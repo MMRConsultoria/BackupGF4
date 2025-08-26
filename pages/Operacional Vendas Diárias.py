@@ -137,7 +137,7 @@ st.markdown("""
 # ================================
 # 3. Separação em ABAS
 # ================================
-aba1, aba3, aba4 = st.tabs(["📄 Upload e Processamento", "🔄 Atualizar Google Sheets","📊 Auditar integração Everest"])
+aba1, aba3, aba4 = st.tabs(["📄 Upload e Processamentoo", "🔄 Atualizar Google Sheets","📊 Auditar integração Everest"])
 
 # ================================
 # 📄 Aba 1 - Upload e Processamento

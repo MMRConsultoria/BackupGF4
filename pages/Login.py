@@ -64,7 +64,7 @@ if not codigo_param or not empresa_param:
 # ✅ Lista de usuários
 USUARIOS = [
     {"codigo": "1825", "email": "carlos.soveral@grupofit.com.br", "senha": "$%252M"},
-    {"codigo": "1825", "email": "maricelisrossi@gmail.com", "senha": "1825."},
+    {"codigo": "1825", "email": "maricelisrossi@gmail.com", "senha": "1825o"},
     {"codigo": "1825", "email": "vanessa.carvalho@grupofit.com.br", "senha": "%6790"},
     {"codigo": "1825", "email": "rosana.rocha@grupofit.com.br", "senha": "hjk&54lmhp"},
     {"codigo": "1825", "email": "debora@grupofit.com.br", "senha": "klom52#@$65"}, 

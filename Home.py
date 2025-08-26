@@ -19,8 +19,12 @@ def app_version():
 st.sidebar.caption(f"🧩 Versão do app: {app_version()}")
 
 # (Opcional) limpar cache via URL ?nocache=1
-q = st.experimental_get_query_params()
-if q.get("nocache", ["0"])[0] == "1":
+# ✅ novo (compatível com 1.49+)
+nocache = st.query_params.get("nocache", "0")
+if isinstance(nocache, list):  # st.query_params pode retornar lista
+    nocache = nocache[0] if nocache else "0"
+
+if nocache == "1":
     st.cache_data.clear()
     st.warning("🧹 Cache limpo via ?nocache=1")
 

@@ -1,0 +1,14 @@
+streamlit
+pandas
+numpy
+gspread
+oauth2client
+xlsxwriter
+gspread-dataframe
+openpyxl
+gspread-formatting
+plotly
+streamlit-aggrid
+unidecode
+reportlab
+

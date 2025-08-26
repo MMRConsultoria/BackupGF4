@@ -523,7 +523,7 @@ else:
 pdf_bytes = gerar_pdf(df_view, mes_rateio=mes_rateio, usuario=usuario_logado)
 
 st.download_button(
-    label="📄 Baixar PDF",
+    label="📄 Baixarr PDF",
     data=pdf_bytes,
     file_name=f"Rateio_{datetime.now().strftime('%Y%m%d')}.pdf",
     mime="application/pdf"

@@ -1,31 +1,46 @@
 # Home.py
+import time, hashlib, glob, os
 import streamlit as st
 
-# ✅ Configuração da página
+# ⚙️ Config da página (sempre no topo)
 st.set_page_config(page_title="Portal de Relatórios | MMR Consultoria")
 
-# ✅ Verificação de login ANTES de exibir o conteúdo
+# 🔎 Indicadores para provar o deploy
+st.sidebar.write("🔄 Build time:", time.strftime("%Y-%m-%d %H:%M:%S"))
+
+def app_version():
+    h = hashlib.sha256()
+    for p in sorted(glob.glob("**/*.py", recursive=True) + ["requirements.txt"]):
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                h.update(f.read())
+    return h.hexdigest()[:8]
+
+st.sidebar.caption(f"🧩 Versão do app: {app_version()}")
+
+# (Opcional) limpar cache via URL ?nocache=1
+q = st.experimental_get_query_params()
+if q.get("nocache", ["0"])[0] == "1":
+    st.cache_data.clear()
+    st.warning("🧹 Cache limpo via ?nocache=1")
+
+# ✅ Gate de login
 if not st.session_state.get("acesso_liberado"):
     st.switch_page("pages/Login.py")
     st.stop()
 
-
-
-
 # ✅ Código da empresa logada
 codigo_empresa = st.session_state.get("empresa")
 
-# ✅ Dicionário com logos por código
+# ✅ Logos por código
 LOGOS_CLIENTES = {
     "1825": "https://raw.githubusercontent.com/MMRConsultoria/MMRBackup/main/logo_grupofit.png",
     "3377": "https://raw.githubusercontent.com/MMRConsultoria/MMRBackup/main/rossi_ferramentas_logo.png",
-    "0041": "https://raw.githubusercontent.com/MMRConsultoria/MMRBackup/main/logo_empresa3.png"
+    "0041": "https://raw.githubusercontent.com/MMRConsultoria/MMRBackup/main/logo_empresa3.png",
 }
 
-# ✅ Busca o logo do cliente
+# ✅ Logo na sidebar
 logo_cliente = LOGOS_CLIENTES.get(codigo_empresa)
-
-# ✅ Logo do cliente na sidebar
 if logo_cliente:
     st.sidebar.markdown(
         f"""
@@ -33,12 +48,12 @@ if logo_cliente:
             <img src="{logo_cliente}" width="100">
         </div>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
-# ✅ Logo principal na área central (cliente ou MMR)
+# ✅ Logo principal
 st.image(logo_cliente or "https://raw.githubusercontent.com/MMRConsultoria/MMRBackup/main/logo-mmr.png", width=150)
 
-# ✅ Mensagem de boas-vindas
+# ✅ Mensagem
 st.markdown("## Bem-vindo ao Portal de Relatórios")
 st.success(f"✅ Acesso liberado para o código {codigo_empresa}!")

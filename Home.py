@@ -17,9 +17,9 @@ codigo_empresa = st.session_state.get("empresa")
 
 # ✅ Dicionário com logos por código
 LOGOS_CLIENTES = {
-    "1825": "https://raw.githubusercontent.com/MMRConsultoria/mmr-site/main/logo_grupofit.png",
-    "3377": "https://raw.githubusercontent.com/MMRConsultoria/mmr-site/main/rossi_ferramentas_logo.png",
-    "0041": "https://raw.githubusercontent.com/MMRConsultoria/mmr-site/main/logo_empresa3.png"
+    "1825": "https://raw.githubusercontent.com/MMRConsultoria/MMRBackup/main/logo_grupofit.png",
+    "3377": "https://raw.githubusercontent.com/MMRConsultoria/MMRBackup/main/rossi_ferramentas_logo.png",
+    "0041": "https://raw.githubusercontent.com/MMRConsultoria/MMRBackup/main/logo_empresa3.png"
 }
 
 # ✅ Busca o logo do cliente
@@ -37,7 +37,7 @@ if logo_cliente:
     )
 
 # ✅ Logo principal na área central (cliente ou MMR)
-st.image(logo_cliente or "https://raw.githubusercontent.com/MMRConsultoria/mmr-site/main/logo-mmr.png", width=150)
+st.image(logo_cliente or "https://raw.githubusercontent.com/MMRConsultoria/MMRBackup/main/logo-mmr.png", width=150)
 
 # ✅ Mensagem de boas-vindas
 st.markdown("## Bem-vindo ao Portal de Relatórios")

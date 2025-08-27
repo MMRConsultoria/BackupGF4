@@ -46,8 +46,8 @@ def _go_login():
 with st.expander("🔎 DEBUG sessão (remover depois)"):
     st.write("session_state:", dict(st.session_state))
 
-# Se não tem flag de acesso → Login
-if not st.session_state.get("acesso_liberado"):
+if "acesso_liberado" not in st.session_state:
+    st.warning("DEBUG: não há acesso_liberado no session_state")
     _go_login()
 
 # ================ Google Sheets client ================

@@ -31,10 +31,28 @@ if nocache == "1":
     st.cache_data.clear()
     st.warning("🧹 Cache limpo via ?nocache=1")
 
-# Gate de login
-if not st.session_state.get("acesso_liberado"):
-    st.switch_page("Login")   # porque Login.py está em /pages
+# Gate de login (robusto)
+def _go_login():
+    # 1) tenta pelo nome da página
+    try:
+        st.switch_page("Login")
+        return
+    except Exception:
+        pass
+    # 2) tenta pelo caminho do arquivo dentro de /pages
+    try:
+        st.switch_page("pages/Login.py")
+        return
+    except Exception:
+        pass
+    # 3) fallback: redirect por URL
+    st.markdown("<meta http-equiv='refresh' content='0; url=/Login' />", unsafe_allow_html=True)
+
     st.stop()
+
+if not st.session_state.get("acesso_liberado"):
+    _go_login()
+
 # Google Sheets client
 PLANILHA_KEY = "1SZ5R6hcBE6o_qWs0_wx6IGKfIGltxpb9RWiGyF4L5uE"
 SHEET_SESSOES = "SessõesAtivas"
@@ -67,7 +85,11 @@ LOGOS_CLIENTES = {
 logo_cliente = LOGOS_CLIENTES.get(codigo_empresa)
 if logo_cliente:
     st.sidebar.markdown(f"<div style='text-align:center;padding:10px 0 30px 0;'><img src='{logo_cliente}' width='100'></div>", unsafe_allow_html=True)
-
+# DEBUG: ver se a página "Login" existe como link
+try:
+    st.sidebar.page_link("pages/Login.py", label="(DEBUG) Ir para Login")
+except Exception:
+    st.sidebar.write("(DEBUG) Não consegui criar link para pages/Login.py")
 st.image(logo_cliente or "https://raw.githubusercontent.com/MMRConsultoria/MMRBackup/main/logo-mmr.png", width=150)
 st.markdown("## Bem-vindo ao Portal de Relatórios")
 st.success(f"✅ Acesso liberado para o código {codigo_empresa}!")

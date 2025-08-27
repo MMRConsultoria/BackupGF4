@@ -47,7 +47,7 @@ gc = gspread.authorize(credentials)
 
 # Já logado? Vai pra Home
 if st.session_state.get("acesso_liberado"):
-    st.experimental_rerun()
+    st.rerun()
 
 # Formulário de login
 st.title("🔐 Acesso Restrito")

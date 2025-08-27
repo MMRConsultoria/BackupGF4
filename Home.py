@@ -3,6 +3,9 @@
 import streamlit as st
 import time, hashlib, glob, os
 
+# ⚙️ Config da página (sempre no topo)
+st.set_page_config(page_title="Portal de Relatórios | MMR Consultoria")
+
 # =====================================
 # CSS para esconder barra de botões do canto superior direito
 # =====================================
@@ -15,9 +18,6 @@ st.markdown("""
         }
     </style>
 """, unsafe_allow_html=True)
-
-# ⚙️ Config da página (sempre no topo)
-st.set_page_config(page_title="Portal de Relatórios | MMR Consultoria")
 
 # 🔎 Indicadores para provar o deploy
 st.sidebar.write("🔄 Build time:", time.strftime("%Y-%m-%d %H:%M:%S"))
@@ -33,7 +33,7 @@ def app_version():
 st.sidebar.caption(f"🧩 Versão do app: {app_version()}")
 
 # (Opcional) limpar cache via URL ?nocache=1
-# ✅ novo (compatível com 1.49+)
+# ✅ compatível com 1.49+
 nocache = st.query_params.get("nocache", "0")
 if isinstance(nocache, list):  # st.query_params pode retornar lista
     nocache = nocache[0] if nocache else "0"
@@ -47,11 +47,25 @@ if not st.session_state.get("acesso_liberado"):
     st.switch_page("pages/Login.py")
     st.stop()
 
-# 🔄 Renova timeout a cada interação
-from pages.Login import atualizar_sessao
-if "usuario_logado" in st.session_state:
-    atualizar_sessao(st.session_state["usuario_logado"])
+# 🔒 Validação de posse da sessão + renovação de timeout
+from pages.Login import validar_sessao, atualizar_sessao
 
+email_atual = st.session_state.get("usuario_logado")
+token_atual = st.session_state.get("sessao_token")
+
+if not email_atual or not token_atual or not validar_sessao(email_atual, token_atual):
+    # Sessão foi assumida por outra máquina (ou não existe mais)
+    for k in ["acesso_liberado", "empresa", "usuario_logado", "sessao_token"]:
+        st.session_state.pop(k, None)
+    st.warning("Sua sessão foi encerrada (acessada em outro dispositivo). Faça login novamente.")
+    st.switch_page("pages/Login.py")
+    st.stop()
+
+# 🔄 Mantém a sessão viva enquanto o usuário navega
+atualizar_sessao(email_atual)
+
+# ✅ Código da empresa logada
+codigo_empresa = st.session_state.get("empresa")
 
 # ✅ Logos por código
 LOGOS_CLIENTES = {
@@ -78,24 +92,3 @@ st.image(logo_cliente or "https://raw.githubusercontent.com/MMRConsultoria/MMRBa
 # ✅ Mensagem
 st.markdown("## Bem-vindo ao Portal de Relatórios")
 st.success(f"✅ Acesso liberado para o código {codigo_empresa}!")
-
-# ======================
-# Botão de Logout
-# ======================
-if "usuario_logado" in st.session_state:
-    st.markdown("---")
-    st.caption(f"🔑 Logado como: {st.session_state['usuario_logado']}")
-
-    if st.button("Sair"):
-        try:
-            # importa a função que criamos no Login.py
-            from pages.Login import encerrar_sessao  
-            encerrar_sessao(st.session_state["usuario_logado"])
-        except Exception as e:
-            st.warning(f"Não foi possível encerrar sessão no servidor: {e}")
-
-        # limpa session_state local
-        for k in ["acesso_liberado", "empresa", "usuario_logado", "sessao_token"]:
-            st.session_state.pop(k, None)
-
-        st.rerun()

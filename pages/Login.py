@@ -66,6 +66,6 @@ if st.button("Entrar"):
         st.session_state["acesso_liberado"] = True
         st.session_state["empresa"] = codigo
         st.session_state["usuario_logado"] = email
-        st.rerun()   # ✅ recarrega o app, cai direto no Home.py
+        st.switch_page("Home")   # ✅ redireciona direto
     else:
         st.error("❌ Código, e-mail ou senha incorretos.")

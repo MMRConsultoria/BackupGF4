@@ -7,6 +7,7 @@ from datetime import datetime
 
 import streamlit as st
 
+st.set_page_config(page_title="Login | MMR Consultoria")
 # =====================================
 # CSS para esconder barra de botões do canto superior direito
 # =====================================
@@ -19,9 +20,6 @@ st.markdown("""
         }
     </style>
 """, unsafe_allow_html=True)
-
-st.set_page_config(page_title="Login | MMR Consultoria")
-
 
 
 

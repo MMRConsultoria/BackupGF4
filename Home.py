@@ -102,7 +102,7 @@ if not email_atual or not token_atual:
     _go_login()
 
 # Deixe True para estabilizar; depois troque para False para validar.
-SKIP_SHEET_VALIDATION = True
+SKIP_SHEET_VALIDATION = False
 
 if not SKIP_SHEET_VALIDATION:
     ok = False

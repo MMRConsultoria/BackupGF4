@@ -66,6 +66,8 @@ if st.button("Entrar"):
         st.session_state["acesso_liberado"] = True
         st.session_state["empresa"] = codigo
         st.session_state["usuario_logado"] = email
-        st.switch_page("Home")   # ✅ redireciona direto
+        # ✅ redireciona para a raiz (onde está o Home.py)
+        st.markdown("<meta http-equiv='refresh' content='0; url=/' />", unsafe_allow_html=True)
+        st.stop()
     else:
         st.error("❌ Código, e-mail ou senha incorretos.")

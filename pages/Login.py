@@ -66,7 +66,6 @@ if st.button("Entrar"):
         st.session_state["acesso_liberado"] = True
         st.session_state["empresa"] = codigo
         st.session_state["usuario_logado"] = email
-        st.markdown("<meta http-equiv='refresh' content='0; url=/' />", unsafe_allow_html=True)
-        st.stop()
+        st.switch_page("Home")   # ou st.rerun() se Home estiver fora de /pages
     else:
         st.error("❌ Código, e-mail ou senha incorretos.")

@@ -14,9 +14,9 @@ st.markdown("""
 [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
 </style>
 """, unsafe_allow_html=True)
-# Se já estiver logado, redireciona para Home (que está na raiz)
+# Se já estiver logado, vai direto pro Home
 if st.session_state.get("acesso_liberado"):
-    st.markdown("<meta http-equiv='refresh' content='0; url=/' />", unsafe_allow_html=True)
+    st.switch_page("Home")   # funciona porque Home.py está na raiz
     st.stop()
 # Parâmetros opcionais
 params = st.query_params

@@ -45,9 +45,10 @@ credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_ACESSOS"])
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
 gc = gspread.authorize(credentials)
 
-# Já logado? Vai pra Home
+# Já logado? Redireciona para a página inicial (Home na raiz)
 if st.session_state.get("acesso_liberado"):
-    st.rerun()
+    st.markdown("<meta http-equiv='refresh' content='0; url=/' />", unsafe_allow_html=True)
+    st.stop()
 
 # Formulário de login
 st.title("🔐 Acesso Restrito")
@@ -65,6 +66,7 @@ if st.button("Entrar"):
         st.session_state["acesso_liberado"] = True
         st.session_state["empresa"] = codigo
         st.session_state["usuario_logado"] = email
-        st.rerun()
+        st.markdown("<meta http-equiv='refresh' content='0; url=/' />", unsafe_allow_html=True)
+        st.stop()
     else:
         st.error("❌ Código, e-mail ou senha incorretos.")

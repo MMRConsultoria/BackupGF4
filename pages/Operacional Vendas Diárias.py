@@ -55,7 +55,7 @@ st.markdown("""
 # Spinner direto ao carregar a página
 # ======================
 with st.spinner("⏳ Processando..."):
-    time.sleep(5)  # simula um processamento (troque pelo seu código real)
+    time.sleep(25)  # simula um processamento (troque pelo seu código real)
 
 # ================================
 # 1. Conexão com Google Sheets

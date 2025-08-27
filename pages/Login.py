@@ -1,11 +1,12 @@
 # pages/Login.py
 import streamlit as st
+import json
+import uuid
+import pytz
+from datetime import datetime
+
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
-from datetime import datetime
-import pytz
-import uuid
 
 st.set_page_config(page_title="Login | MMR Consultoria")
 
@@ -52,6 +53,8 @@ USUARIOS = [
 # Google Sheets
 # =====================================
 PLANILHA_KEY = "1SZ5R6hcBE6o_qWs0_wx6IGKfIGltxpb9RWiGyF4L5uE"
+SHEET_SESSOES = "SessõesAtivas"
+
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_ACESSOS"])
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
@@ -77,31 +80,19 @@ def registrar_acesso(nome_usuario, acao="LOGIN"):
         st.warning(f"Não foi possível registrar acesso: {e}")
 
 # =====================================
-# Sessão única + timeout + forçar login
+# Sessões: login sempre assume (derruba anterior)
 # =====================================
-NOME_ABA_SESSOES = "SessõesAtivas"
-SESSION_TIMEOUT_MIN = 30  # ajuste aqui
-
 def _open_aba_sessoes():
     planilha = gc.open_by_key(PLANILHA_KEY)
     try:
-        aba = planilha.worksheet(NOME_ABA_SESSOES)
+        aba = planilha.worksheet(SHEET_SESSOES)
     except:
-        aba = planilha.add_worksheet(title=NOME_ABA_SESSOES, rows=200, cols=6)
+        aba = planilha.add_worksheet(title=SHEET_SESSOES, rows=200, cols=6)
         aba.update("A1:E1", [["email", "token", "data", "hora", "ultimo_acesso"]])
     return aba
 
-def get_sessoes_ativas():
-    try:
-        aba = _open_aba_sessoes()
-        registros = aba.get_all_records()
-        return aba, registros
-    except Exception as e:
-        st.error(f"Erro ao acessar sessões ativas: {e}")
-        return None, []
-
-def _liberar_sessao(email):
-    """Remove todas as linhas da sessão desse e-mail."""
+def _liberar_sessao(email: str):
+    """Remove TODAS as linhas desse e-mail (derruba sessão anterior)."""
     aba = _open_aba_sessoes()
     todas = aba.get_all_values()
     if not todas:
@@ -110,42 +101,28 @@ def _liberar_sessao(email):
     aba.clear()
     aba.update("A1", novas)
 
-def registrar_sessao(email, force=False):
-    aba, registros = get_sessoes_ativas()
-    if not aba:
-        return False
+def registrar_sessao_assumindo(email: str):
+    """
+    Login preemptivo: apaga sessão anterior desse e-mail e cria uma nova.
+    Salva token no session_state para validação na Home.
+    """
+    aba = _open_aba_sessoes()
 
-    fuso = pytz.timezone("America/Sao_Paulo")
-    agora = datetime.now(fuso)
-
-    # verifica sessão existente
-    existente = None
-    for r in registros:
-        if r.get("email") == email:
-            existente = r
-            break
-
-    if existente:
-        # idade da sessão
-        try:
-            ultimo = datetime.strptime(f"{existente['data']} {existente['hora']}", "%d/%m/%Y %H:%M:%S")
-        except Exception:
-            ultimo = agora  # conservador
-        diff_min = (agora - ultimo).total_seconds() / 60.0
-        if diff_min < SESSION_TIMEOUT_MIN and not force:
-            return False  # ainda válida e sem forçar
-        # expirou ou force=True => libera antiga
-        _liberar_sessao(email)
+    # derruba sessão anterior
+    _liberar_sessao(email)
 
     # cria nova sessão
+    fuso = pytz.timezone("America/Sao_Paulo")
+    agora = datetime.now(fuso)
     token = str(uuid.uuid4())
     nova = [email, token, agora.strftime("%d/%m/%Y"), agora.strftime("%H:%M:%S"), agora.isoformat()]
     aba.append_row(nova)
+
     st.session_state["sessao_token"] = token
     return True
 
-def atualizar_sessao(email):
-    """Renova data/hora/ultimo_acesso enquanto o usuário navega."""
+def atualizar_sessao(email: str):
+    """Renova carimbo de tempo da sessão atual (se existir)."""
     try:
         aba = _open_aba_sessoes()
         todas = aba.get_all_values()
@@ -164,17 +141,29 @@ def atualizar_sessao(email):
                 todas[i] = row
         aba.clear()
         aba.update("A1", todas)
-    except Exception as e:
-        # não travar app por isso
-        st.caption(f"ℹ️ Sessão não renovada: {e}")
+    except Exception:
+        # não travar o app por isso
+        pass
 
-def encerrar_sessao(email):
-    """Logout explícito (opcional no Home)."""
+def validar_sessao(email: str, token: str) -> bool:
+    """Confere se o token na planilha ainda é o mesmo desta máquina."""
+    try:
+        aba = _open_aba_sessoes()
+        registros = aba.get_all_records()
+        for r in registros:
+            if r.get("email") == email:
+                return r.get("token") == token
+        return False  # não achou sessão ativa para este e-mail
+    except Exception:
+        return False
+
+def encerrar_sessao(email: str):
+    """Logout explícito (opcional)."""
     try:
         _liberar_sessao(email)
         registrar_acesso(email, acao="LOGOUT")
-    except Exception as e:
-        st.warning(f"Não foi possível encerrar sessão: {e}")
+    except Exception:
+        pass
 
 # =====================================
 # Já logado? Vai pra Home
@@ -192,48 +181,18 @@ codigo = st.text_input("Código da Empresa:", value=codigo_param)
 email = st.text_input("E-mail:")
 senha = st.text_input("Senha:", type="password")
 
-# Guarda tentativa para o botão "Forçar login"
-if "pending_login" not in st.session_state:
-    st.session_state["pending_login"] = {}
-
 if st.button("Entrar"):
     usuario = next(
         (u for u in USUARIOS if u["codigo"] == codigo and u["email"] == email and u["senha"] == senha),
         None
     )
     if usuario:
-        ok = registrar_sessao(email, force=False)
-        if ok:
+        # Login sempre assume: derruba sessão antiga e cria nova
+        if registrar_sessao_assumindo(email):
             st.session_state["acesso_liberado"] = True
             st.session_state["empresa"] = codigo
             st.session_state["usuario_logado"] = email
             registrar_acesso(email, acao="LOGIN")
             st.switch_page("Home.py")
-        else:
-            st.error("⚠️ Esse usuário já está logado em outra máquina.")
-            st.info("Se a sessão anterior travou, você pode liberar e entrar agora.")
-            st.session_state["pending_login"] = {"codigo": codigo, "email": email, "senha": senha}
     else:
         st.error("❌ Código, e-mail ou senha incorretos.")
-
-# Botão FORÇAR LOGIN (mostra só após bloqueio)
-if st.session_state.get("pending_login", {}).get("email"):
-    if st.button("⚡ Liberar sessão anterior e entrar agora"):
-        pend = st.session_state["pending_login"]
-        usuario = next(
-            (u for u in USUARIOS if u["codigo"] == pend["codigo"] and u["email"] == pend["email"] and u["senha"] == pend["senha"]),
-            None
-        )
-        if usuario:
-            ok = registrar_sessao(pend["email"], force=True)
-            if ok:
-                st.session_state["acesso_liberado"] = True
-                st.session_state["empresa"] = pend["codigo"]
-                st.session_state["usuario_logado"] = pend["email"]
-                st.session_state["pending_login"] = {}
-                registrar_acesso(pend["email"], acao="FORCE_LOGIN")
-                st.switch_page("Home.py")
-            else:
-                st.error("Não foi possível assumir a sessão agora. Tente novamente.")
-        else:
-            st.error("Credenciais inválidas ao forçar login. Tente novamente.")

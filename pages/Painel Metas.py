@@ -17,7 +17,20 @@ from st_aggrid import AgGrid, GridOptionsBuilder
 
 if not st.session_state.get("acesso_liberado"):
     st.stop()
+import streamlit as st
 
+# =====================================
+# CSS para esconder barra de botões do canto superior direito
+# =====================================
+st.markdown("""
+    <style>
+        [data-testid="stToolbar"] {
+            visibility: hidden;
+            height: 0%;
+            position: fixed;
+        }
+    </style>
+""", unsafe_allow_html=True)
 # ================================
 # 1. Conexão com Google Sheets
 # ================================

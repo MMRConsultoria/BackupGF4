@@ -23,34 +23,93 @@ import streamlit as st
 import streamlit as st
 import time
 
-# CSS para ocultar apenas o menu superior
+import streamlit as st
+import time
+from contextlib import contextmanager
+
+st.set_page_config(page_title="Spinner personalizado | MMR Consultoria")
+
+# ======================
+# CSS: esconder barra superior e estilo do overlay do GIF
+# ======================
 st.markdown("""
     <style>
-        [data-testid="stToolbar"] {visibility: hidden; height: 0%;}
-        
-        /* Substituir o spinner padrão por um GIF */
-        .stSpinner > div {
-            background-image: url("https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExYTZiM2U3OWIxNTQyYjM1ZjY0ODg1MjAwZjY0ZmE4Y2FkYzcyMTY5MCZjdD1n/3oEjI6SIIHBdRxXI40/giphy.gif");
-            background-size: contain;
-            background-repeat: no-repeat;
-            height: 120px;
-            width: 120px;
-            margin: auto;
+        /* Ocultar apenas o menu/toolbar do Streamlit */
+        [data-testid="stToolbar"] {
+            visibility: hidden;
+            height: 0%;
+            position: fixed;
         }
 
-        /* Esconde o texto "Carregando..." */
-        .stSpinner > div > div {
-            visibility: hidden;
+        /* Overlay do nosso spinner GIF */
+        .mmr-spinner-overlay {
+            position: fixed;
+            inset: 0;                 /* top:0; right:0; bottom:0; left:0 */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255,255,255,0.60);
+            z-index: 9999;            /* fica por cima de tudo */
+            pointer-events: none;     /* não bloqueia cliques em botões do app ao fundo */
+        }
+        .mmr-spinner-box {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            border-radius: 12px;
+            box-shadow: none;
+            background: transparent;
+        }
+        .mmr-spinner-box img {
+            width: 140px;   /* ajuste o tamanho do GIF aqui */
+            height: 140px;
+            object-fit: contain;
+            image-rendering: auto;
         }
     </style>
 """, unsafe_allow_html=True)
 
-st.title("Teste do Homenzinho")
+# ======================
+# Helper: context manager para exibir/ocultar GIF
+# ======================
+@contextmanager
+def gif_spinner(placeholder, gif_url: str):
+    """Mostra um overlay com GIF enquanto o bloco 'with' estiver em execução."""
+    html = f"""
+    <div class="mmr-spinner-overlay">
+        <div class="mmr-spinner-box">
+            <img src="{gif_url}" alt="Processando...">
+        </div>
+    </div>
+    """
+    placeholder.markdown(html, unsafe_allow_html=True)
+    try:
+        yield
+    finally:
+        placeholder.empty()
 
-with st.spinner(""):
-    time.sleep(5)
+st.title("Exibir só o homenzinho correndo durante o processamento")
 
-st.success("✅ Concluído!")
+st.write("Clique no botão abaixo para ver o GIF aparecer enquanto processa.")
+
+# Coloque aqui o link do GIF que você quer (pode ser o do 'homenzinho correndo' que você curte)
+# Exemplo (Giphy). Troque pela sua URL se preferir:
+GIF_URL = "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExYTZiM2U3OWIxNTQyYjM1ZjY0ODg1MjAwZjY0ZmE4Y2FkYzcyMTY5MCZjdD1n/3oEjI6SIIHBdRxXI40/giphy.gif"
+
+if st.button("🚀 Processar"):
+    # placeholder para injetar/remover o overlay
+    overlay = st.empty()
+    with gif_spinner(overlay, GIF_URL):
+        # Simula um trabalho pesado
+        time.sleep(5)
+    st.success("✅ Concluído!")
+
+# Dica: para usar em qualquer parte do seu app, crie um 'overlay = st.empty()'
+# e envolva o trecho demorado com:
+# with gif_spinner(overlay, GIF_URL):
+#     ... seu processamento ...
+
 # ================================
 # 1. Conexão com Google Sheets
 # ================================

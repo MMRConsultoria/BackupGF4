@@ -1,6 +1,7 @@
 # Home.py
 
 import streamlit as st
+import time, hashlib, glob, os
 
 # =====================================
 # CSS para esconder barra de botões do canto superior direito
@@ -14,13 +15,6 @@ st.markdown("""
         }
     </style>
 """, unsafe_allow_html=True)
-
-
-
-
-
-import time, hashlib, glob, os
-import streamlit as st
 
 # ⚙️ Config da página (sempre no topo)
 st.set_page_config(page_title="Portal de Relatórios | MMR Consultoria")
@@ -81,3 +75,24 @@ st.image(logo_cliente or "https://raw.githubusercontent.com/MMRConsultoria/MMRBa
 # ✅ Mensagem
 st.markdown("## Bem-vindo ao Portal de Relatórios")
 st.success(f"✅ Acesso liberado para o código {codigo_empresa}!")
+
+# ======================
+# Botão de Logout
+# ======================
+if "usuario_logado" in st.session_state:
+    st.markdown("---")
+    st.caption(f"🔑 Logado como: {st.session_state['usuario_logado']}")
+
+    if st.button("Sair"):
+        try:
+            # importa a função que criamos no Login.py
+            from pages.Login import encerrar_sessao  
+            encerrar_sessao(st.session_state["usuario_logado"])
+        except Exception as e:
+            st.warning(f"Não foi possível encerrar sessão no servidor: {e}")
+
+        # limpa session_state local
+        for k in ["acesso_liberado", "empresa", "usuario_logado", "sessao_token"]:
+            st.session_state.pop(k, None)
+
+        st.rerun()

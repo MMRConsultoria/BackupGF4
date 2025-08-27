@@ -14,7 +14,10 @@ st.markdown("""
 [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
 </style>
 """, unsafe_allow_html=True)
-
+# Se já estiver logado, redireciona para Home (que está na raiz)
+if st.session_state.get("acesso_liberado"):
+    st.markdown("<meta http-equiv='refresh' content='0; url=/' />", unsafe_allow_html=True)
+    st.stop()
 # Parâmetros opcionais
 params = st.query_params
 codigo_param = (params.get("codigo") or "").strip()

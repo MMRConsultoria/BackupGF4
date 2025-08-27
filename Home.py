@@ -47,10 +47,11 @@ if not st.session_state.get("acesso_liberado"):
     st.switch_page("pages/Login.py")
     st.stop()
 
-# 🔄 Renova o timeout da sessão sempre que a Home roda
+# 🔄 Renova timeout a cada interação
 from pages.Login import atualizar_sessao
 if "usuario_logado" in st.session_state:
     atualizar_sessao(st.session_state["usuario_logado"])
+
 
 # ✅ Logos por código
 LOGOS_CLIENTES = {

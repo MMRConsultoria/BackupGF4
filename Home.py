@@ -33,7 +33,7 @@ if nocache == "1":
 
 # Gate de login
 if not st.session_state.get("acesso_liberado"):
-    st.markdown("<meta http-equiv='refresh' content='0; url=/Login' />", unsafe_allow_html=True)
+    st.switch_page("Login")   # porque Login.py está em /pages
     st.stop()
 # Google Sheets client
 PLANILHA_KEY = "1SZ5R6hcBE6o_qWs0_wx6IGKfIGltxpb9RWiGyF4L5uE"

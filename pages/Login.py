@@ -47,7 +47,7 @@ gc = gspread.authorize(credentials)
 
 # Já logado? Vai pra Home
 if st.session_state.get("acesso_liberado"):
-    st.switch_page("Home.py")
+    st.switch_page("Home")
 
 # Formulário de login
 st.title("🔐 Acesso Restrito")
@@ -65,6 +65,6 @@ if st.button("Entrar"):
         st.session_state["acesso_liberado"] = True
         st.session_state["empresa"] = codigo
         st.session_state["usuario_logado"] = email
-        st.switch_page("Home.py")
+        st.switch_page("Home")
     else:
         st.error("❌ Código, e-mail ou senha incorretos.")

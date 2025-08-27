@@ -34,6 +34,9 @@ import time
 
 import streamlit as st
 
+import streamlit as st
+import time
+
 # ======================
 # CSS para esconder só a barra superior
 # ======================
@@ -51,15 +54,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ======================
-# Spinner dura enquanto o processamento roda
+# Somente a ampulheta até concluir
 # ======================
 with st.spinner("⏳ Processando..."):
-    # 🔽 Coloque aqui todo o seu código pesado
-    import time
-    for i in range(1, 6):
-        time.sleep(1)  # simulação de tarefa demorada
-        st.write(f"Passo {i} concluído")
-    # quando esse bloco terminar, a ampulheta some
+    # Coloque aqui seu processamento real
+    time.sleep(5)   # simulação de código demorado
+
+# Quando terminar, só aparece a tela final (sem mensagens intermediárias)
+st.success("✅ Tudo pronto!")
+
 # ================================
 # 1. Conexão com Google Sheets
 # ================================

@@ -32,19 +32,18 @@ st.set_page_config(page_title="Spinner personalizado | MMR Consultoria")
 import streamlit as st
 import time
 
+import streamlit as st
+
 # ======================
 # CSS para esconder só a barra superior
 # ======================
 st.markdown("""
     <style>
-        /* Ocultar apenas o menu de "Gerenciar Aplicativo" e afins */
         [data-testid="stToolbar"] {
             visibility: hidden;
             height: 0%;
             position: fixed;
         }
-
-        /* Mantém o spinner padrão visível */
         .stSpinner {
             visibility: visible !important;
         }
@@ -52,11 +51,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ======================
-# Spinner direto ao carregar a página
+# Spinner dura enquanto o processamento roda
 # ======================
 with st.spinner("⏳ Processando..."):
-    time.sleep(25)  # simula um processamento (troque pelo seu código real)
-
+    # 🔽 Coloque aqui todo o seu código pesado
+    import time
+    for i in range(1, 6):
+        time.sleep(1)  # simulação de tarefa demorada
+        st.write(f"Passo {i} concluído")
+    # quando esse bloco terminar, a ampulheta some
 # ================================
 # 1. Conexão com Google Sheets
 # ================================

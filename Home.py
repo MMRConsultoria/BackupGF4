@@ -6,14 +6,14 @@ from utils.sessoes import validar_sessao, atualizar_sessao, registrar_sessao_ass
 
 st.set_page_config(page_title="Portal de Relatórios | MMR Consultoria")
 
-# ================= CSS =================
+# ============== CSS ==============
 st.markdown("""
 <style>
 [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
 </style>
 """, unsafe_allow_html=True)
 
-# ================ Sidebar: build info =================
+# ============== Sidebar: build info ==============
 st.sidebar.write("🔄 Build time:", time.strftime("%Y-%m-%d %H:%M:%S"))
 def app_version():
     h = hashlib.sha256()
@@ -23,14 +23,22 @@ def app_version():
     return h.hexdigest()[:8]
 st.sidebar.caption(f"🧩 Versão do app: {app_version()}")
 
-# ================ nocache opcional =================
+# ============== nocache opcional ==============
 nocache = st.query_params.get("nocache", "0")
 if isinstance(nocache, list): nocache = nocache[0] if nocache else "0"
 if nocache == "1":
     st.cache_data.clear()
     st.warning("🧹 Cache limpo via ?nocache=1")
 
-# ================ Gate de login (robusto) ================
+# ============== Google Sheets client (ANTES de qualquer gate) ==============
+PLANILHA_KEY = "1SZ5R6hcBE6o_qWs0_wx6IGKfIGltxpb9RWiGyF4L5uE"
+SHEET_SESSOES = "SessõesAtivas"
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_ACESSOS"])
+credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+gc = gspread.authorize(credentials)
+
+# ============== Helpers navegação ==============
 def _go_login():
     # 1) tenta pelo nome da página (requer pages/Login.py)
     try:
@@ -42,45 +50,58 @@ def _go_login():
     st.markdown("<meta http-equiv='refresh' content='0; url=/Login' />", unsafe_allow_html=True)
     st.stop()
 
-# DEBUG (remova depois de estabilizar)
+def _open_aba_sessoes():
+    planilha = gc.open_by_key(PLANILHA_KEY)
+    try:
+        aba = planilha.worksheet(SHEET_SESSOES)
+    except:
+        aba = planilha.add_worksheet(title=SHEET_SESSOES, rows=200, cols=6)
+        aba.update("A1:E1", [["email","token","data","hora","ultimo_acesso"]])
+    return aba
+
+def _recuperar_session_do_sheets():
+    """Recupera a ÚLTIMA sessão registrada no sheet (fallback para meta-refresh perder session_state)."""
+    try:
+        aba = _open_aba_sessoes()
+        vals = aba.get_all_values()
+        if not vals or len(vals) < 2:
+            return False
+        header = vals[0]
+        last = vals[-1]
+        cols = {header[i]: (last[i] if i < len(last) else "") for i in range(len(header))}
+        email = cols.get("email","").strip()
+        token = cols.get("token","").strip()
+        if not email or not token:
+            return False
+        # repovoa o session_state mínimo para continuar
+        st.session_state["usuario_logado"] = email
+        st.session_state["sessao_token"] = token
+        # empresa não está no sheet de sessões; se você quiser, salve em outro lugar.
+        st.session_state.setdefault("empresa", "")
+        st.session_state["acesso_liberado"] = True
+        return True
+    except Exception as e:
+        st.caption(f"DEBUG: falha ao recuperar sessão do Sheets: {e}")
+        return False
+
+# ============== DEBUG sessão (remover depois) ==============
 with st.expander("🔎 DEBUG sessão (remover depois)"):
     st.write("session_state:", dict(st.session_state))
 
-if "acesso_liberado" not in st.session_state:
-    # tenta recuperar do Sheets
-    try:
-        aba = gc.open_by_key(PLANILHA_KEY).worksheet(SHEET_SESSOES)
-        registros = aba.get_all_records()
-        # pega o último registro do usuário que logou
-        if registros:
-            ultimo = registros[-1]
-            st.session_state["usuario_logado"] = ultimo.get("email", "")
-            st.session_state["sessao_token"] = ultimo.get("token", "")
-            st.session_state["empresa"] = ultimo.get("empresa", "")
-            st.session_state["acesso_liberado"] = True
-        else:
-            _go_login()
-    except Exception as e:
-        st.warning(f"DEBUG: não consegui recuperar sessão do Sheets: {e}")
+# ============== Gate + recuperação ==============
+if not st.session_state.get("acesso_liberado"):
+    # Tenta recuperar do Sheets (caso meta-refresh tenha zerado o session_state)
+    if not _recuperar_session_do_sheets():
         _go_login()
 
-# ================ Google Sheets client ================
-PLANILHA_KEY = "1SZ5R6hcBE6o_qWs0_wx6IGKfIGltxpb9RWiGyF4L5uE"
-SHEET_SESSOES = "SessõesAtivas"
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_ACESSOS"])
-credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
-gc = gspread.authorize(credentials)
-
-# ================ Valida e (se precisar) reassume sessão ================
+# ============== Validação (com bypass inicial) ==============
 email_atual = st.session_state.get("usuario_logado")
 token_atual = st.session_state.get("sessao_token")
 
 if not email_atual or not token_atual:
     _go_login()
 
-# BYPASS TEMPORÁRIO DA VALIDAÇÃO NO SHEETS (ligado = True)
-# Depois de tudo estável, troque para False para validar de novo.
+# Deixe True para estabilizar; depois troque para False para validar.
 SKIP_SHEET_VALIDATION = True
 
 if not SKIP_SHEET_VALIDATION:
@@ -92,7 +113,7 @@ if not SKIP_SHEET_VALIDATION:
         ok = False
 
     if not ok:
-        # Auto-fix: reassume sessão aqui e segue
+        # Auto-fix: reassume a sessão AQUI e segue
         try:
             novo_token = registrar_sessao_assumindo(gc, PLANILHA_KEY, SHEET_SESSOES, email_atual)
             st.session_state["sessao_token"] = novo_token
@@ -109,7 +130,7 @@ try:
 except Exception as e:
     st.caption(f"DEBUG: atualizar_sessao falhou: {e}")
 
-# ================ Conteúdo original =================
+# ============== Conteúdo original ==============
 codigo_empresa = st.session_state.get("empresa")
 
 LOGOS_CLIENTES = {

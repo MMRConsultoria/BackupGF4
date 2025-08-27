@@ -33,7 +33,7 @@ if nocache == "1":
 
 # Gate de login
 if not st.session_state.get("acesso_liberado"):
-    st.switch_page("páginas/Login.py")   # ajuste se sua pasta tiver outro nome
+    st.switch_page("Login")   # ajuste se sua pasta tiver outro nome
     st.stop()
 
 # Google Sheets client
@@ -52,7 +52,7 @@ if not email_atual or not token_atual or not validar_sessao(gc, PLANILHA_KEY, SH
     for k in ["acesso_liberado", "empresa", "usuario_logado", "sessao_token"]:
         st.session_state.pop(k, None)
     st.warning("Sua sessão foi encerrada. Faça login novamente.")
-    st.switch_page("páginas/Login.py")
+    st.switch_page("Login")
     st.stop()
 
 # Mantém a sessão viva

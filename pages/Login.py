@@ -16,7 +16,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 # Se já estiver logado, vai direto pro Home
 if st.session_state.get("acesso_liberado"):
-    st.switch_page("Home")   # funciona porque Home.py está na raiz
+    st.markdown("<meta http-equiv='refresh' content='0; url=/' />", unsafe_allow_html=True)
     st.stop()
 # Parâmetros opcionais
 params = st.query_params

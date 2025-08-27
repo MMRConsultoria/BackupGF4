@@ -95,9 +95,10 @@ def registrar_acesso(nome_usuario):
         st.error(f"Erro ao registrar acesso: {e}")
 
 # =====================================
-# CONTROLE DE SESSÃO ÚNICA
+# CONTROLE DE SESSÃO ÚNICA COM TIMEOUT
 # =====================================
 NOME_ABA_SESSOES = "SessõesAtivas"
+SESSION_TIMEOUT_MIN = 30  # tempo em minutos
 
 def get_sessoes_ativas():
     try:
@@ -105,8 +106,8 @@ def get_sessoes_ativas():
         try:
             aba = planilha.worksheet(NOME_ABA_SESSOES)
         except:
-            aba = planilha.add_worksheet(title=NOME_ABA_SESSOES, rows=100, cols=5)
-            aba.append_row(["email", "token", "data", "hora"])  # cabeçalho
+            aba = planilha.add_worksheet(title=NOME_ABA_SESSOES, rows=100, cols=6)
+            aba.append_row(["email", "token", "data", "hora", "ultimo_acesso"])  # cabeçalho
         registros = aba.get_all_records()
         return aba, registros
     except Exception as e:
@@ -118,29 +119,53 @@ def registrar_sessao(email):
     if not aba:
         return False
 
-    # Bloqueia se já existe esse email ativo
-    for r in registros:
-        if r["email"] == email:
-            return False
-
-    # ✅ Registra nova sessão
     fuso_brasilia = pytz.timezone("America/Sao_Paulo")
     agora = datetime.now(fuso_brasilia)
+
+    # Procura se já existe sessão ativa desse usuário
+    for r in registros:
+        if r.get("email") == email:
+            try:
+                ultimo = datetime.strptime(f"{r['data']} {r['hora']}", "%d/%m/%Y %H:%M:%S")
+                diff = (agora - ultimo).total_seconds() / 60
+                if diff < SESSION_TIMEOUT_MIN:
+                    # sessão ainda é válida → bloqueia
+                    return False
+            except:
+                pass
+            # se já expirou, vamos limpar a linha antiga
+            todas = aba.get_all_values()
+            novas = [todas[0]] + [row for row in todas[1:] if row[0] != email]
+            aba.clear()
+            aba.update("A1", novas)
+            break
+
+    # ✅ Registra nova sessão
     token = str(uuid.uuid4())
-    nova_linha = [email, token, agora.strftime("%d/%m/%Y"), agora.strftime("%H:%M:%S")]
+    nova_linha = [email, token, agora.strftime("%d/%m/%Y"), agora.strftime("%H:%M:%S"), agora.isoformat()]
     aba.append_row(nova_linha)
 
     st.session_state["sessao_token"] = token
     return True
 
-def encerrar_sessao(email):
+def atualizar_sessao(email):
+    """Atualiza o último acesso da sessão ativa"""
     aba, registros = get_sessoes_ativas()
     if not aba:
         return
     todas = aba.get_all_values()
-    novas = [todas[0]] + [row for row in todas[1:] if row[0] != email]
+    novas = []
+    for row in todas:
+        if row and row[0] == email:
+            fuso_brasilia = pytz.timezone("America/Sao_Paulo")
+            agora = datetime.now(fuso_brasilia)
+            row[2] = agora.strftime("%d/%m/%Y")
+            row[3] = agora.strftime("%H:%M:%S")
+            row[4] = agora.isoformat()
+        novas.append(row)
     aba.clear()
     aba.update("A1", novas)
+
 
 # =====================================
 # Redireciona se já estiver logado

@@ -29,6 +29,9 @@ from contextlib import contextmanager
 
 st.set_page_config(page_title="Spinner personalizado | MMR Consultoria")
 
+import streamlit as st
+import time
+
 # ======================
 # CSS para esconder só a barra superior
 # ======================
@@ -49,52 +52,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ======================
-# Demonstração de processamento
+# Spinner direto ao carregar a página
 # ======================
-if st.button("🚀 Processar"):
-    with st.spinner("⏳ Processando..."):
-        time.sleep(5)  # simula tempo de processamento
-    #st.success("✅ Concluído!")
-
-# ======================
-# Helper: context manager para exibir/ocultar GIF
-# ======================
-@contextmanager
-def gif_spinner(placeholder, gif_url: str):
-    """Mostra um overlay com GIF enquanto o bloco 'with' estiver em execução."""
-    html = f"""
-    <div class="mmr-spinner-overlay">
-        <div class="mmr-spinner-box">
-            <img src="{gif_url}" alt="Processando...">
-        </div>
-    </div>
-    """
-    placeholder.markdown(html, unsafe_allow_html=True)
-    try:
-        yield
-    finally:
-        placeholder.empty()
-
-st.title("Exibir só o homenzinho correndo durante o processamento")
-
-st.write("Clique no botão abaixo para ver o GIF aparecer enquanto processa.")
-
-# Coloque aqui o link do GIF que você quer (pode ser o do 'homenzinho correndo' que você curte)
-# Exemplo (Giphy). Troque pela sua URL se preferir:
-GIF_URL = "https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExYTZiM2U3OWIxNTQyYjM1ZjY0ODg1MjAwZjY0ZmE4Y2FkYzcyMTY5MCZjdD1n/3oEjI6SIIHBdRxXI40/giphy.gif"
-
-if st.button("🚀 Processar"):
-    # placeholder para injetar/remover o overlay
-    overlay = st.empty()
-    with gif_spinner(overlay, GIF_URL):
-        # Simula um trabalho pesado
-        time.sleep(5)
-    st.success("✅ Concluído!")
-
-# Dica: para usar em qualquer parte do seu app, crie um 'overlay = st.empty()'
-# e envolva o trecho demorado com:
-# with gif_spinner(overlay, GIF_URL):
-#     ... seu processamento ...
+with st.spinner("⏳ Processando..."):
+    time.sleep(5)  # simula um processamento (troque pelo seu código real)
 
 # ================================
 # 1. Conexão com Google Sheets

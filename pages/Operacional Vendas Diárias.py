@@ -30,45 +30,31 @@ from contextlib import contextmanager
 st.set_page_config(page_title="Spinner personalizado | MMR Consultoria")
 
 # ======================
-# CSS: esconder barra superior e estilo do overlay do GIF
+# CSS para esconder só a barra superior
 # ======================
 st.markdown("""
     <style>
-        /* Ocultar apenas o menu/toolbar do Streamlit */
+        /* Ocultar apenas o menu de "Gerenciar Aplicativo" e afins */
         [data-testid="stToolbar"] {
             visibility: hidden;
             height: 0%;
             position: fixed;
         }
 
-        /* Overlay do nosso spinner GIF */
-        .mmr-spinner-overlay {
-            position: fixed;
-            inset: 0;                 /* top:0; right:0; bottom:0; left:0 */
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: rgba(255,255,255,0.60);
-            z-index: 9999;            /* fica por cima de tudo */
-            pointer-events: none;     /* não bloqueia cliques em botões do app ao fundo */
-        }
-        .mmr-spinner-box {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 0;
-            border-radius: 12px;
-            box-shadow: none;
-            background: transparent;
-        }
-        .mmr-spinner-box img {
-            width: 140px;   /* ajuste o tamanho do GIF aqui */
-            height: 140px;
-            object-fit: contain;
-            image-rendering: auto;
+        /* Garante que o spinner (homenzinho animado) continue visível */
+        .stSpinner {
+            visibility: visible !important;
         }
     </style>
 """, unsafe_allow_html=True)
+
+
+
+
+import time
+
+# Demonstração
+with st.spinner("⏳ Processando...")
 
 # ======================
 # Helper: context manager para exibir/ocultar GIF

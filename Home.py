@@ -3,7 +3,7 @@ import streamlit as st
 import time, hashlib, glob, os, json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from utils.sessoes import validar_sessao, atualizar_sessao
+from utils.sessoes import validar_sessao, atualizar_sessao, registrar_sessao_assumindo
 
 st.set_page_config(page_title="Portal de Relatórios | MMR Consultoria")
 
@@ -61,16 +61,44 @@ credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_ACESSOS"])
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
 gc = gspread.authorize(credentials)
 
-# Valida e renova sessão
+# Valida e (se precisar) reassume a sessão
 email_atual = st.session_state.get("usuario_logado")
 token_atual = st.session_state.get("sessao_token")
 
-if not email_atual or not token_atual or not validar_sessao(gc, PLANILHA_KEY, SHEET_SESSOES, email_atual, token_atual):
-    for k in ["acesso_liberado", "empresa", "usuario_logado", "sessao_token"]:
-        st.session_state.pop(k, None)
-    st.warning("Sua sessão foi encerrada. Faça login novamente.")
-    st.switch_page("Login")
+def _go_login():
+    try:
+        st.switch_page("Login")
+    except Exception:
+        st.markdown("<meta http-equiv='refresh' content='0; url=/Login' />", unsafe_allow_html=True)
     st.stop()
+
+# se nem está logado, vá ao login
+if not email_atual or not token_atual:
+    _go_login()
+
+# tenta validar
+ok = False
+erro = None
+try:
+    ok = validar_sessao(gc, PLANILHA_KEY, SHEET_SESSOES, email_atual, token_atual)
+except Exception as e:
+    erro = str(e)
+    ok = False
+
+if not ok:
+    # 💡 Auto-fix: reassume a sessão AQUI e segue
+    try:
+        novo_token = registrar_sessao_assumindo(gc, PLANILHA_KEY, SHEET_SESSOES, email_atual)
+        st.session_state["sessao_token"] = novo_token
+        atualizar_sessao(gc, PLANILHA_KEY, SHEET_SESSOES, email_atual)
+        # segue o fluxo normalmente (sem mandar pro Login)
+    except Exception as e:
+        # se nem reassumir deu, aí sim limpa e vai pro login
+        for k in ["acesso_liberado", "empresa", "usuario_logado", "sessao_token"]:
+            st.session_state.pop(k, None)
+        st.warning("Sua sessão foi encerrada. Faça login novamente.")
+        _go_login()
+
 
 # Mantém a sessão viva
 atualizar_sessao(gc, PLANILHA_KEY, SHEET_SESSOES, email_atual)

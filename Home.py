@@ -8,7 +8,7 @@ st.set_page_config(page_title="Portal de Relatórios | MMR Consultoria")
 # Atualiza de 15 em 15 segundos para revalidar token
 st_autorefresh = st.sidebar.empty()
 st_autorefresh.markdown("⏳ Atualizando a cada ~15s para manter a sessão")
-st.experimental_rerun  # apenas para IDEs antigas saberem do símbolo
+
 # ============== CSS ==============
 st.markdown("""
 <style>

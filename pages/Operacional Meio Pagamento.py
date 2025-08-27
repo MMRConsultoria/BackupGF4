@@ -8,7 +8,20 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 st.set_page_config(page_title="Meio de Pagamento", layout="wide")
+import streamlit as st
 
+# =====================================
+# CSS para esconder barra de botões do canto superior direito
+# =====================================
+st.markdown("""
+    <style>
+        [data-testid="stToolbar"] {
+            visibility: hidden;
+            height: 0%;
+            position: fixed;
+        }
+    </style>
+""", unsafe_allow_html=True)
 # 🔥 CSS para estilizar as abas
 st.markdown("""
     <style>

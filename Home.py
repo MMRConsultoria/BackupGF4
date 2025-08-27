@@ -47,8 +47,22 @@ with st.expander("🔎 DEBUG sessão (remover depois)"):
     st.write("session_state:", dict(st.session_state))
 
 if "acesso_liberado" not in st.session_state:
-    st.warning("DEBUG: não há acesso_liberado no session_state")
-    _go_login()
+    # tenta recuperar do Sheets
+    try:
+        aba = gc.open_by_key(PLANILHA_KEY).worksheet(SHEET_SESSOES)
+        registros = aba.get_all_records()
+        # pega o último registro do usuário que logou
+        if registros:
+            ultimo = registros[-1]
+            st.session_state["usuario_logado"] = ultimo.get("email", "")
+            st.session_state["sessao_token"] = ultimo.get("token", "")
+            st.session_state["empresa"] = ultimo.get("empresa", "")
+            st.session_state["acesso_liberado"] = True
+        else:
+            _go_login()
+    except Exception as e:
+        st.warning(f"DEBUG: não consegui recuperar sessão do Sheets: {e}")
+        _go_login()
 
 # ================ Google Sheets client ================
 PLANILHA_KEY = "1SZ5R6hcBE6o_qWs0_wx6IGKfIGltxpb9RWiGyF4L5uE"

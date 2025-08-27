@@ -1,5 +1,5 @@
 # utils/sessoes.py
-import pytz, uuid
+import pytz, uuid, time
 from datetime import datetime
 
 def _open_aba_sessoes(gc, planilha_key, sheet_name):
@@ -11,26 +11,34 @@ def _open_aba_sessoes(gc, planilha_key, sheet_name):
         aba.update("A1:E1", [["email","token","data","hora","ultimo_acesso"]])
     return aba
 
-def _liberar_sessao(gc, planilha_key, sheet_name, email):
-    aba = _open_aba_sessoes(gc, planilha_key, sheet_name)
-    todas = aba.get_all_values()
-    if not todas: return
-    novas = [todas[0]] + [row for row in todas[1:] if row and row[0] != email]
+def _remover_linhas_email(aba, email):
+    """Remove todas as linhas (exceto cabeçalho) cujo email == email."""
+    vals = aba.get_all_values()
+    if not vals or len(vals) < 2:
+        return
+    header, rows = vals[0], vals[1:]
+    # Reescreve a planilha mantendo apenas linhas de outros e-mails
+    novas = [header] + [r for r in rows if (len(r) >= 1 and r[0] != email)]
     aba.clear()
     aba.update("A1", novas)
 
 def registrar_sessao_assumindo(gc, planilha_key, sheet_name, email):
-    """Login sempre assume: remove sessão antiga e cria nova."""
-    _liberar_sessao(gc, planilha_key, sheet_name, email)
+    """
+    Remove qualquer sessão anterior do e-mail e cria uma nova (token único).
+    """
     aba = _open_aba_sessoes(gc, planilha_key, sheet_name)
-    fuso = pytz.timezone("America/Sao_Paulo"); agora = datetime.now(fuso)
+    _remover_linhas_email(aba, email)
+
+    fuso = pytz.timezone("America/Sao_Paulo")
+    agora = datetime.now(fuso)
     token = str(uuid.uuid4())
-    aba.append_row([email, token, agora.strftime("%d/%m/%Y"),
-                    agora.strftime("%H:%M:%S"), agora.isoformat()])
+    nova = [email, token, agora.strftime("%d/%m/%Y"), agora.strftime("%H:%M:%S"), agora.isoformat()]
+    aba.append_row(nova)
+    # pequena espera para consistência do Sheets (evita corrida)
+    time.sleep(0.3)
     return token
 
 def validar_sessao(gc, planilha_key, sheet_name, email, token):
-    """Confere se o token na planilha ainda é o mesmo desta máquina."""
     aba = _open_aba_sessoes(gc, planilha_key, sheet_name)
     for r in aba.get_all_records():
         if r.get("email") == email:
@@ -38,22 +46,22 @@ def validar_sessao(gc, planilha_key, sheet_name, email, token):
     return False
 
 def atualizar_sessao(gc, planilha_key, sheet_name, email):
-    """Renova carimbo de tempo da sessão atual (se existir)."""
     aba = _open_aba_sessoes(gc, planilha_key, sheet_name)
-    todas = aba.get_all_values()
-    if not todas: return
+    vals = aba.get_all_values()
+    if not vals or len(vals) < 2:
+        return
+    header, rows = vals[0], vals[1:]
     fuso = pytz.timezone("America/Sao_Paulo"); agora = datetime.now(fuso)
-    for i in range(1, len(todas)):
-        row = todas[i]
-        if row and row[0] == email:
-            if len(row) < 5: row += [""] * (5 - len(row))
-            row[2] = agora.strftime("%d/%m/%Y")
-            row[3] = agora.strftime("%H:%M:%S")
-            row[4] = agora.isoformat()
-            todas[i] = row
-    aba.clear()
-    aba.update("A1", todas)
+    for i, r in enumerate(rows, start=2):  # linhas 2..N
+        if len(r) >= 1 and r[0] == email:
+            if len(r) < 5:
+                r += [""] * (5 - len(r))
+            r[2] = agora.strftime("%d/%m/%Y")
+            r[3] = agora.strftime("%H:%M:%S")
+            r[4] = agora.isoformat()
+            aba.update(f"A{i}:E{i}", [r[:5]])
+            break
 
 def encerrar_sessao(gc, planilha_key, sheet_name, email):
-    """Logout explícito (opcional)."""
-    _liberar_sessao(gc, planilha_key, sheet_name, email)
+    aba = _open_aba_sessoes(gc, planilha_key, sheet_name)
+    _remover_linhas_email(aba, email)

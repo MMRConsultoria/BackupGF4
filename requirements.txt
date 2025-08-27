@@ -11,4 +11,6 @@ plotly
 streamlit-aggrid
 unidecode
 reportlab
+pytz
+streamlit-autorefresh
 

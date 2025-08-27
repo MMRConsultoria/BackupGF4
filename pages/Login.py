@@ -118,6 +118,78 @@ def registrar_acesso(nome_usuario):
     except Exception as e:
         st.error(f"Erro ao registrar acesso: {e}")
 
+import uuid
+
+# 🔑 Aba de sessões ativas no mesmo Google Sheets
+NOME_ABA_SESSOES = "SessõesAtivas"
+
+def get_sessoes_ativas():
+    try:
+        planilha = gc.open_by_key("1SZ5R6hcBE6o_qWs0_wx6IGKfIGltxpb9RWiGyF4L5uE")
+        try:
+            aba = planilha.worksheet(NOME_ABA_SESSOES)
+        except:
+            aba = planilha.add_worksheet(title=NOME_ABA_SESSOES, rows=100, cols=5)
+            aba.append_row(["email", "token", "data", "hora"])  # cabeçalho
+        registros = aba.get_all_records()
+        return aba, registros
+    except Exception as e:
+        st.error(f"Erro ao acessar sessões ativas: {e}")
+        return None, []
+
+def registrar_sessao(email):
+    aba, registros = get_sessoes_ativas()
+    if not aba:
+        return False
+
+    # 🔍 Bloqueia se já existe esse email ativo
+    for r in registros:
+        if r["email"] == email:
+            return False
+
+    # ✅ Registra nova sessão
+    fuso_brasilia = pytz.timezone("America/Sao_Paulo")
+    agora = datetime.now(fuso_brasilia)
+    token = str(uuid.uuid4())
+    nova_linha = [email, token, agora.strftime("%d/%m/%Y"), agora.strftime("%H:%M:%S")]
+    aba.append_row(nova_linha)
+
+    # Salva no session_state
+    st.session_state["sessao_token"] = token
+    return True
+
+def encerrar_sessao(email):
+    aba, registros = get_sessoes_ativas()
+    if not aba:
+        return
+    todas = aba.get_all_values()
+    # Mantém apenas cabeçalho + linhas diferentes do email
+    novas = [todas[0]] + [row for row in todas[1:] if row[0] != email]
+    aba.clear()
+    aba.update("A1", novas)
+
+# ========================
+# Login
+# ========================
+if st.button("Entrar"):
+    usuario_encontrado = next(
+        (u for u in USUARIOS if u["codigo"] == codigo and u["email"] == email and u["senha"] == senha),
+        None
+    )
+
+    if usuario_encontrado:
+        # 🔍 Verifica se já está logado em outro lugar
+        if not registrar_sessao(email):
+            st.error("⚠️ Esse usuário já está logado em outra máquina.")
+            st.stop()
+
+        st.session_state["acesso_liberado"] = True
+        st.session_state["empresa"] = codigo
+        st.session_state["usuario_logado"] = email
+        registrar_acesso(email)
+        st.switch_page("Home.py")
+    else:
+        st.error("❌ Código, e-mail ou senha incorretos.")
 
 
 # ✅ Redireciona se já estiver logado

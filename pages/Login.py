@@ -4,7 +4,26 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 from datetime import datetime
+
+import streamlit as st
+
+# =====================================
+# CSS para esconder barra de botões do canto superior direito
+# =====================================
+st.markdown("""
+    <style>
+        [data-testid="stToolbar"] {
+            visibility: hidden;
+            height: 0%;
+            position: fixed;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 st.set_page_config(page_title="Login | MMR Consultoria")
+
+
+
 
 # ✅ Captura segura dos parâmetros da URL
 params = st.query_params

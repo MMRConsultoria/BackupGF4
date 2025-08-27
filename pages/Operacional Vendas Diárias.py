@@ -41,20 +41,20 @@ st.markdown("""
             position: fixed;
         }
 
-        /* Garante que o spinner (homenzinho animado) continue visível */
+        /* Mantém o spinner padrão visível */
         .stSpinner {
             visibility: visible !important;
         }
     </style>
 """, unsafe_allow_html=True)
 
-
-
-
-import time
-
-# Demonstração
-with st.spinner("⏳ Processando...")
+# ======================
+# Demonstração de processamento
+# ======================
+if st.button("🚀 Processar"):
+    with st.spinner("⏳ Processando..."):
+        time.sleep(5)  # simula tempo de processamento
+    #st.success("✅ Concluído!")
 
 # ======================
 # Helper: context manager para exibir/ocultar GIF

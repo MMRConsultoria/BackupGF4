@@ -45,9 +45,8 @@ credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_ACESSOS"])
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
 gc = gspread.authorize(credentials)
 
-# Já logado? Redireciona para a página inicial (Home na raiz)
-if st.session_state.get("acesso_liberado"):
-    st.markdown("<meta http-equiv='refresh' content='0; url=/' />", unsafe_allow_html=True)
+if not st.session_state.get("acesso_liberado"):
+    st.switch_page("Login")   # abre o Login que está em /pages
     st.stop()
 
 # Formulário de login

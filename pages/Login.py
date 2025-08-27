@@ -1,34 +1,28 @@
-# pages/Login.py
+# páginas/Login.py
 import streamlit as st
-import json
-import pytz
+import json, gspread, pytz
 from datetime import datetime
-
-import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-from utils.sessoes import (
-    registrar_sessao_assumindo, validar_sessao,
-    atualizar_sessao, encerrar_sessao
-)
+from utils.sessoes import registrar_sessao_assumindo
 
 st.set_page_config(page_title="Login | MMR Consultoria")
 
-# CSS – esconder toolbar
+# CSS para esconder a barra
 st.markdown("""
 <style>
-  [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
+[data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
 </style>
 """, unsafe_allow_html=True)
 
-# Parâmetros (opcionais)
+# Parâmetros opcionais
 params = st.query_params
 codigo_param = (params.get("codigo") or "").strip()
 empresa_param = (params.get("empresa") or "").strip().lower()
 if not codigo_param or not empresa_param:
     st.warning("⚠️ Acesso direto sem parâmetros. Você pode logar normalmente abaixo.")
 
-# Usuários
+# Usuários permitidos
 USUARIOS = [
     {"codigo": "1825", "email": "carlos.soveral@grupofit.com.br", "senha": "$%252M"},
     {"codigo": "1825", "email": "maricelisrossi@gmail.com", "senha": "1825o"},
@@ -45,31 +39,17 @@ USUARIOS = [
 
 # Google Sheets
 PLANILHA_KEY = "1SZ5R6hcBE6o_qWs0_wx6IGKfIGltxpb9RWiGyF4L5uE"
+SHEET_SESSOES = "SessõesAtivas"
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_ACESSOS"])
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
 gc = gspread.authorize(credentials)
 
-# Registro de acesso
-def registrar_acesso(nome_usuario, acao="LOGIN"):
-    try:
-        fuso = pytz.timezone("America/Sao_Paulo")
-        agora = datetime.now(fuso)
-        data = agora.strftime("%d/%m/%Y"); hora = agora.strftime("%H:%M:%S")
-        planilha = gc.open_by_key(PLANILHA_KEY)
-        aba = planilha.sheet1
-        vals = aba.get_all_values()
-        if not vals:
-            aba.append_row(["Usuario", "Data", "Hora", "Acao"])
-        aba.append_row([nome_usuario, data, hora, acao])
-    except Exception as e:
-        st.caption(f"ℹ️ Não foi possível registrar acesso: {e}")
-
 # Já logado? Vai pra Home
 if st.session_state.get("acesso_liberado"):
     st.switch_page("Home.py")
 
-# Login UI
+# Formulário de login
 st.title("🔐 Acesso Restrito")
 st.markdown("Informe o código da empresa, e-mail e senha.")
 
@@ -78,17 +58,13 @@ email = st.text_input("E-mail:")
 senha = st.text_input("Senha:", type="password")
 
 if st.button("Entrar"):
-    usuario = next(
-        (u for u in USUARIOS if u["codigo"] == codigo and u["email"] == email and u["senha"] == senha), None
-    )
+    usuario = next((u for u in USUARIOS if u["codigo"] == codigo and u["email"] == email and u["senha"] == senha), None)
     if usuario:
-        # Login sempre assume: derruba sessão antiga e cria nova
-        token = registrar_sessao_assumindo(gc, PLANILHA_KEY, email)
+        token = registrar_sessao_assumindo(gc, PLANILHA_KEY, SHEET_SESSOES, email)
         st.session_state["sessao_token"] = token
         st.session_state["acesso_liberado"] = True
         st.session_state["empresa"] = codigo
         st.session_state["usuario_logado"] = email
-        registrar_acesso(email, acao="LOGIN")
         st.switch_page("Home.py")
     else:
         st.error("❌ Código, e-mail ou senha incorretos.")

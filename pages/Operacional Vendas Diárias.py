@@ -20,33 +20,36 @@ if not st.session_state.get("acesso_liberado"):
     st.stop()
 import streamlit as st
 
-# ======================
-# CSS para esconder só a barra superior
-# ======================
+import streamlit as st
+import time
+
+# CSS para ocultar apenas o menu superior
 st.markdown("""
     <style>
-        /* Ocultar apenas o menu de "Gerenciar Aplicativo" e afins */
-        [data-testid="stToolbar"] {
-            visibility: hidden;
-            height: 0%;
-            position: fixed;
+        [data-testid="stToolbar"] {visibility: hidden; height: 0%;}
+        
+        /* Substituir o spinner padrão por um GIF */
+        .stSpinner > div {
+            background-image: url("https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExYTZiM2U3OWIxNTQyYjM1ZjY0ODg1MjAwZjY0ZmE4Y2FkYzcyMTY5MCZjdD1n/3oEjI6SIIHBdRxXI40/giphy.gif");
+            background-size: contain;
+            background-repeat: no-repeat;
+            height: 120px;
+            width: 120px;
+            margin: auto;
         }
 
-        /* Garante que o spinner (homenzinho animado) continue visível */
-        .stSpinner {
-            visibility: visible !important;
+        /* Esconde o texto "Carregando..." */
+        .stSpinner > div > div {
+            visibility: hidden;
         }
     </style>
 """, unsafe_allow_html=True)
 
+st.title("Teste do Homenzinho")
 
-st.title("Exemplo com Spinner")
-
-import time
-
-# Demonstração
-with st.spinner("⏳ Processando..."):
+with st.spinner(""):
     time.sleep(5)
+
 st.success("✅ Concluído!")
 # ================================
 # 1. Conexão com Google Sheets

@@ -18,18 +18,36 @@ st.set_page_config(page_title="Vendas Diarias", layout="wide")
 # 🔒 Bloqueia o acesso caso o usuário não esteja logado
 if not st.session_state.get("acesso_liberado"):
     st.stop()
-# =====================================
-# CSS para esconder barra de botões do canto superior direito
-# =====================================
+import streamlit as st
+
+# ======================
+# CSS para esconder só a barra superior
+# ======================
 st.markdown("""
     <style>
+        /* Ocultar apenas o menu de "Gerenciar Aplicativo" e afins */
         [data-testid="stToolbar"] {
             visibility: hidden;
             height: 0%;
             position: fixed;
         }
+
+        /* Garante que o spinner (homenzinho animado) continue visível */
+        .stSpinner {
+            visibility: visible !important;
+        }
     </style>
 """, unsafe_allow_html=True)
+
+
+st.title("Exemplo com Spinner")
+
+import time
+
+# Demonstração
+with st.spinner("⏳ Processando..."):
+    time.sleep(5)
+st.success("✅ Concluído!")
 # ================================
 # 1. Conexão com Google Sheets
 # ================================

@@ -7,26 +7,26 @@ from utils.sessoes import registrar_sessao_assumindo
 
 st.set_page_config(page_title="Login | MMR Consultoria")
 
-# ================ CSS =================
+# ============== CSS ==============
 st.markdown("""
 <style>
 [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
 </style>
 """, unsafe_allow_html=True)
 
-# ================ Se já estiver logado, manda pro Home (raiz '/') ================
+# ============== Se já estiver logado, mande para Home (raiz '/') ==============
 if st.session_state.get("acesso_liberado"):
     st.markdown("<meta http-equiv='refresh' content='0; url=/' />", unsafe_allow_html=True)
     st.stop()
 
-# ================ Parâmetros opcionais =================
+# ============== Parâmetros opcionais ==============
 params = st.query_params
 codigo_param = (params.get("codigo") or "").strip()
 empresa_param = (params.get("empresa") or "").strip().lower()
 if not codigo_param or not empresa_param:
     st.caption("ℹ️ Acesse normalmente informando seus dados abaixo.")
 
-# ================ Usuários permitidos =================
+# ============== Usuários permitidos ==============
 USUARIOS = [
     {"codigo": "1825", "email": "carlos.soveral@grupofit.com.br", "senha": "$%252M"},
     {"codigo": "1825", "email": "maricelisrossi@gmail.com", "senha": "1825o"},
@@ -41,7 +41,7 @@ USUARIOS = [
     {"codigo": "3377", "email": "maricelisrossi@gmail.com", "senha": "1825"}
 ]
 
-# ================ Google Sheets =================
+# ============== Google Sheets ==============
 PLANILHA_KEY = "1SZ5R6hcBE6o_qWs0_wx6IGKfIGltxpb9RWiGyF4L5uE"
 SHEET_SESSOES = "SessõesAtivas"
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -49,7 +49,7 @@ credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_ACESSOS"])
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
 gc = gspread.authorize(credentials)
 
-# ================ Formulário =================
+# ============== Formulário ==============
 st.title("🔐 Acesso Restrito")
 st.markdown("Informe o código da empresa, e-mail e senha.")
 
@@ -60,14 +60,13 @@ senha = st.text_input("Senha:", type="password")
 if st.button("Entrar"):
     usuario = next((u for u in USUARIOS if u["codigo"] == codigo and u["email"] == email and u["senha"] == senha), None)
     if usuario:
-        # Cria/assume sessão
         token = registrar_sessao_assumindo(gc, PLANILHA_KEY, SHEET_SESSOES, email)
         st.session_state["sessao_token"] = token
         st.session_state["acesso_liberado"] = True
         st.session_state["empresa"] = codigo
         st.session_state["usuario_logado"] = email
 
-        # Como Home está fora de /pages, redireciona por URL para a RAIZ
+        # Home está FORA de /pages → redireciono por URL
         st.markdown("<meta http-equiv='refresh' content='0; url=/' />", unsafe_allow_html=True)
         st.stop()
     else:

@@ -1178,54 +1178,59 @@ with st.spinner("⏳ Processando..."):
                     
                             d_in = entrada_por_n[nkey]
                             df_in = pd.DataFrame([d_in])
-                    
-                            # tenta deixar Data amigável para exibição (sem mexer no original d_in)
+                            
+                            # ✅ Ajusta Data IN-PLACE (sem criar segunda coluna)
                             if "Data" in df_in.columns:
-                                df_in["_Data_exibe_"] = df_in["Data"].apply(_fmt_data_yyyy_mm_dd_to_br)
-                                df_in = df_in.rename(columns={"_Data_exibe_": "Data"})
-                                # evita coluna duplicada de Data
-                                # (se quiser mostrar as duas, remova essa linha)
-                                # df_in.drop(columns=["Data"], inplace=True)  # <- NÃO: trocaríamos a original
-                                pass
-                    
+                                df_in["Data"] = pd.to_datetime(
+                                    df_in["Data"], origin="1899-12-30", unit="D", errors="coerce"
+                                ).dt.strftime("%d/%m/%Y")
+                            
                             df_sh = sheet_por_n[nkey].copy()
-                    
-                            # organiza ordem de colunas conforme seu sheet + M N + origem
-                            cols_show = [c for c in headers if c in df_in.columns]  # ordem do sheet
-                            for c in ["M", "N"]:
-                                if c in df_in.columns and c not in cols_show:
-                                    cols_show.append(c)
-                            cols_show = cols_show + [c for c in df_in.columns if c not in cols_show]
-                    
-                            df_in = df_in.reindex(columns=cols_show, fill_value="")
-                            df_sh = df_sh.reindex(columns=cols_show, fill_value="")
-                    
-                            # marca origem com cor
+                            
+                            # Se a planilha tiver "Data" como serial, formata para exibição também
+                            if "Data" in df_sh.columns:
+                                try:
+                                    df_sh["Data"] = pd.to_datetime(
+                                        pd.to_numeric(df_sh["Data"], errors="coerce"),
+                                        origin="1899-12-30", unit="D", errors="coerce"
+                                    ).dt.strftime("%d/%m/%Y")
+                                except Exception:
+                                    pass
+                            
+                            # Ordem de exibição: cabeçalho do Sheets + M e N (se existirem)
+                            cols_show = [h for h in headers]  # já estão na ordem do sheet
+                            for extra in ["M", "N"]:
+                                if extra not in cols_show:
+                                    cols_show.append(extra)
+                            # ✅ remove duplicados preservando ordem
+                            cols_show = list(dict.fromkeys(cols_show))
+                            
+                            # ✅ Reindex só com colunas que existem no DF (evita erro)
+                            cols_in_in  = [c for c in cols_show if c in df_in.columns]
+                            cols_in_sh  = [c for c in cols_show if c in df_sh.columns]
+                            
+                            df_in = df_in.reindex(columns=cols_in_in, fill_value="")
+                            df_sh = df_sh.reindex(columns=cols_in_sh, fill_value="")
+                            
+                            # Marcar origem
                             df_in["__origem__"] = "Nova Arquivo"
                             df_sh["__origem__"] = "Google Sheets"
-                    
-                            # radios de decisão
-                            escolha = st.radio(
-                                "O que você quer manter para esse N?",
-                                options=["Manter Google Sheets", "Substituir pelo Nova Arquivo"],
-                                index=0,  # default: manter o que já está
-                                key=f"opt_n_{nkey}",
-                                horizontal=True,
-                            )
-                            escolhas[nkey] = escolha
-                    
-                            # mostra as duas linhas empilhadas e coloridas
+                            
+                            # Empilhar para exibição (coluna de origem primeiro)
                             df_comp = pd.concat([df_in, df_sh], ignore_index=True)
-                            cols_ordered = ["__origem__"] + [c for c in df_comp.columns if c != "__origem__"]
-                            df_comp = df_comp[cols_ordered]
-                    
+                            colunas_ordem = ["__origem__"] + [c for c in cols_show if c in df_comp.columns and c != "__origem__"] \
+                                            + [c for c in df_comp.columns if c not in cols_show and c != "__origem__"]
+                            df_comp = df_comp.reindex(columns=colunas_ordem, fill_value="")
+                            
+                            # Cores por origem
                             color_map = {"Nova Arquivo": "#e9f9ee", "Google Sheets": "#fff0f0"}
                             def _row_style(row):
                                 return [f"background-color: {color_map.get(row['__origem__'], '#ffffff')}"] * len(row)
-                    
+                            
                             st.dataframe(df_comp.style.apply(_row_style, axis=1),
                                          use_container_width=True, hide_index=True)
                             st.divider()
+
                     
                         # aplicar escolhas
                         if st.button("✅ Aplicar escolhas (atualizar planilha)"):

@@ -1141,29 +1141,29 @@ with st.spinner("⏳ Processando..."):
                     pode_enviar = True
                     
                     if suspeitos_n:
-                    st.markdown("### 🔴 Possíveis duplicados (N já existe)")
-                    
-                    # DataFrame com os suspeitos (entrada)
-                    df_exibir_suspeitos = pd.DataFrame(suspeitos_n, columns=colunas_df).copy()
-                    if "Data" in df_exibir_suspeitos.columns:
-                        df_exibir_suspeitos["Data"] = pd.to_datetime(
-                            df_exibir_suspeitos["Data"], origin="1899-12-30", unit="D", errors="coerce"
-                        ).dt.strftime("%d/%m/%Y")
-                    
-                    # Normaliza as chaves N
-                    df_exibir_suspeitos["N"] = df_exibir_suspeitos["N"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-                    valores_existentes_df["N"] = valores_existentes_df["N"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-                    
-                    # Pega do Sheet todos que batem o N
-                    df_sh = valores_existentes_df[valores_existentes_df["N"].isin(df_exibir_suspeitos["N"])].copy()
-                    df_sh["__origem__"] = "sheet"
-                    df_exibir_suspeitos["__origem__"] = "entrada"
-                    
-                    # Empilha os dois DataFrames
-                    df_comparacao = pd.concat([df_exibir_suspeitos, df_sh], ignore_index=True)
-                    
-                    st.dataframe(df_comparacao, use_container_width=True, hide_index=True)
-                    pode_enviar = False   # bloqueia envio se houver suspeitos
+                        st.markdown("### 🔴 Possíveis duplicados (N já existe)")
+                        
+                        # DataFrame com os suspeitos (entrada)
+                        df_exibir_suspeitos = pd.DataFrame(suspeitos_n, columns=colunas_df).copy()
+                        if "Data" in df_exibir_suspeitos.columns:
+                            df_exibir_suspeitos["Data"] = pd.to_datetime(
+                                df_exibir_suspeitos["Data"], origin="1899-12-30", unit="D", errors="coerce"
+                            ).dt.strftime("%d/%m/%Y")
+                        
+                        # Normaliza as chaves N
+                        df_exibir_suspeitos["N"] = df_exibir_suspeitos["N"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+                        valores_existentes_df["N"] = valores_existentes_df["N"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+                        
+                        # Pega do Sheet todos que batem o N
+                        df_sh = valores_existentes_df[valores_existentes_df["N"].isin(df_exibir_suspeitos["N"])].copy()
+                        df_sh["__origem__"] = "sheet"
+                        df_exibir_suspeitos["__origem__"] = "entrada"
+                        
+                        # Empilha os dois DataFrames
+                        df_comparacao = pd.concat([df_exibir_suspeitos, df_sh], ignore_index=True)
+                        
+                        st.dataframe(df_comparacao, use_container_width=True, hide_index=True)
+                        pode_enviar = False   # bloqueia envio se houver suspeitos
 
                     
                     st.markdown("### 🟢 Novos registros (serão enviados)")

@@ -701,7 +701,7 @@ with st.spinner("⏳ Processando..."):
                 # === VISUALIZAÇÃO (empilhado) ===
                 st.markdown(
                     f"<div style='color:#a33; font-weight:500; margin-top:10px;'>"
-                    "🔴 Possíveis duplicados encontrados — selecione quais manter</div>",
+                    "🔴 Possíveis duplicadosescolha o que manter",
                     unsafe_allow_html=True
                 )
                 
@@ -1114,7 +1114,7 @@ with st.spinner("⏳ Processando..."):
                     if suspeitos_n:
                         st.markdown(
                             "<div style='color:#555; font-size:0.9rem; font-weight:500; margin:10px 0;'>"
-                            "🔴 Possíveis duplicados (N já existe) — escolha o que manter"
+                            "🔴 Possíveis duplicadosescolha o que manter"
                             "</div>",
                             unsafe_allow_html=True
                         )

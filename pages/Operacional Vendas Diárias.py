@@ -1112,7 +1112,12 @@ with st.spinner("⏳ Processando..."):
                     pode_enviar = True
                     
                     if suspeitos_n:
-                        st.markdown("### 🔴 Possíveis duplicados (N já existe) — escolha o que manter")
+                        st.markdown(
+                            "<div style='color:#555; font-size:0.9rem; font-weight:500; margin:10px 0;'>"
+                            "🔴 Possíveis duplicados (N já existe) — escolha o que manter"
+                            "</div>",
+                            unsafe_allow_html=True
+                        )
                     
                         # --------- helpers ----------
                         def _fmt_data_yyyy_mm_dd_to_br(s):
@@ -1144,8 +1149,8 @@ with st.spinner("⏳ Processando..."):
                     
                         # interface por N
                         escolhas = {}
-                        for nkey in sorted(entrada_por_n.keys()):
-                            st.markdown(f"#### N: `{nkey}`")
+                        #for nkey in sorted(entrada_por_n.keys()):
+                            #st.markdown(f"#### N: `{nkey}`")
                     
                             d_in = entrada_por_n[nkey]
                             df_in = pd.DataFrame([d_in])

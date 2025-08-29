@@ -1156,8 +1156,8 @@ with st.spinner("⏳ Processando..."):
                         
                         # Pega do Sheet todos que batem o N
                         df_sh = valores_existentes_df[valores_existentes_df["N"].isin(df_exibir_suspeitos["N"])].copy()
-                        df_sh["__origem__"] = "sheet"
-                        df_exibir_suspeitos["__origem__"] = "entrada"
+                        df_sh["Origem"] = "Google Sheet"
+                        df_exibir_suspeitos["Origem"] = "Novo Arquivo"
                         
                         # Empilha os dois DataFrames
                         df_comparacao = pd.concat([df_exibir_suspeitos, df_sh], ignore_index=True)

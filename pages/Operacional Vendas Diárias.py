@@ -1273,67 +1273,67 @@ with st.spinner("⏳ Processando..."):
                             })
                             
                             # editor interativo — apenas captura escolhas
-                            # dentro do loop de cada nkey
-                            edited_df = st.data_editor(
-                                df_view,
-                                use_container_width=True,
-                                hide_index=True,
-                                key=f"editor_dup_{nkey}",
-                                column_config={
-                                    "Manter": st.column_config.CheckboxColumn(
-                                        help="Marque qual(is) registro(s) deseja manter",
-                                        default=False
-                                    )
-                                }
-                            )
+                           
                             
-                            # só guarda o resultado do editor no session_state
-                            st.session_state[f"escolhas_{nkey}"] = edited_df
-                            st.divider()
-                            # botão global no final, fora do loop
-                            if st.button("✅ Aplicar TODAS as escolhas"):
-                                try:
-                                    atualizados = 0
-                                    adicionados = 0
-                                    pulados = 0
+
+                            with st.form(key=f"form_dup_{nkey}"):
+                                edited_df = st.data_editor(
+                                    df_view,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    key=f"editor_dup_{nkey}",
+                                    column_config={
+                                        "Manter": st.column_config.CheckboxColumn(
+                                            help="Marque qual(is) registro(s) deseja manter",
+                                            default=False
+                                        )
+                                    }
+                                )
+                                submitted = st.form_submit_button("✅ Aplicar escolhas (atualizar planilha)")
+                                if submitted:
+                                    try:
+                                        atualizados = 0
+                                        adicionados = 0
+                                        pulados = 0
                             
-                                    for nkey in entrada_por_n.keys():
-                                        escolha_df = st.session_state.get(f"escolhas_{nkey}")
-                                        if escolha_df is None or "Manter" not in escolha_df.columns:
-                                            continue
+                                        escolha_df = edited_df  # pega direto do editor
+                                        if escolha_df is not None and "Manter" in escolha_df.columns:
+                                            manter_novo  = any((escolha_df["__origem__"] == "🟢 Nova Arquivo") & (escolha_df["Manter"]))
+                                            manter_velho = any((escolha_df["__origem__"] == "🔴 Google Sheets") & (escolha_df["Manter"]))
                             
-                                        manter_novo  = any((escolha_df["__origem__"] == "🟢 Nova Arquivo") & (escolha_df["Manter"]))
-                                        manter_velho = any((escolha_df["__origem__"] == "🔴 Google Sheets") & (escolha_df["Manter"]))
+                                            d_in = entrada_por_n[nkey]
                             
-                                        d_in = entrada_por_n[nkey]
-                            
-                                        if manter_novo and manter_velho:
-                                            row_values = [d_in.get(h, "") for h in headers]
-                                            aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
-                                            adicionados += 1
-                            
-                                        elif manter_novo and not manter_velho:
-                                            idxs = valores_existentes_df.index[valores_existentes_df["N"] == nkey].tolist()
-                                            if idxs:
-                                                sheet_row = idxs[0] + 2
-                                                row_values = [d_in.get(h, "") for h in headers]
-                                                aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
-                                                atualizados += 1
-                                            else:
+                                            if manter_novo and manter_velho:
                                                 row_values = [d_in.get(h, "") for h in headers]
                                                 aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                                 adicionados += 1
                             
-                                        elif not manter_novo and manter_velho:
-                                            pulados += 1
-                                        else:
-                                            pulados += 1
+                                            elif manter_novo and not manter_velho:
+                                                idxs = valores_existentes_df.index[valores_existentes_df["N"] == nkey].tolist()
+                                                if idxs:
+                                                    sheet_row = idxs[0] + 2
+                                                    row_values = [d_in.get(h, "") for h in headers]
+                                                    aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
+                                                    atualizados += 1
+                                                else:
+                                                    row_values = [d_in.get(h, "") for h in headers]
+                                                    aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
+                                                    adicionados += 1
                             
-                                    st.success(f"✅ Concluído: {adicionados} adicionado(s), {atualizados} substituído(s), {pulados} ignorado(s).")
-                                    st.info("ℹ️ Atualize sua planilha no navegador para ver as mudanças.")
+                                            elif not manter_novo and manter_velho:
+                                                pulados += 1
+                                            else:
+                                                pulados += 1
                             
-                                except Exception as e:
-                                    st.error(f"❌ Erro ao aplicar escolhas: {e}")
+                                        st.success(f"✅ Concluído: {adicionados} adicionado(s), {atualizados} substituído(s), {pulados} ignorado(s).")
+                                        st.info("ℹ️ Atualize sua planilha no navegador para ver as mudanças.")
+                            
+                                    except Exception as e:
+                                        st.error(f"❌ Erro ao aplicar escolhas: {e}")
+
+
+                        # bloqueia envio automático enquanto houver conflitos
+                        pode_enviar = False
 
 
                     # 8) Envio

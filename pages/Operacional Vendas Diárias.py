@@ -1286,8 +1286,7 @@ with st.spinner("⏳ Processando..."):
                                 }
                             )
                             
-                            # 👉 não faz nada agora, só guarda no estado
-                            st.session_state[f"escolhas_{nkey}"] = edited_df
+                           
                             
                             st.divider()
 
@@ -1295,22 +1294,23 @@ with st.spinner("⏳ Processando..."):
                             
 
                     
-                        if st.button("✅ Aplicar escolhas (atualizar planilha)"):
                        
+                       
+                        if st.button("✅ Aplicar escolhas (atualizar planilha)"):
                             try:
                                 atualizados = 0
                                 adicionados = 0
                                 pulados = 0
                         
                                 for nkey in sorted(entrada_por_n.keys()):
-                                    escolha_df = st.session_state.get(f"escolhas_{nkey}")
+                                    escolha_df = st.session_state.get(f"editor_dup_{nkey}")  # pega direto do editor
                                     if escolha_df is None or "Manter" not in escolha_df.columns:
                                         continue
                         
-                                    manter_novo   = any((escolha_df["__origem__"] == "🟢 Nova Arquivo") & (escolha_df["Manter"]))
-                                    manter_velho  = any((escolha_df["__origem__"] == "🔴 Google Sheets") & (escolha_df["Manter"]))
+                                    manter_novo  = any((escolha_df["__origem__"] == "🟢 Nova Arquivo") & (escolha_df["Manter"]))
+                                    manter_velho = any((escolha_df["__origem__"] == "🔴 Google Sheets") & (escolha_df["Manter"]))
                         
-                                    d_in = entrada_por_n[nkey]  # linha de entrada (novo registro)
+                                    d_in = entrada_por_n[nkey]
                         
                                     if manter_novo and manter_velho:
                                         row_values = [d_in.get(h, "") for h in headers]
@@ -1339,11 +1339,12 @@ with st.spinner("⏳ Processando..."):
                         
                             except Exception as e:
                                 st.error(f"❌ Erro ao aplicar escolhas: {e}")
+    
 
 
                     
                         # bloqueia envio automático enquanto houver conflitos
-                        #pode_enviar = False
+                        pode_enviar = False
 
 
                     # 8) Envio

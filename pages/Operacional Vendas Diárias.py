@@ -1142,41 +1142,61 @@ with st.spinner("⏳ Processando..."):
                     
                     if suspeitos_n:
                         st.markdown("### 🔴 Possíveis duplicados (N já existe)")
-                        
-                        # DataFrame com os suspeitos (entrada)
-                        df_exibir_suspeitos = pd.DataFrame(suspeitos_n, columns=colunas_df).copy()
-                        if "Data" in df_exibir_suspeitos.columns:
-                            df_exibir_suspeitos["Data"] = pd.to_datetime(
-                                df_exibir_suspeitos["Data"], origin="1899-12-30", unit="D", errors="coerce"
-                            ).dt.strftime("%d/%m/%Y")
-                        
-                        # Normaliza as chaves N
-                        df_exibir_suspeitos["N"] = df_exibir_suspeitos["N"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-                        valores_existentes_df["N"] = valores_existentes_df["N"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-                        
-                        # Pega do Sheet todos que batem o N
-                        df_sh = valores_existentes_df[valores_existentes_df["N"].isin(df_exibir_suspeitos["N"])].copy()
-                        df_sh["Origem"] = "Google Sheet"
-                        df_exibir_suspeitos["Origem"] = "Novo Arquivo"
-                        
-                        # Empilha os dois DataFrames
-                        df_comparacao = pd.concat([df_exibir_suspeitos, df_sh], ignore_index=True)
-                        
-                        st.dataframe(df_comparacao, use_container_width=True, hide_index=True)
-                        pode_enviar = False   # bloqueia envio se houver suspeitos
-
                     
-                    st.markdown("### 🟢 Novos registros (serão enviados)")
-                    if novos_dados:
-                        df_exibir_novos = pd.DataFrame(novos_dados, columns=colunas_df).copy()
-                        if "Data" in df_exibir_novos.columns:
-                            df_exibir_novos["Data"] = pd.to_datetime(
-                                df_exibir_novos["Data"], origin="1899-12-30", unit="D", errors="coerce"
+                        # entrada
+                        df_in = pd.DataFrame(suspeitos_n, columns=colunas_df).copy()
+                        if "Data" in df_in.columns:
+                            df_in["Data"] = pd.to_datetime(
+                                df_in["Data"], origin="1899-12-30", unit="D", errors="coerce"
                             ).dt.strftime("%d/%m/%Y")
-                        st.dataframe(df_exibir_novos, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("Nenhum novo registro encontrado.")
-    
+                    
+                        # normaliza N para casar com o sheet
+                        df_in["N"] = df_in["N"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+                        valores_existentes_df["N"] = valores_existentes_df["N"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+                    
+                        # pega no sheet todos os com o mesmo N
+                        df_sh = valores_existentes_df[valores_existentes_df["N"].isin(df_in["N"])].copy()
+                    
+                        # renomeia as origens como você pediu
+                        df_in["__origem__"] = "Nova Arquivo"
+                        df_sh["__origem__"] = "Google Sheets"
+                    
+                        # mesmos campos nas duas tabelas (ordem das colunas do seu sheet + origem no fim)
+                        cols_show = [c for c in df_in.columns if c in valores_existentes_df.columns]  # interseção
+                        # garante que M e N apareçam também
+                        for c in ["M", "N"]:
+                            if c not in cols_show and c in df_in.columns:
+                                cols_show.append(c)
+                        cols_show = [c for c in headers if c in cols_show] + [c for c in cols_show if c not in headers] + ["__origem__"]
+                    
+                        df_in = df_in.reindex(columns=cols_show, fill_value="")
+                        df_sh = df_sh.reindex(columns=cols_show, fill_value="")
+                    
+                        # empilha entrada + sheet
+                        df_comp = pd.concat([df_in, df_sh], ignore_index=True)
+                    
+                        # ------- colorir linhas por origem -------
+                        color_map = {
+                            "Nova Arquivo":  "#e9f9ee",  # verdinho claro
+                            "Google Sheets": "#fff0f0",  # vermelhinho claro
+                        }
+                    
+                        def _row_style(row):
+                            bg = color_map.get(row["__origem__"], "#ffffff")
+                            return [f"background-color: {bg}"] * len(row)
+                    
+                        # move a coluna de origem para a 1ª posição (opcional)
+                        cols_ordered = ["__origem__"] + [c for c in df_comp.columns if c != "__origem__"]
+                        df_comp = df_comp[cols_ordered]
+                    
+                        st.dataframe(
+                            df_comp.style.apply(_row_style, axis=1),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                    
+                        pode_enviar = False  # continua bloqueando envio enquanto houver suspeitos
+
                     # 8) Envio
                     if todas_lojas_ok and pode_enviar:
                         try:

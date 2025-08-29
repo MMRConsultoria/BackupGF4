@@ -699,16 +699,28 @@ with st.spinner("⏳ Processando..."):
                     else:
                         duplicados.append(linha)
     
-                # 7) Bloqueio/alerta por N
+                # 7) Exibir comparação de registros (empilhado)
+                pode_enviar = True
+                
                 if suspeitos_n:
-                    st.warning("❌ Existem registros possivelmente duplicados (chave N). Corrija antes de continuar.")
-                    df_exibir = pd.DataFrame(suspeitos_n, columns=colunas_df).copy()
-                    if "Data" in df_exibir.columns:
-                        df_exibir["Data"] = pd.to_datetime(
-                            df_exibir["Data"], origin="1899-12-30", unit="D", errors="coerce"
+                    st.markdown("### 🔴 Possíveis duplicados (N já existe)")
+                    df_exibir_suspeitos = pd.DataFrame(suspeitos_n, columns=colunas_df).copy()
+                    if "Data" in df_exibir_suspeitos.columns:
+                        df_exibir_suspeitos["Data"] = pd.to_datetime(
+                            df_exibir_suspeitos["Data"], origin="1899-12-30", unit="D", errors="coerce"
                         ).dt.strftime("%d/%m/%Y")
-                    st.dataframe(df_exibir, use_container_width=True)
-                    return False
+                    st.dataframe(df_exibir_suspeitos, use_container_width=True, hide_index=True)
+                    pode_enviar = False   # bloqueia envio se houver suspeitos
+                
+                if novos_dados:
+                    st.markdown("### 🟢 Novos registros (serão enviados)")
+                    df_exibir_novos = pd.DataFrame(novos_dados, columns=colunas_df).copy()
+                    if "Data" in df_exibir_novos.columns:
+                        df_exibir_novos["Data"] = pd.to_datetime(
+                            df_exibir_novos["Data"], origin="1899-12-30", unit="D", errors="coerce"
+                        ).dt.strftime("%d/%m/%Y")
+                    st.dataframe(df_exibir_novos, use_container_width=True, hide_index=True)
+
     
                 # 8) Envio (só 'novos')
                 try:

@@ -1269,10 +1269,10 @@ with st.spinner("⏳ Processando..."):
                             df_view = df_comp.reindex(columns=cols_keep, fill_value="")
                             
 
-                            # cores por origem (apenas referência, já que st.data_editor não aceita .style)
+                            # ---------- preparar dataframe para exibição ----------
                             color_map = {"Nova Arquivo": "#e9f9ee", "Google Sheets": "#fff0f0"}
                             
-                            # subset de colunas que você pediu
+                            # subset de colunas para mostrar
                             cols_show = [
                                 "__origem__",
                                 "Data",
@@ -1284,18 +1284,21 @@ with st.spinner("⏳ Processando..."):
                                 "Fat.Total"
                             ]
                             
-                            # só mantém colunas que existem
+                            # garante apenas colunas existentes
                             cols_show = [c for c in cols_show if c in df_comp.columns]
                             
-                            # cria coluna de flag
+                            # cria coluna de flag se não existir
                             if "Manter" not in df_comp.columns:
                                 df_comp["Manter"] = False
                             
-                            # organiza ordem: Manter + colunas visíveis
-                            cols_final = ["Manter"] + cols_show
-                            df_view = df_comp.reindex(columns=cols_final)
+                            # cria coluna de cor auxiliar (não exibida, só para estilo)
+                            df_comp["_row_color"] = df_comp["__origem__"].map(color_map).fillna("#ffffff")
                             
-                            # editor interativo: usuário marca quais manter
+                            # ordem final: Manter + colunas visíveis
+                            cols_final = ["Manter"] + cols_show
+                            df_view = df_comp.reindex(columns=cols_final + ["_row_color"])
+                            
+                            # editor interativo com cor por linha
                             edited_df = st.data_editor(
                                 df_view,
                                 use_container_width=True,
@@ -1305,11 +1308,30 @@ with st.spinner("⏳ Processando..."):
                                     "Manter": st.column_config.CheckboxColumn(
                                         help="Marque qual registro deseja manter",
                                         default=False
+                                    ),
+                                    "_row_color": st.column_config.Column(  # oculta mas aplica cor
+                                        width="small",
+                                        help="cor",
+                                        required=False
                                     )
-                                }
+                                },
+                                disabled=["_row_color"],   # não editável
+                                hide_columns=["_row_color"]  # não aparece na tabela
                             )
                             
-                            # salva escolhas
+                            # aplica estilo de fundo dinamicamente
+                            st.markdown(
+                                """
+                                <style>
+                                [data-testid="stDataFrame"] tbody tr td:nth-child(1) {
+                                    font-weight: bold;
+                                }
+                                </style>
+                                """,
+                                unsafe_allow_html=True
+                            )
+                            
+                            # salva escolhas (apenas os que o usuário marcou)
                             escolhas[nkey] = edited_df[edited_df["Manter"] == True]
                             
                             st.divider()

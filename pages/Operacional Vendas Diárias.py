@@ -1269,7 +1269,7 @@ with st.spinner("⏳ Processando..."):
                             df_view = df_comp.reindex(columns=cols_keep, fill_value="")
                             
                             # ---------- preparar dataframe para exibição ----------
-                            # subset de colunas para mostrar
+                            # subset de colunas para exibição
                             cols_show = [
                                 "Manter",
                                 "__origem__",
@@ -1286,19 +1286,17 @@ with st.spinner("⏳ Processando..."):
                             if "Manter" not in df_comp.columns:
                                 df_comp["Manter"] = False
                             
-                            # garante apenas colunas que existem
+                            # mantém só colunas que existem
                             cols_show = [c for c in cols_show if c in df_comp.columns]
-                            
-                            # cria view ordenada
                             df_view = df_comp[cols_show].copy()
                             
-                            # 🔹 adiciona emoji para diferenciar origem (substitui cor de fundo)
+                            # adiciona emoji no campo origem (em vez de cor de fundo)
                             df_view["__origem__"] = df_view["__origem__"].replace({
                                 "Nova Arquivo": "🟢 Nova Arquivo",
                                 "Google Sheets": "🔴 Google Sheets"
                             })
                             
-                            # editor interativo com flag
+                            # editor interativo — apenas captura escolhas
                             edited_df = st.data_editor(
                                 df_view,
                                 use_container_width=True,
@@ -1306,16 +1304,17 @@ with st.spinner("⏳ Processando..."):
                                 key=f"editor_dup_{nkey}",
                                 column_config={
                                     "Manter": st.column_config.CheckboxColumn(
-                                        help="Marque qual registro deseja manter",
+                                        help="Marque qual(is) registro(s) deseja manter",
                                         default=False
                                     )
                                 }
                             )
                             
-                            # salva escolhas
-                            escolhas[nkey] = edited_df[edited_df["Manter"] == True]
+                            # 👉 não faz nada agora, só guarda no estado
+                            st.session_state[f"escolhas_{nkey}"] = edited_df
                             
                             st.divider()
+
 
                             
 

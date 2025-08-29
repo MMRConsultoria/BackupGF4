@@ -1343,7 +1343,7 @@ with st.spinner("⏳ Processando..."):
 
                     
                         # bloqueia envio automático enquanto houver conflitos
-                        pode_enviar = False
+                        #pode_enviar = False
 
 
                     # 8) Envio

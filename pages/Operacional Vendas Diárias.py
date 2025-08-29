@@ -1140,7 +1140,7 @@ with st.spinner("⏳ Processando..."):
                     # 7) Exibir comparação de registros (empilhado)
                     pode_enviar = True
                     
-                   if suspeitos_n:
+                    if suspeitos_n:
                         st.markdown("### 🔴 Possíveis duplicados (N já existe) — escolha o que manter")
                     
                         # --------- helpers ----------

@@ -941,66 +941,98 @@ with st.spinner("⏳ Processando..."):
                         import unicodedata, re
                         s = str(s or "").strip().lower()
                         s = unicodedata.normalize("NFD", s)
-                        s = "".join(c for c in s if unicodedata.category(c) != "Mn")   # remove acentos
+                        s = "".join(c for c in s if unicodedata.category(c) != "Mn")
                         s = re.sub(r"[^a-z0-9]+", " ", s).strip()
                         return s
                     
                     lookup = {_norm_simple(h): h for h in headers}
-                    
                     aliases = {
-                        "codigo everest": ["codigo ev", "cod everest"],
-                        "codigo grupo everest": ["cod grupo empresas", "codigo grupo"],
-                        "fat total": ["fat.total"],
-                        "serv tx": ["serv/tx"],
-                        "fat real": ["fat.real"],
-                        "mes": ["mês"]
+                        "codigo everest": ["codigo ev", "cod everest", "código everest"],
+                        "codigo grupo everest": ["cod grupo empresas", "codigo grupo", "cód grupo empresas"],
+                        "fat total": ["fat.total", "fat total"],
+                        "serv tx": ["serv/tx", "serv tx"],
+                        "fat real": ["fat.real", "fat real"],
+                        "mes": ["mês", "mes"],
                     }
                     
+                    # Renomeia df_final para bater com o cabeçalho do Sheet
                     rename_map = {}
-                    for col in df_final.columns:
+                    for col in list(df_final.columns):
                         k = _norm_simple(col)
                         if k in lookup:
                             rename_map[col] = lookup[k]
-                        else:
-                            for canonical, variations in aliases.items():
-                                if k == canonical or k in variations:
-                                    for v in [canonical] + variations:
-                                        kv = _norm_simple(v)
-                                        if kv in lookup:
-                                            rename_map[col] = lookup[kv]
-                                            break
+                            continue
+                        for canonical, variations in aliases.items():
+                            if k == canonical or k in variations:
+                                for v in [canonical] + variations:
+                                    kv = _norm_simple(v)
+                                    if kv in lookup:
+                                        rename_map[col] = lookup[kv]
+                                        break
+                                break
+                    if rename_map:
+                        df_final = df_final.rename(columns=rename_map)
                     
-                    df_final = df_final.rename(columns=rename_map)
+                    # --- Helper robusto para escolher colunas por "intenção" ---
+                    def pick_col(df, headers, target_norm, *cands):
+                        # 1) tenta achar no headers (ordem oficial do Sheet)
+                        for h in headers:
+                            if _norm_simple(h) == target_norm and h in df.columns:
+                                return h
+                        # 2) tenta candidatos literais
+                        for c in cands:
+                            if c in df.columns:
+                                return c
+                        # 3) fallback por normalização nas colunas do df
+                        for c in df.columns:
+                            if _norm_simple(c) == target_norm:
+                                return c
+                        return None
+                    
+                    fat_col   = pick_col(df_final, headers, "fat total", "Fat.Total", "Fat Total")
+                    loja_col  = pick_col(df_final, headers, "loja", "Loja")
+                    cod_col   = pick_col(df_final, headers, "codigo everest", "Codigo Everest", "Código Everest")
+                    data_col  = pick_col(df_final, headers, "data", "Data")
+                    
+                    missing = [n for n,v in {"Data":data_col,"Loja":loja_col,"Fat.Total/Fat Total":fat_col,"Codigo Everest":cod_col}.items() if v is None]
+                    if missing:
+                        st.error(f"Colunas obrigatórias ausentes para calcular M/N: {', '.join(missing)}")
+                        st.stop()
                     
                     # 6) Criar chaves M e N
-                    df_final['Data_Formatada'] = pd.to_datetime(
-                        df_final['Data'], origin="1899-12-30", unit='D', errors="coerce"
-                    ).dt.strftime('%Y-%m-%d')
+                    # Garante Data_Formatada (yyyy-mm-dd) a partir da serial 'Data'
+                    df_final["Data_Formatada"] = pd.to_datetime(
+                        df_final[data_col], origin="1899-12-30", unit="D", errors="coerce"
+                    ).dt.strftime("%Y-%m-%d")
                     
-                    df_final['M'] = (
-                        df_final['Data_Formatada'].fillna('') +
-                        df_final['Fat Total'].astype(str) +
-                        df_final['Loja'].astype(str)
+                    # Garante numérico para o faturamento usado em M
+                    df_final[fat_col] = pd.to_numeric(df_final[fat_col], errors="coerce").fillna(0)
+                    
+                    # M = Data_Formatada + Fat + Loja
+                    df_final["M"] = (
+                        df_final["Data_Formatada"].fillna("") +
+                        df_final[fat_col].astype(str) +
+                        df_final[loja_col].astype(str)
                     ).str.strip()
                     
-                    if 'Codigo Everest' in df_final.columns:
-                        df_final['Codigo Everest'] = pd.to_numeric(df_final['Codigo Everest'], errors="coerce").fillna(0).astype(int).astype(str)
-                    else:
-                        df_final['Codigo Everest'] = ""
+                    # Codigo Everest numérico (p/ N)
+                    df_final[cod_col] = pd.to_numeric(df_final[cod_col], errors="coerce").fillna(0).astype(int).astype(str)
                     
-                    df_final['N'] = (
-                        df_final['Data_Formatada'].fillna('') +
-                        df_final['Codigo Everest'].astype(str)
+                    # N = Data_Formatada + Codigo Everest
+                    df_final["N"] = (
+                        df_final["Data_Formatada"].fillna("") +
+                        df_final[cod_col].astype(str)
                     ).str.strip()
                     
-                    df_final = df_final.drop(columns=['Data_Formatada'], errors='ignore')
+                    # Remove auxiliar
+                    df_final = df_final.drop(columns=["Data_Formatada"], errors="ignore")
                     
-                    # 7) Reindexar seguindo ordem exata do Sheet
+                    # 7) Reindexar seguindo ordem exata do Sheet (mantém M e N se não estiverem no cabeçalho)
                     extras = [c for c in df_final.columns if c not in headers]
                     df_final = df_final.reindex(columns=headers + extras, fill_value="")
-                    
                     colunas_df = df_final.columns.tolist()
                     rows = df_final.fillna("").values.tolist()
+
 
 
     

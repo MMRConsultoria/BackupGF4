@@ -1268,10 +1268,7 @@ with st.spinner("⏳ Processando..."):
                             # reindex só com as colunas encontradas
                             df_view = df_comp.reindex(columns=cols_keep, fill_value="")
                             
-
                             # ---------- preparar dataframe para exibição ----------
-                            color_map = {"Nova Arquivo": "#e9f9ee", "Google Sheets": "#fff0f0"}
-                            
                             # subset de colunas para mostrar
                             cols_show = [
                                 "Manter",
@@ -1295,6 +1292,12 @@ with st.spinner("⏳ Processando..."):
                             # cria view ordenada
                             df_view = df_comp[cols_show].copy()
                             
+                            # 🔹 adiciona emoji para diferenciar origem (substitui cor de fundo)
+                            df_view["__origem__"] = df_view["__origem__"].replace({
+                                "Nova Arquivo": "🟢 Nova Arquivo",
+                                "Google Sheets": "🔴 Google Sheets"
+                            })
+                            
                             # editor interativo com flag
                             edited_df = st.data_editor(
                                 df_view,
@@ -1306,12 +1309,7 @@ with st.spinner("⏳ Processando..."):
                                         help="Marque qual registro deseja manter",
                                         default=False
                                     )
-                                },
-                                # Aplica cor por origem (streamlit >=1.29)
-                                row_styles=[
-                                    {"if": {"filter_query": "__origem__ == 'Nova Arquivo'"}, "backgroundColor": "#e9f9ee"},
-                                    {"if": {"filter_query": "__origem__ == 'Google Sheets'"}, "backgroundColor": "#fff0f0"},
-                                ]
+                                }
                             )
                             
                             # salva escolhas
@@ -1319,7 +1317,7 @@ with st.spinner("⏳ Processando..."):
                             
                             st.divider()
 
-
+                            
 
                     
                         # aplicar escolhas

@@ -1287,7 +1287,7 @@ with st.spinner("⏳ Processando..."):
                                     )
                                 }
                             )
-                            
+                            st.session_state[f"escolhas_{nkey}"] = edited_df
                             st.divider()
 
 

@@ -1274,6 +1274,7 @@ with st.spinner("⏳ Processando..."):
                             
                             # subset de colunas para mostrar
                             cols_show = [
+                                "Manter",
                                 "__origem__",
                                 "Data",
                                 "Dia da Semana",
@@ -1284,21 +1285,17 @@ with st.spinner("⏳ Processando..."):
                                 "Fat.Total"
                             ]
                             
-                            # garante apenas colunas existentes
-                            cols_show = [c for c in cols_show if c in df_comp.columns]
-                            
                             # cria coluna de flag se não existir
                             if "Manter" not in df_comp.columns:
                                 df_comp["Manter"] = False
                             
-                            # cria coluna de cor auxiliar
-                            df_comp["_row_color"] = df_comp["__origem__"].map(color_map).fillna("#ffffff")
+                            # garante apenas colunas que existem
+                            cols_show = [c for c in cols_show if c in df_comp.columns]
                             
-                            # monta df final sem a coluna de cor
-                            cols_final = ["Manter"] + cols_show
-                            df_view = df_comp[cols_final].copy()
+                            # cria view ordenada
+                            df_view = df_comp[cols_show].copy()
                             
-                            # editor interativo
+                            # editor interativo com flag
                             edited_df = st.data_editor(
                                 df_view,
                                 use_container_width=True,
@@ -1309,21 +1306,19 @@ with st.spinner("⏳ Processando..."):
                                         help="Marque qual registro deseja manter",
                                         default=False
                                     )
-                                }
+                                },
+                                # Aplica cor por origem (streamlit >=1.29)
+                                row_styles=[
+                                    {"if": {"filter_query": "__origem__ == 'Nova Arquivo'"}, "backgroundColor": "#e9f9ee"},
+                                    {"if": {"filter_query": "__origem__ == 'Google Sheets'"}, "backgroundColor": "#fff0f0"},
+                                ]
                             )
-                            
-                            # aplica estilo de fundo (CSS inline por __origem__)
-                            def _row_style(row):
-                                return [f"background-color: {color_map.get(row['__origem__'], '#ffffff')}"] * len(row)
-                            
-                            styled_view = df_view.style.apply(_row_style, axis=1)
-                            
-                            st.dataframe(styled_view, use_container_width=True, hide_index=True)
                             
                             # salva escolhas
                             escolhas[nkey] = edited_df[edited_df["Manter"] == True]
                             
                             st.divider()
+
 
 
                     

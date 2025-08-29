@@ -719,7 +719,7 @@ with st.spinner("⏳ Processando..."):
                     df_ent = df_suspeitos.copy()
                     if "Data" in df_ent.columns:
                         df_ent["Data"] = pd.to_datetime(df_ent["Data"], origin="1899-12-30", unit="D", errors="coerce").dt.strftime("%d/%m/%Y")
-                    df_ent["__origem__"] = "entrada"
+                    df_ent["origem"] = "Novo Arquivo"
                     # Traz do Sheet as linhas com as mesmas N (apenas colunas úteis)
                     cData  = _col_sheet("Data")
                     cLoja  = _col_sheet("Loja")
@@ -733,7 +733,7 @@ with st.spinner("⏳ Processando..."):
                         # exibe como veio do sheet
                         pass
                     df_sh = df_sh[df_sh[cN].isin(df_ent["N"])].copy()
-                    df_sh["__origem__"] = "sheet"
+                    df_sh["origem"] = "Google Sheet"
                 
                     # Renomeia para rótulos amigáveis e empilha
                     ren = {}

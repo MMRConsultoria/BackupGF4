@@ -1332,58 +1332,6 @@ with st.spinner("⏳ Processando..."):
                                         st.error(f"❌ Erro ao aplicar escolhas: {e}")
 
 
-                            
-
-                    
-                       
-                       
-                        if st.button("✅ Aplicar escolhas (atualizar planilha)"):
-                            try:
-                                atualizados = 0
-                                adicionados = 0
-                                pulados = 0
-                        
-                                for nkey in sorted(entrada_por_n.keys()):
-                                    escolha_df = st.session_state.get(f"editor_dup_{nkey}")  # pega direto do editor
-                                    if escolha_df is None or "Manter" not in escolha_df.columns:
-                                        continue
-                        
-                                    manter_novo  = any((escolha_df["__origem__"] == "🟢 Nova Arquivo") & (escolha_df["Manter"]))
-                                    manter_velho = any((escolha_df["__origem__"] == "🔴 Google Sheets") & (escolha_df["Manter"]))
-                        
-                                    d_in = entrada_por_n[nkey]
-                        
-                                    if manter_novo and manter_velho:
-                                        row_values = [d_in.get(h, "") for h in headers]
-                                        aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
-                                        adicionados += 1
-                        
-                                    elif manter_novo and not manter_velho:
-                                        idxs = valores_existentes_df.index[valores_existentes_df["N"] == nkey].tolist()
-                                        if idxs:
-                                            sheet_row = idxs[0] + 2
-                                            row_values = [d_in.get(h, "") for h in headers]
-                                            aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
-                                            atualizados += 1
-                                        else:
-                                            row_values = [d_in.get(h, "") for h in headers]
-                                            aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
-                                            adicionados += 1
-                        
-                                    elif not manter_novo and manter_velho:
-                                        pulados += 1
-                                    else:
-                                        pulados += 1
-                        
-                                st.success(f"✅ Concluído: {adicionados} adicionado(s), {atualizados} substituído(s), {pulados} ignorado(s).")
-                                st.info("ℹ️ Atualize sua planilha no navegador para ver as mudanças.")
-                        
-                            except Exception as e:
-                                st.error(f"❌ Erro ao aplicar escolhas: {e}")
-    
-
-
-                    
                         # bloqueia envio automático enquanto houver conflitos
                         pode_enviar = False
 

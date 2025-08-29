@@ -1221,15 +1221,73 @@ with st.spinner("⏳ Processando..."):
                             colunas_ordem = ["__origem__"] + [c for c in cols_show if c in df_comp.columns and c != "__origem__"] \
                                             + [c for c in df_comp.columns if c not in cols_show and c != "__origem__"]
                             df_comp = df_comp.reindex(columns=colunas_ordem, fill_value="")
+
+                            # ---------- escolher e exibir apenas colunas desejadas ----------
+                            def _norm_simple(s: str) -> str:
+                                import unicodedata, re
+                                s = str(s or "").strip().lower()
+                                s = unicodedata.normalize("NFD", s)
+                                s = "".join(c for c in s if unicodedata.category(c) != "Mn")  # remove acentos
+                                s = re.sub(r"[^a-z0-9]+", " ", s).strip()                      # normaliza
+                                return s
                             
-                            # Cores por origem
+                            # candidatos por coluna desejada (aceita variações)
+                            targets = {
+                                "__origem__": ["__origem__"],
+                                "Data": ["data"],
+                                "Dia da Semana": ["dia da semana","dia semana","dia"],
+                                "Loja": ["loja"],
+                                "Codigo Everest": ["codigo everest","código everest","cod everest","codigo ev","cod ev"],
+                                "Grupo": ["grupo"],
+                                "Cod Grupo Empresas": ["cod grupo empresas","codigo grupo empresas","código grupo everest","codigo grupo everest","cod grupo","codigo grupo"],
+                                "Fat.Total": ["fat.total","fat total","faturamento total","faturamento"],
+                            }
+                            
+                            # cria lookup normalizado -> coluna existente em df_comp
+                            norm_to_col = {_norm_simple(c): c for c in df_comp.columns}
+                            
+                            # monta lista final na ordem pedida
+                            cols_keep = []
+                            for display_name, variations in targets.items():
+                                found_col = None
+                                for v in variations:
+                                    nv = _norm_simple(v)
+                                    if nv in norm_to_col:
+                                        found_col = norm_to_col[nv]
+                                        break
+                                if found_col:
+                                    cols_keep.append(found_col)
+                            
+                            # garante __origem__ no primeiro lugar
+                            if "__origem__" in df_comp.columns and "__origem__" not in cols_keep:
+                                cols_keep = ["__origem__"] + cols_keep
+                            else:
+                                # se já está, move para frente
+                                cols_keep = ["__origem__"] + [c for c in cols_keep if c != "__origem__"]
+                            
+                            # reindex só com as colunas encontradas
+                            df_view = df_comp.reindex(columns=cols_keep, fill_value="")
+                            
+                            # estiliza por origem
                             color_map = {"Nova Arquivo": "#e9f9ee", "Google Sheets": "#fff0f0"}
                             def _row_style(row):
                                 return [f"background-color: {color_map.get(row['__origem__'], '#ffffff')}"] * len(row)
                             
-                            st.dataframe(df_comp.style.apply(_row_style, axis=1),
-                                         use_container_width=True, hide_index=True)
+                            st.dataframe(
+                                df_view.style.apply(_row_style, axis=1),
+                                use_container_width=True, hide_index=True
+                            )
+                            
+                            # 🔘 flag: escolha do usuário (mantido)
+                            escolhas[nkey] = st.radio(
+                                "Qual registro você quer manter?",
+                                options=["Nova Arquivo", "Google Sheets"],
+                                index=0,
+                                horizontal=True,
+                                key=f"keep_{nkey}"
+                            )
                             st.divider()
+
 
                     
                         # aplicar escolhas

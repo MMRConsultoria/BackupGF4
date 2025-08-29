@@ -700,10 +700,10 @@ with st.spinner("⏳ Processando..."):
                 
                 # === VISUALIZAÇÃO (empilhado) ===
                 #st.markdown(
-                #    f"<div style='color:#a33; font-weight:500; margin-top:10px;'>"
-                #    "🔴 Possíveis duplicados encontrados — selecione quais manter</div>",
-                #    unsafe_allow_html=True
-                #)
+                    f"<div style='color:#a33; font-weight:500; margin-top:10px;'>"
+                    "🔴 Possíveis duplicados encontrados — selecione quais manter</div>",
+                    unsafe_allow_html=True
+                )
                 
                 def _norm_simple(s: str) -> str:
                     import unicodedata, re
@@ -1143,8 +1143,8 @@ with st.spinner("⏳ Processando..."):
                     # 7) Exibir comparação de registros (empilhado)
                     pode_enviar = True
                     
-                    if suspeitos_n:
-                        st.markdown("### 🔴 Possíveis duplicados (N já existe) — escolha o que manter")
+                    #if suspeitos_n:
+                    #    st.markdown("### 🔴 Possíveis duplicados (N já existe) — escolha o que manter")
                     
                         # --------- helpers ----------
                         def _fmt_data_yyyy_mm_dd_to_br(s):

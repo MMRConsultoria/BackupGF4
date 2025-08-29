@@ -705,13 +705,7 @@ with st.spinner("⏳ Processando..."):
                     unsafe_allow_html=True
                 )
                 
-                def _norm_simple(s: str) -> str:
-                    import unicodedata, re
-                    s = str(s or "").strip().lower()
-                    s = unicodedata.normalize("NFD", s)
-                    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-                    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
-                    return s
+                
                 
                 def _col_sheet(humano):
                     k = _norm_simple(humano)
@@ -798,33 +792,7 @@ with st.spinner("⏳ Processando..."):
 
 
     
-                # 8) Envio (só 'novos')
-                try:
-                    if len(novos_dados) == 0:
-                        st.info(f"ℹ️ **0 enviados**. ❌ **{len(duplicados)}** registro(s) não enviados por duplicidade (M).")
-                        return True
-    
-                    inicio = len(aba_destino.col_values(1)) + 1
-                    aba_destino.append_rows(novos_dados, value_input_option='USER_ENTERED')
-                    fim = inicio + len(novos_dados) - 1
-    
-                    if inicio <= fim:
-                        data_format   = CellFormat(numberFormat=NumberFormat(type='DATE',   pattern='dd/mm/yyyy'))
-                        numero_format = CellFormat(numberFormat=NumberFormat(type='NUMBER', pattern='0'))
-                        # Ajuste os intervalos conforme seu cabeçalho real
-                        format_cell_range(aba_destino, f"A{inicio}:A{fim}", data_format)  # Data
-                        format_cell_range(aba_destino, f"D{inicio}:D{fim}", numero_format) # Código Everest (se D)
-                        format_cell_range(aba_destino, f"F{inicio}:F{fim}", numero_format) # Código Grupo (se F)
-                        format_cell_range(aba_destino, f"L{inicio}:L{fim}", numero_format) # Ano (se L)
-    
-                    st.success(
-                        f"✅ **{len(novos_dados)}** registro(s) enviado(s). "
-                        f"❌ **{len(duplicados)}** registro(s) não enviados por duplicidade (M)."
-                    )
-                    return True
-                except Exception as e:
-                    st.error(f"❌ Erro ao atualizar o Google Sheets: {e}")
-                    return False
+               
     
         # ------------------------ ESTADO / INICIALIZAÇÃO ------------------------
         if st.session_state.get("_last_tab") != "atualizar_google_sheets":
@@ -1143,8 +1111,8 @@ with st.spinner("⏳ Processando..."):
                     # 7) Exibir comparação de registros (empilhado)
                     pode_enviar = True
                     
-                    #if suspeitos_n:
-                    #    st.markdown("### 🔴 Possíveis duplicados (N já existe) — escolha o que manter")
+                    if suspeitos_n:
+                        st.markdown("### 🔴 Possíveis duplicados (N já existe) — escolha o que manter")
                     
                         # --------- helpers ----------
                         def _fmt_data_yyyy_mm_dd_to_br(s):

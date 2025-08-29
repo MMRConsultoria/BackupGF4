@@ -699,8 +699,11 @@ with st.spinner("⏳ Processando..."):
                 df_dup_M     = df_final.loc[mask_dup_M].copy()
                 
                 # === VISUALIZAÇÃO (empilhado) ===
-                st.markdown("### 🔴 Possíveis duplicados (entrada vs. já no Sheet)")
-                st.write(f"Total suspeitos: {len(df_suspeitos)}")
+                st.markdown(
+                    f"<div style='color:#a33; font-weight:500; margin-top:10px;'>"
+                    "🔴 Possíveis duplicados encontrados — selecione quais manter</div>",
+                    unsafe_allow_html=True
+                )
                 
                 def _norm_simple(s: str) -> str:
                     import unicodedata, re

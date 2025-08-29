@@ -1291,14 +1291,14 @@ with st.spinner("⏳ Processando..."):
                             if "Manter" not in df_comp.columns:
                                 df_comp["Manter"] = False
                             
-                            # cria coluna de cor auxiliar (não exibida, só para estilo)
+                            # cria coluna de cor auxiliar
                             df_comp["_row_color"] = df_comp["__origem__"].map(color_map).fillna("#ffffff")
                             
-                            # ordem final: Manter + colunas visíveis
+                            # monta df final sem a coluna de cor
                             cols_final = ["Manter"] + cols_show
-                            df_view = df_comp.reindex(columns=cols_final + ["_row_color"])
+                            df_view = df_comp[cols_final].copy()
                             
-                            # editor interativo com cor por linha
+                            # editor interativo
                             edited_df = st.data_editor(
                                 df_view,
                                 use_container_width=True,
@@ -1308,33 +1308,23 @@ with st.spinner("⏳ Processando..."):
                                     "Manter": st.column_config.CheckboxColumn(
                                         help="Marque qual registro deseja manter",
                                         default=False
-                                    ),
-                                    "_row_color": st.column_config.Column(  # oculta mas aplica cor
-                                        width="small",
-                                        help="cor",
-                                        required=False
                                     )
-                                },
-                                disabled=["_row_color"],   # não editável
-                                hide_columns=["_row_color"]  # não aparece na tabela
-                            )
-                            
-                            # aplica estilo de fundo dinamicamente
-                            st.markdown(
-                                """
-                                <style>
-                                [data-testid="stDataFrame"] tbody tr td:nth-child(1) {
-                                    font-weight: bold;
                                 }
-                                </style>
-                                """,
-                                unsafe_allow_html=True
                             )
                             
-                            # salva escolhas (apenas os que o usuário marcou)
+                            # aplica estilo de fundo (CSS inline por __origem__)
+                            def _row_style(row):
+                                return [f"background-color: {color_map.get(row['__origem__'], '#ffffff')}"] * len(row)
+                            
+                            styled_view = df_view.style.apply(_row_style, axis=1)
+                            
+                            st.dataframe(styled_view, use_container_width=True, hide_index=True)
+                            
+                            # salva escolhas
                             escolhas[nkey] = edited_df[edited_df["Manter"] == True]
                             
                             st.divider()
+
 
                     
                         # aplicar escolhas

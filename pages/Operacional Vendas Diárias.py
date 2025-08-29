@@ -586,15 +586,102 @@ with st.spinner("⏳ Processando..."):
                 if 'Data_Formatada' in df_final.columns:
                     df_final = df_final.drop(columns=['Data_Formatada'])
     
-                # 5) Alinhar colunas ao cabeçalho real do Sheets
-                headers = aba_destino.row_values(1)  # primeira linha do sheet
-                if headers:
-                    extras = [c for c in df_final.columns if c not in headers]
-                    ordem_final = headers + extras
-                    df_final = df_final.reindex(columns=ordem_final, fill_value="")
-    
-                colunas_df = df_final.columns.tolist()
-                rows = df_final.fillna("").values.tolist()
+                # 5) Alinhar colunas ao cabeçalho real do Sheets (normalizando nomes)
+                headers_raw = aba_destino.row_values(1)
+                
+                # o Sheet tem espaços extras em algumas colunas; tiramos só para casar nomes,
+                # a ordem continua exatamente a mesma do Sheet
+                headers = [h.strip() for h in headers_raw]
+                
+                def _norm_simple(s: str) -> str:
+                    import unicodedata, re
+                    s = str(s or "").strip().lower()
+                    s = unicodedata.normalize("NFD", s)
+                    s = "".join(c for c in s if unicodedata.category(c) != "Mn")   # remove acentos
+                    s = re.sub(r"[^a-z0-9]+", " ", s).strip()                      # troca pontuação por espaço
+                    return s
+                
+                # mapa: nome-normalizado -> nome exato que está no Sheet
+                lookup = {_norm_simple(h): h for h in headers}
+                
+                # aliases para equivalências entre DF e Sheet
+                aliases = {
+                    "codigo everest": ["codigo everest", "codigo ev", "cod everest", "cod ev"],
+                    "codigo grupo everest": ["cod grupo empresas", "codigo grupo empresas", "codigo grupo", "cod grupo"],
+                    "fat total": ["fat.total", "fat total"],
+                    "serv tx": ["serv/tx", "serv tx"],
+                    "fat real": ["fat.real", "fat real"],
+                    "mes": ["mes", "mês"],
+                }
+                
+                rename_map = {}
+                for col in list(df_final.columns):
+                    k = _norm_simple(col)
+                
+                    # 1) casa direto com cabeçalho do Sheet
+                    if k in lookup:
+                        rename_map[col] = lookup[k]
+                        continue
+                
+                    # 2) tenta aliases
+                    found = False
+                    for canonical, variations in aliases.items():
+                        if k == canonical or k in variations:
+                            for v in [canonical] + variations:
+                                kv = _norm_simple(v)
+                                if kv in lookup:
+                                    rename_map[col] = lookup[kv]
+                                    found = True
+                                    break
+                        if found:
+                            break
+                
+                    # 3) heurística leve para "codigo grupo ..."
+                    if not found and ("codigo grupo" in k or "cod grupo" in k):
+                        for cand in ("codigo grupo everest", "cod grupo empresas", "codigo grupo empresas"):
+                            kc = _norm_simple(cand)
+                            if kc in lookup:
+                                rename_map[col] = lookup[kc]
+                                found = True
+                                break
+                
+                # aplica rename ANTES de reindexar
+                if rename_map:
+                    df_final = df_final.rename(columns=rename_map)
+                # --- Chaves M e N ---
+                # Data formatada em yyyy-mm-dd
+                df_final['Data_Formatada'] = pd.to_datetime(
+                    df_final['Data'], origin="1899-12-30", unit='D', errors="coerce"
+                ).dt.strftime('%Y-%m-%d')
+                
+                # Garante numéricos
+                df_final['Fat.Total'] = pd.to_numeric(df_final['Fat.Total'], errors="coerce").fillna(0)
+                
+                # Cria M (Data + Fat.Total + Loja)
+                df_final['M'] = (
+                    df_final['Data_Formatada'].fillna('') +
+                    df_final['Fat.Total'].astype(str) +
+                    df_final['Loja'].astype(str)
+                ).str.strip()
+                
+                # Cria N (Data + Codigo Everest)
+                if 'Codigo Everest' in df_final.columns:
+                    df_final['Codigo Everest'] = pd.to_numeric(df_final['Codigo Everest'], errors="coerce").fillna(0).astype(int).astype(str)
+                else:
+                    df_final['Codigo Everest'] = ""
+                
+                df_final['N'] = (
+                    df_final['Data_Formatada'].fillna('') +
+                    df_final['Codigo Everest'].astype(str)
+                ).str.strip()
+                
+                # Remove auxiliar
+                df_final = df_final.drop(columns=['Data_Formatada'], errors='ignore')
+
+                # reindex para a ordem do Sheet mantendo extras ao final
+                extras = [c for c in df_final.columns if c not in headers]
+                df_final = df_final.reindex(columns=headers + extras, fill_value="")
+
     
                 # 6) Classificação
                 duplicados, suspeitos_n, novos_dados = [], [], []

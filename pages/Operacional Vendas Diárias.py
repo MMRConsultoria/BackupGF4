@@ -917,40 +917,92 @@ with st.spinner("⏳ Processando..."):
                     if 'Código Grupo Everest' in df_final.columns:
                         df_final['Código Grupo Everest'] = df_final['Código Grupo Everest'].apply(to_int_safe)
     
-                    # 4) Abre Sheets e lê existentes
+                    # 4) Conecta Sheets e lê existentes
                     gc = get_gc()
                     planilha_destino = gc.open("Vendas diarias")
                     aba_destino = planilha_destino.worksheet("Fat Sistema Externo")
-    
+                    
                     valores_existentes_df = get_as_dataframe(aba_destino, evaluate_formulas=True, dtype=str).fillna("")
                     colunas_df_existente = valores_existentes_df.columns.str.strip().tolist()
-    
+                    
                     dados_existentes   = set(valores_existentes_df["M"].astype(str).str.strip()) if "M" in colunas_df_existente else set()
                     dados_n_existentes = set(valores_existentes_df["N"].astype(str).str.strip()) if "N" in colunas_df_existente else set()
-    
+                    
                     if "M" not in colunas_df_existente:
-                        st.warning("⚠️ A coluna 'M' não foi encontrada na planilha. Nenhuma checagem de duplicidade será feita com base nela.")
+                        st.warning("⚠️ A coluna 'M' não foi encontrada na planilha. Checagem parcial.")
                     if "N" not in colunas_df_existente:
-                        st.warning("⚠️ A coluna 'N' não foi encontrada na planilha. Nenhuma checagem de duplicidade será feita com base nela.")
-    
-                    # 5) Chave N
+                        st.warning("⚠️ A coluna 'N' não foi encontrada na planilha. Checagem parcial.")
+                    
+                    # 5) Alinhar colunas ao cabeçalho real do Sheets (normalizando nomes)
+                    headers_raw = aba_destino.row_values(1)
+                    headers = [h.strip() for h in headers_raw]
+                    
+                    def _norm_simple(s: str) -> str:
+                        import unicodedata, re
+                        s = str(s or "").strip().lower()
+                        s = unicodedata.normalize("NFD", s)
+                        s = "".join(c for c in s if unicodedata.category(c) != "Mn")   # remove acentos
+                        s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+                        return s
+                    
+                    lookup = {_norm_simple(h): h for h in headers}
+                    
+                    aliases = {
+                        "codigo everest": ["codigo ev", "cod everest"],
+                        "codigo grupo everest": ["cod grupo empresas", "codigo grupo"],
+                        "fat total": ["fat.total"],
+                        "serv tx": ["serv/tx"],
+                        "fat real": ["fat.real"],
+                        "mes": ["mês"]
+                    }
+                    
+                    rename_map = {}
+                    for col in df_final.columns:
+                        k = _norm_simple(col)
+                        if k in lookup:
+                            rename_map[col] = lookup[k]
+                        else:
+                            for canonical, variations in aliases.items():
+                                if k == canonical or k in variations:
+                                    for v in [canonical] + variations:
+                                        kv = _norm_simple(v)
+                                        if kv in lookup:
+                                            rename_map[col] = lookup[kv]
+                                            break
+                    
+                    df_final = df_final.rename(columns=rename_map)
+                    
+                    # 6) Criar chaves M e N
                     df_final['Data_Formatada'] = pd.to_datetime(
-                        df_final['Data'], origin="1899-12-30", unit='D'
+                        df_final['Data'], origin="1899-12-30", unit='D', errors="coerce"
                     ).dt.strftime('%Y-%m-%d')
-                    df_final['N'] = (df_final['Data_Formatada'] + df_final.get('Código Everest', "").astype(str)).astype(str).str.strip()
-    
-                    if 'Data_Formatada' in df_final.columns:
-                        df_final = df_final.drop(columns=['Data_Formatada'])
-    
-                    # 5b) Alinhar ao cabeçalho
-                    headers = aba_destino.row_values(1)
-                    if headers:
-                        extras = [c for c in df_final.columns if c not in headers]
-                        ordem_final = headers + extras
-                        df_final = df_final.reindex(columns=ordem_final, fill_value="")
-    
+                    
+                    df_final['M'] = (
+                        df_final['Data_Formatada'].fillna('') +
+                        df_final['Fat Total'].astype(str) +
+                        df_final['Loja'].astype(str)
+                    ).str.strip()
+                    
+                    if 'Codigo Everest' in df_final.columns:
+                        df_final['Codigo Everest'] = pd.to_numeric(df_final['Codigo Everest'], errors="coerce").fillna(0).astype(int).astype(str)
+                    else:
+                        df_final['Codigo Everest'] = ""
+                    
+                    df_final['N'] = (
+                        df_final['Data_Formatada'].fillna('') +
+                        df_final['Codigo Everest'].astype(str)
+                    ).str.strip()
+                    
+                    df_final = df_final.drop(columns=['Data_Formatada'], errors='ignore')
+                    
+                    # 7) Reindexar seguindo ordem exata do Sheet
+                    extras = [c for c in df_final.columns if c not in headers]
+                    df_final = df_final.reindex(columns=headers + extras, fill_value="")
+                    
                     colunas_df = df_final.columns.tolist()
                     rows = df_final.fillna("").values.tolist()
+
+
     
                     # 6) Classificação: novos / duplicados(M) / suspeitos(N)
                     duplicados, suspeitos_n, novos_dados = [], [], []

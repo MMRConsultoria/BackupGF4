@@ -1148,7 +1148,7 @@ with st.spinner("⏳ Processando..."):
                             sheet_por_n[nkey] = valores_existentes_df[valores_existentes_df["N"] == nkey].copy()
                     
                         # interface por N
-                        escolhas = {}
+                        #escolhas = {}
                         #for nkey in sorted(entrada_por_n.keys()):
                             #st.markdown(f"#### N: `{nkey}`")
                     

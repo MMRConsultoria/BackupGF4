@@ -683,43 +683,116 @@ with st.spinner("⏳ Processando..."):
                 df_final = df_final.reindex(columns=headers + extras, fill_value="")
 
     
-                # 6) Classificação
-                duplicados, suspeitos_n, novos_dados = [], [], []
-                for linha in rows:
-                    linha_dict = dict(zip(colunas_df, linha))
-                    chave_m = str(linha_dict.get("M", "")).strip()
-                    chave_n = str(linha_dict.get("N", "")).strip()
-    
-                    if chave_m not in dados_existentes:
-                        if chave_n and (chave_n in dados_n_existentes):
-                            suspeitos_n.append(linha)
-                        else:
-                            novos_dados.append(linha)
-                        dados_existentes.add(chave_m)
+                # === Classificação VETORIZADA (sem loop) ===
+                M_in = df_final["M"].astype(str).str.strip()
+                N_in = df_final["N"].astype(str).str.strip()
+                
+                is_dup_M = M_in.isin(dados_existentes)
+                is_dup_N = N_in.isin(dados_n_existentes)
+                
+                mask_suspeitos = (~is_dup_M) & is_dup_N      # N já existe -> possível duplicado
+                mask_novos     = (~is_dup_M) & (~is_dup_N)   # novo
+                mask_dup_M     = is_dup_M                    # duplicado por M
+                
+                df_suspeitos = df_final.loc[mask_suspeitos].copy()
+                df_novos     = df_final.loc[mask_novos].copy()
+                df_dup_M     = df_final.loc[mask_dup_M].copy()
+                
+                # === VISUALIZAÇÃO (empilhado) ===
+                st.markdown("### 🔴 Possíveis duplicados (entrada vs. já no Sheet)")
+                st.write(f"Total suspeitos: {len(df_suspeitos)}")
+                
+                def _norm_simple(s: str) -> str:
+                    import unicodedata, re
+                    s = str(s or "").strip().lower()
+                    s = unicodedata.normalize("NFD", s)
+                    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+                    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+                    return s
+                
+                def _col_sheet(humano):
+                    k = _norm_simple(humano)
+                    return lookup[k] if k in lookup else None
+                
+                if len(df_suspeitos) > 0:
+                    # Entrada (formatando Data)
+                    df_ent = df_suspeitos.copy()
+                    if "Data" in df_ent.columns:
+                        df_ent["Data"] = pd.to_datetime(df_ent["Data"], origin="1899-12-30", unit="D", errors="coerce").dt.strftime("%d/%m/%Y")
+                    df_ent["__origem__"] = "entrada"
+                    # Traz do Sheet as linhas com as mesmas N (apenas colunas úteis)
+                    cData  = _col_sheet("Data")
+                    cLoja  = _col_sheet("Loja")
+                    cCod   = _col_sheet("codigo everest")
+                    cFat   = _col_sheet("fat total")
+                    cM     = "M" if "M" in valores_existentes_df.columns else None
+                    cN     = "N" if "N" in valores_existentes_df.columns else None
+                    cols_sheet = [c for c in [cN, cData, cLoja, cCod, cFat, cM] if c]
+                    df_sh = valores_existentes_df[cols_sheet].copy()
+                    if cData and cData in df_sh.columns:
+                        # exibe como veio do sheet
+                        pass
+                    df_sh = df_sh[df_sh[cN].isin(df_ent["N"])].copy()
+                    df_sh["__origem__"] = "sheet"
+                
+                    # Renomeia para rótulos amigáveis e empilha
+                    ren = {}
+                    if cData: ren[cData] = "Data"
+                    if cLoja: ren[cLoja] = "Loja"
+                    if cCod:  ren[cCod]  = "Codigo Everest"
+                    if cFat:  ren[cFat]  = "Fat Total"
+                    if cM:    ren[cM]    = "M"
+                    if cN:    ren[cN]    = "N"
+                    df_sh = df_sh.rename(columns=ren)
+                
+                    # Seleciona as mesmas colunas nas duas
+                    cols_show = [c for c in ["N","Data","Loja","Codigo Everest","Fat Total","M"] if c in (df_ent.columns.union(df_sh.columns))]
+                    df_ent_show = df_ent.reindex(columns=cols_show, fill_value="")
+                    df_sh_show  = df_sh.reindex(columns=cols_show,  fill_value="")
+                
+                    conflitos_empilhado = pd.concat([
+                        df_ent_show.assign(_view="entrada"),
+                        df_sh_show.assign(_view="sheet")
+                    ], ignore_index=True)
+                
+                    st.dataframe(conflitos_empilhado, use_container_width=True)
+                else:
+                    st.info("Nenhum suspeito (N) encontrado.")
+                
+                st.markdown("### 🟢 Novos registros (serão enviados)")
+                st.write(f"Total novos: {len(df_novos)}")
+                if len(df_novos) > 0:
+                    df_n = df_novos.copy()
+                    if "Data" in df_n.columns:
+                        df_n["Data"] = pd.to_datetime(df_n["Data"], origin="1899-12-30", unit="D", errors="coerce").dt.strftime("%d/%m/%Y")
+                    st.dataframe(df_n, use_container_width=True)
+                else:
+                    st.info("Nenhum novo registro encontrado.")
+                
+                # === ENVIO (apenas NOVOS) ===
+                pode_enviar = len(df_suspeitos) == 0
+                if todas_lojas_ok and pode_enviar:
+                    dados_para_enviar = df_novos.fillna("").values.tolist()
+                    if len(dados_para_enviar) == 0:
+                        st.info(f"ℹ️ 0 enviados. ❌ {len(df_dup_M)} duplicado(s) por M.")
                     else:
-                        duplicados.append(linha)
-    
-                # 7) Exibir comparação de registros (empilhado)
-                pode_enviar = True
-                
-                if suspeitos_n:
-                    st.markdown("### 🔴 Possíveis duplicados (N já existe)")
-                    df_exibir_suspeitos = pd.DataFrame(suspeitos_n, columns=colunas_df).copy()
-                    if "Data" in df_exibir_suspeitos.columns:
-                        df_exibir_suspeitos["Data"] = pd.to_datetime(
-                            df_exibir_suspeitos["Data"], origin="1899-12-30", unit="D", errors="coerce"
-                        ).dt.strftime("%d/%m/%Y")
-                    st.dataframe(df_exibir_suspeitos, use_container_width=True, hide_index=True)
-                    pode_enviar = False   # bloqueia envio se houver suspeitos
-                
-                if novos_dados:
-                    st.markdown("### 🟢 Novos registros (serão enviados)")
-                    df_exibir_novos = pd.DataFrame(novos_dados, columns=colunas_df).copy()
-                    if "Data" in df_exibir_novos.columns:
-                        df_exibir_novos["Data"] = pd.to_datetime(
-                            df_exibir_novos["Data"], origin="1899-12-30", unit="D", errors="coerce"
-                        ).dt.strftime("%d/%m/%Y")
-                    st.dataframe(df_exibir_novos, use_container_width=True, hide_index=True)
+                        inicio = len(aba_destino.col_values(1)) + 1
+                        aba_destino.append_rows(dados_para_enviar, value_input_option='USER_ENTERED')
+                        fim = inicio + len(dados_para_enviar) - 1
+                        if inicio <= fim:
+                            data_format   = CellFormat(numberFormat=NumberFormat(type='DATE',   pattern='dd/mm/yyyy'))
+                            numero_format = CellFormat(numberFormat=NumberFormat(type='NUMBER', pattern='0'))
+                            format_cell_range(aba_destino, f"A{inicio}:A{fim}", data_format)
+                            format_cell_range(aba_destino, f"D{inicio}:D{fim}", numero_format)
+                            format_cell_range(aba_destino, f"F{inicio}:F{fim}", numero_format)
+                            format_cell_range(aba_destino, f"L{inicio}:L{fim}", numero_format)
+                        st.success(f"✅ {len(dados_para_enviar)} novo(s) enviado(s). ❌ {len(df_dup_M)} duplicado(s) por M.")
+                else:
+                    if not todas_lojas_ok:
+                        st.error("🚫 Há lojas sem **Código Everest** cadastradas. Corrija e tente novamente.")
+                    elif len(df_suspeitos) > 0:
+                        st.warning("⚠️ Existem suspeitos (chave N). Resolva antes de enviar.")
+
 
     
                 # 8) Envio (só 'novos')

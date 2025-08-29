@@ -705,13 +705,7 @@ with st.spinner("⏳ Processando..."):
                     unsafe_allow_html=True
                 )
                 
-                def _norm_simple(s: str) -> str:
-                    import unicodedata, re
-                    s = str(s or "").strip().lower()
-                    s = unicodedata.normalize("NFD", s)
-                    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-                    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
-                    return s
+               
                 
                 def _col_sheet(humano):
                     k = _norm_simple(humano)

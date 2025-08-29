@@ -1064,17 +1064,31 @@ with st.spinner("⏳ Processando..."):
                         else:
                             duplicados.append(linha)
     
-                    # 7) Alerta por N (bloqueia envio)
+                    # 7) Exibir comparação de registros (empilhado)
                     pode_enviar = True
+                    
+                    st.markdown("### 🔴 Possíveis duplicados (N já existe)")
                     if suspeitos_n:
-                        st.warning("❌ Existem registros possivelmente duplicados. Corrija antes de continuar.")
-                        df_exibir = pd.DataFrame(suspeitos_n, columns=colunas_df).copy()
-                        if "Data" in df_exibir.columns:
-                            df_exibir["Data"] = pd.to_datetime(
-                                df_exibir["Data"], origin="1899-12-30", unit="D"
+                        df_exibir_suspeitos = pd.DataFrame(suspeitos_n, columns=colunas_df).copy()
+                        if "Data" in df_exibir_suspeitos.columns:
+                            df_exibir_suspeitos["Data"] = pd.to_datetime(
+                                df_exibir_suspeitos["Data"], origin="1899-12-30", unit="D", errors="coerce"
                             ).dt.strftime("%d/%m/%Y")
-                        st.dataframe(df_exibir, use_container_width=True)
-                        pode_enviar = False
+                        st.dataframe(df_exibir_suspeitos, use_container_width=True, hide_index=True)
+                        pode_enviar = False   # bloqueia envio se houver suspeitos
+                    else:
+                        st.info("Nenhum suspeito encontrado.")
+                    
+                    st.markdown("### 🟢 Novos registros (serão enviados)")
+                    if novos_dados:
+                        df_exibir_novos = pd.DataFrame(novos_dados, columns=colunas_df).copy()
+                        if "Data" in df_exibir_novos.columns:
+                            df_exibir_novos["Data"] = pd.to_datetime(
+                                df_exibir_novos["Data"], origin="1899-12-30", unit="D", errors="coerce"
+                            ).dt.strftime("%d/%m/%Y")
+                        st.dataframe(df_exibir_novos, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("Nenhum novo registro encontrado.")
     
                     # 8) Envio
                     if todas_lojas_ok and pode_enviar:

@@ -1296,6 +1296,7 @@ with st.spinner("⏳ Processando..."):
 
                     
                         if st.button("✅ Aplicar escolhas (atualizar planilha)"):
+                       
                             try:
                                 atualizados = 0
                                 adicionados = 0
@@ -1306,44 +1307,39 @@ with st.spinner("⏳ Processando..."):
                                     if escolha_df is None or "Manter" not in escolha_df.columns:
                                         continue
                         
-                                    # Verifica quais registros foram marcados
                                     manter_novo   = any((escolha_df["__origem__"] == "🟢 Nova Arquivo") & (escolha_df["Manter"]))
                                     manter_velho  = any((escolha_df["__origem__"] == "🔴 Google Sheets") & (escolha_df["Manter"]))
                         
                                     d_in = entrada_por_n[nkey]  # linha de entrada (novo registro)
                         
                                     if manter_novo and manter_velho:
-                                        # 👉 Mantém os dois
                                         row_values = [d_in.get(h, "") for h in headers]
                                         aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                         adicionados += 1
                         
                                     elif manter_novo and not manter_velho:
-                                        # 👉 Substitui o velho pelo novo
                                         idxs = valores_existentes_df.index[valores_existentes_df["N"] == nkey].tolist()
                                         if idxs:
-                                            sheet_row = idxs[0] + 2  # índice real no Sheets
+                                            sheet_row = idxs[0] + 2
                                             row_values = [d_in.get(h, "") for h in headers]
                                             aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
                                             atualizados += 1
                                         else:
-                                            # fallback se não encontrar: adiciona como novo
                                             row_values = [d_in.get(h, "") for h in headers]
                                             aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                             adicionados += 1
                         
                                     elif not manter_novo and manter_velho:
-                                        # 👉 Mantém apenas o que já estava, não faz nada
                                         pulados += 1
-                        
                                     else:
-                                        # 👉 Não marcou nenhum → ignora os dois
                                         pulados += 1
                         
-                                st.success(f"Concluído: {adicionados} adicionado(s), {atualizados} substituído(s), {pulados} ignorado(s).")
+                                st.success(f"✅ Concluído: {adicionados} adicionado(s), {atualizados} substituído(s), {pulados} ignorado(s).")
+                                st.info("ℹ️ Atualize sua planilha no navegador para ver as mudanças.")
                         
                             except Exception as e:
                                 st.error(f"❌ Erro ao aplicar escolhas: {e}")
+
 
                     
                         # bloqueia envio automático enquanto houver conflitos

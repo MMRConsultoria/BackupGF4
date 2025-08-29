@@ -1273,21 +1273,20 @@ with st.spinner("⏳ Processando..."):
                             })
                             
                             # editor interativo — apenas captura escolhas
-                            # cria uma lista para armazenar flags
-                            manter_flags = []
-                            
-                            for i, row in df_view.iterrows():
-                                col1, col2 = st.columns([1, 9])
-                                with col1:
-                                    manter = st.checkbox(
-                                        "Manter",
-                                        key=f"keep_{nkey}_{i}"
-                                    )
-                                    manter_flags.append(manter)
-                                with col2:
-                                    st.write(row.drop("Manter").to_dict())
-                            
                            
+                            
+                            edited_df = st.data_editor(
+                                df_view,
+                                use_container_width=True,
+                                hide_index=True,
+                                key=f"editor_dup_{nkey}",
+                                column_config={
+                                    "Manter": st.column_config.CheckboxColumn(
+                                        help="Marque qual(is) registro(s) deseja manter",
+                                        default=False
+                                    )
+                                }
+                            )
                             
                             st.divider()
 

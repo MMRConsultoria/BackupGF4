@@ -1140,62 +1140,133 @@ with st.spinner("⏳ Processando..."):
                     # 7) Exibir comparação de registros (empilhado)
                     pode_enviar = True
                     
-                    if suspeitos_n:
-                        st.markdown("### 🔴 Possíveis duplicados (N já existe)")
+                   if suspeitos_n:
+                        st.markdown("### 🔴 Possíveis duplicados (N já existe) — escolha o que manter")
                     
-                        # entrada
-                        df_in = pd.DataFrame(suspeitos_n, columns=colunas_df).copy()
-                        if "Data" in df_in.columns:
-                            df_in["Data"] = pd.to_datetime(
-                                df_in["Data"], origin="1899-12-30", unit="D", errors="coerce"
-                            ).dt.strftime("%d/%m/%Y")
+                        # --------- helpers ----------
+                        def _fmt_data_yyyy_mm_dd_to_br(s):
+                            try:
+                                # s é serial Excel (int) na sua base; aqui exibimos BR
+                                return pd.to_datetime(pd.Series([s]), origin="1899-12-30", unit="D", errors="coerce")\
+                                         .dt.strftime("%d/%m/%Y").iloc[0]
+                            except Exception:
+                                return s
                     
-                        # normaliza N para casar com o sheet
-                        df_in["N"] = df_in["N"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-                        valores_existentes_df["N"] = valores_existentes_df["N"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+                        # normaliza N (remove .0 etc) para casar certinho
+                        def _normN(x):
+                            return str(x).strip().replace(".0", "")
                     
-                        # pega no sheet todos os com o mesmo N
-                        df_sh = valores_existentes_df[valores_existentes_df["N"].isin(df_in["N"])].copy()
+                        valores_existentes_df = valores_existentes_df.copy()
+                        valores_existentes_df["N"] = valores_existentes_df["N"].map(_normN)
                     
-                        # renomeia as origens como você pediu
-                        df_in["__origem__"] = "Nova Arquivo"
-                        df_sh["__origem__"] = "Google Sheets"
+                        # mapeia: N -> linha de entrada (da lista 'suspeitos_n')
+                        entrada_por_n = {}
+                        for linha in suspeitos_n:
+                            d = dict(zip(colunas_df, linha))
+                            nkey = _normN(d.get("N", ""))
+                            entrada_por_n[nkey] = d
                     
-                        # mesmos campos nas duas tabelas (ordem das colunas do seu sheet + origem no fim)
-                        cols_show = [c for c in df_in.columns if c in valores_existentes_df.columns]  # interseção
-                        # garante que M e N apareçam também
-                        for c in ["M", "N"]:
-                            if c not in cols_show and c in df_in.columns:
-                                cols_show.append(c)
-                        cols_show = [c for c in headers if c in cols_show] + [c for c in cols_show if c not in headers] + ["__origem__"]
+                        # mapeia N -> (df de 1+ linhas no sheet com esse N)
+                        sheet_por_n = {}
+                        for nkey in entrada_por_n.keys():
+                            sheet_por_n[nkey] = valores_existentes_df[valores_existentes_df["N"] == nkey].copy()
                     
-                        df_in = df_in.reindex(columns=cols_show, fill_value="")
-                        df_sh = df_sh.reindex(columns=cols_show, fill_value="")
+                        # interface por N
+                        escolhas = {}
+                        for nkey in sorted(entrada_por_n.keys()):
+                            st.markdown(f"#### N: `{nkey}`")
                     
-                        # empilha entrada + sheet
-                        df_comp = pd.concat([df_in, df_sh], ignore_index=True)
+                            d_in = entrada_por_n[nkey]
+                            df_in = pd.DataFrame([d_in])
                     
-                        # ------- colorir linhas por origem -------
-                        color_map = {
-                            "Nova Arquivo":  "#e9f9ee",  # verdinho claro
-                            "Google Sheets": "#fff0f0",  # vermelhinho claro
-                        }
+                            # tenta deixar Data amigável para exibição (sem mexer no original d_in)
+                            if "Data" in df_in.columns:
+                                df_in["_Data_exibe_"] = df_in["Data"].apply(_fmt_data_yyyy_mm_dd_to_br)
+                                df_in = df_in.rename(columns={"_Data_exibe_": "Data"})
+                                # evita coluna duplicada de Data
+                                # (se quiser mostrar as duas, remova essa linha)
+                                # df_in.drop(columns=["Data"], inplace=True)  # <- NÃO: trocaríamos a original
+                                pass
                     
-                        def _row_style(row):
-                            bg = color_map.get(row["__origem__"], "#ffffff")
-                            return [f"background-color: {bg}"] * len(row)
+                            df_sh = sheet_por_n[nkey].copy()
                     
-                        # move a coluna de origem para a 1ª posição (opcional)
-                        cols_ordered = ["__origem__"] + [c for c in df_comp.columns if c != "__origem__"]
-                        df_comp = df_comp[cols_ordered]
+                            # organiza ordem de colunas conforme seu sheet + M N + origem
+                            cols_show = [c for c in headers if c in df_in.columns]  # ordem do sheet
+                            for c in ["M", "N"]:
+                                if c in df_in.columns and c not in cols_show:
+                                    cols_show.append(c)
+                            cols_show = cols_show + [c for c in df_in.columns if c not in cols_show]
                     
-                        st.dataframe(
-                            df_comp.style.apply(_row_style, axis=1),
-                            use_container_width=True,
-                            hide_index=True,
-                        )
+                            df_in = df_in.reindex(columns=cols_show, fill_value="")
+                            df_sh = df_sh.reindex(columns=cols_show, fill_value="")
                     
-                        pode_enviar = False  # continua bloqueando envio enquanto houver suspeitos
+                            # marca origem com cor
+                            df_in["__origem__"] = "Nova Arquivo"
+                            df_sh["__origem__"] = "Google Sheets"
+                    
+                            # radios de decisão
+                            escolha = st.radio(
+                                "O que você quer manter para esse N?",
+                                options=["Manter Google Sheets", "Substituir pelo Nova Arquivo"],
+                                index=0,  # default: manter o que já está
+                                key=f"opt_n_{nkey}",
+                                horizontal=True,
+                            )
+                            escolhas[nkey] = escolha
+                    
+                            # mostra as duas linhas empilhadas e coloridas
+                            df_comp = pd.concat([df_in, df_sh], ignore_index=True)
+                            cols_ordered = ["__origem__"] + [c for c in df_comp.columns if c != "__origem__"]
+                            df_comp = df_comp[cols_ordered]
+                    
+                            color_map = {"Nova Arquivo": "#e9f9ee", "Google Sheets": "#fff0f0"}
+                            def _row_style(row):
+                                return [f"background-color: {color_map.get(row['__origem__'], '#ffffff')}"] * len(row)
+                    
+                            st.dataframe(df_comp.style.apply(_row_style, axis=1),
+                                         use_container_width=True, hide_index=True)
+                            st.divider()
+                    
+                        # aplicar escolhas
+                        if st.button("✅ Aplicar escolhas (atualizar planilha)"):
+                            try:
+                                # para cada N escolhido "Substituir pelo Nova Arquivo": atualiza a linha existente
+                                atualizados = 0
+                                pulados = 0
+                                for nkey, escolha in escolhas.items():
+                                    if escolha == "Substituir pelo Nova Arquivo":
+                                        # linha de entrada para esse N
+                                        d_in = entrada_por_n[nkey]
+                    
+                                        # encontra a *primeira* linha no sheet com esse N
+                                        idxs = valores_existentes_df.index[valores_existentes_df["N"] == nkey].tolist()
+                                        if not idxs:
+                                            # fallback: se não achar, tratamos como novo append
+                                            row_values = [d_in.get(h, "") for h in headers]
+                                            aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
+                                            atualizados += 1
+                                            continue
+                    
+                                        sheet_row_idx0 = idxs[0]              # índice 0-based no DF
+                                        sheet_row = sheet_row_idx0 + 2        # linha real no Sheets (1 header + 1-based)
+                    
+                                        # monta a linha na ordem exata do header para atualizar in-place
+                                        row_values = [d_in.get(h, "") for h in headers]
+                    
+                                        # escreve a partir da coluna A dessa linha
+                                        aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
+                                        atualizados += 1
+                                    else:
+                                        pulados += 1
+                    
+                                st.success(f"Concluído: {atualizados} linha(s) substituída(s), {pulados} mantida(s) do Google Sheets.")
+                                st.info("Dica: recarregue/atualize a planilha para ver as alterações.")
+                            except Exception as e:
+                                st.error(f"❌ Erro ao aplicar escolhas: {e}")
+                    
+                        # bloqueia envio automático enquanto houver conflitos
+                        pode_enviar = False
+
 
                     # 8) Envio
                     if todas_lojas_ok and pode_enviar:

@@ -1268,26 +1268,51 @@ with st.spinner("⏳ Processando..."):
                             # reindex só com as colunas encontradas
                             df_view = df_comp.reindex(columns=cols_keep, fill_value="")
                             
-                            # estiliza por origem
-                            color_map = {"Nova Arquivo": "#e9f9ee", "Google Sheets": "#fff0f0"}
-                            def _row_style(row):
-                                return [f"background-color: {color_map.get(row['__origem__'], '#ffffff')}"] * len(row)
-                            
-                            st.dataframe(
-                                df_view.style.apply(_row_style, axis=1),
-                                use_container_width=True, hide_index=True
-                            )
-                            
-                            # 🔘 flag: escolha do usuário (mantido)
-                            escolhas[nkey] = st.radio(
-                                "Qual registro você quer manter?",
-                                options=["Nova Arquivo", "Google Sheets"],
-                                index=0,
-                                horizontal=True,
-                                key=f"keep_{nkey}"
-                            )
-                            st.divider()
 
+                            # cores por origem (apenas referência, já que st.data_editor não aceita .style)
+                            color_map = {"Nova Arquivo": "#e9f9ee", "Google Sheets": "#fff0f0"}
+                            
+                            # subset de colunas que você pediu
+                            cols_show = [
+                                "__origem__",
+                                "Data",
+                                "Dia da Semana",
+                                "Loja",
+                                "Codigo Everest",
+                                "Grupo",
+                                "Cod Grupo Empresas",
+                                "Fat.Total"
+                            ]
+                            
+                            # só mantém colunas que existem
+                            cols_show = [c for c in cols_show if c in df_comp.columns]
+                            
+                            # cria coluna de flag
+                            if "Manter" not in df_comp.columns:
+                                df_comp["Manter"] = False
+                            
+                            # organiza ordem: Manter + colunas visíveis
+                            cols_final = ["Manter"] + cols_show
+                            df_view = df_comp.reindex(columns=cols_final)
+                            
+                            # editor interativo: usuário marca quais manter
+                            edited_df = st.data_editor(
+                                df_view,
+                                use_container_width=True,
+                                hide_index=True,
+                                key=f"editor_dup_{nkey}",
+                                column_config={
+                                    "Manter": st.column_config.CheckboxColumn(
+                                        help="Marque qual registro deseja manter",
+                                        default=False
+                                    )
+                                }
+                            )
+                            
+                            # salva escolhas
+                            escolhas[nkey] = edited_df[edited_df["Manter"] == True]
+                            
+                            st.divider()
 
                     
                         # aplicar escolhas

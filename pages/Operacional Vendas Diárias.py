@@ -765,7 +765,26 @@ with st.spinner("⏳ Processando..."):
                     st.dataframe(df_n, use_container_width=True)
                 else:
                     st.info("Nenhum novo registro encontrado.")
+                # --- GUARDS (colocar logo ANTES do bloco if todas_lojas_ok and pode_enviar) ---
+                # garante flags mesmo se vier por outro caminho do código
+                if 'todas_lojas_ok' not in locals():
+                    todas_lojas_ok = True
+                if 'pode_enviar' not in locals():
+                    pode_enviar = True
                 
+                # garante DataFrames usados no envio
+                import pandas as pd
+                if 'df_novos' not in locals():
+                    df_novos = pd.DataFrame()
+                if 'df_dup_M' not in locals():
+                    df_dup_M = pd.DataFrame()
+                
+                # garante a worksheet de destino
+                if 'aba_destino' not in locals():
+                    gc = get_gc()
+                    planilha_destino = gc.open("Vendas diarias")
+                    aba_destino = planilha_destino.worksheet("Fat Sistema Externo")
+
                 # === ENVIO (apenas NOVOS) ===
               
                 pode_enviar = df_suspeitos.empty

@@ -1151,7 +1151,7 @@ with st.spinner("⏳ Processando..."):
                         # Requer estas variáveis já criadas antes: entrada_por_n, sheet_por_n, headers,
                         # valores_existentes_df, aba_destino
                         
-                        st.markdown("### 🔴 Possíveis duplicados — marque o(s) que deseja manter")
+                        #st.markdown("### 🔴 Possíveis duplicados — marque o(s) que deseja manter")
                         
                         def _fmt_serial_to_br(x):
                             try:
@@ -1232,7 +1232,7 @@ with st.spinner("⏳ Processando..."):
                                     )
                                 }
                             )
-                            aplicar_tudo = st.form_submit_button("✅ Aplicar escolhas (atualizar planilha)")
+                            aplicar_tudo = st.form_submit_button("✅Atualizar planilha")
                         
                         if aplicar_tudo:
                             try:

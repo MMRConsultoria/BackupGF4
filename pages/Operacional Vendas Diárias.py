@@ -933,7 +933,54 @@ with st.spinner("⏳ Processando..."):
                     if ok:
                         st.session_state.manual_df = template_manuais(10)
                         st.rerun()
-    
+            def _aplicar_atualizacoes_google_sheets(edited_df, entrada_por_n, valores_existentes_df, headers, aba_destino, df_novos):
+                import pandas as pd
+                def _normN(x): return str(x).strip().replace(".0", "")
+                adicionados = 0; atualizados = 0; pulados = 0
+            
+                if edited_df is not None and not edited_df.empty and ("N" in edited_df.columns) and ("__tipo__" in edited_df.columns):
+                    edited = edited_df.copy()
+                    edited["N"] = edited["N"].astype(str).map(_normN)
+                    if "Manter" in edited.columns and edited["Manter"].dtype != bool:
+                        edited["Manter"] = edited["Manter"].astype(bool)
+                    edited["Manter"] = edited["Manter"].fillna(False)
+            
+                    entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
+            
+                    for nkey, bloco in edited.groupby("N"):
+                        manter_novo  = bool((bloco["__tipo__"].eq("entrada") & bloco["Manter"]).any())
+                        manter_velho = bool((bloco["__tipo__"].eq("sheet")   & bloco["Manter"]).any())
+                        d_in = entrada_por_n_norm.get(nkey)
+                        if d_in is None:
+                            pulados += 1; continue
+                        row_values = [d_in.get(h, "") for h in headers]
+            
+                        if manter_novo and manter_velho:
+                            aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
+                            adicionados += 1
+                        elif manter_novo and not manter_velho:
+                            if "N" in valores_existentes_df.columns:
+                                idxs = valores_existentes_df.index[valores_existentes_df["N"].astype(str).map(_normN) == nkey].tolist()
+                            else:
+                                idxs = []
+                            if idxs:
+                                sheet_row = idxs[0] + 2
+                                aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
+                                atualizados += 1
+                            else:
+                                aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
+                                adicionados += 1
+                        else:
+                            pulados += 1
+            
+                if isinstance(df_novos, pd.DataFrame) and not df_novos.empty:
+                    dados_para_enviar = df_novos.fillna("").values.tolist()
+                    if dados_para_enviar:
+                        aba_destino.append_rows(dados_para_enviar, value_input_option="USER_ENTERED")
+                        adicionados += len(dados_para_enviar)
+            
+                return adicionados, atualizados, pulados
+          
         # ---------- ENVIO AUTOMÁTICO (lógica antiga preservada) ----------
         if enviar_auto:
             if 'df_final' not in st.session_state or st.session_state.df_final.empty:
@@ -1226,6 +1273,8 @@ with st.spinner("⏳ Processando..."):
                             df_conf.insert(0, "Manter", False)
                         
                         # ---------- EDITOR (em FORM) ----------
+                        # ... você já montou df_conf acima ...
+                        
                         st.markdown("### 🔴 Possíveis duplicados — marque o(s) que deseja manter")
                         with st.form("form_conflitos_globais"):
                             edited_conf = st.data_editor(
@@ -1234,107 +1283,42 @@ with st.spinner("⏳ Processando..."):
                                 hide_index=True,
                                 key="editor_conflitos",
                                 column_config={
-                                    "Manter": st.column_config.CheckboxColumn(help="Marque quais linhas (de cada N) deseja manter", default=False),
+                                    "Manter": st.column_config.CheckboxColumn(default=False),
                                     "N": st.column_config.TextColumn(disabled=True),
                                     "__origem__": st.column_config.TextColumn(disabled=True),
                                     "__tipo__": st.column_config.TextColumn(disabled=True),
-                                    # (opcional) travar leitura:
-                                    "Data": st.column_config.TextColumn(disabled=True),
-                                    "Loja": st.column_config.TextColumn(disabled=True),
-                                    "Codigo Everest": st.column_config.TextColumn(disabled=True),
-                                    "Fat.Total": st.column_config.TextColumn(disabled=True),
+                                    # demais colunas que você travou para leitura...
                                 }
                             )
+                        
+                            # ⬇️ EXATAMENTE AQUI:
                             if st.form_submit_button("✅ Atualizar Planilha", use_container_width=True):
-                                # seta "commit" e reroda
                                 st.session_state["_commit_conflitos"] = True
                                 st.session_state["_edited_conf_cache"] = edited_conf.copy() if edited_conf is not None else None
                                 st.rerun()
                         
-                        # ---------- APLICAÇÃO (só no ciclo após o clique) ----------
+                        # ⬇️ e logo DEPOIS do with st.form(...):
+                        # ---------- APLICAÇÃO (apenas após o clique no botão do form) ----------
                         if st.session_state.get("_commit_conflitos"):
-                            st.session_state["_commit_conflitos"] = False  # consome o commit
-                            edited = st.session_state.get("_edited_conf_cache")
+                            st.session_state["_commit_conflitos"] = False
+                            edited_cache = st.session_state.get("_edited_conf_cache")
                         
                             try:
-                                atualizados = 0
-                                adicionados = 0
-                                pulados     = 0
-                        
-                                # === 1) Resolver duplicados conforme marcação ===
-                                if edited is not None and not edited.empty and ("N" in edited.columns) and ("__tipo__" in edited.columns):
-                                    edited["N"] = edited["N"].astype(str).map(_normN)
-                                    if edited["Manter"].dtype != bool:
-                                        edited["Manter"] = edited["Manter"].astype(bool)
-                        
-                                    entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
-                        
-                                    for nkey, bloco in edited.groupby("N"):
-                                        manter_novo  = bool((bloco["__tipo__"].eq("entrada") & bloco["Manter"]).any())
-                                        manter_velho = bool((bloco["__tipo__"].eq("sheet")   & bloco["Manter"]).any())
-                        
-                                        d_in = entrada_por_n_norm.get(nkey)
-                                        if d_in is None:
-                                            pulados += 1
-                                            continue
-                        
-                                        row_values = [d_in.get(h, "") for h in headers]  # ordem do cabeçalho do Sheet
-                        
-                                        if manter_novo and manter_velho:
-                                            # mantém os dois → append da linha nova
-                                            aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
-                                            adicionados += 1
-                        
-                                        elif manter_novo and not manter_velho:
-                                            # substitui 1ª ocorrência do N; se não houver, append
-                                            idxs = valores_existentes_df.index[valores_existentes_df["N"].astype(str).map(_normN) == nkey].tolist() \
-                                                   if "N" in valores_existentes_df.columns else []
-                                            if idxs:
-                                                sheet_row = idxs[0] + 2  # 1 header + base 0
-                                                aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
-                                                atualizados += 1
-                                                # espelho local (opcional)
-                                                try:
-                                                    valores_existentes_df.loc[idxs[0], list(valores_existentes_df.columns.intersection(headers))] = row_values[:len(headers)]
-                                                except Exception:
-                                                    pass
-                                            else:
-                                                aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
-                                                adicionados += 1
-                        
-                                        elif not manter_novo and manter_velho:
-                                            pulados += 1
-                                        else:
-                                            pulados += 1
-                        
-                                # === 2) Incluir TODOS os novos (sem conflito) no mesmo clique ===
-                                
-                              
-                                # ---------- APLICACAO (so no ciclo apos o clique no botao do form) ----------
-                                if st.session_state.get("_commit_conflitos"):
-                                    # consome o commit e le o cache
-                                    st.session_state["_commit_conflitos"] = False
-                                    edited_cache = st.session_state.get("_edited_conf_cache")
-                                
-                                    try:
-                                        adicionados, atualizados, pulados = _aplicar_atualizacoes_google_sheets(
-                                            edited_df=edited_cache,
-                                            entrada_por_n=entrada_por_n,
-                                            valores_existentes_df=valores_existentes_df,
-                                            headers=headers,
-                                            aba_destino=aba_destino,
-                                            df_novos=df_novos
-                                        )
-                                
-                                        st.success(f"Concluido: {adicionados} adicionados, {atualizados} substituidos, {pulados} ignorados.")
-                                
-                                        # impede que o fluxo siga para '# 8) Envio' neste ciclo
-                                        st.session_state["_commit_ok"] = True
-                                        st.stop()
-                                
-                                    except Exception as e:
-                                        st.error(f"Erro ao aplicar escolhas: {e}")
-                                        st.stop()
+                                adicionados, atualizados, pulados = _aplicar_atualizacoes_google_sheets(
+                                    edited_df=edited_cache,
+                                    entrada_por_n=entrada_por_n,
+                                    valores_existentes_df=valores_existentes_df,
+                                    headers=headers,
+                                    aba_destino=aba_destino,
+                                    df_novos=df_novos
+                                )
+                                st.success(f"Concluído: {adicionados} adicionados, {atualizados} substituídos, {pulados} ignorados.")
+                                st.session_state["_commit_ok"] = True
+                                st.stop()  # impede cair no bloco "# 8) Envio" neste ciclo
+                            except Exception as e:
+                                st.error(f"Erro ao aplicar escolhas: {e}")
+                                st.stop()
+
 
 
 

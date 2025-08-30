@@ -1241,31 +1241,28 @@ with st.spinner("⏳ Processando..."):
                         if "Manter" not in df_conf.columns:
                             df_conf.insert(0, "Manter", False)
                         
-                        with st.form("form_conflitos_globais"):
-                            edited_conf = st.data_editor(
-                                df_conf,
-                                use_container_width=True,
-                                hide_index=True,
-                                key="editor_conflitos",
-                                column_config={
-                                    "Manter": st.column_config.CheckboxColumn(
-                                        help="Marque quais linhas (de cada N) deseja manter",
-                                        default=False
-                                    ),
-                                    "N": st.column_config.TextColumn(disabled=True)  # mostra N só para referência
-                                }
-                            )
-                            aplicar_tudo = st.form_submit_button("✅ Atualizar Planilha")
-
+                        # Editor sempre visível
+                        edited_conf = st.data_editor(
+                            df_conf,
+                            use_container_width=True,
+                            hide_index=True,
+                            key="editor_conflitos",
+                            column_config={
+                                "Manter": st.column_config.CheckboxColumn(
+                                    help="Marque quais linhas (de cada N) deseja manter",
+                                    default=False
+                                ),
+                                "N": st.column_config.TextColumn(disabled=True)
+                            }
+                        )
                         
-                       
-                        if aplicar_tudo:
+                        # Botão único para aplicar mudanças
+                        if st.button("✅ Atualizar Planilha", key="btn_atualizar_planilha"):
                             try:
                                 atualizados = 0
                                 adicionados = 0
                                 pulados     = 0
                         
-                                # === 1) Tratar duplicados ===
                                 if not edited_conf.empty and "N" in edited_conf.columns:
                                     entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
                         
@@ -1281,16 +1278,12 @@ with st.spinner("⏳ Processando..."):
                                         row_values = [d_in.get(h, "") for h in headers]
                         
                                         if manter_novo and manter_velho:
-                                            # mantém os dois
                                             aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                             adicionados += 1
                         
                                         elif manter_novo and not manter_velho:
-                                            # substitui ou inclui
-                                            if "N" in valores_existentes_df.columns:
-                                                idxs = valores_existentes_df.index[valores_existentes_df["N"] == nkey].tolist()
-                                            else:
-                                                idxs = []
+                                            idxs = valores_existentes_df.index[valores_existentes_df["N"] == nkey].tolist() \
+                                                   if "N" in valores_existentes_df.columns else []
                                             if idxs:
                                                 sheet_row = idxs[0] + 2
                                                 aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
@@ -1304,13 +1297,12 @@ with st.spinner("⏳ Processando..."):
                                         else:
                                             pulados += 1
                         
-                                # === 2) Sempre incluir os novos (df_novos) ===
+                                # Também insere os novos
                                 if not df_novos.empty:
                                     dados_para_enviar = df_novos.fillna("").values.tolist()
                                     aba_destino.append_rows(dados_para_enviar, value_input_option="USER_ENTERED")
                                     adicionados += len(dados_para_enviar)
                         
-                                # === 3) Mensagem final ===
                                 st.success(f"✅ Concluído: {adicionados} adicionados, {atualizados} substituídos, {pulados} ignorados.")
                         
                             except Exception as e:

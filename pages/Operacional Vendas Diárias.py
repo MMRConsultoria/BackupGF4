@@ -1147,23 +1147,43 @@ with st.spinner("⏳ Processando..."):
                         for nkey in entrada_por_n.keys():
                             sheet_por_n[nkey] = valores_existentes_df[valores_existentes_df["N"] == nkey].copy()
                     
-                        # interface por N
-                        #escolhas = {}
-                        #for nkey in sorted(entrada_por_n.keys()):
-                            #st.markdown(f"#### N: `{nkey}`")
-                    
-                            d_in = entrada_por_n[nkey]
-                            df_in = pd.DataFrame([d_in])
-                            
-                            # ✅ Ajusta Data IN-PLACE (sem criar segunda coluna)
-                            if "Data" in df_in.columns:
-                                df_in["Data"] = pd.to_datetime(
-                                    df_in["Data"], origin="1899-12-30", unit="D", errors="coerce"
-                                ).dt.strftime("%d/%m/%Y")
-                            
+                        # ================== CONFLITOS: TABELA ÚNICA + BOTÃO ÚNICO ==================
+                        # Requer estas variáveis já criadas antes: entrada_por_n, sheet_por_n, headers,
+                        # valores_existentes_df, aba_destino
+                        
+                        st.markdown("### 🔴 Possíveis duplicados — marque o(s) que deseja manter")
+                        
+                        def _fmt_serial_to_br(x):
+                            try:
+                                return pd.to_datetime(pd.Series([x]), origin="1899-12-30", unit="D", errors="coerce")\
+                                         .dt.strftime("%d/%m/%Y").iloc[0]
+                            except Exception:
+                                return x
+                        
+                        def _normN(x):
+                            return str(x).strip().replace(".0", "")
+                        
+                        # normaliza N já lido do Sheet
+                        valores_existentes_df = valores_existentes_df.copy()
+                        if "N" in valores_existentes_df.columns:
+                            valores_existentes_df["N"] = valores_existentes_df["N"].map(_normN)
+                        
+                        # monta uma lista única com TODAS as linhas (entrada + sheet) por N
+                        conflitos_linhas = []
+                        alvos_ordem = [
+                            "__origem__", "N", "Data", "Dia da Semana", "Loja",
+                            "Codigo Everest", "Grupo", "Cod Grupo Empresas", "Fat.Total", "M"
+                        ]
+                        
+                        for nkey in sorted(entrada_por_n.keys()):
+                            d_in = entrada_por_n[nkey].copy()
+                            d_in["__origem__"] = "Nova Arquivo"
+                            d_in["N"] = _normN(d_in.get("N", ""))
+                            if "Data" in d_in:
+                                d_in["Data"] = _fmt_serial_to_br(d_in["Data"])
+                            conflitos_linhas.append(d_in)
+                        
                             df_sh = sheet_por_n[nkey].copy()
-                            
-                            # Se a planilha tiver "Data" como serial, formata para exibição também
                             if "Data" in df_sh.columns:
                                 try:
                                     df_sh["Data"] = pd.to_datetime(
@@ -1172,164 +1192,106 @@ with st.spinner("⏳ Processando..."):
                                     ).dt.strftime("%d/%m/%Y")
                                 except Exception:
                                     pass
-                            
-                            # Ordem de exibição: cabeçalho do Sheets + M e N (se existirem)
-                            cols_show = [h for h in headers]  # já estão na ordem do sheet
-                            for extra in ["M", "N"]:
-                                if extra not in cols_show:
-                                    cols_show.append(extra)
-                            # ✅ remove duplicados preservando ordem
-                            cols_show = list(dict.fromkeys(cols_show))
-                            
-                            # ✅ Reindex só com colunas que existem no DF (evita erro)
-                            cols_in_in  = [c for c in cols_show if c in df_in.columns]
-                            cols_in_sh  = [c for c in cols_show if c in df_sh.columns]
-                            
-                            df_in = df_in.reindex(columns=cols_in_in, fill_value="")
-                            df_sh = df_sh.reindex(columns=cols_in_sh, fill_value="")
-                            
-                            # Marcar origem
-                            df_in["__origem__"] = "Nova Arquivo"
-                            df_sh["__origem__"] = "Google Sheets"
-                            
-                            # Empilhar para exibição (coluna de origem primeiro)
-                            df_comp = pd.concat([df_in, df_sh], ignore_index=True)
-                            colunas_ordem = ["__origem__"] + [c for c in cols_show if c in df_comp.columns and c != "__origem__"] \
-                                            + [c for c in df_comp.columns if c not in cols_show and c != "__origem__"]
-                            df_comp = df_comp.reindex(columns=colunas_ordem, fill_value="")
-
-                            # ---------- escolher e exibir apenas colunas desejadas ----------
-                            def _norm_simple(s: str) -> str:
-                                import unicodedata, re
-                                s = str(s or "").strip().lower()
-                                s = unicodedata.normalize("NFD", s)
-                                s = "".join(c for c in s if unicodedata.category(c) != "Mn")  # remove acentos
-                                s = re.sub(r"[^a-z0-9]+", " ", s).strip()                      # normaliza
-                                return s
-                            
-                            # candidatos por coluna desejada (aceita variações)
-                            targets = {
-                                "__origem__": ["__origem__"],
-                                "Data": ["data"],
-                                "Dia da Semana": ["dia da semana","dia semana","dia"],
-                                "Loja": ["loja"],
-                                "Codigo Everest": ["codigo everest","código everest","cod everest","codigo ev","cod ev"],
-                                "Grupo": ["grupo"],
-                                "Cod Grupo Empresas": ["cod grupo empresas","codigo grupo empresas","código grupo everest","codigo grupo everest","cod grupo","codigo grupo"],
-                                "Fat.Total": ["fat.total","fat total","faturamento total","faturamento"],
-                            }
-                            
-                            # cria lookup normalizado -> coluna existente em df_comp
-                            norm_to_col = {_norm_simple(c): c for c in df_comp.columns}
-                            
-                            # monta lista final na ordem pedida
-                            cols_keep = []
-                            for display_name, variations in targets.items():
-                                found_col = None
-                                for v in variations:
-                                    nv = _norm_simple(v)
-                                    if nv in norm_to_col:
-                                        found_col = norm_to_col[nv]
-                                        break
-                                if found_col:
-                                    cols_keep.append(found_col)
-                            
-                            # garante __origem__ no primeiro lugar
-                            if "__origem__" in df_comp.columns and "__origem__" not in cols_keep:
-                                cols_keep = ["__origem__"] + cols_keep
-                            else:
-                                # se já está, move para frente
-                                cols_keep = ["__origem__"] + [c for c in cols_keep if c != "__origem__"]
-                            
-                            # reindex só com as colunas encontradas
-                            df_view = df_comp.reindex(columns=cols_keep, fill_value="")
-                            
-                            # ---------- preparar dataframe para exibição ----------
-                            # subset de colunas para exibição
-                            cols_show = [
-                                "Manter",
-                                "__origem__",
-                                "Data",
-                                "Dia da Semana",
-                                "Loja",
-                                "Codigo Everest",
-                                "Grupo",
-                                "Cod Grupo Empresas",
-                                "Fat.Total"
-                            ]
-                            
-                            # cria coluna de flag se não existir
-                            if "Manter" not in df_comp.columns:
-                                df_comp["Manter"] = False
-                            
-                            # mantém só colunas que existem
-                            cols_show = [c for c in cols_show if c in df_comp.columns]
-                            df_view = df_comp[cols_show].copy()
-                            
-                            # adiciona emoji no campo origem (em vez de cor de fundo)
-                            df_view["__origem__"] = df_view["__origem__"].replace({
+                        
+                            for _, row in df_sh.iterrows():
+                                d_sh = row.to_dict()
+                                d_sh["__origem__"] = "Google Sheets"
+                                if "Código Everest" in d_sh and "Codigo Everest" not in d_sh:
+                                    d_sh["Codigo Everest"] = d_sh["Código Everest"]
+                                if "Fat Total" in d_sh and "Fat.Total" not in d_sh:
+                                    d_sh["Fat.Total"] = d_sh["Fat Total"]
+                                conflitos_linhas.append(d_sh)
+                        
+                        df_conf = pd.DataFrame(conflitos_linhas).copy()
+                        
+                        # ordena/seleciona colunas
+                        cols_keep = [c for c in alvos_ordem if c in df_conf.columns]
+                        df_conf = df_conf.reindex(columns=cols_keep + [c for c in df_conf.columns if c not in cols_keep], fill_value="")
+                        
+                        # emojis na origem
+                        if "__origem__" in df_conf.columns:
+                            df_conf["__origem__"] = df_conf["__origem__"].replace({
                                 "Nova Arquivo": "🟢 Nova Arquivo",
                                 "Google Sheets": "🔴 Google Sheets"
                             })
-                            
-                            # editor interativo — apenas captura escolhas
-                           
-                            
-
-                            with st.form(key=f"form_dup_{nkey}"):
-                                edited_df = st.data_editor(
-                                    df_view,
-                                    use_container_width=True,
-                                    hide_index=True,
-                                    key=f"editor_dup_{nkey}",
-                                    column_config={
-                                        "Manter": st.column_config.CheckboxColumn(
-                                            help="Marque qual(is) registro(s) deseja manter",
-                                            default=False
-                                        )
-                                    }
-                                )
-                                submitted = st.form_submit_button("✅ Aplicar escolhas (atualizar planilha)")
-                                if submitted:
-                                    try:
-                                        atualizados = 0
-                                        adicionados = 0
-                                        pulados = 0
-                            
-                                        escolha_df = edited_df  # pega direto do editor
-                                        if escolha_df is not None and "Manter" in escolha_df.columns:
-                                            manter_novo  = any((escolha_df["__origem__"] == "🟢 Nova Arquivo") & (escolha_df["Manter"]))
-                                            manter_velho = any((escolha_df["__origem__"] == "🔴 Google Sheets") & (escolha_df["Manter"]))
-                            
-                                            d_in = entrada_por_n[nkey]
-                            
-                                            if manter_novo and manter_velho:
-                                                row_values = [d_in.get(h, "") for h in headers]
+                        
+                        # coluna de marcação
+                        if "Manter" not in df_conf.columns:
+                            df_conf.insert(0, "Manter", False)
+                        
+                        with st.form("form_conflitos_globais"):
+                            edited_conf = st.data_editor(
+                                df_conf,
+                                use_container_width=True,
+                                hide_index=True,
+                                key="editor_conflitos",
+                                column_config={
+                                    "Manter": st.column_config.CheckboxColumn(
+                                        help="Marque quais linhas (de cada N) deseja manter",
+                                        default=False
+                                    )
+                                }
+                            )
+                            aplicar_tudo = st.form_submit_button("✅ Aplicar escolhas (atualizar planilha)")
+                        
+                        if aplicar_tudo:
+                            try:
+                                atualizados = 0
+                                adicionados = 0
+                                pulados     = 0
+                        
+                                # mapa rápido de entrada por N normalizado
+                                entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
+                        
+                                if "N" not in edited_conf.columns:
+                                    st.error("❌ Não foi possível identificar a coluna N na tabela de conflitos.")
+                                else:
+                                    for nkey, bloco in edited_conf.groupby(edited_conf["N"].map(_normN)):
+                                        manter_novo  = any((bloco["__origem__"] == "🟢 Nova Arquivo")  & (bloco["Manter"]))
+                                        manter_velho = any((bloco["__origem__"] == "🔴 Google Sheets") & (bloco["Manter"]))
+                        
+                                        d_in = entrada_por_n_norm.get(nkey, None)
+                                        if d_in is None:
+                                            pulados += 1
+                                            continue
+                        
+                                        row_values = [d_in.get(h, "") for h in headers]  # ordem exata do cabeçalho
+                        
+                                        if manter_novo and manter_velho:
+                                            # mantém os dois -> append
+                                            aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
+                                            adicionados += 1
+                        
+                                        elif manter_novo and not manter_velho:
+                                            # update na 1ª ocorrência do N; se não houver, append
+                                            if "N" in valores_existentes_df.columns:
+                                                idxs = valores_existentes_df.index[valores_existentes_df["N"] == nkey].tolist()
+                                            else:
+                                                idxs = []
+                                            if idxs:
+                                                sheet_row = idxs[0] + 2  # 1 header + base 0
+                                                aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
+                                                atualizados += 1
+                                                # espelho local
+                                                valores_existentes_df.loc[idxs[0], list(valores_existentes_df.columns.intersection(headers))] = row_values[:len(headers)]
+                                            else:
                                                 aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                                 adicionados += 1
-                            
-                                            elif manter_novo and not manter_velho:
-                                                idxs = valores_existentes_df.index[valores_existentes_df["N"] == nkey].tolist()
-                                                if idxs:
-                                                    sheet_row = idxs[0] + 2
-                                                    row_values = [d_in.get(h, "") for h in headers]
-                                                    aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
-                                                    atualizados += 1
-                                                else:
-                                                    row_values = [d_in.get(h, "") for h in headers]
-                                                    aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
-                                                    adicionados += 1
-                            
-                                            elif not manter_novo and manter_velho:
-                                                pulados += 1
-                                            else:
-                                                pulados += 1
-                            
-                                        st.success(f"✅ Concluído: {adicionados} adicionado(s), {atualizados} substituído(s), {pulados} ignorado(s).")
-                                        st.info("ℹ️ Atualize sua planilha no navegador para ver as mudanças.")
-                            
-                                    except Exception as e:
-                                        st.error(f"❌ Erro ao aplicar escolhas: {e}")
+                        
+                                        elif not manter_novo and manter_velho:
+                                            # mantém como está
+                                            pulados += 1
+                                        else:
+                                            # nada marcado
+                                            pulados += 1
+                        
+                                st.success(f"✅ Concluído: {adicionados} adicionado(s), {atualizados} substituído(s), {pulados} ignorado(s).")
+                                st.info("ℹ️ Recarregue o Google Sheets no navegador para ver as mudanças.")
+                        
+                            except Exception as e:
+                                st.error(f"❌ Erro ao aplicar escolhas: {e}")
+                        # ================== /CONFLITOS GLOBAIS ==================
+
 
 
                         # bloqueia envio automático enquanto houver conflitos

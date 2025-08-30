@@ -1309,18 +1309,33 @@ with st.spinner("⏳ Processando..."):
                         
                                 # === 2) Incluir TODOS os novos (sem conflito) no mesmo clique ===
                                 
-                                if isinstance(df_novos, pd.DataFrame) and not df_novos.empty:
-                                    dados_para_enviar = df_novos.fillna("").values.tolist()
-                                    if dados_para_enviar:
-                                        aba_destino.append_rows(dados_para_enviar, value_input_option="USER_ENTERED")
-                                        adicionados += len(dados_para_enviar)
+                              
+                                # ---------- APLICACAO (so no ciclo apos o clique no botao do form) ----------
+                                if st.session_state.get("_commit_conflitos"):
+                                    # consome o commit e le o cache
+                                    st.session_state["_commit_conflitos"] = False
+                                    edited_cache = st.session_state.get("_edited_conf_cache")
                                 
-                                st.success(f"✅ Concluído: {adicionados} adicionados, {atualizados} substituídos, {pulados} ignorados.")
+                                    try:
+                                        adicionados, atualizados, pulados = _aplicar_atualizacoes_google_sheets(
+                                            edited_df=edited_cache,
+                                            entrada_por_n=entrada_por_n,
+                                            valores_existentes_df=valores_existentes_df,
+                                            headers=headers,
+                                            aba_destino=aba_destino,
+                                            df_novos=df_novos
+                                        )
                                 
-                                # 🔑 impede que o fluxo volte para "# 8) Envio" e sobrescreva
-                                st.session_state["_commit_ok"] = True
-                                pode_enviar = False   # mantém bloqueado o envio automático
-                                st.stop()             # encerra a execução aqui
+                                        st.success(f"Concluido: {adicionados} adicionados, {atualizados} substituidos, {pulados} ignorados.")
+                                
+                                        # impede que o fluxo siga para '# 8) Envio' neste ciclo
+                                        st.session_state["_commit_ok"] = True
+                                        st.stop()
+                                
+                                    except Exception as e:
+                                        st.error(f"Erro ao aplicar escolhas: {e}")
+                                        st.stop()
+
 
 
                         # bloqueia envio automático enquanto houver conflitos

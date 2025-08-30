@@ -1147,11 +1147,8 @@ with st.spinner("⏳ Processando..."):
                         for nkey in entrada_por_n.keys():
                             sheet_por_n[nkey] = valores_existentes_df[valores_existentes_df["N"] == nkey].copy()
                     
-                        # ================== CONFLITOS: TABELA ÚNICA + BOTÃO ÚNICO ==================
-                        # Requer estas variáveis já criadas antes: entrada_por_n, sheet_por_n, headers,
-                        # valores_existentes_df, aba_destino
-                        
-                        #st.markdown("### 🔴 Possíveis duplicados — marque o(s) que deseja manter")
+                        # ================== CONFLITOS: TABELA ÚNICA + BOTÃO ÚNICO (ROBUSTO) ==================
+                        # Requer: entrada_por_n, sheet_por_n, headers, valores_existentes_df, aba_destino, df_novos
                         
                         def _fmt_serial_to_br(x):
                             try:
@@ -1168,30 +1165,31 @@ with st.spinner("⏳ Processando..."):
                         if "N" in valores_existentes_df.columns:
                             valores_existentes_df["N"] = valores_existentes_df["N"].map(_normN)
                         
-                        # monta uma lista única com TODAS as linhas (entrada + sheet) por N
                         conflitos_linhas = []
                         alvos_ordem = [
-                            "__origem__", "N", "Data", "Dia da Semana", "Loja",
+                            "Manter", "__origem__", "__tipo__", "N", "Data", "Dia da Semana", "Loja",
                             "Codigo Everest", "Grupo", "Cod Grupo Empresas", "Fat.Total", "M"
                         ]
                         
                         for nkey in sorted(entrada_por_n.keys()):
+                            # ---- ENTRADA (Nova) ----
                             d_in = entrada_por_n[nkey].copy()
-                            d_in["__origem__"] = "Nova Arquivo"
+                            d_in["__origem__"] = "🟢 Nova Arquivo"
+                            d_in["__tipo__"]   = "entrada"           # <- coluna técnica estável
                             d_in["N"] = _normN(d_in.get("N", ""))
                             if "Data" in d_in:
                                 d_in["Data"] = _fmt_serial_to_br(d_in["Data"])
                             conflitos_linhas.append(d_in)
                         
+                            # ---- SHEET (existente) ----
                             df_sh = sheet_por_n[nkey].copy()
-
-                            # --- 1) Normaliza os nomes das colunas vindos do Google Sheets ---
                             df_sh.columns = df_sh.columns.astype(str).str.strip()
-                            for c in df_sh.columns:
+                            # padroniza Data
+                            for c in list(df_sh.columns):
                                 if c.strip().lower() in ["data", "dt", "data lançamento", "dt lançamento"]:
                                     df_sh = df_sh.rename(columns={c: "Data"})
-                            
-                            # --- 2) Formata a Data (serial Excel ou texto dd/mm/yyyy) ---
+                                    break
+                        
                             if "Data" in df_sh.columns:
                                 try:
                                     ser = pd.to_numeric(df_sh["Data"], errors="coerce")
@@ -1205,43 +1203,38 @@ with st.spinner("⏳ Processando..."):
                                         ).dt.strftime("%d/%m/%Y")
                                 except Exception:
                                     pass
-                            
-                            # --- 3) Itera as linhas e adiciona no empilhado ---
+                        
                             for _, row in df_sh.iterrows():
                                 d_sh = row.to_dict()
-                                d_sh["__origem__"] = "Google Sheets"
-                            
-                                # ajustes de nomes alternativos
+                                d_sh["__origem__"] = "🔴 Google Sheets"
+                                d_sh["__tipo__"]   = "sheet"          # <- coluna técnica estável
+                                # compat de nomes
                                 if "Código Everest" in d_sh and "Codigo Everest" not in d_sh:
                                     d_sh["Codigo Everest"] = d_sh["Código Everest"]
                                 if "Fat Total" in d_sh and "Fat.Total" not in d_sh:
                                     d_sh["Fat.Total"] = d_sh["Fat Total"]
-                            
+                                d_sh["N"] = _normN(d_sh.get("N", ""))
                                 conflitos_linhas.append(d_sh)
-
                         
+                        # DF único
                         df_conf = pd.DataFrame(conflitos_linhas).copy()
-                        # garante que N existe
-                        if "N" not in df_conf.columns:
-                            st.error("❌ Coluna N não encontrada nos dados de conflito.")
-
-                            
+                        
+                        # sanity mínima
+                        for need in ["N", "__tipo__"]:
+                            if need not in df_conf.columns:
+                                st.error(f"❌ Coluna obrigatória ausente nos conflitos: {need}")
+                                st.stop()
+                        
                         # ordena/seleciona colunas
                         cols_keep = [c for c in alvos_ordem if c in df_conf.columns]
                         df_conf = df_conf.reindex(columns=cols_keep + [c for c in df_conf.columns if c not in cols_keep], fill_value="")
-                        
-                        # emojis na origem
-                        if "__origem__" in df_conf.columns:
-                            df_conf["__origem__"] = df_conf["__origem__"].replace({
-                                "Nova Arquivo": "🟢 Nova Arquivo",
-                                "Google Sheets": "🔴 Google Sheets"
-                            })
                         
                         # coluna de marcação
                         if "Manter" not in df_conf.columns:
                             df_conf.insert(0, "Manter", False)
                         
-                        # Editor sempre visível
+                        # Editor persistente (sem form)
+                        st.markdown("### 🔴 Possíveis duplicados — marque o(s) que deseja manter")
                         edited_conf = st.data_editor(
                             df_conf,
                             use_container_width=True,
@@ -1252,61 +1245,93 @@ with st.spinner("⏳ Processando..."):
                                     help="Marque quais linhas (de cada N) deseja manter",
                                     default=False
                                 ),
-                                "N": st.column_config.TextColumn(disabled=True)
+                                "N": st.column_config.TextColumn(disabled=True),
+                                "__origem__": st.column_config.TextColumn(disabled=True),
+                                "__tipo__": st.column_config.TextColumn(disabled=True),
+                                # opcionalmente desabilite outros campos de leitura:
+                                "Data": st.column_config.TextColumn(disabled=True),
+                                "Loja": st.column_config.TextColumn(disabled=True),
+                                "Codigo Everest": st.column_config.TextColumn(disabled=True),
+                                "Fat.Total": st.column_config.TextColumn(disabled=True),
                             }
                         )
                         
-                        # Botão único para aplicar mudanças
-                        if st.button("✅ Atualizar Planilha", key="btn_atualizar_planilha"):
+                        # Botão ÚNICO para aplicar (dup + novos)
+                        if st.button("✅ Atualizar Planilha", key="btn_aplicar_conflitos"):
                             try:
-                                atualizados = 0
-                                adicionados = 0
-                                pulados     = 0
+                                # pega o valor persistido do editor
+                                edited = st.session_state.get("editor_conflitos", edited_conf).copy()
+                                if edited is None or edited.empty:
+                                    st.warning("Nenhuma seleção a aplicar.")
+                                else:
+                                    # normaliza N e Manter
+                                    edited["N"] = edited["N"].astype(str).map(_normN)
+                                    if edited["Manter"].dtype != bool:
+                                        edited["Manter"] = edited["Manter"].astype(bool)
                         
-                                if not edited_conf.empty and "N" in edited_conf.columns:
+                                    atualizados = 0
+                                    adicionados = 0
+                                    pulados     = 0
+                        
+                                    # mapa de entrada por N
                                     entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
                         
-                                    for nkey, bloco in edited_conf.groupby(edited_conf["N"].map(_normN)):
-                                        manter_novo  = any((bloco["__origem__"] == "🟢 Nova Arquivo")  & (bloco["Manter"]))
-                                        manter_velho = any((bloco["__origem__"] == "🔴 Google Sheets") & (bloco["Manter"]))
+                                    # === 1) Resolver duplicados conforme marcação ===
+                                    for nkey, bloco in edited.groupby("N"):
+                                        manter_novo  = bool((bloco["__tipo__"].eq("entrada") & bloco["Manter"]).any())
+                                        manter_velho = bool((bloco["__tipo__"].eq("sheet")   & bloco["Manter"]).any())
                         
-                                        d_in = entrada_por_n_norm.get(nkey, None)
+                                        d_in = entrada_por_n_norm.get(nkey)
                                         if d_in is None:
                                             pulados += 1
                                             continue
                         
-                                        row_values = [d_in.get(h, "") for h in headers]
+                                        row_values = [d_in.get(h, "") for h in headers]  # ordem do cabeçalho do Sheet
                         
                                         if manter_novo and manter_velho:
+                                            # mantém os dois → append da linha nova
                                             aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                             adicionados += 1
                         
                                         elif manter_novo and not manter_velho:
-                                            idxs = valores_existentes_df.index[valores_existentes_df["N"] == nkey].tolist() \
+                                            # substitui primeira ocorrência do N; se não houver, append
+                                            idxs = valores_existentes_df.index[valores_existentes_df["N"].map(_normN) == nkey].tolist() \
                                                    if "N" in valores_existentes_df.columns else []
                                             if idxs:
-                                                sheet_row = idxs[0] + 2
+                                                sheet_row = idxs[0] + 2  # header + base 0
                                                 aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
                                                 atualizados += 1
+                                                # espelho local (opcional)
+                                                try:
+                                                    valores_existentes_df.loc[idxs[0], list(valores_existentes_df.columns.intersection(headers))] = row_values[:len(headers)]
+                                                except Exception:
+                                                    pass
                                             else:
                                                 aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                                 adicionados += 1
                         
                                         elif not manter_novo and manter_velho:
+                                            # mantém como está
                                             pulados += 1
                                         else:
+                                            # nada marcado para esse N
                                             pulados += 1
                         
-                                # Também insere os novos
-                                if not df_novos.empty:
-                                    dados_para_enviar = df_novos.fillna("").values.tolist()
-                                    aba_destino.append_rows(dados_para_enviar, value_input_option="USER_ENTERED")
-                                    adicionados += len(dados_para_enviar)
+                                    # === 2) Incluir TODOS os novos (sem conflito) ===
+                                    if ('df_novos' in locals()) and (isinstance(df_novos, pd.DataFrame)) and (not df_novos.empty):
+                                        dados_para_enviar = df_novos.fillna("").values.tolist()
+                                        if dados_para_enviar:
+                                            aba_destino.append_rows(dados_para_enviar, value_input_option="USER_ENTERED")
+                                            adicionados += len(dados_para_enviar)
                         
-                                st.success(f"✅ Concluído: {adicionados} adicionados, {atualizados} substituídos, {pulados} ignorados.")
+                                    st.success(f"✅ Concluído: {adicionados} adicionados, {atualizados} substituídos, {pulados} ignorados.")
+                                    # opcional: st.rerun()
                         
                             except Exception as e:
                                 st.error(f"❌ Erro ao aplicar escolhas: {e}")
+                        
+                        # ================== /CONFLITOS GLOBAIS ==================
+
 
 
 

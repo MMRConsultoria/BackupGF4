@@ -1133,7 +1133,29 @@ with st.spinner("⏳ Processando..."):
                 return pd.to_datetime(pd.Series([x]), origin="1899-12-30", unit="D", errors="coerce").dt.strftime("%d/%m/%Y").iloc[0]
             except Exception:
                 return x
+        # --- GARANTIR CONEXÃO ATIVA E VARIÁVEIS BASE ---
+        try:
+            aba_destino  # existe?
+        except NameError:
+            gc = get_gc()
+            planilha_destino = gc.open("Vendas diarias")
+            aba_destino = planilha_destino.worksheet("Fat Sistema Externo")
         
+        # valores_existentes_df também pode não existir dependendo do fluxo
+        try:
+            valores_existentes_df
+        except NameError:
+            from gspread_dataframe import get_as_dataframe
+            valores_existentes_df = get_as_dataframe(aba_destino, evaluate_formulas=True, dtype=str).fillna("")
+        
+        # idem para df_novos / df_dup_M / df_suspeitos (dependem do cálculo anterior)
+        if "df_novos" not in locals():
+            df_novos = pd.DataFrame()
+        if "df_dup_M" not in locals():
+            df_dup_M = pd.DataFrame()
+        if "df_suspeitos" not in locals():
+            df_suspeitos = pd.DataFrame()
+
         # headers exatos do Sheet (ordem oficial)
         headers_raw = aba_destino.row_values(1)
         headers = [h.strip() for h in headers_raw]

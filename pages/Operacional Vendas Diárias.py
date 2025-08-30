@@ -1234,49 +1234,51 @@ with st.spinner("⏳ Processando..."):
                             df_conf.insert(0, "Manter", False)
                         
                         # Editor persistente (sem form)
-                        st.markdown("### 🔴 Possíveis duplicados — marque o(s) que deseja manter")
-                        edited_conf = st.data_editor(
-                            df_conf,
-                            use_container_width=True,
-                            hide_index=True,
-                            key="editor_conflitos",
-                            column_config={
-                                "Manter": st.column_config.CheckboxColumn(
-                                    help="Marque quais linhas (de cada N) deseja manter",
-                                    default=False
-                                ),
-                                "N": st.column_config.TextColumn(disabled=True),
-                                "__origem__": st.column_config.TextColumn(disabled=True),
-                                "__tipo__": st.column_config.TextColumn(disabled=True),
-                                # opcionalmente desabilite outros campos de leitura:
-                                "Data": st.column_config.TextColumn(disabled=True),
-                                "Loja": st.column_config.TextColumn(disabled=True),
-                                "Codigo Everest": st.column_config.TextColumn(disabled=True),
-                                "Fat.Total": st.column_config.TextColumn(disabled=True),
-                            }
-                        )
+                        # ---------- EDITOR DE CONFLITOS (em FORM) ----------
+                        # df_conf já montado acima
                         
-                        # Botão ÚNICO para aplicar (dup + novos)
-                        if st.button("✅ Atualizar Planilha", key="btn_aplicar_conflitos"):
+                        with st.form("form_conflitos_globais"):
+                            edited_conf = st.data_editor(
+                                df_conf,
+                                use_container_width=True,
+                                hide_index=True,
+                                key="editor_conflitos",
+                                column_config={
+                                    "Manter": st.column_config.CheckboxColumn(
+                                        help="Marque quais linhas (de cada N) deseja manter",
+                                        default=False
+                                    ),
+                                    "N": st.column_config.TextColumn(disabled=True),
+                                    "__origem__": st.column_config.TextColumn(disabled=True),
+                                    "__tipo__": st.column_config.TextColumn(disabled=True),
+                                }
+                            )
+                            # IMPORTANTE: o submit do form seta um "commit" e faz rerun; a aplicação acontece no próximo ciclo
+                            if st.form_submit_button("✅ Atualizar Planilha", use_container_width=True):
+                                st.session_state["_commit_conflitos"] = True
+                                st.session_state["_edited_conf_cache"] = edited_conf.copy() if edited_conf is not None else None
+                                st.rerun()
+                        
+                        # ---------- APLICAÇÃO (só quando o commit estiver setado) ----------
+                        if st.session_state.get("_commit_conflitos"):
+                            st.session_state["_commit_conflitos"] = False  # consome o commit para não repetir
+                            edited = st.session_state.get("_edited_conf_cache")
+                        
                             try:
-                                # pega o valor persistido do editor
-                                edited = st.session_state.get("editor_conflitos", edited_conf).copy()
-                                if edited is None or edited.empty:
-                                    st.warning("Nenhuma seleção a aplicar.")
-                                else:
-                                    # normaliza N e Manter
+                                atualizados = 0
+                                adicionados = 0
+                                pulados     = 0
+                        
+                                # 1) Resolver duplicados conforme marcação
+                                if edited is not None and not edited.empty and ("N" in edited.columns) and ("__tipo__" in edited.columns):
+                                    # normalizações
+                                    def _normN(x): return str(x).strip().replace(".0", "")
                                     edited["N"] = edited["N"].astype(str).map(_normN)
                                     if edited["Manter"].dtype != bool:
                                         edited["Manter"] = edited["Manter"].astype(bool)
                         
-                                    atualizados = 0
-                                    adicionados = 0
-                                    pulados     = 0
-                        
-                                    # mapa de entrada por N
                                     entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
                         
-                                    # === 1) Resolver duplicados conforme marcação ===
                                     for nkey, bloco in edited.groupby("N"):
                                         manter_novo  = bool((bloco["__tipo__"].eq("entrada") & bloco["Manter"]).any())
                                         manter_velho = bool((bloco["__tipo__"].eq("sheet")   & bloco["Manter"]).any())
@@ -1286,49 +1288,40 @@ with st.spinner("⏳ Processando..."):
                                             pulados += 1
                                             continue
                         
-                                        row_values = [d_in.get(h, "") for h in headers]  # ordem do cabeçalho do Sheet
+                                        row_values = [d_in.get(h, "") for h in headers]  # mesma ordem do Sheet
                         
                                         if manter_novo and manter_velho:
-                                            # mantém os dois → append da linha nova
                                             aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                             adicionados += 1
                         
                                         elif manter_novo and not manter_velho:
-                                            # substitui primeira ocorrência do N; se não houver, append
-                                            idxs = valores_existentes_df.index[valores_existentes_df["N"].map(_normN) == nkey].tolist() \
+                                            idxs = valores_existentes_df.index[valores_existentes_df["N"].astype(str).map(_normN) == nkey].tolist() \
                                                    if "N" in valores_existentes_df.columns else []
                                             if idxs:
-                                                sheet_row = idxs[0] + 2  # header + base 0
+                                                sheet_row = idxs[0] + 2
                                                 aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
                                                 atualizados += 1
-                                                # espelho local (opcional)
-                                                try:
-                                                    valores_existentes_df.loc[idxs[0], list(valores_existentes_df.columns.intersection(headers))] = row_values[:len(headers)]
-                                                except Exception:
-                                                    pass
                                             else:
                                                 aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                                 adicionados += 1
                         
                                         elif not manter_novo and manter_velho:
-                                            # mantém como está
                                             pulados += 1
                                         else:
-                                            # nada marcado para esse N
                                             pulados += 1
                         
-                                    # === 2) Incluir TODOS os novos (sem conflito) ===
-                                    if ('df_novos' in locals()) and (isinstance(df_novos, pd.DataFrame)) and (not df_novos.empty):
-                                        dados_para_enviar = df_novos.fillna("").values.tolist()
-                                        if dados_para_enviar:
-                                            aba_destino.append_rows(dados_para_enviar, value_input_option="USER_ENTERED")
-                                            adicionados += len(dados_para_enviar)
+                                # 2) Sempre incluir os novos (sem conflito) junto
+                                if isinstance(df_novos, pd.DataFrame) and not df_novos.empty:
+                                    dados_para_enviar = df_novos.fillna("").values.tolist()
+                                    if dados_para_enviar:
+                                        aba_destino.append_rows(dados_para_enviar, value_input_option="USER_ENTERED")
+                                        adicionados += len(dados_para_enviar)
                         
-                                    st.success(f"✅ Concluído: {adicionados} adicionados, {atualizados} substituídos, {pulados} ignorados.")
-                                    # opcional: st.rerun()
+                                st.success(f"✅ Concluído: {adicionados} adicionados, {atualizados} substituídos, {pulados} ignorados.")
                         
                             except Exception as e:
                                 st.error(f"❌ Erro ao aplicar escolhas: {e}")
+
                         
                         # ================== /CONFLITOS GLOBAIS ==================
 

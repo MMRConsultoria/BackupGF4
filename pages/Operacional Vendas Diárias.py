@@ -1308,27 +1308,24 @@ with st.spinner("⏳ Processando..."):
                                             pulados += 1
                         
                                 # === 2) Incluir TODOS os novos (sem conflito) no mesmo clique ===
+                                
                                 if isinstance(df_novos, pd.DataFrame) and not df_novos.empty:
                                     dados_para_enviar = df_novos.fillna("").values.tolist()
                                     if dados_para_enviar:
                                         aba_destino.append_rows(dados_para_enviar, value_input_option="USER_ENTERED")
                                         adicionados += len(dados_para_enviar)
-                        
+                                
                                 st.success(f"✅ Concluído: {adicionados} adicionados, {atualizados} substituídos, {pulados} ignorados.")
-                        
-                            except Exception as e:
-                                st.error(f"❌ Erro ao aplicar escolhas: {e}")
-
-# ================== /CONFLITOS GLOBAIS ==================
-
-                 
-
+                                
+                                # 🔑 impede que o fluxo volte para "# 8) Envio" e sobrescreva
+                                st.session_state["_commit_ok"] = True
+                                pode_enviar = False   # mantém bloqueado o envio automático
+                                st.stop()             # encerra a execução aqui
 
 
                         # bloqueia envio automático enquanto houver conflitos
                         pode_enviar = False
-
-
+                        
                     # 8) Envio
                     if todas_lojas_ok and pode_enviar:
                         try:

@@ -332,6 +332,7 @@ with st.spinner("⏳ Processando..."):
         from oauth2client.service_account import ServiceAccountCredentials
         from gspread_dataframe import get_as_dataframe
         from gspread_formatting import CellFormat, NumberFormat, format_cell_range
+        from gspread.utils import rowcol_to_a1
     
         # ------------------------ ESTILO (botões pequenos, cinza) ------------------------
         def _inject_button_css():
@@ -507,7 +508,55 @@ with st.spinner("⏳ Processando..."):
             df = df[cols]
     
             return df
-    
+            # (dentro do with aba3:, mas fora de qualquer if)
+            def _aplicar_atualizacoes_google_sheets(edited_df, entrada_por_n, valores_existentes_df, headers, aba_destino, df_novos):
+                import pandas as pd
+                def _normN(x): return str(x).strip().replace(".0", "")
+                adicionados = 0; atualizados = 0; pulados = 0
+            
+                if edited_df is not None and not edited_df.empty and ("N" in edited_df.columns) and ("__tipo__" in edited_df.columns):
+                    edited = edited_df.copy()
+                    edited["N"] = edited["N"].astype(str).map(_normN)
+                    if "Manter" in edited.columns and edited["Manter"].dtype != bool:
+                        edited["Manter"] = edited["Manter"].astype(bool)
+                    edited["Manter"] = edited["Manter"].fillna(False)
+            
+                    entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
+            
+                    for nkey, bloco in edited.groupby("N"):
+                        manter_novo  = bool((bloco["__tipo__"].eq("entrada") & bloco["Manter"]).any())
+                        manter_velho = bool((bloco["__tipo__"].eq("sheet")   & bloco["Manter"]).any())
+                        d_in = entrada_por_n_norm.get(nkey)
+                        if d_in is None:
+                            pulados += 1; continue
+                        row_values = [d_in.get(h, "") for h in headers]
+            
+                        if manter_novo and manter_velho:
+                            aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
+                            adicionados += 1
+                        elif manter_novo and not manter_velho:
+                            if "N" in valores_existentes_df.columns:
+                                idxs = valores_existentes_df.index[valores_existentes_df["N"].astype(str).map(_normN) == nkey].tolist()
+                            else:
+                                idxs = []
+                            if idxs:
+                                sheet_row = idxs[0] + 2
+                                aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
+                                atualizados += 1
+                            else:
+                                aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
+                                adicionados += 1
+                        else:
+                            pulados += 1
+            
+                if isinstance(df_novos, pd.DataFrame) and not df_novos.empty:
+                    dados_para_enviar = df_novos.fillna("").values.tolist()
+                    if dados_para_enviar:
+                        aba_destino.append_rows(dados_para_enviar, value_input_option="USER_ENTERED")
+                        adicionados += len(dados_para_enviar)
+            
+                return adicionados, atualizados, pulados
+
         # ------------------------ Função de ENVIO ------------------------
         def enviar_para_sheets(df_input: pd.DataFrame, titulo_origem: str = "dados") -> bool:
             """
@@ -933,11 +982,26 @@ with st.spinner("⏳ Processando..."):
                     if ok:
                         st.session_state.manual_df = template_manuais(10)
                         st.rerun()
-            def _aplicar_atualizacoes_google_sheets(edited_df, entrada_por_n, valores_existentes_df, headers, aba_destino, df_novos):
-                import pandas as pd
-                def _normN(x): return str(x).strip().replace(".0", "")
-                adicionados = 0; atualizados = 0; pulados = 0
+          
             
+            def _aplicar_atualizacoes_google_sheets(
+                edited_df, 
+                entrada_por_n, 
+                valores_existentes_df, 
+                headers, 
+                aba_destino, 
+                df_novos
+            ):
+                import pandas as pd
+            
+                def _normN(x): 
+                    return str(x).strip().replace(".0", "")
+            
+                adicionados = 0
+                atualizados = 0
+                pulados     = 0
+            
+                # --- 1) Resolver "suspeitos" conforme marcação do usuário ---
                 if edited_df is not None and not edited_df.empty and ("N" in edited_df.columns) and ("__tipo__" in edited_df.columns):
                     edited = edited_df.copy()
                     edited["N"] = edited["N"].astype(str).map(_normN)
@@ -945,34 +1009,57 @@ with st.spinner("⏳ Processando..."):
                         edited["Manter"] = edited["Manter"].astype(bool)
                     edited["Manter"] = edited["Manter"].fillna(False)
             
-                    entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
+                    entrada_por_n_norm = {_normN(k): v for k, v in entrada_por_n.items()}
             
                     for nkey, bloco in edited.groupby("N"):
                         manter_novo  = bool((bloco["__tipo__"].eq("entrada") & bloco["Manter"]).any())
                         manter_velho = bool((bloco["__tipo__"].eq("sheet")   & bloco["Manter"]).any())
+            
                         d_in = entrada_por_n_norm.get(nkey)
                         if d_in is None:
-                            pulados += 1; continue
+                            pulados += 1
+                            continue
+            
+                        # garante valores na ordem do cabeçalho do Sheet
                         row_values = [d_in.get(h, "") for h in headers]
             
                         if manter_novo and manter_velho:
+                            # manter ambos -> só faz append do novo
                             aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                             adicionados += 1
+            
                         elif manter_novo and not manter_velho:
+                            # substituir o que está no sheet (primeira ocorrência do N); se não existir, append
                             if "N" in valores_existentes_df.columns:
-                                idxs = valores_existentes_df.index[valores_existentes_df["N"].astype(str).map(_normN) == nkey].tolist()
+                                idxs = valores_existentes_df.index[
+                                    valores_existentes_df["N"].astype(str).map(_normN) == nkey
+                                ].tolist()
                             else:
                                 idxs = []
+            
                             if idxs:
-                                sheet_row = idxs[0] + 2
-                                aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
+                                sheet_row = idxs[0] + 2  # 1 de header + base zero
+            
+                                # garante que o comprimento bate com o cabeçalho
+                                if len(row_values) != len(headers):
+                                    row_values = row_values[:len(headers)]
+            
+                                # range completo da linha a atualizar (A{row}:{LastCol}{row})
+                                end_a1   = rowcol_to_a1(1, len(headers))      # p.ex. 'L1'
+                                last_col = ''.join(filter(str.isalpha, end_a1))  # 'L'
+                                rng = f"A{sheet_row}:{last_col}{sheet_row}"      # 'A25:L25'
+            
+                                aba_destino.update(rng, [row_values], value_input_option="USER_ENTERED")
                                 atualizados += 1
                             else:
                                 aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                 adicionados += 1
+            
                         else:
+                            # não marcar nada ou marcar só o velho -> não faz nada
                             pulados += 1
             
+                # --- 2) Inserir todos os "novos" (sem conflito) ---
                 if isinstance(df_novos, pd.DataFrame) and not df_novos.empty:
                     dados_para_enviar = df_novos.fillna("").values.tolist()
                     if dados_para_enviar:
@@ -980,6 +1067,7 @@ with st.spinner("⏳ Processando..."):
                         adicionados += len(dados_para_enviar)
             
                 return adicionados, atualizados, pulados
+
           
         # ---------- ENVIO AUTOMÁTICO (lógica antiga preservada) ----------
         if enviar_auto:
@@ -1287,37 +1375,30 @@ with st.spinner("⏳ Processando..."):
                                     "N": st.column_config.TextColumn(disabled=True),
                                     "__origem__": st.column_config.TextColumn(disabled=True),
                                     "__tipo__": st.column_config.TextColumn(disabled=True),
-                                    # demais colunas que você travou para leitura...
+                                    "Data": st.column_config.TextColumn(disabled=True),
+                                    "Loja": st.column_config.TextColumn(disabled=True),
+                                    "Codigo Everest": st.column_config.TextColumn(disabled=True),
+                                    "Fat.Total": st.column_config.TextColumn(disabled=True),
                                 }
                             )
                         
-                            # ⬇️ EXATAMENTE AQUI:
                             if st.form_submit_button("✅ Atualizar Planilha", use_container_width=True):
-                                st.session_state["_commit_conflitos"] = True
-                                st.session_state["_edited_conf_cache"] = edited_conf.copy() if edited_conf is not None else None
-                                st.rerun()
-                        
-                        # ⬇️ e logo DEPOIS do with st.form(...):
-                        # ---------- APLICAÇÃO (apenas após o clique no botão do form) ----------
-                        if st.session_state.get("_commit_conflitos"):
-                            st.session_state["_commit_conflitos"] = False
-                            edited_cache = st.session_state.get("_edited_conf_cache")
-                        
-                            try:
-                                adicionados, atualizados, pulados = _aplicar_atualizacoes_google_sheets(
-                                    edited_df=edited_cache,
-                                    entrada_por_n=entrada_por_n,
-                                    valores_existentes_df=valores_existentes_df,
-                                    headers=headers,
-                                    aba_destino=aba_destino,
-                                    df_novos=df_novos
-                                )
-                                st.success(f"Concluído: {adicionados} adicionados, {atualizados} substituídos, {pulados} ignorados.")
-                                st.session_state["_commit_ok"] = True
-                                st.stop()  # impede cair no bloco "# 8) Envio" neste ciclo
-                            except Exception as e:
-                                st.error(f"Erro ao aplicar escolhas: {e}")
-                                st.stop()
+                                try:
+                                    adicionados, atualizados, pulados = _aplicar_atualizacoes_google_sheets(
+                                        edited_df=edited_conf,
+                                        entrada_por_n=entrada_por_n,
+                                        valores_existentes_df=valores_existentes_df,
+                                        headers=headers,
+                                        aba_destino=aba_destino,
+                                        df_novos=df_novos
+                                    )
+                                    st.success(f"Concluído: {adicionados} adicionados, {atualizados} substituídos, {pulados} ignorados.")
+                                    st.stop()  # não deixa cair no bloco de envio automático
+                                except Exception as e:
+                                    st.error(f"Erro ao aplicar escolhas: {e}")
+                                    st.stop()
+
+
 
 
 

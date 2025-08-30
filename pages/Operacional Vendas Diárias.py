@@ -1258,12 +1258,10 @@ with st.spinner("⏳ Processando..."):
                                 adicionados = 0
                                 pulados     = 0
                         
-                                # === 1) Primeiro trata os conflitos (suspeitos) ===
-                                entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
+                                # === 1) Tratar os conflitos (suspeitos) ===
+                                if not edited_conf.empty and "N" in edited_conf.columns:
+                                    entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
                         
-                                if "N" not in edited_conf.columns:
-                                    st.error("❌ Não foi possível identificar a coluna N na tabela de conflitos.")
-                                else:
                                     for nkey, bloco in edited_conf.groupby(edited_conf["N"].map(_normN)):
                                         manter_novo  = any((bloco["__origem__"] == "🟢 Nova Arquivo")  & (bloco["Manter"]))
                                         manter_velho = any((bloco["__origem__"] == "🔴 Google Sheets") & (bloco["Manter"]))
@@ -1298,16 +1296,18 @@ with st.spinner("⏳ Processando..."):
                                         else:
                                             pulados += 1
                         
-                                # === 2) Agora inclui TODOS os novos (df_novos) ===
+                                # === 2) Sempre incluir os NOVOS (df_novos), mesmo que haja suspeitos ===
                                 if not df_novos.empty:
                                     dados_para_enviar = df_novos.fillna("").values.tolist()
                                     aba_destino.append_rows(dados_para_enviar, value_input_option='USER_ENTERED')
                                     adicionados += len(dados_para_enviar)
                         
-                                st.success(f"✅ Concluído: {adicionados} adicionado(s), {atualizados} substituído(s), {pulados} ignorado(s).")
+                                # === 3) Mensagem final ===
+                                st.success(f"✅ Concluído: {adicionados} adicionados, {atualizados} substituídos, {pulados} ignorados.")
                         
                             except Exception as e:
                                 st.error(f"❌ Erro ao aplicar escolhas: {e}")
+
 
                         # ================== /CONFLITOS GLOBAIS ==================
 

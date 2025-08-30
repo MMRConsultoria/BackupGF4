@@ -1184,23 +1184,41 @@ with st.spinner("⏳ Processando..."):
                             conflitos_linhas.append(d_in)
                         
                             df_sh = sheet_por_n[nkey].copy()
+
+                            # --- 1) Normaliza os nomes das colunas vindos do Google Sheets ---
+                            df_sh.columns = df_sh.columns.astype(str).str.strip()
+                            for c in df_sh.columns:
+                                if c.strip().lower() in ["data", "dt", "data lançamento", "dt lançamento"]:
+                                    df_sh = df_sh.rename(columns={c: "Data"})
+                            
+                            # --- 2) Formata a Data (serial Excel ou texto dd/mm/yyyy) ---
                             if "Data" in df_sh.columns:
                                 try:
-                                    df_sh["Data"] = pd.to_datetime(
-                                        pd.to_numeric(df_sh["Data"], errors="coerce"),
-                                        origin="1899-12-30", unit="D", errors="coerce"
-                                    ).dt.strftime("%d/%m/%Y")
+                                    ser = pd.to_numeric(df_sh["Data"], errors="coerce")
+                                    if ser.notna().any():
+                                        df_sh["Data"] = pd.to_datetime(
+                                            ser, origin="1899-12-30", unit="D", errors="coerce"
+                                        ).dt.strftime("%d/%m/%Y")
+                                    else:
+                                        df_sh["Data"] = pd.to_datetime(
+                                            df_sh["Data"], dayfirst=True, errors="coerce"
+                                        ).dt.strftime("%d/%m/%Y")
                                 except Exception:
                                     pass
-                        
+                            
+                            # --- 3) Itera as linhas e adiciona no empilhado ---
                             for _, row in df_sh.iterrows():
                                 d_sh = row.to_dict()
                                 d_sh["__origem__"] = "Google Sheets"
+                            
+                                # ajustes de nomes alternativos
                                 if "Código Everest" in d_sh and "Codigo Everest" not in d_sh:
                                     d_sh["Codigo Everest"] = d_sh["Código Everest"]
                                 if "Fat Total" in d_sh and "Fat.Total" not in d_sh:
                                     d_sh["Fat.Total"] = d_sh["Fat Total"]
+                            
                                 conflitos_linhas.append(d_sh)
+
                         
                         df_conf = pd.DataFrame(conflitos_linhas).copy()
                         

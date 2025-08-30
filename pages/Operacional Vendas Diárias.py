@@ -1221,7 +1221,11 @@ with st.spinner("⏳ Processando..."):
 
                         
                         df_conf = pd.DataFrame(conflitos_linhas).copy()
-                        
+                        # garante que N existe
+                        if "N" not in df_conf.columns:
+                            st.error("❌ Coluna N não encontrada nos dados de conflito.")
+
+                            
                         # ordena/seleciona colunas
                         cols_keep = [c for c in alvos_ordem if c in df_conf.columns]
                         df_conf = df_conf.reindex(columns=cols_keep + [c for c in df_conf.columns if c not in cols_keep], fill_value="")
@@ -1247,18 +1251,21 @@ with st.spinner("⏳ Processando..."):
                                     "Manter": st.column_config.CheckboxColumn(
                                         help="Marque quais linhas (de cada N) deseja manter",
                                         default=False
-                                    )
+                                    ),
+                                    "N": st.column_config.TextColumn(disabled=True)  # mostra N só para referência
                                 }
                             )
-                            aplicar_tudo = st.form_submit_button("✅Atualizar planilha")
+                            aplicar_tudo = st.form_submit_button("✅ Atualizar Planilha")
+
                         
+                       
                         if aplicar_tudo:
                             try:
                                 atualizados = 0
                                 adicionados = 0
                                 pulados     = 0
                         
-                                # === 1) Tratar os conflitos (suspeitos) ===
+                                # === 1) Tratar duplicados ===
                                 if not edited_conf.empty and "N" in edited_conf.columns:
                                     entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
                         
@@ -1274,10 +1281,12 @@ with st.spinner("⏳ Processando..."):
                                         row_values = [d_in.get(h, "") for h in headers]
                         
                                         if manter_novo and manter_velho:
+                                            # mantém os dois
                                             aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                             adicionados += 1
                         
                                         elif manter_novo and not manter_velho:
+                                            # substitui ou inclui
                                             if "N" in valores_existentes_df.columns:
                                                 idxs = valores_existentes_df.index[valores_existentes_df["N"] == nkey].tolist()
                                             else:
@@ -1286,7 +1295,6 @@ with st.spinner("⏳ Processando..."):
                                                 sheet_row = idxs[0] + 2
                                                 aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
                                                 atualizados += 1
-                                                valores_existentes_df.loc[idxs[0], list(valores_existentes_df.columns.intersection(headers))] = row_values[:len(headers)]
                                             else:
                                                 aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                                 adicionados += 1
@@ -1296,10 +1304,10 @@ with st.spinner("⏳ Processando..."):
                                         else:
                                             pulados += 1
                         
-                                # === 2) Sempre incluir os NOVOS (df_novos), mesmo que haja suspeitos ===
+                                # === 2) Sempre incluir os novos (df_novos) ===
                                 if not df_novos.empty:
                                     dados_para_enviar = df_novos.fillna("").values.tolist()
-                                    aba_destino.append_rows(dados_para_enviar, value_input_option='USER_ENTERED')
+                                    aba_destino.append_rows(dados_para_enviar, value_input_option="USER_ENTERED")
                                     adicionados += len(dados_para_enviar)
                         
                                 # === 3) Mensagem final ===
@@ -1307,6 +1315,7 @@ with st.spinner("⏳ Processando..."):
                         
                             except Exception as e:
                                 st.error(f"❌ Erro ao aplicar escolhas: {e}")
+
 
 
                         # ================== /CONFLITOS GLOBAIS ==================

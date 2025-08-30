@@ -1110,14 +1110,10 @@ with st.spinner("⏳ Processando..."):
     
                     # 7) Exibir comparação de registros (empilhado)
                     pode_enviar = True
-                    
                     if suspeitos_n:
                         st.markdown("### 🔴 Possíveis duplicados — marque o(s) que deseja manter")
                     
-                        # --- helpers ---
-                        def _normN(x): 
-                            return str(x).strip().replace(".0", "")
-                    
+                        def _normN(x): return str(x).strip().replace(".0", "")
                         def _fmt_serial_to_br(x):
                             try:
                                 return pd.to_datetime(pd.Series([x]), origin="1899-12-30", unit="D", errors="coerce")\
@@ -1130,144 +1126,95 @@ with st.spinner("⏳ Processando..."):
                         if "N" in valores_existentes_df.columns:
                             valores_existentes_df["N"] = valores_existentes_df["N"].map(_normN)
                     
-                        # mapeia: N -> linha de entrada (dos suspeitos)
-                        entrada_por_n = {}
-                        for linha in suspeitos_n:
-                            d = dict(zip(colunas_df, linha))
-                            entrada_por_n[_normN(d.get("N",""))] = d
+                        # mapa entrada N → linha do arquivo
+                        entrada_por_n = {
+                            _normN(dict(zip(colunas_df, linha)).get("N", "")): dict(zip(colunas_df, linha))
+                            for linha in suspeitos_n
+                        }
                     
-                        # pega todas as linhas do sheet com N de interesse (pra mostrar na tabela)
+                        # pega as linhas do sheet com N suspeito
                         sheet_por_n = {
                             nkey: valores_existentes_df[valores_existentes_df["N"] == nkey].copy()
                             for nkey in entrada_por_n.keys()
                         }
                     
-                        # cabeçalho exato do sheet (pra montar row_values)
-                        headers_raw = aba_destino.row_values(1)
-                        headers = [h.strip() for h in headers_raw]
+                        # cabeçalho exato do sheet
+                        headers = [h.strip() for h in aba_destino.row_values(1)]
                     
-                        # monta dataframe de conflitos (entrada + sheet) por N
-                        conflitos_linhas = []
-                        for nkey in sorted(entrada_por_n.keys()):
-                            d_in = entrada_por_n[nkey].copy()
-                            d_in["__origem__"] = "🟢 Novo arquivo"
+                        # monta tabela de conflitos
+                        conflitos = []
+                        for nkey, d_in in entrada_por_n.items():
+                            d_in = d_in.copy()
+                            d_in["__origem__"] = "🟢 Novo"
                             d_in["__tipo__"]   = "entrada"
-                            d_in["N"] = _normN(d_in.get("N",""))
                             if "Data" in d_in:
                                 d_in["Data"] = _fmt_serial_to_br(d_in["Data"])
-                            conflitos_linhas.append(d_in)
+                            conflitos.append(d_in)
                     
-                            df_sh = sheet_por_n[nkey].copy()
-                            # padroniza nome de "Data" e formata
-                            df_sh.columns = df_sh.columns.astype(str).str.strip()
-                            for c in list(df_sh.columns):
-                                if c.strip().lower() in ["data","dt","data lançamento","dt lançamento"]:
-                                    df_sh = df_sh.rename(columns={c:"Data"})
-                                    break
-                            if "Data" in df_sh.columns:
-                                try:
-                                    ser = pd.to_numeric(df_sh["Data"], errors="coerce")
-                                    if ser.notna().any():
-                                        df_sh["Data"] = pd.to_datetime(ser, origin="1899-12-30", unit="D", errors="coerce")\
-                                                            .dt.strftime("%d/%m/%Y")
-                                    else:
-                                        df_sh["Data"] = pd.to_datetime(df_sh["Data"], dayfirst=True, errors="coerce")\
-                                                            .dt.strftime("%d/%m/%Y")
-                                except Exception:
-                                    pass
-                    
-                            for _, row in df_sh.iterrows():
+                            for _, row in sheet_por_n[nkey].iterrows():
                                 d_sh = row.to_dict()
-                                d_sh["__origem__"] = "🔴 Google Sheets"
+                                d_sh["__origem__"] = "🔴 Sheets"
                                 d_sh["__tipo__"]   = "sheet"
-                                # alias de nomes para visual
-                                if "Código Everest" in d_sh and "Codigo Everest" not in d_sh:
-                                    d_sh["Codigo Everest"] = d_sh["Código Everest"]
-                                if "Fat Total" in d_sh and "Fat.Total" not in d_sh:
-                                    d_sh["Fat.Total"] = d_sh["Fat Total"]
-                                d_sh["N"] = _normN(d_sh.get("N",""))
-                                conflitos_linhas.append(d_sh)
+                                conflitos.append(d_sh)
                     
-                        df_conf = pd.DataFrame(conflitos_linhas)
+                        df_conf = pd.DataFrame(conflitos)
                         if "Manter" not in df_conf.columns:
                             df_conf.insert(0, "Manter", False)
                     
-                        with st.form("form_conflitos_globais"):
-                            edited_conf = st.data_editor(
-                                df_conf,
-                                use_container_width=True,
-                                hide_index=True,
-                                key="editor_conflitos",
+                        with st.form("form_conflitos"):
+                            edited = st.data_editor(
+                                df_conf, use_container_width=True, hide_index=True,
                                 column_config={
-                                    "Manter": st.column_config.CheckboxColumn(default=False,
-                                                                              help="Marque as linhas que deseja manter"),
-                                    "N": st.column_config.TextColumn(disabled=True),
+                                    "Manter": st.column_config.CheckboxColumn(default=False),
                                     "__origem__": st.column_config.TextColumn(disabled=True),
                                     "__tipo__": st.column_config.TextColumn(disabled=True),
+                                    "N": st.column_config.TextColumn(disabled=True),
+                                    "Data": st.column_config.TextColumn(disabled=True),
+                                    "Loja": st.column_config.TextColumn(disabled=True),
                                 }
                             )
                             aplicar = st.form_submit_button("✅ Atualizar Planilha")
                     
                         if aplicar:
-                            try:
-                                adicionados = 0
-                                atualizados = 0
-                                pulados     = 0
+                            adicionados, atualizados, pulados = 0, 0, 0
+                            entrada_por_n_norm = {_normN(k): v for k, v in entrada_por_n.items()}
                     
-                                # normaliza mapa de entradas por N
-                                entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
+                            for nkey, bloco in edited.groupby(edited["N"].map(_normN)):
+                                manter_novo  = any((bloco["__origem__"] == "🟢 Novo")   & (bloco["Manter"]))
+                                manter_velho = any((bloco["__origem__"] == "🔴 Sheets") & (bloco["Manter"]))
+                                d_in = entrada_por_n_norm.get(nkey)
                     
-                                # para cada N, verifica o que o usuário marcou
-                                for nkey, bloco in edited_conf.groupby(edited_conf["N"].map(_normN)):
-                                    manter_novo  = any((bloco["__origem__"] == "🟢 Novo arquivo")  & (bloco["Manter"]))
-                                    manter_velho = any((bloco["__origem__"] == "🔴 Google Sheets") & (bloco["Manter"]))
+                                if not d_in:
+                                    pulados += 1
+                                    continue
                     
-                                    d_in = entrada_por_n_norm.get(nkey)
-                                    if d_in is None:
-                                        pulados += 1
-                                        continue
+                                row_values = [d_in.get(h, "") for h in headers]
                     
-                                    # monta a linha na ordem exata do cabeçalho do sheet
-                                    row_values = [d_in.get(h, "") for h in headers]
-                                    if len(row_values) != len(headers):
-                                        row_values = (row_values + [""]*len(headers))[:len(headers)]
-                    
-                                    if manter_novo and manter_velho:
-                                        # mantém o velho e ADICIONA o novo
+                                if manter_novo and manter_velho:
+                                    aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
+                                    adicionados += 1
+                                elif manter_novo and not manter_velho:
+                                    idxs = valores_existentes_df.index[valores_existentes_df["N"] == nkey].tolist()
+                                    if idxs:
+                                        sheet_row = idxs[0] + 2  # 1 linha header + base 0
+                                        from gspread.utils import rowcol_to_a1
+                                        end_a1   = rowcol_to_a1(1, len(headers))
+                                        last_col = ''.join(filter(str.isalpha, end_a1))
+                                        rng = f"A{sheet_row}:{last_col}{sheet_row}"
+                                        aba_destino.update(rng, [row_values], value_input_option="USER_ENTERED")
+                                        atualizados += 1
+                                    else:
                                         aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                         adicionados += 1
+                                else:
+                                    pulados += 1
                     
-                                    elif manter_novo and not manter_velho:
-                                        # substitui a 1ª ocorrência do N (ou grava como novo se não achar)
-                                        if "N" in valores_existentes_df.columns:
-                                            idxs = valores_existentes_df.index[valores_existentes_df["N"] == nkey].tolist()
-                                        else:
-                                            idxs = []
-                                        if idxs:
-                                            sheet_row = idxs[0] + 2  # 1 de header + base 0
-                                            # atualiza A:{última coluna} naquela linha
-                                            from gspread.utils import rowcol_to_a1
-                                            end_a1   = rowcol_to_a1(1, len(headers))   # p.ex. 'L1'
-                                            last_col = ''.join(filter(str.isalpha, end_a1))
-                                            rng = f"A{sheet_row}:{last_col}{sheet_row}"
-                                            aba_destino.update(rng, [row_values], value_input_option="USER_ENTERED")
-                                            atualizados += 1
-                                        else:
-                                            aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
-                                            adicionados += 1
+                            st.success(f"✅ {adicionados} adicionados, {atualizados} substituídos, {pulados} ignorados.")
+                            st.stop()
                     
-                                    else:
-                                        # não marcou o novo; se marcou só o velho, apenas ignora
-                                        pulados += 1
-                    
-                                st.success(f"✅ Concluído: {adicionados} adicionado(s), {atualizados} substituído(s), {pulados} ignorado(s).")
-                                st.stop()  # evita cair no envio automático
-                            except Exception as e:
-                                st.error(f"❌ Erro ao aplicar escolhas: {e}")
-                                st.stop()
-                    
-                        # enquanto houver conflitos, impede envio automático
                         pode_enviar = False
+                                 
+
 
 
 

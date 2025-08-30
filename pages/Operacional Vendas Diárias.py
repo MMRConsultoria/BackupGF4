@@ -509,34 +509,42 @@ with aba3:
         return df
 
     # ------------------------ Helper ÚNICO para aplicar escolhas/atualizar Sheet ------------------------
-    def _aplicar_atualizacoes_google_sheets(
-        edited_df, 
-        entrada_por_n, 
-        valores_existentes_df, 
-        headers, 
-        aba_destino, 
-        df_novos
-    ):
-        import pandas as pd
+    from gspread.utils import rowcol_to_a1
 
-        def _normN(x): 
-            return str(x).strip().replace(".0", "")
+def _aplicar_atualizacoes_google_sheets(
+    edited_df,           # DataFrame vindo do data_editor dos conflitos
+    entrada_por_n,       # dict: N_normalizado -> dict da linha “nova” (entrada)
+    valores_existentes_df,  # df com o conteúdo do sheet já lido
+    headers,             # lista do cabeçalho da planilha (na ordem EXATA)
+    aba_destino,         # worksheet gspread
+    df_novos             # DataFrame com linhas classificadas como “novas” (sem conflito)
+):
+    import pandas as pd
 
-        adicionados = 0
-        atualizados = 0
-        pulados     = 0
+    def _normN(x): 
+        return str(x).strip().replace(".0", "")
 
-        # 1) Resolver "suspeitos" conforme marcação do usuário
-        if edited_df is not None and not edited_df.empty and ("N" in edited_df.columns) and ("__tipo__" in edited_df.columns):
-            edited = edited_df.copy()
-            edited["N"] = edited["N"].astype(str).map(_normN)
-            if "Manter" in edited.columns and edited["Manter"].dtype != bool:
-                edited["Manter"] = edited["Manter"].astype(bool)
-            edited["Manter"] = edited["Manter"].fillna(False)
+    adicionados = 0
+    atualizados = 0
+    pulados     = 0
 
+    # ---------- 1) Resolver conflitos (apenas o que o usuário MARCOU) ----------
+    if isinstance(edited_df, pd.DataFrame) and not edited_df.empty \
+       and ("N" in edited_df.columns) and ("__tipo__" in edited_df.columns) \
+       and ("Manter" in edited_df.columns):
+
+        # normaliza e mantém só linhas marcadas
+        work = edited_df.copy()
+        work["N"]      = work["N"].astype(str).map(_normN)
+        work["Manter"] = work["Manter"].fillna(False).astype(bool)
+        
+        # nada marcado? então só pula para os novos
+        if work["Manter"].any():
             entrada_por_n_norm = {_normN(k): v for k, v in entrada_por_n.items()}
 
-            for nkey, bloco in edited.groupby("N"):
+            # Agrupa por N para descobrir a intenção por chave
+            for nkey, bloco in work.groupby("N"):
+                # dentro do grupo, vê se o user marcou o da "entrada" e/ou o do "sheet"
                 manter_novo  = bool((bloco["__tipo__"].eq("entrada") & bloco["Manter"]).any())
                 manter_velho = bool((bloco["__tipo__"].eq("sheet")   & bloco["Manter"]).any())
 
@@ -545,18 +553,22 @@ with aba3:
                     pulados += 1
                     continue
 
-                # valores na ordem exata do cabeçalho da planilha
+                # gera a linha exatamente no mesmo nº de colunas do cabeçalho
                 row_values = [d_in.get(h, "") for h in headers]
                 if len(row_values) != len(headers):
-                    row_values = row_values[:len(headers)]
-
+                    # garante comprimento correto
+                    if len(row_values) < len(headers):
+                        row_values = row_values + [""]*(len(headers)-len(row_values))
+                    else:
+                        row_values = row_values[:len(headers)]
+                st.write("DEBUG row_values len=", len(row_values), "headers len=", len(headers))
                 if manter_novo and manter_velho:
-                    # manter os dois -> append do novo
+                    # manter os dois -> só faz append do novo
                     aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                     adicionados += 1
 
                 elif manter_novo and not manter_velho:
-                    # substituir a 1ª ocorrência do N; se não achar, append
+                    # substituir a 1ª ocorrência do N; se não achar, faz append
                     if "N" in valores_existentes_df.columns:
                         idxs = valores_existentes_df.index[
                             valores_existentes_df["N"].astype(str).map(_normN) == nkey
@@ -565,10 +577,11 @@ with aba3:
                         idxs = []
 
                     if idxs:
-                        sheet_row = idxs[0] + 2  # 1 header + base zero
-                        end_a1   = rowcol_to_a1(1, len(headers))          # p.ex. 'L1'
-                        last_col = ''.join(filter(str.isalpha, end_a1))   # 'L'
-                        rng = f"A{sheet_row}:{last_col}{sheet_row}"       # 'A25:L25'
+                        sheet_row = idxs[0] + 2  # +1 header + base 0
+                        # range completo da linha A{row}:{LastCol}{row}
+                        end_a1   = rowcol_to_a1(1, len(headers))         # ex.: 'L1'
+                        last_col = ''.join(filter(str.isalpha, end_a1))  # 'L'
+                        rng = f"A{sheet_row}:{last_col}{sheet_row}"      # 'A25:L25'
                         aba_destino.update(rng, [row_values], value_input_option="USER_ENTERED")
                         atualizados += 1
                     else:
@@ -576,17 +589,18 @@ with aba3:
                         adicionados += 1
 
                 else:
-                    # não marcar nada ou marcar só o velho -> não faz nada
+                    # marcou só o velho ou nada -> não altera a planilha
                     pulados += 1
 
-        # 2) Enviar TODOS os "novos" sem conflito (df_novos DataFrame)
-        if isinstance(df_novos, pd.DataFrame) and not df_novos.empty:
-            dados_para_enviar = df_novos.fillna("").values.tolist()
-            if dados_para_enviar:
-                aba_destino.append_rows(dados_para_enviar, value_input_option="USER_ENTERED")
-                adicionados += len(dados_para_enviar)
+    # ---------- 2) Inserir todos os “novos” (sem conflito) ----------
+    if hasattr(df_novos, "empty") and not df_novos.empty:
+        dados_para_enviar = df_novos.fillna("").values.tolist()
+        if dados_para_enviar:
+            aba_destino.append_rows(dados_para_enviar, value_input_option="USER_ENTERED")
+            adicionados += len(dados_para_enviar)
 
-        return adicionados, atualizados, pulados
+    return adicionados, atualizados, pulados
+
 
     # ------------------------ Função de ENVIO (lançamentos manuais) ------------------------
     def enviar_para_sheets(df_input: pd.DataFrame, titulo_origem: str = "dados") -> bool:
@@ -989,31 +1003,36 @@ with aba3:
 
                 # Se HOUVER suspeitos -> montar UI de conflitos
                 st.markdown("### 🔴 Possíveis duplicados — marque o(s) que deseja manter")
-
+                
                 def _normN(x): return str(x).strip().replace(".0", "")
                 valores_existentes_df = valores_existentes_df.copy()
                 if "N" in valores_existentes_df.columns:
                     valores_existentes_df["N"] = valores_existentes_df["N"].map(_normN)
-
+                
                 colunas_df = df_final.columns.tolist()
-                novos_dados = df_novos.fillna("").values.tolist()
                 suspeitos_rows = df_suspeitos.fillna("").values.tolist()
-
+                
+                # mapa N -> linha “nova” (entrada)
                 entrada_por_n = {}
                 for linha in suspeitos_rows:
                     d = dict(zip(colunas_df, linha))
                     entrada_por_n[_normN(d.get("N",""))] = d
-
-                sheet_por_n = { nkey: valores_existentes_df[valores_existentes_df["N"] == nkey].copy()
-                                for nkey in entrada_por_n.keys() }
-
+                
+                # mapa N -> linhas existentes no sheet
+                sheet_por_n = {
+                    nkey: valores_existentes_df[valores_existentes_df["N"] == nkey].copy()
+                    for nkey in entrada_por_n.keys()
+                }
+                
+                # monta dataframe de conflitos
                 conflitos_linhas = []
                 def _fmt_serial_to_br(x):
                     try:
-                        return pd.to_datetime(pd.Series([x]), origin="1899-12-30", unit="D", errors="coerce").dt.strftime("%d/%m/%Y").iloc[0]
+                        return pd.to_datetime(pd.Series([x]), origin="1899-12-30", unit="D", errors="coerce")\
+                                 .dt.strftime("%d/%m/%Y").iloc[0]
                     except Exception:
                         return x
-
+                
                 for nkey, d_in in entrada_por_n.items():
                     d_new = d_in.copy()
                     d_new["__origem__"] = "🟢 Nova Arquivo"
@@ -1021,28 +1040,30 @@ with aba3:
                     d_new["N"]          = _normN(d_new.get("N",""))
                     if "Data" in d_new: d_new["Data"] = _fmt_serial_to_br(d_new["Data"])
                     conflitos_linhas.append(d_new)
-
+                
                     df_sh = sheet_por_n[nkey].copy()
                     for _, row in df_sh.iterrows():
                         d_sh = row.to_dict()
                         d_sh["__origem__"] = "🔴 Google Sheets"
                         d_sh["__tipo__"]   = "sheet"
                         d_sh["N"]          = _normN(d_sh.get("N",""))
-                        if "Data" in d_sh:
-                            d_sh["Data"] = _fmt_serial_to_br(d_sh["Data"])
+                        if "Data" in d_sh: d_sh["Data"] = _fmt_serial_to_br(d_sh["Data"])
                         conflitos_linhas.append(d_sh)
-
-                df_conf = pd.DataFrame(conflitos_linhas)
+                
+                df_conf = pd.DataFrame(conflitos_linhas).copy()
                 for need in ["N","__tipo__"]:
                     if need not in df_conf.columns:
                         st.error(f"❌ Coluna obrigatória ausente nos conflitos: {need}")
                         st.stop()
+                
                 if "Manter" not in df_conf.columns:
                     df_conf.insert(0, "Manter", False)
-
+                
+                # garanta df_novos como DataFrame
                 df_novos_df = df_novos.copy()
-
-                with st.form("form_conflitos_globais"):
+                
+                # ===== FORM =====
+                with st.form("form_conflitos_globais", clear_on_submit=False):
                     edited_conf = st.data_editor(
                         df_conf,
                         use_container_width=True,
@@ -1059,22 +1080,24 @@ with aba3:
                             "Fat.Total": st.column_config.TextColumn(disabled=True),
                         }
                     )
+                    submitted = st.form_submit_button("✅ Atualizar Planilha", use_container_width=True)
+                
+                if submitted:
+                    try:
+                        adicionados, atualizados, pulados = _aplicar_atualizacoes_google_sheets(
+                            edited_df=edited_conf,
+                            entrada_por_n=entrada_por_n,
+                            valores_existentes_df=valores_existentes_df,
+                            headers=headers,
+                            aba_destino=aba_destino,
+                            df_novos=df_novos_df
+                        )
+                        st.success(f"Concluído: {adicionados} adicionados, {atualizados} substituídos, {pulados} ignorados.")
+                        st.toast("Planilha atualizada ✅", icon="✅")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao aplicar escolhas: {e}")
 
-                    if st.form_submit_button("✅ Atualizar Planilha", use_container_width=True):
-                        try:
-                            adicionados, atualizados, pulados = _aplicar_atualizacoes_google_sheets(
-                                edited_df=edited_conf,
-                                entrada_por_n=entrada_por_n,
-                                valores_existentes_df=valores_existentes_df,
-                                headers=headers,
-                                aba_destino=aba_destino,
-                                df_novos=df_novos_df
-                            )
-                            st.success(f"Concluído: {adicionados} adicionados, {atualizados} substituídos, {pulados} ignorados.")
-                            st.stop()
-                        except Exception as e:
-                            st.error(f"Erro ao aplicar escolhas: {e}")
-                            st.stop()
 
     # Utilitário opcional (se for usar a regra de horário)
     def pode_executar_agora():

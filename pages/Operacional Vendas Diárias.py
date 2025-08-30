@@ -1258,7 +1258,7 @@ with st.spinner("⏳ Processando..."):
                                 adicionados = 0
                                 pulados     = 0
                         
-                                # mapa rápido de entrada por N normalizado
+                                # === 1) Primeiro trata os conflitos (suspeitos) ===
                                 entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
                         
                                 if "N" not in edited_conf.columns:
@@ -1273,41 +1273,42 @@ with st.spinner("⏳ Processando..."):
                                             pulados += 1
                                             continue
                         
-                                        row_values = [d_in.get(h, "") for h in headers]  # ordem exata do cabeçalho
+                                        row_values = [d_in.get(h, "") for h in headers]
                         
                                         if manter_novo and manter_velho:
-                                            # mantém os dois -> append
                                             aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                             adicionados += 1
                         
                                         elif manter_novo and not manter_velho:
-                                            # update na 1ª ocorrência do N; se não houver, append
                                             if "N" in valores_existentes_df.columns:
                                                 idxs = valores_existentes_df.index[valores_existentes_df["N"] == nkey].tolist()
                                             else:
                                                 idxs = []
                                             if idxs:
-                                                sheet_row = idxs[0] + 2  # 1 header + base 0
+                                                sheet_row = idxs[0] + 2
                                                 aba_destino.update(f"A{sheet_row}", [row_values], value_input_option="USER_ENTERED")
                                                 atualizados += 1
-                                                # espelho local
                                                 valores_existentes_df.loc[idxs[0], list(valores_existentes_df.columns.intersection(headers))] = row_values[:len(headers)]
                                             else:
                                                 aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                                 adicionados += 1
                         
                                         elif not manter_novo and manter_velho:
-                                            # mantém como está
                                             pulados += 1
                                         else:
-                                            # nada marcado
                                             pulados += 1
                         
+                                # === 2) Agora inclui TODOS os novos (df_novos) ===
+                                if not df_novos.empty:
+                                    dados_para_enviar = df_novos.fillna("").values.tolist()
+                                    aba_destino.append_rows(dados_para_enviar, value_input_option='USER_ENTERED')
+                                    adicionados += len(dados_para_enviar)
+                        
                                 st.success(f"✅ Concluído: {adicionados} adicionado(s), {atualizados} substituído(s), {pulados} ignorado(s).")
-                                st.info("ℹ️ Recarregue o Google Sheets no navegador para ver as mudanças.")
                         
                             except Exception as e:
                                 st.error(f"❌ Erro ao aplicar escolhas: {e}")
+
                         # ================== /CONFLITOS GLOBAIS ==================
 
 

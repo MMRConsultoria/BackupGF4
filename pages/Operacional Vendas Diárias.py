@@ -564,7 +564,68 @@ with st.spinner("⏳ Processando..."):
                 gc = get_gc()
                 planilha_destino = gc.open("Vendas diarias")
                 aba_destino = planilha_destino.worksheet("Fat Sistema Externo")
-    
+
+                with st.expander("🔧 Teste rápido de exclusão (fora do fluxo)"):
+                    st.write("Use este teste para verificar se consigo EXCLUIR uma linha pela API direto nesta aba.")
+                
+                    # Mostra as infos da aba/planilha (confirma o alvo)
+                    try:
+                        st.write("📄 **Planilha**:", aba_destino.spreadsheet.title)
+                        st.write("📑 **Aba**:", aba_destino.title, " | **sheetId/gid**:", aba_destino.id)
+                        # Link direto pra aba
+                        st.write("🔗 Abra a aba:", f"https://docs.google.com/spreadsheets/d/{aba_destino.spreadsheet.id}/edit#gid={aba_destino.id}")
+                    except Exception as e:
+                        st.error(f"❌ Não consegui acessar a aba: {e}")
+                
+                    # Entrada do número da linha real (1-based)
+                    ln_test = st.number_input("Linha (1-based) para excluir", min_value=2, value=10, step=1,
+                                              help="Linha 1 é cabeçalho; use 2 ou mais. Escolha uma linha 'dummy' para testar.")
+                
+                    # Botões para testar os 2 caminhos
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        bt_delete_rows = st.button("Testar com gspread.delete_rows")
+                    with c2:
+                        bt_batch_update = st.button("Testar com batchUpdate (deleteDimension)")
+                
+                    # Método 1: gspread.delete_rows
+                    if bt_delete_rows:
+                        try:
+                            aba_destino.delete_rows(int(ln_test))
+                            st.success(f"✅ delete_rows: excluída a linha {ln_test}.")
+                        except Exception as e:
+                            st.error(f"❌ delete_rows falhou: {e}")
+                
+                    # Método 2: batchUpdate/deleteDimension
+                    if bt_batch_update:
+                        try:
+                            sheet_id = int(aba_destino.id)  # gid/sheetId
+                            requests = [{
+                                "deleteDimension": {
+                                    "range": {
+                                        "sheetId": sheet_id,
+                                        "dimension": "ROWS",
+                                        "startIndex": int(ln_test) - 1,  # 0-based inclusive
+                                        "endIndex": int(ln_test)        # 0-based exclusive
+                                    }
+                                }
+                            }]
+                            resp = aba_destino.spreadsheet.batch_update({"requests": requests})
+                            st.success(f"✅ batchUpdate: solicitei exclusão da linha {ln_test}.")
+                            st.caption(f"Resposta: {resp}")
+                        except Exception as e:
+                            st.error(f"❌ batchUpdate falhou: {e}")
+                
+                    # Mostra email do Service Account (confirma quem está agindo)
+                    try:
+                        cred = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+                        st.caption(f"👤 Service Account: {cred.get('client_email','(sem email)')}")
+                        st.caption("⚠️ Este e-mail precisa ter permissão de **Editor** na planilha.")
+                    except Exception:
+                        pass
+
+                 
+      #exclui aqui
                 valores_existentes_df = get_as_dataframe(aba_destino, evaluate_formulas=True, dtype=str).fillna("")
                 colunas_df_existente = valores_existentes_df.columns.str.strip().tolist()
                 dados_existentes   = set(valores_existentes_df["M"].astype(str).str.strip()) if "M" in colunas_df_existente else set()

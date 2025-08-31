@@ -1247,6 +1247,9 @@ with st.spinner("⏳ Processando..."):
                             if "Data" in d_in:
                                 d_in["Data"] = _fmt_serial_to_br(d_in["Data"])
                             conflitos_linhas.append(d_in)
+
+                            
+
                         
                             # sheet
                             df_sh = sheet_por_n[nkey].copy()
@@ -1260,9 +1263,10 @@ with st.spinner("⏳ Processando..."):
                                         df_sh["Data"] = pd.to_datetime(df_sh["Data"], dayfirst=True, errors="coerce").dt.strftime("%d/%m/%Y")
                                 except Exception:
                                     pass
-                            for _, row in df_sh.iterrows():
+                            for idx, row in df_sh.iterrows():
                                 d_sh = canonize_dict(row.to_dict())
                                 d_sh["_origem_"] = "Google Sheets"
+                                d_sh["Linha Sheet"] = idx + 2   # linha real do Google Sheets
                                 conflitos_linhas.append(d_sh)
                         
                         # (2) DataFrame consolidado
@@ -1290,9 +1294,11 @@ with st.spinner("⏳ Processando..."):
                         
                         # (6) reordena
                         ordem_final = [
-                            "Manter","_origem_","Data","Dia da Semana","Loja","Codigo Everest","Grupo","Cod Grupo Empresas",
+                            "Manter","_origem_","Linha Sheet","Data","Dia da Semana","Loja",
+                            "Codigo Everest","Grupo","Cod Grupo Empresas",
                             "Fat. Total","Serv/Tx","Fat.Real","Ticket","Mês","Ano","M","N"
                         ]
+
                         cols_final = [c for c in ordem_final if c in df_conf.columns] + [c for c in df_conf.columns if c not in ordem_final]
                         df_conf = df_conf.reindex(columns=cols_final, fill_value="")
                         

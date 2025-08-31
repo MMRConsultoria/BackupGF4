@@ -1148,17 +1148,17 @@ with st.spinner("⏳ Processando..."):
                             sheet_por_n[nkey] = valores_existentes_df[valores_existentes_df["N"] == nkey].copy()
                     
                         # ================== CONFLITOS: TABELA ÚNICA + BOTÃO ÚNICO ==================
-                        # Requer estas variáveis já criadas antes: entrada_por_n, sheet_por_n, headers,
-                        # valores_existentes_df, aba_destino
-                        
-                        #st.markdown("### 🔴 Possíveis duplicados — marque o(s) que deseja manter")
-                        
+
                         def _fmt_serial_to_br(x):
                             try:
-                                return pd.to_datetime(pd.Series([x]), origin="1899-12-30", unit="D", errors="coerce")\
+                                return pd.to_datetime(pd.Series([x]), origin="1899-12-30", unit="D", errors="coerce") \
                                          .dt.strftime("%d/%m/%Y").iloc[0]
                             except Exception:
-                                return x
+                                # tenta interpretar como texto dd/mm/yyyy
+                                try:
+                                    return pd.to_datetime(pd.Series([x]), dayfirst=True, errors="coerce").dt.strftime("%d/%m/%Y").iloc[0]
+                                except Exception:
+                                    return x
                         
                         def _normN(x):
                             return str(x).strip().replace(".0", "")
@@ -1168,74 +1168,134 @@ with st.spinner("⏳ Processando..."):
                         if "N" in valores_existentes_df.columns:
                             valores_existentes_df["N"] = valores_existentes_df["N"].map(_normN)
                         
-                        # monta uma lista única com TODAS as linhas (entrada + sheet) por N
+                        # (1) monta uma lista única com TODAS as linhas (entrada + sheet) por N
                         conflitos_linhas = []
-                        alvos_ordem = [
-                            "__origem__", "N", "Data", "Dia da Semana", "Loja",
-                            "Codigo Everest", "Grupo", "Cod Grupo Empresas", "Fat.Total", "M"
-                        ]
                         
                         for nkey in sorted(entrada_por_n.keys()):
+                            # ---- linha da ENTRADA (arquivo novo) ----
                             d_in = entrada_por_n[nkey].copy()
-                            d_in["__origem__"] = "Nova Arquivo"
+                            d_in["_origem_"] = "Nova Arquivo"              # novo nome pedido
                             d_in["N"] = _normN(d_in.get("N", ""))
+                        
+                            # Data (serial -> dd/mm/yyyy)
                             if "Data" in d_in:
                                 d_in["Data"] = _fmt_serial_to_br(d_in["Data"])
+                        
                             conflitos_linhas.append(d_in)
                         
+                            # ---- linhas do SHEET com mesmo N ----
                             df_sh = sheet_por_n[nkey].copy()
-
-                            # --- 1) Normaliza os nomes das colunas vindos do Google Sheets ---
+                            # normaliza cabeçalhos básicos
                             df_sh.columns = df_sh.columns.astype(str).str.strip()
-                            for c in df_sh.columns:
-                                if c.strip().lower() in ["data", "dt", "data lançamento", "dt lançamento"]:
-                                    df_sh = df_sh.rename(columns={c: "Data"})
-                            
-                            # --- 2) Formata a Data (serial Excel ou texto dd/mm/yyyy) ---
+                        
+                            # Padroniza nomes equivalentes
+                            rename_sheet_cols = {}
+                            for c in list(df_sh.columns):
+                                c_norm = c.strip().lower()
+                                if c_norm in ["código everest", "codigo everest"]:
+                                    rename_sheet_cols[c] = "Codigo Everest"
+                                elif c_norm in ["código grupo everest", "codigo grupo everest", "cod grupo empresas", "codigo grupo empresas"]:
+                                    rename_sheet_cols[c] = "Cod Grupo Empresas"
+                                elif c_norm in ["fat total", "fat.total"]:
+                                    rename_sheet_cols[c] = "Fat. Total"
+                                elif c_norm in ["serv/tx", "serv tx", "serv", "servico"]:
+                                    rename_sheet_cols[c] = "Serv/Tx"
+                                elif c_norm in ["fat real", "fat.real"]:
+                                    rename_sheet_cols[c] = "Fat.Real"
+                            if rename_sheet_cols:
+                                df_sh = df_sh.rename(columns=rename_sheet_cols)
+                        
+                            # padroniza Data
                             if "Data" in df_sh.columns:
                                 try:
                                     ser = pd.to_numeric(df_sh["Data"], errors="coerce")
                                     if ser.notna().any():
-                                        df_sh["Data"] = pd.to_datetime(
-                                            ser, origin="1899-12-30", unit="D", errors="coerce"
-                                        ).dt.strftime("%d/%m/%Y")
+                                        df_sh["Data"] = pd.to_datetime(ser, origin="1899-12-30", unit="D", errors="coerce").dt.strftime("%d/%m/%Y")
                                     else:
-                                        df_sh["Data"] = pd.to_datetime(
-                                            df_sh["Data"], dayfirst=True, errors="coerce"
-                                        ).dt.strftime("%d/%m/%Y")
+                                        df_sh["Data"] = pd.to_datetime(df_sh["Data"], dayfirst=True, errors="coerce").dt.strftime("%d/%m/%Y")
                                 except Exception:
                                     pass
-                            
-                            # --- 3) Itera as linhas e adiciona no empilhado ---
+                        
                             for _, row in df_sh.iterrows():
                                 d_sh = row.to_dict()
-                                d_sh["__origem__"] = "Google Sheets"
-                            
-                                # ajustes de nomes alternativos
+                                d_sh["_origem_"] = "Google Sheets"
+                                # garantias de nomes
                                 if "Código Everest" in d_sh and "Codigo Everest" not in d_sh:
                                     d_sh["Codigo Everest"] = d_sh["Código Everest"]
-                                if "Fat Total" in d_sh and "Fat.Total" not in d_sh:
-                                    d_sh["Fat.Total"] = d_sh["Fat Total"]
-                            
-                                conflitos_linhas.append(d_sh)
-
+                                if "Fat Total" in d_sh and "Fat. Total" not in d_sh:
+                                    d_sh["Fat. Total"] = d_sh["Fat Total"]
+                                if "Código Grupo Everest" in d_sh and "Cod Grupo Empresas" not in d_sh:
+                                    d_sh["Cod Grupo Empresas"] = d_sh["Código Grupo Everest"]
                         
+                                conflitos_linhas.append(d_sh)
+                        
+                        # (2) DataFrame consolidado
                         df_conf = pd.DataFrame(conflitos_linhas).copy()
                         
-                        # ordena/seleciona colunas
-                        cols_keep = [c for c in alvos_ordem if c in df_conf.columns]
-                        df_conf = df_conf.reindex(columns=cols_keep + [c for c in df_conf.columns if c not in cols_keep], fill_value="")
+                        # padroniza também das linhas de entrada (caso tenham os nomes “com acento”)
+                        df_conf = df_conf.rename(columns={
+                            "Código Everest": "Codigo Everest",
+                            "Código Grupo Everest": "Cod Grupo Empresas",
+                            "Fat Total": "Fat. Total",
+                            "Serv/Tx": "Serv/Tx",
+                            "Fat.Real": "Fat.Real"
+                        })
                         
-                        # emojis na origem
-                        if "__origem__" in df_conf.columns:
-                            df_conf["__origem__"] = df_conf["__origem__"].replace({
+                        # (3) calcula Dia da Semana, Mês e Ano a partir de "Data" (dd/mm/yyyy)
+                        def _to_dt(s):
+                            try:
+                                return pd.to_datetime(s, dayfirst=True, errors="coerce")
+                            except Exception:
+                                return pd.NaT
+                        
+                        if "Data" in df_conf.columns:
+                            _dt = pd.to_datetime(df_conf["Data"], dayfirst=True, errors="coerce")
+                            nomes_dia = ["segunda-feira","terça-feira","quarta-feira","quinta-feira","sexta-feira","sábado","domingo"]
+                            df_conf["Dia da Semana"] = _dt.dt.dayofweek.map(lambda i: nomes_dia[i].title() if pd.notna(i) else "")
+                            nomes_mes = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]
+                            df_conf["Mês"] = _dt.dt.month.map(lambda m: nomes_mes[m-1] if pd.notna(m) else "")
+                            df_conf["Ano"] = _dt.dt.year.fillna("").astype(str).replace("nan","")
+                        
+                        # (4) emojis em _origem_
+                        if "_origem_" in df_conf.columns:
+                            df_conf["_origem_"] = df_conf["_origem_"].replace({
                                 "Nova Arquivo": "🟢 Nova Arquivo",
                                 "Google Sheets": "🔴 Google Sheets"
                             })
                         
-                        # coluna de marcação
+                        # (5) garante “Manter” no início
                         if "Manter" not in df_conf.columns:
                             df_conf.insert(0, "Manter", False)
+                        
+                        # (6) reordena exatamente como solicitado
+                        ordem_final = [
+                            "Manter",
+                            "_origem_",
+                            "Data",
+                            "Dia da Semana",
+                            "Loja",
+                            "Codigo Everest",
+                            "Grupo",
+                            "Cod Grupo Empresas",
+                            "Fat. Total",
+                            "Serv/Tx",
+                            "Fat.Real",
+                            "Ticket",
+                            "Mês",
+                            "Ano",
+                            "M",
+                            "N",
+                        ]
+                        cols_final = [c for c in ordem_final if c in df_conf.columns] + \
+                                     [c for c in df_conf.columns if c not in ordem_final]
+                        df_conf = df_conf.reindex(columns=cols_final, fill_value="")
+                        
+                        st.markdown(
+                            "<div style='color:#555; font-size:0.9rem; font-weight:500; margin:10px 0;'>"
+                            "🔴 Possíveis duplicados — marque o(s) que deseja manter"
+                            "</div>",
+                            unsafe_allow_html=True
+                        )
                         
                         with st.form("form_conflitos_globais"):
                             edited_conf = st.data_editor(
@@ -1250,7 +1310,7 @@ with st.spinner("⏳ Processando..."):
                                     )
                                 }
                             )
-                            aplicar_tudo = st.form_submit_button("✅Atualizar planilha")
+                            aplicar_tudo = st.form_submit_button("✅ Atualizar planilha")
                         
                         if aplicar_tudo:
                             try:
@@ -1264,24 +1324,24 @@ with st.spinner("⏳ Processando..."):
                                 if "N" not in edited_conf.columns:
                                     st.error("❌ Não foi possível identificar a coluna N na tabela de conflitos.")
                                 else:
+                                    # usa _origem_ (novo nome) no lugar de __origem__
                                     for nkey, bloco in edited_conf.groupby(edited_conf["N"].map(_normN)):
-                                        manter_novo  = any((bloco["__origem__"] == "🟢 Nova Arquivo")  & (bloco["Manter"]))
-                                        manter_velho = any((bloco["__origem__"] == "🔴 Google Sheets") & (bloco["Manter"]))
+                                        manter_novo  = any((bloco["_origem_"] == "🟢 Nova Arquivo")  & (bloco["Manter"]))
+                                        manter_velho = any((bloco["_origem_"] == "🔴 Google Sheets") & (bloco["Manter"]))
                         
                                         d_in = entrada_por_n_norm.get(nkey, None)
                                         if d_in is None:
                                             pulados += 1
                                             continue
                         
-                                        row_values = [d_in.get(h, "") for h in headers]  # ordem exata do cabeçalho
+                                        # ordem exata do cabeçalho do Sheet (headers)
+                                        row_values = [d_in.get(h, "") for h in headers]
                         
                                         if manter_novo and manter_velho:
-                                            # mantém os dois -> append
                                             aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                             adicionados += 1
                         
                                         elif manter_novo and not manter_velho:
-                                            # update na 1ª ocorrência do N; se não houver, append
                                             if "N" in valores_existentes_df.columns:
                                                 idxs = valores_existentes_df.index[valores_existentes_df["N"] == nkey].tolist()
                                             else:
@@ -1297,10 +1357,8 @@ with st.spinner("⏳ Processando..."):
                                                 adicionados += 1
                         
                                         elif not manter_novo and manter_velho:
-                                            # mantém como está
                                             pulados += 1
                                         else:
-                                            # nada marcado
                                             pulados += 1
                         
                                 st.success(f"✅ Concluído: {adicionados} adicionado(s), {atualizados} substituído(s), {pulados} ignorado(s).")
@@ -1308,12 +1366,10 @@ with st.spinner("⏳ Processando..."):
                         
                             except Exception as e:
                                 st.error(f"❌ Erro ao aplicar escolhas: {e}")
-                        # ================== /CONFLITOS GLOBAIS ==================
-
-
-
+                        
                         # bloqueia envio automático enquanto houver conflitos
                         pode_enviar = False
+                        # ================== /CONFLITOS GLOBAIS ==================
 
 
                     # 8) Envio

@@ -1418,15 +1418,30 @@ with st.spinner("⏳ Processando..."):
                         })
                     
                     # garante coluna oculta de linha do sheet (para deletar com precisão)
+                    import uuid
+
+                    # garante coluna oculta de linha do sheet (para deletar com precisão)
                     if "__sheet_row" not in df_conf.columns:
                         df_conf["__sheet_row"] = ""
                     
-                    with st.form("form_conflitos_globais"):
+                    # 🔑 gera key única para o form
+                    form_key = st.session_state.get("_conflicts_form_key")
+                    if not form_key:
+                        form_key = f"form_conflitos_globais_{uuid.uuid4().hex}"
+                        st.session_state["_conflicts_form_key"] = form_key
+                    
+                    # 🔑 gera key única para o editor
+                    editor_key = st.session_state.get("_conflicts_editor_key")
+                    if not editor_key:
+                        editor_key = f"editor_conflitos_{uuid.uuid4().hex}"
+                        st.session_state["_conflicts_editor_key"] = editor_key
+                    
+                    with st.form(form_key):
                         edited_conf = st.data_editor(
                             df_conf,
                             use_container_width=True,
                             hide_index=True,
-                            key="editor_conflitos",
+                            key=editor_key,  # usa a key única
                             column_config={
                                 "Manter": st.column_config.CheckboxColumn(
                                     help="Marque o que deseja manter/inserir",
@@ -1435,6 +1450,7 @@ with st.spinner("⏳ Processando..."):
                             }
                         )
                         aplicar_tudo = st.form_submit_button("✅ Aplicar escolhas")
+
                     
                     if aplicar_tudo:
                         try:

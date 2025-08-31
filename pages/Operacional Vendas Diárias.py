@@ -876,7 +876,7 @@ with st.spinner("⏳ Processando..."):
     
         with c1:
             enviar_auto = st.button(
-                "Atualizar SheetsS",
+                "Atualizar Sheets",
                 use_container_width=True,
                 disabled=not has_df,
                 help=None if has_df else "Carregue os dados para habilitar",

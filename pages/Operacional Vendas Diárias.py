@@ -785,20 +785,26 @@ with aba3:
                         conflitos_linhas.append(d_sh)
 
                 df_conf = pd.DataFrame(conflitos_linhas).copy()
-                order_cols = ["Manter","__origem__","N","Data","Dia da Semana","Loja","Codigo Everest","Grupo","Cod Grupo Empresas","Fat.Total","Serv/Tx","Fat.Real","Ticket","Mês","Ano","M","__sheet_row"]
+                df_conf = pd.DataFrame(conflitos_linhas).copy()
+                order_cols = ["Manter","__origem__","N","Data","Dia da Semana","Loja","Codigo Everest",
+                              "Grupo","Cod Grupo Empresas","Fat.Total","Serv/Tx","Fat.Real","Ticket",
+                              "Mês","Ano","M","__sheet_row"]
                 keep = [c for c in order_cols if c in df_conf.columns]
                 df_conf = df_conf.reindex(columns=keep + [c for c in df_conf.columns if c not in keep], fill_value="")
-
-                df_conf["__origem__"] = df_conf["__origem__"].replace({"Nova Arquivo":"🟢 Nova Arquivo","Google Sheets":"🔴 Google Sheets"})
+                
+                df_conf["__origem__"] = df_conf["__origem__"].replace({
+                    "Nova Arquivo":"🟢 Nova Arquivo",
+                    "Google Sheets":"🔴 Google Sheets"
+                })
                 if "__sheet_row" not in df_conf.columns:
                     df_conf["__sheet_row"] = ""
-
+                
                 # keys únicas
                 if "_conflicts_form_key" not in st.session_state:
                     st.session_state["_conflicts_form_key"] = f"form_conflitos_globais_{uuid.uuid4().hex}"
                 if "_conflicts_editor_key" not in st.session_state:
                     st.session_state["_conflicts_editor_key"] = f"editor_conflitos_{uuid.uuid4().hex}"
-
+                
                 with st.form(st.session_state["_conflicts_form_key"]):
                     edited_conf = st.data_editor(
                         df_conf, use_container_width=True, hide_index=True,
@@ -811,9 +817,8 @@ with aba3:
                         }
                     )
                     aplicar_tudo = st.form_submit_button("✅ Aplicar escolhas")
-
+                
                 if aplicar_tudo:
-                   
                     try:
                         adicionados = 0
                         deletados   = 0
@@ -822,84 +827,123 @@ with aba3:
                         headers = aba_destino.row_values(1)
                         num_cols = len(headers)
                 
-                        # ... (seu código que calcula rows_del, deleta e depois insere os "🟢 Nova Arquivo" marcados) ...
-                        # no final do loop de inserção, você terá as contagens:
+                        # 1) excluir linhas 🔴 desmarcadas
+                        if "__sheet_row" in edited_conf.columns:
+                            rows_del = (
+                                edited_conf[
+                                    (edited_conf["__origem__"] == "🔴 Google Sheets") &
+                                    (~edited_conf["Manter"].astype(bool)) &
+                                    (edited_conf["__sheet_row"].astype(str).str.strip() != "")
+                                ]["__sheet_row"].dropna().astype(int).tolist()
+                            )
+                        else:
+                            rows_del = []
+                
+                        for row_idx in sorted(set(rows_del), reverse=True):
+                            try:
+                                aba_destino.delete_rows(row_idx)
+                                deletados += 1
+                            except Exception as e:
+                                st.error(f"❌ Erro ao excluir linha {row_idx}: {e}")
+                
+                        # 2) inserir 🟢 marcadas
+                        entrada_por_n_norm = {_normN(k): v for k, v in entrada_por_n.items()}
+                        novos_marcados = edited_conf[
+                            (edited_conf["__origem__"] == "🟢 Nova Arquivo") & (edited_conf["Manter"].astype(bool))
+                        ].copy()
+                
+                        for _, r in novos_marcados.iterrows():
+                            nkey = _normN(r.get("N", ""))
+                            d_in = entrada_por_n_norm.get(nkey)
+                            if not d_in:
+                                ignorados += 1
+                                continue
+                
+                            row_values = build_row_values(headers, d_in)
+                            if len(row_values) < num_cols: row_values += [""]*(num_cols - len(row_values))
+                            elif len(row_values) > num_cols: row_values = row_values[:num_cols]
+                
+                            try:
+                                aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
+                                adicionados += 1
+                            except Exception as e:
+                                st.error(f"❌ Erro ao inserir (N={nkey}): {e}")
                 
                         ok_final = (adicionados > 0) or (deletados > 0)
-                
-                        # Mostra feedback local (na área da tabela) e também grava banner
                         if ok_final:
                             msg = f"Concluído: {adicionados} inserido(s) | {deletados} excluído(s) | {ignorados} ignorado(s)."
                             st.success(f"✅ {msg}")
                             _set_status(True, "Google Sheets atualizado com sucesso.", {
-                                "inseridos": adicionados,
-                                "excluidos": deletados,
-                                "ignorados": ignorados
+                                "inseridos": adicionados, "excluidos": deletados, "ignorados": ignorados
                             })
                         else:
                             msg = "Nada foi alterado (nenhum 'Novo Arquivo' marcado ou payload ausente)."
                             st.warning(f"⚠️ {msg}")
                             _set_status(False, "Não foi possível atualizar o Google Sheets.", {
-                                "inseridos": adicionados,
-                                "excluidos": deletados,
-                                "ignorados": ignorados
+                                "inseridos": adicionados, "excluidos": deletados, "ignorados": ignorados
                             })
-                
-                        # IMPORTANTE: NÃO usar st.rerun() aqui
                     except Exception as e:
                         st.error(f"❌ Erro geral ao aplicar escolhas: {e}")
                         _set_status(False, f"Falha no APPLY: {e}")
                 
+                # === Regras de envio direto (sem conflitos) ===
+                # (este bloco fica FORA do if aplicar_tudo)
+                def _is_na_code(x):
+                    s = str(x).strip()
+                    return (s == "" or s.lower() == "nan" or s == "0")
                 
-                            # === Regras de envio direto (sem conflitos) ===
-                            # Validação de códigos
-                            def _is_na_code(x):
-                                s = str(x).strip()
-                                return (s == "" or s.lower() == "nan" or s == "0")
+                if "Código Everest" in df_final.columns:
+                    lojas_nao_cadastradas = df_final.loc[df_final["Código Everest"].apply(_is_na_code), "Loja"].dropna().unique().tolist()
+                else:
+                    lojas_nao_cadastradas = []
                 
-                            if "Código Everest" in df_final.columns:
-                                lojas_nao_cadastradas = df_final.loc[df_final["Código Everest"].apply(_is_na_code), "Loja"].dropna().unique().tolist()
-                            else:
-                                lojas_nao_cadastradas = []
+                todas_lojas_ok = len(lojas_nao_cadastradas) == 0
+                pode_enviar = len(df_suspeitos) == 0  # só envia direto se não houver suspeitos N
                 
-                            todas_lojas_ok = len(lojas_nao_cadastradas) == 0
-                            pode_enviar = len(df_suspeitos) == 0  # só envia se não houver suspeitos N
+                # alinhar estritamente aos headers
+                headers_envio = aba_destino.row_values(1)
+                df_novos_alinhado = df_novos.reindex(columns=headers_envio).copy()
+                dados_para_enviar = df_novos_alinhado.fillna("").astype(object).values.tolist()
                 
-                            # alinhar estritamente aos headers
-                            df_novos_alinhado = df_novos.reindex(columns=headers).copy()
-                            dados_para_enviar = df_novos_alinhado.fillna("").astype(object).values.tolist()
+                if MODO_DEBUG and len(dados_para_enviar) > 0:
+                    st.caption("🧪 Pré-envio — primeiras colunas/valores")
+                    st.code(dict(zip(headers_envio, dados_para_enviar[0][:len(headers_envio)])), language="json")
                 
-                            if MODO_DEBUG and len(dados_para_enviar) > 0:
-                                st.caption("🧪 Pré-envio — primeiras colunas/valores")
-                                st.code(dict(zip(headers, dados_para_enviar[0][:len(headers)])), language="json")
+                if todas_lojas_ok and pode_enviar:
+                    if len(dados_para_enviar) == 0:
+                        st.info(f"ℹ️ 0 enviados. ❌ {len(df_dup_M)} duplicado(s) por M.")
+                        _set_status(False, "Nenhum registro novo para enviar (0 novos).", {
+                            "duplicados_M": int(len(df_dup_M))
+                        })
+                    else:
+                        try:
+                            inicio = len(aba_destino.col_values(1)) + 1
+                            aba_destino.append_rows(dados_para_enviar, value_input_option='USER_ENTERED')
+                            fim = inicio + len(dados_para_enviar) - 1
                 
-                            if todas_lojas_ok and pode_enviar:
-                                if len(dados_para_enviar) == 0:
-                                    st.info(f"ℹ️ 0 enviados. ❌ {len(df_dup_M)} duplicado(s) por M.")
-                                else:
-                                    try:
-                                        inicio = len(aba_destino.col_values(1)) + 1
-                                        aba_destino.append_rows(dados_para_enviar, value_input_option='USER_ENTERED')
-                                        fim = inicio + len(dados_para_enviar) - 1
+                            if inicio <= fim:
+                                data_format   = CellFormat(numberFormat=NumberFormat(type='DATE',   pattern='dd/mm/yyyy'))
+                                numero_format = CellFormat(numberFormat=NumberFormat(type='NUMBER', pattern='0'))
+                                format_cell_range(aba_destino, f"A{inicio}:A{fim}", data_format)
+                                format_cell_range(aba_destino, f"D{inicio}:D{fim}", numero_format)
+                                format_cell_range(aba_destino, f"F{inicio}:F{fim}", numero_format)
+                                format_cell_range(aba_destino, f"L{inicio}:L{fim}", numero_format)
                 
-                                        if inicio <= fim:
-                                            data_format   = CellFormat(numberFormat=NumberFormat(type='DATE',   pattern='dd/mm/yyyy'))
-                                            numero_format = CellFormat(numberFormat=NumberFormat(type='NUMBER', pattern='0'))
-                                            format_cell_range(aba_destino, f"A{inicio}:A{fim}", data_format)
-                                            format_cell_range(aba_destino, f"D{inicio}:D{fim}", numero_format)
-                                            format_cell_range(aba_destino, f"F{inicio}:F{fim}", numero_format)
-                                            format_cell_range(aba_destino, f"L{inicio}:L{fim}", numero_format)
-                
-                                        st.success(f"✅ {len(dados_para_enviar)} novo(s) enviado(s). ❌ {len(df_dup_M)} duplicado(s) por M.")
-                                    except Exception as e:
-                                        st.error(f"❌ Erro ao fazer append_rows: {e}")
-                            else:
-                                if not todas_lojas_ok:
-                                    st.error("🚫 Há lojas sem **Código Everest** cadastradas. Corrija e tente novamente.")
-                                elif len(df_suspeitos) > 0:
-                                    st.warning("⚠️ Existem suspeitos (chave N). Resolva antes de enviar.")
-                
-                        return True
+                            st.success(f"✅ {len(dados_para_enviar)} novo(s) enviados. ❌ {len(df_dup_M)} duplicado(s) por M.")
+                            _set_status(True, f"{len(dados_para_enviar)} registro(s) enviados para o Google Sheets.", {
+                                "enviados": len(dados_para_enviar), "duplicados_M": int(len(df_dup_M))
+                            })
+                        except Exception as e:
+                            st.error(f"❌ Erro ao fazer append_rows: {e}")
+                            _set_status(False, f"Falha ao enviar para o Google Sheets: {e}")
+                else:
+                    if not todas_lojas_ok:
+                        st.error("🚫 Há lojas sem **Código Everest** cadastradas. Corrija e tente novamente.")
+                        _set_status(False, "Há lojas sem Código Everest cadastrado.")
+                    elif len(df_suspeitos) > 0:
+                        st.warning("⚠️ Existem suspeitos (chave N). Resolva antes de enviar.")
+                        _set_status(False, "Há suspeitos por N — resolva no grid antes do envio direto.")
+
 
     # ------------------------ ESTADO / INICIALIZAÇÃO ------------------------
     if st.session_state.get("_last_tab") != "atualizar_google_sheets":

@@ -732,22 +732,50 @@ with aba3:
                         headers = aba_destino.row_values(1)
                         num_cols = len(headers)
 
-                        # 1) excluir: usa __sheet_row E fallback por N para garantir
-                        rows_to_delete = set(df_conf.loc[df_conf["Origem"]=="🔴 Google Sheets","__sheet_row"]
-                                                .dropna().astype(int).tolist())
-                        if cN:
-                            # fallback: procura por N atual no DF existente (índice+2)
-                            for nkey in entrada_por_n.keys():
-                                idxs = valores_existentes_df.index[valores_existentes_df[cN] == nkey].tolist()
-                                rows_to_delete.update(i+2 for i in idxs)
+                # 1) EXCLUIR com 3 estratégias: __sheet_row, DF e varredura direta na COLUNA N
+                rows_to_delete = set()
+                
+                # (a) linhas pré-mapeadas no grid
+                if "__sheet_row" in df_conf.columns:
+                    rows_to_delete.update(
+                        df_conf.loc[df_conf["Origem"]=="🔴 Google Sheets","__sheet_row"]
+                        .dropna().astype(int).tolist()
+                    )
+                
+                # (b) fallback pelo DataFrame de existentes (índice + 2)
+                if cN and not valores_existentes_df.empty:
+                    for nkey in entrada_por_n.keys():
+                        idxs = valores_existentes_df.index[valores_existentes_df[cN].astype(str).str.strip() == nkey].tolist()
+                        rows_to_delete.update(i+2 for i in idxs)
+                
+                # (c) varredura DIRETA na COLUNA N do Sheet (mais robusto)
+                try:
+                    headers = aba_destino.row_values(1)
+                    if "N" in headers:
+                        n_col_idx = headers.index("N") + 1  # 1-indexed
+                        colN = aba_destino.col_values(n_col_idx)
+                        for nkey in entrada_por_n.keys():
+                            # normaliza e compara
+                            matches = [i+1 for i, v in enumerate(colN) if _normN(v) == _normN(nkey)]
+                            rows_to_delete.update(matches)
+                        dlog("Varredura direta na coluna N", {
+                            "n_col_idx": n_col_idx,
+                            "rows_found": sorted(rows_to_delete)
+                        })
+                except Exception as e:
+                    st.warning(f"Não consegui varrer a coluna N diretamente: {e}")
+                
+                # remove cabeçalho caso tenha entrado por engano
+                rows_to_delete.discard(1)
+                
+                # executa exclusão em ordem decrescente
+                for row_idx in sorted(rows_to_delete, reverse=True):
+                    try:
+                        aba_destino.delete_rows(row_idx)
+                        deletados += 1
+                    except Exception as e:
+                        st.error(f"❌ Erro ao excluir linha {row_idx}: {e}")
 
-                        dlog("Linhas a excluir (final)", sorted(rows_to_delete))
-                        for row_idx in sorted(rows_to_delete, reverse=True):
-                            try:
-                                aba_destino.delete_rows(row_idx)
-                                deletados += 1
-                            except Exception as e:
-                                st.error(f"❌ Erro ao excluir linha {row_idx}: {e}")
 
                         # 2) inserir: “Novo Arquivo” por N
                         for nkey, d_in in entrada_por_n.items():

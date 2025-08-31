@@ -1352,7 +1352,7 @@ with st.spinner("⏳ Processando..."):
                                     )
                                 }
                             )
-                            aplicar_tudo = st.form_submit_button("Atualizar SheetsS")
+                            aplicar_tudo = st.form_submit_button("Atualizar Sheets")
                         
                         # (9) EXCLUIR linhas marcadas do lado Google Sheets
                         if aplicar_tudo:

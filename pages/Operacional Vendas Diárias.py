@@ -1313,36 +1313,186 @@ with st.spinner("⏳ Processando..."):
 
 
                         # bloqueia envio automático enquanto houver conflitos
-                        pode_enviar = False
+                        #pode_enviar = False
 
 
                     # 8) Envio
-                    if todas_lojas_ok and pode_enviar:
+                    # ================== CONFLITOS GLOBAIS ==================
+                    def _fmt_serial_to_br(x):
                         try:
-                            dados_para_enviar = novos_dados  # (suspeitos_n bloqueados)
-                            if len(dados_para_enviar) == 0:
-                                st.info(f"ℹ️ {len(duplicados)} registros duplicados. Nada a enviar.")
-                            else:
-                                inicio = len(aba_destino.col_values(1)) + 1
-                                aba_destino.append_rows(dados_para_enviar, value_input_option='USER_ENTERED')
-                                fim = inicio + len(dados_para_enviar) - 1
-    
-                                if inicio <= fim:
-                                    data_format   = CellFormat(numberFormat=NumberFormat(type='DATE',   pattern='dd/mm/yyyy'))
-                                    numero_format = CellFormat(numberFormat=NumberFormat(type='NUMBER', pattern='0'))
-                                    format_cell_range(aba_destino, f"A{inicio}:A{fim}", data_format)
-                                    format_cell_range(aba_destino, f"L{inicio}:L{fim}", numero_format)
-                                    format_cell_range(aba_destino, f"D{inicio}:D{fim}", numero_format)
-                                    format_cell_range(aba_destino, f"F{inicio}:F{fim}", numero_format)
-    
-                                st.success(f"✅ {len(dados_para_enviar)} registro(s) enviado(s) com sucesso para o Google Sheets!")
-                                if duplicados:
-                                    st.warning(f"⚠️ {len(duplicados)} registro(s) duplicados na google sheets, não foram enviados.")
+                            return pd.to_datetime(pd.Series([x]), origin="1899-12-30", unit="D", errors="coerce")\
+                                     .dt.strftime("%d/%m/%Y").iloc[0]
+                        except Exception:
+                            return x
+                    
+                    def _normN(x):
+                        return str(x).strip().replace(".0", "")
+                    
+                    # normaliza N já lido do Sheet
+                    valores_existentes_df = valores_existentes_df.copy()
+                    if "N" in valores_existentes_df.columns:
+                        valores_existentes_df["N"] = valores_existentes_df["N"].map(_normN)
+                    
+                    conflitos_linhas = []
+                    alvos_ordem = [
+                        "Manter", "__origem__", "N", "Data", "Dia da Semana", "Loja",
+                        "Codigo Everest", "Grupo", "Cod Grupo Empresas", "Fat.Total", "M", "__sheet_row"
+                    ]
+                    
+                    # 🔗 ajudante pra achar nomes corretos no cabeçalho do Sheet
+                    def _col_sheet(humano):
+                        k = _norm_simple(humano)
+                        return lookup[k] if k in lookup else None
+                    
+                    cData = _col_sheet("Data")
+                    cLoja = _col_sheet("Loja")
+                    cCod  = _col_sheet("codigo everest")
+                    cFat  = _col_sheet("fat total")
+                    cM    = "M" if "M" in valores_existentes_df.columns else None
+                    cN    = "N" if "N" in valores_existentes_df.columns else None
+                    cols_sheet = [c for c in [cN, cData, cLoja, cCod, cFat, cM] if c]
+                    
+                    # 🔎 mapeia N -> linhas de entrada e N -> linhas do Sheet (com nº da linha no Sheet)
+                    entrada_por_n = {}
+                    sheet_por_n   = {}
+                    
+                    for linha in suspeitos_n:
+                        d = dict(zip(colunas_df, linha))
+                        nkey = _normN(d.get("N", ""))
+                        d["__origem__"] = "Nova Arquivo"
+                        d["N"] = nkey
+                        if "Data" in d:
+                            d["Data"] = _fmt_serial_to_br(d["Data"])
+                        entrada_por_n[nkey] = d  # (há 1 por N aqui)
+                    
+                    for nkey in sorted(entrada_por_n.keys()):
+                        d_in = entrada_por_n[nkey].copy()
+                        conflitos_linhas.append({**d_in, "Manter": False})  # linha da ENTRADA (🟢)
+                        # todas as linhas do Sheet com esse N (preservando índice → linha do Sheet)
+                        if cN in valores_existentes_df.columns:
+                            df_sh = valores_existentes_df[valores_existentes_df[cN] == nkey].copy()
+                        else:
+                            df_sh = valores_existentes_df.iloc[0:0].copy()
+                    
+                        # renomeia p/ rótulos amigáveis
+                        ren = {}
+                        if cData: ren[cData] = "Data"
+                        if cLoja: ren[cLoja] = "Loja"
+                        if cCod:  ren[cCod]  = "Codigo Everest"
+                        if cFat:  ren[cFat]  = "Fat.Total"
+                        if cM:    ren[cM]    = "M"
+                        if cN:    ren[cN]    = "N"
+                        df_sh = df_sh.rename(columns=ren)
+                    
+                        # formata data
+                        if "Data" in df_sh.columns:
+                            try:
+                                ser = pd.to_numeric(df_sh["Data"], errors="coerce")
+                                if ser.notna().any():
+                                    df_sh["Data"] = pd.to_datetime(ser, origin="1899-12-30", unit="D", errors="coerce").dt.strftime("%d/%m/%Y")
+                                else:
+                                    df_sh["Data"] = pd.to_datetime(df_sh["Data"], dayfirst=True, errors="coerce").dt.strftime("%d/%m/%Y")
+                            except Exception:
+                                pass
+                    
+                        # adiciona cada linha do Sheet com marcador da linha real no Sheet
+                        for idx, row in df_sh.iterrows():
+                            d_sh = row.to_dict()
+                            d_sh["__origem__"] = "Google Sheets"
+                            d_sh["N"] = nkey
+                            d_sh["Manter"] = False
+                            d_sh["__sheet_row"] = int(idx) + 2  # 1 header + base 0 → linha real no Sheet
+                            conflitos_linhas.append(d_sh)
+                    
+                    df_conf = pd.DataFrame(conflitos_linhas).copy()
+                    
+                    # ordena/seleciona colunas
+                    cols_keep = [c for c in alvos_ordem if c in df_conf.columns]
+                    df_conf = df_conf.reindex(columns=cols_keep + [c for c in df_conf.columns if c not in cols_keep], fill_value="")
+                    
+                    # emojis na origem
+                    if "__origem__" in df_conf.columns:
+                        df_conf["__origem__"] = df_conf["__origem__"].replace({
+                            "Nova Arquivo": "🟢 Nova Arquivo",
+                            "Google Sheets": "🔴 Google Sheets"
+                        })
+                    
+                    # garante coluna oculta de linha do sheet (para deletar com precisão)
+                    if "__sheet_row" not in df_conf.columns:
+                        df_conf["__sheet_row"] = ""
+                    
+                    with st.form("form_conflitos_globais"):
+                        edited_conf = st.data_editor(
+                            df_conf,
+                            use_container_width=True,
+                            hide_index=True,
+                            key="editor_conflitos",
+                            column_config={
+                                "Manter": st.column_config.CheckboxColumn(
+                                    help="Marque o que deseja manter/inserir",
+                                    default=False
+                                )
+                            }
+                        )
+                        aplicar_tudo = st.form_submit_button("✅ Aplicar escolhas")
+                    
+                    if aplicar_tudo:
+                        try:
+                            adicionados = 0
+                            deletados   = 0
+                            ignorados   = 0
+                    
+                            # 1) Deletar do Google Sheets cada linha '🔴 Google Sheets' SEM Manter
+                            if not edited_conf.empty and "__sheet_row" in edited_conf.columns:
+                                linhas_para_deletar = (
+                                    edited_conf[
+                                        (edited_conf["__origem__"] == "🔴 Google Sheets") &
+                                        (~edited_conf["Manter"].astype(bool)) &
+                                        (edited_conf["__sheet_row"].astype(str).str.strip() != "")
+                                    ]["__sheet_row"]
+                                    .dropna()
+                                    .astype(int)
+                                    .tolist()
+                                )
+                                # remove duplicatas e deleta do maior para o menor (para não deslocar índices)
+                                for row_idx in sorted(set(linhas_para_deletar), reverse=True):
+                                    try:
+                                        aba_destino.delete_rows(row_idx)
+                                        deletados += 1
+                                    except Exception as e:
+                                        st.error(f"❌ Erro ao excluir linha {row_idx} do Sheet: {e}")
+                    
+                            # 2) Inserir apenas as linhas '🟢 Nova Arquivo' marcadas com Manter
+                            #    (sem Manter → não insere)
+                            #    Monta row_values conforme 'headers' do Sheet
+                            #    Busca o registro de entrada por N para reconstruir o payload original
+                            entrada_por_n_norm = {k: v for k, v in entrada_por_n.items()}
+                            novos_marcados = edited_conf[
+                                (edited_conf["__origem__"] == "🟢 Nova Arquivo") &
+                                (edited_conf["Manter"].astype(bool))
+                            ]
+                    
+                            for _, r in novos_marcados.iterrows():
+                                nkey = _normN(r.get("N", ""))
+                                d_in = entrada_por_n_norm.get(nkey)
+                                if not d_in:
+                                    ignorados += 1
+                                    continue
+                                # monta payload na ORDEM EXATA do cabeçalho do Sheet
+                                row_values = [d_in.get(h, "") for h in headers]
+                                try:
+                                    aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
+                                    adicionados += 1
+                                except Exception as e:
+                                    st.error(f"❌ Erro ao inserir novo registro (N={nkey}): {e}")
+                    
+                            st.success(f"✅ Concluído: {adicionados} inserido(s) | {deletados} excluído(s) | {ignorados} ignorado(s).")
+                            st.info("ℹ️ Reabra o Google Sheets para visualizar as alterações aplicadas.")
+                    
                         except Exception as e:
-                            st.error(f"❌ Erro ao atualizar o Google Sheets: {e}")
-                    else:
-                        if not todas_lojas_ok:
-                            st.error("🚫 Há lojas sem **Código Everest** cadastradas. Corrija e tente novamente.")
+                            st.error(f"❌ Erro ao aplicar escolhas: {e}")
+                    # ================== /CONFLITOS GLOBAIS ==================
+
     
       
     

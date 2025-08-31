@@ -1396,6 +1396,7 @@ with st.spinner("⏳ Processando..."):
                             aplicar_tudo = st.form_submit_button("✅ Aplicar escolhas")
                         
                         if aplicar_tudo:
+                    
                             try:
                                 adicionados = 0
                                 deletados   = 0
@@ -1421,7 +1422,6 @@ with st.spinner("⏳ Processando..."):
                                             (edited_conf["__sheet_row"].astype(str).str.strip() != "")
                                         ]["__sheet_row"].dropna().astype(int).tolist()
                                     )
-                        
                                 dlog("Linhas a deletar", sorted(set(linhas_para_deletar)))
                         
                                 for row_idx in sorted(set(linhas_para_deletar), reverse=True):
@@ -1432,7 +1432,9 @@ with st.spinner("⏳ Processando..."):
                                         st.error(f"❌ Erro ao excluir linha {row_idx} do Sheet: {e}")
                         
                                 # 2) Inserir apenas 🟢 'Novo Arquivo' marcados com Manter
-                                entrada_por_n_norm = {str(k).strip(): v for k, v in entrada_por_n.items()}
+                                #    🔑 AQUI ESTÁ O PULO DO GATO: NORMALIZAR N nos DOIS LADOS
+                                entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
+                        
                                 novos_marcados = edited_conf[
                                     (edited_conf["__origem__"] == "🟢 Nova Arquivo") &
                                     (edited_conf["Manter"].astype(bool))
@@ -1446,16 +1448,20 @@ with st.spinner("⏳ Processando..."):
                                 if novos_marcados.empty:
                                     st.info("ℹ️ Nenhum 'Novo Arquivo' marcado para inserir.")
                         
+                                ns_sem_payload = []
+                        
                                 for i, (_, r) in enumerate(novos_marcados.iterrows(), start=1):
-                                    nkey = str(r.get("N", "")).strip()
+                                    nkey_raw = r.get("N", "")
+                                    nkey = _normN(nkey_raw)  # ✅ normaliza N vindo do grid
                                     d_in = entrada_por_n_norm.get(nkey)
                         
                                     if not d_in:
                                         ignorados += 1
-                                        dlog(f"[{i}] Sem payload de entrada para N", nkey)
+                                        ns_sem_payload.append(str(nkey_raw))
+                                        dlog(f"[{i}] Sem payload de entrada para N (provável mudança de formatação)", {"N_grid": str(nkey_raw), "N_norm": nkey})
                                         continue
                         
-                                    # ✅ Usa build_row_values para alinhar corretamente com os headers do Sheet (mesmo sujos com espaços)
+                                    # ✅ Usa build_row_values para alinhar corretamente com os headers do Sheet (mesmo com espaços/acentos)
                                     row_values = build_row_values(headers, d_in)
                         
                                     if MODO_DEBUG:
@@ -1485,6 +1491,12 @@ with st.spinner("⏳ Processando..."):
                                             language="json"
                                         )
                         
+                                # Feedback final
+                                if ns_sem_payload:
+                                    st.warning("⚠️ Alguns 'Novo Arquivo' marcados não tinham payload correspondente (N diferente após normalização).")
+                                    if MODO_DEBUG:
+                                        dlog("N sem payload (como veio do grid)", ns_sem_payload)
+                        
                                 st.success(f"✅ Concluído: {adicionados} inserido(s) | {deletados} excluído(s) | {ignorados} ignorado(s).")
                                 if MODO_DEBUG:
                                     st.info("🔍 Debug ativo — veja os logs acima.")
@@ -1493,6 +1505,7 @@ with st.spinner("⏳ Processando..."):
                         
                             except Exception as e:
                                 st.error(f"❌ Erro geral no APPLY: {e}")
+
                         # ================== /CONFLITOS GLOBAIS ==================
 
         

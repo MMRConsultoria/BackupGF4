@@ -1368,6 +1368,7 @@ with st.spinner("⏳ Processando..."):
                             except Exception as e:
                                 st.error(f"❌ Erro ao excluir linhas do Google Sheets: {e}")
 
+
                         
                         pode_enviar=False
                         # ================== /CONFLITOS GLOBAIS ==================

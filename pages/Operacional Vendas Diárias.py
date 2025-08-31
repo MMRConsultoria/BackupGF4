@@ -1312,86 +1312,61 @@ with st.spinner("⏳ Processando..."):
                             aplicar_tudo = st.form_submit_button("✅ Atualizar planilha")
                         
                         if aplicar_tudo:
-                 
+             
                             try:
-                                atualizados = 0
-                                adicionados = 0
-                                removidos   = 0
-                                pulados     = 0
+                                removidos = 0
+                                pulados   = 0
                         
-                                # mapa rápido de entrada por N normalizado (linha "Nova Arquivo")
-                                entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
-                        
+                                # validações básicas
                                 if "N" not in edited_conf.columns:
                                     st.error("❌ Não foi possível identificar a coluna N na tabela de conflitos.")
+                                elif "_origem_" not in edited_conf.columns:
+                                    st.error("❌ Não foi possível identificar a coluna _origem_.")
                                 else:
-                                    # normaliza coluna Linha Sheet (se existir)
-                                    tem_linha_sheet = "Linha Sheet" in edited_conf.columns
-                                    if tem_linha_sheet:
-                                        # garante numérico ou NaN
-                                        edited_conf["Linha Sheet"] = pd.to_numeric(edited_conf["Linha Sheet"], errors="coerce")
+                                    # Ns alvo = qualquer N que tenha pelo menos uma linha marcada "Manter"
+                                    edited_conf["_N_norm_"] = edited_conf["N"].astype(str).str.strip().str.replace(".0", "", regex=False)
+                                    ns_alvo = sorted(set(edited_conf.loc[edited_conf["Manter"] == True, "_N_norm_"].tolist()))
                         
-                                    # agrupa por N
-                                    for nkey, bloco in edited_conf.groupby(edited_conf["N"].map(_normN)):
-                                        manter_novo  = any((bloco["_origem_"] == "🟢 Nova Arquivo")  & (bloco["Manter"]))
-                                        manter_velho = any((bloco["_origem_"] == "🔴 Google Sheets") & (bloco["Manter"]))
+                                    if not ns_alvo:
+                                        st.info("ℹ️ Nenhum N marcado para ação. Nada a excluir.")
+                                    else:
+                                        # se tivermos a coluna Linha Sheet, podemos usá-la para precisão;
+                                        # mas como você quer excluir TODAS as linhas daquele N no Sheet,
+                                        # o fallback por N já cobre completamente o caso.
+                                        linhas_sheet = set()
                         
-                                        # se não marcou nada para esse N, ignora
-                                        if not manter_novo and not manter_velho:
-                                            pulados += 1
-                                            continue
+                                        # Fallback por N: apaga TODAS as linhas do Sheet onde N == nkey
+                                        if "N" in valores_existentes_df.columns:
+                                            veN = valores_existentes_df["N"].astype(str).str.strip().str.replace(".0","", regex=False)
+                                            idxs_para_remover = valores_existentes_df.index[veN.isin(ns_alvo)].tolist()
+                                            # converte para linhas reais do Google Sheets (idx + 2)
+                                            linhas_sheet.update([i + 2 for i in idxs_para_remover])
+                                        else:
+                                            st.warning("⚠️ A planilha não possui coluna 'N'. Não foi possível localizar linhas para exclusão.")
+                                            idxs_para_remover = []
                         
-                                        # dados de entrada (nova linha) para esse N
-                                        d_in = entrada_por_n_norm.get(nkey, None)
+                                        # ordena desc e exclui (evita deslocamento)
+                                        linhas_sheet = sorted([ln for ln in linhas_sheet if isinstance(ln, int) and ln >= 2], reverse=True)
                         
-                                        # 1) Descobrir quais linhas do Sheet remover para esse N
-                                        linhas_sheet = []
-                                        if tem_linha_sheet:
-                                            # pega direto do bloco editado (mais preciso, já filtrado pelo usuário)
-                                            linhas_sheet = bloco.loc[
-                                                (bloco["_origem_"] == "🔴 Google Sheets") & (bloco["Linha Sheet"].notna()),
-                                                "Linha Sheet"
-                                            ].astype(int).tolist()
-                        
-                                        # fallback: caso não tenha "Linha Sheet" na tabela, procura por N no DF do sheet
                                         if not linhas_sheet:
-                                            if "N" in valores_existentes_df.columns:
-                                                idxs = valores_existentes_df.index[valores_existentes_df["N"].map(_normN) == nkey].tolist()
-                                                # converte índices do DF para linhas reais (idx + 2)
-                                                linhas_sheet = [i + 2 for i in idxs]
-                        
-                                        # 2) Se marcou "Nova Arquivo", primeiro REMOVER as linhas antigas do Sheet
-                                        if manter_novo:
-                                            # remove de baixo para cima para não deslocar índices
-                                            for ln in sorted(set(linhas_sheet), reverse=True):
+                                            st.info("ℹ️ Nada para excluir (nenhuma linha correspondente encontrada por N).")
+                                        else:
+                                            for ln in linhas_sheet:
                                                 try:
                                                     aba_destino.delete_rows(ln)
                                                     removidos += 1
                                                 except Exception as _e:
-                                                    st.warning(f"⚠️ Falha ao remover linha {ln} do Sheet para N={nkey}: {_e}")
+                                                    st.warning(f"⚠️ Falha ao excluir linha {ln} do Google Sheets: {_e}")
                         
-                                            if d_in is None:
-                                                # não tem a linha nova correspondente (deveria ter), então pula
-                                                pulados += 1
-                                            else:
-                                                # monta a nova linha na ordem exata do cabeçalho 'headers'
-                                                row_values = [d_in.get(h, "") for h in headers]
-                                                try:
-                                                    aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
-                                                    adicionados += 1
-                                                except Exception as _e:
-                                                    st.error(f"❌ Erro ao inserir nova linha para N={nkey}: {_e}")
+                                            # atualiza espelho local (opcional)
+                                            if idxs_para_remover:
+                                                valores_existentes_df.drop(index=idxs_para_remover, errors="ignore", inplace=True)
                         
-                                        # 3) Se marcou "Google Sheets" e NÃO marcou "Nova Arquivo", mantém como está (não apaga nem insere)
-                                        if (not manter_novo) and manter_velho:
-                                            # nada a fazer — mantido
-                                            pass
-                        
-                                st.success(f"✅ Concluído: {adicionados} adicionado(s), {removidos} removido(s), {pulados} ignorado(s).")
+                                st.success(f"🗑️ Exclusão concluída: {removidos} removido(s), {pulados} ignorado(s).")
                                 st.info("ℹ️ Recarregue o Google Sheets no navegador para ver as mudanças.")
                         
                             except Exception as e:
-                                st.error(f"❌ Erro ao aplicar escolhas: {e}")
+                                st.error(f"❌ Erro ao excluir linhas do Google Sheets: {e}")
 
                         
                         pode_enviar=False

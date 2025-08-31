@@ -1159,10 +1159,41 @@ with st.spinner("⏳ Processando..."):
                         sheet_por_n = {}
                         for nkey in entrada_por_n.keys():
                             sheet_por_n[nkey] = valores_existentes_df[valores_existentes_df["N"] == nkey].copy()
-                    
+                        
                         # ================== CONFLITOS: TABELA ÚNICA + BOTÃO ÚNICO ==================
-                        # ================== CONFLITOS GLOBAIS ==================
-                        import uuid
+                    
+                        # Coloque esta seção no topo do arquivo, APENAS UMA VEZ
+                        import unicodedata, re, uuid
+                        import pandas as pd
+                        import streamlit as st
+                        
+                        # Toggle de debug global
+                        MODO_DEBUG = st.sidebar.toggle("🔍 Modo debug", value=False, help="Exibe diagnósticos detalhados")
+                        def dlog(msg, data=None):
+                            if MODO_DEBUG:
+                                st.caption(f"🧪 {msg}")
+                                if data is not None:
+                                    try:
+                                        import json as _json
+                                        st.code(_json.dumps(data, ensure_ascii=False, indent=2) if not isinstance(data, str) else data, language="json")
+                                    except Exception:
+                                        st.code(str(data))
+                        
+                        def _norm_simple(s: str) -> str:
+                            s = str(s or "").strip().lower()
+                            s = unicodedata.normalize("NFD", s)
+                            s = "".join(c for c in s if unicodedata.category(c) != "Mn")   # remove acentos
+                            s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+                            return s
+                        
+                        def _norm_key(s: str) -> str:
+                            # versão para casar nomes de colunas do dict/headers
+                            s = str(s or "")
+                            s = unicodedata.normalize("NFD", s)
+                            s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+                            s = s.strip().lower()
+                            s = re.sub(r"[^a-z0-9]+", " ", s)
+                            return s.strip()
                         
                         def _fmt_serial_to_br(x):
                             try:
@@ -1174,18 +1205,42 @@ with st.spinner("⏳ Processando..."):
                         def _normN(x):
                             return str(x).strip().replace(".0", "")
                         
-                        def _norm_simple(s: str) -> str:
-                            import unicodedata, re
-                            s = str(s or "").strip().lower()
-                            s = unicodedata.normalize("NFD", s)
-                            s = "".join(c for c in s if unicodedata.category(c) != "Mn")   # remove acentos
-                            s = re.sub(r"[^a-z0-9]+", " ", s).strip()
-                            return s
+                        # Aliases (normalizados) p/ cobrir variações dos headers
+                        ALIASES = {
+                            "codigo everest": {"codigo everest", "cod everest", "codigo ev"},
+                            "cod grupo empresas": {"codigo grupo everest", "codigo grupo empresas", "cod grupo empresas"},
+                            "fat total": {"fat total", "fat total", "fat.total"},
+                            "serv tx": {"serv tx", "serv/tx"},
+                            "fat real": {"fat real", "fat.real"},
+                            "mes": {"mes", "mês", "mes "},
+                        }
                         
-                        # 🔗 ajudante pra achar nomes corretos no cabeçalho do Sheet
-                        def _col_sheet(humano):
-                            k = _norm_simple(humano)
-                            return lookup[k] if k in lookup else None
+                        def _alias_target(norm_name: str) -> str:
+                            for canon, variants in ALIASES.items():
+                                if norm_name == canon or norm_name in variants:
+                                    return canon
+                            return norm_name
+                        
+                        def build_row_values(headers_raw, registro_dict):
+                            """
+                            Monta a lista de valores alinhada aos headers do Sheet.
+                            Usa normalização + aliases para casar 'Fat.Total' em d_in com ' Fat.Total ' no header, etc.
+                            """
+                            dnorm = {_norm_key(k): v for k, v in registro_dict.items()}
+                            out = []
+                            for h in headers_raw:
+                                h_norm = _alias_target(_norm_key(h))
+                                val = dnorm.get(h_norm, None)
+                                if val is None:
+                                    # fallback por header strip
+                                    val = registro_dict.get(str(h).strip(), "")
+                                out.append(val)
+                            return out
+                        # ================== /TOGGLE + HELPERS ==================
+                        
+                        
+                        # ================== CONFLITOS GLOBAIS ==================
+                        # REQUER: suspeitos_n, colunas_df, valores_existentes_df, aba_destino, lookup (já existem no seu fluxo)
                         
                         # (re)garante cabeçalho atual do Sheet
                         try:
@@ -1201,11 +1256,10 @@ with st.spinner("⏳ Processando..."):
                         if "N" in valores_existentes_df.columns:
                             valores_existentes_df["N"] = valores_existentes_df["N"].map(_normN)
                         
-                        conflitos_linhas = []
-                        alvos_ordem = [
-                            "Manter", "__origem__", "N", "Data", "Dia da Semana", "Loja",
-                            "Codigo Everest", "Grupo", "Cod Grupo Empresas", "Fat.Total", "M", "__sheet_row"
-                        ]
+                        # ajudante p/ achar nomes corretos do header do Sheet por rótulo humano
+                        def _col_sheet(humano):
+                            k = _norm_simple(humano)
+                            return lookup[k] if k in lookup else None
                         
                         cData = _col_sheet("Data")
                         cLoja = _col_sheet("Loja")
@@ -1216,7 +1270,7 @@ with st.spinner("⏳ Processando..."):
                         
                         # 🔎 mapeia N -> linha de ENTRADA (novo) e N -> linhas do SHEET (existentes)
                         entrada_por_n = {}
-                        sheet_por_n   = {}
+                        conflitos_linhas = []
                         
                         # Monta mapa de entrada (um por N em 'suspeitos_n')
                         for linha in suspeitos_n:
@@ -1250,7 +1304,7 @@ with st.spinner("⏳ Processando..."):
                             if cN:    ren[cN]    = "N"
                             df_sh = df_sh.rename(columns=ren)
                         
-                            # formata Data
+                            # formata Data vinda do Sheet
                             if "Data" in df_sh.columns:
                                 try:
                                     ser = pd.to_numeric(df_sh["Data"], errors="coerce")
@@ -1261,7 +1315,7 @@ with st.spinner("⏳ Processando..."):
                                 except Exception:
                                     pass
                         
-                            # adiciona cada linha do Sheet com o marcador da linha real
+                            # adiciona cada linha do Sheet com o marcador de linha real
                             for idx, row in df_sh.iterrows():
                                 d_sh = row.to_dict()
                                 d_sh["__origem__"] = "Google Sheets"
@@ -1270,9 +1324,13 @@ with st.spinner("⏳ Processando..."):
                                 d_sh["__sheet_row"] = int(idx) + 2  # 1 header + base 0 → linha real no Sheet
                                 conflitos_linhas.append(d_sh)
                         
+                        # DataFrame único para edição
                         df_conf = pd.DataFrame(conflitos_linhas).copy()
-                        
-                        # ordena/seleciona colunas
+                        alvos_ordem = [
+                            "Manter", "__origem__", "N", "Data", "Dia da Semana", "Loja",
+                            "Codigo Everest", "Grupo", "Cod Grupo Empresas", "Fat.Total", "Serv/Tx", "Fat.Real", "Ticket", "Mês", "Ano",
+                            "M", "__sheet_row"
+                        ]
                         cols_keep = [c for c in alvos_ordem if c in df_conf.columns]
                         df_conf = df_conf.reindex(columns=cols_keep + [c for c in df_conf.columns if c not in cols_keep], fill_value="")
                         
@@ -1315,7 +1373,7 @@ with st.spinner("⏳ Processando..."):
                                 key=editor_key,
                                 column_config={
                                     "Manter": st.column_config.CheckboxColumn(
-                                        help="Marque o que deseja manter/inserir (🟢) ou manter (🔴). Desmarcado no 🔴 será EXCLUÍDO.",
+                                        help="🟢 marcado = inserir; 🔴 desmarcado = excluir do Google Sheets",
                                         default=False
                                     )
                                 }
@@ -1382,8 +1440,8 @@ with st.spinner("⏳ Processando..."):
                                         dlog(f"[{i}] Sem payload de entrada para N", nkey)
                                         continue
                         
-                                    # monta payload na ORDEM EXATA do cabeçalho do Sheet
-                                    row_values = [d_in.get(h, "") for h in headers]
+                                    # ✅ Usa build_row_values para alinhar corretamente com os headers do Sheet (mesmo sujos com espaços)
+                                    row_values = build_row_values(headers, d_in)
                         
                                     if MODO_DEBUG:
                                         dlog(f"[{i}] Pré-append (N={nkey})", {
@@ -1391,7 +1449,7 @@ with st.spinner("⏳ Processando..."):
                                             "first_pairs": dict(list(zip(headers, row_values))[:10])
                                         })
                         
-                                    # garante tamanho certo
+                                    # sanity de tamanho
                                     if len(row_values) < num_cols:
                                         row_values += [""] * (num_cols - len(row_values))
                                     elif len(row_values) > num_cols:
@@ -1422,18 +1480,6 @@ with st.spinner("⏳ Processando..."):
                                 st.error(f"❌ Erro geral no APPLY: {e}")
                         # ================== /CONFLITOS GLOBAIS ==================
 
-
-    
-      
-    
-    
-    
-    
-    
-           
-    
-            
-            
         
         from datetime import datetime
         import requests

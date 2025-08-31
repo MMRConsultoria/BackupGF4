@@ -793,7 +793,17 @@ with st.spinner("⏳ Processando..."):
                     st.dataframe(df_n, use_container_width=True)
                 else:
                     st.info("Nenhum novo registro encontrado.")
+                # === Validação de códigos (dentro da função enviar_para_sheets) ===
+                def _is_na_code(x):
+                    s = str(x).strip()
+                    return (s == "" or s.lower() == "nan" or s == "0")
                 
+                if "Código Everest" in df_final.columns:
+                    lojas_nao_cadastradas = df_final.loc[df_final["Código Everest"].apply(_is_na_code), "Loja"].dropna().unique().tolist()
+                else:
+                    lojas_nao_cadastradas = []
+                
+                todas_lojas_ok = len(lojas_nao_cadastradas) == 0
                 # === ENVIO (apenas NOVOS) ===
                 pode_enviar = len(df_suspeitos) == 0
                 if todas_lojas_ok and pode_enviar:
@@ -1177,81 +1187,7 @@ with st.spinner("⏳ Processando..."):
                         
                         # ================== CONFLITOS: TABELA ÚNICA + BOTÃO ÚNICO ==================
                     
-                        # Coloque esta seção no topo do arquivo, APENAS UMA VEZ
-                        import unicodedata, re, uuid
-                        import pandas as pd
-                        import streamlit as st
-                        
-                        # Toggle de debug global
-                        MODO_DEBUG = st.sidebar.toggle("🔍 Modo debug", value=False, help="Exibe diagnósticos detalhados")
-                        def dlog(msg, data=None):
-                            if MODO_DEBUG:
-                                st.caption(f"🧪 {msg}")
-                                if data is not None:
-                                    try:
-                                        import json as _json
-                                        st.code(_json.dumps(data, ensure_ascii=False, indent=2) if not isinstance(data, str) else data, language="json")
-                                    except Exception:
-                                        st.code(str(data))
-                        
-                        def _norm_simple(s: str) -> str:
-                            s = str(s or "").strip().lower()
-                            s = unicodedata.normalize("NFD", s)
-                            s = "".join(c for c in s if unicodedata.category(c) != "Mn")   # remove acentos
-                            s = re.sub(r"[^a-z0-9]+", " ", s).strip()
-                            return s
-                        
-                        def _norm_key(s: str) -> str:
-                            # versão para casar nomes de colunas do dict/headers
-                            s = str(s or "")
-                            s = unicodedata.normalize("NFD", s)
-                            s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-                            s = s.strip().lower()
-                            s = re.sub(r"[^a-z0-9]+", " ", s)
-                            return s.strip()
-                        
-                        def _fmt_serial_to_br(x):
-                            try:
-                                return pd.to_datetime(pd.Series([x]), origin="1899-12-30", unit="D", errors="coerce")\
-                                         .dt.strftime("%d/%m/%Y").iloc[0]
-                            except Exception:
-                                return x
-                        
-                        def _normN(x):
-                            return str(x).strip().replace(".0", "")
-                        
-                        # Aliases (normalizados) p/ cobrir variações dos headers
-                        ALIASES = {
-                            "codigo everest": {"codigo everest", "cod everest", "codigo ev"},
-                            "cod grupo empresas": {"codigo grupo everest", "codigo grupo empresas", "cod grupo empresas"},
-                            "fat total": {"fat total", "fat total", "fat.total"},
-                            "serv tx": {"serv tx", "serv/tx"},
-                            "fat real": {"fat real", "fat.real"},
-                            "mes": {"mes", "mês", "mes "},
-                        }
-                        
-                        def _alias_target(norm_name: str) -> str:
-                            for canon, variants in ALIASES.items():
-                                if norm_name == canon or norm_name in variants:
-                                    return canon
-                            return norm_name
-                        
-                        def build_row_values(headers_raw, registro_dict):
-                            """
-                            Monta a lista de valores alinhada aos headers do Sheet.
-                            Usa normalização + aliases para casar 'Fat.Total' em d_in com ' Fat.Total ' no header, etc.
-                            """
-                            dnorm = {_norm_key(k): v for k, v in registro_dict.items()}
-                            out = []
-                            for h in headers_raw:
-                                h_norm = _alias_target(_norm_key(h))
-                                val = dnorm.get(h_norm, None)
-                                if val is None:
-                                    # fallback por header strip
-                                    val = registro_dict.get(str(h).strip(), "")
-                                out.append(val)
-                            return out
-                        # ================== /TOGGLE + HELPERS ==================
+
                         
                         
                         # ================== CONFLITOS GLOBAIS ==================

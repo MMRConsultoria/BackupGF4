@@ -722,92 +722,98 @@ with aba3:
                 st.markdown("### 🔴 Revisão antes de substituir")
                 st.dataframe(df_conf_show, use_container_width=True)
 
-                if st.button("🧹 Excluir existentes e inserir 'Novo Arquivo' (substituir por N)", use_container_width=True, key="btn_substituir_por_n"):
+                
+                # --- botão de substituição por N ---
+                if st.button("🧹 Excluir existentes e inserir 'Novo Arquivo' (substituir por N)",
+                             use_container_width=True, key="btn_substituir_por_n"):
                     try:
                         adicionados = 0
                         deletados   = 0
-
-                        # reabre destino e lê estado atual
-                        _, aba_destino = open_dest(get_gc(), WS_FAT)
+                        enviados_novos = 0
+                
+                        # (re)abre destino e lê estado atual
+                        _, aba_destino = open_dest(get_gc(), WS_FAT)   # <-- use seu helper
+                        # # Fallback simples, caso não tenha open_dest/WS_FAT:
+                        # gc = get_gc()
+                        # aba_destino = gc.open("Vendas diarias").worksheet("Fat Sistema Externo")
+                
                         headers = aba_destino.row_values(1)
                         num_cols = len(headers)
-
-                # 1) EXCLUIR com 3 estratégias: __sheet_row, DF e varredura direta na COLUNA N
-                rows_to_delete = set()
                 
-                # (a) linhas pré-mapeadas no grid
-                if "__sheet_row" in df_conf.columns:
-                    rows_to_delete.update(
-                        df_conf.loc[df_conf["Origem"]=="🔴 Google Sheets","__sheet_row"]
-                        .dropna().astype(int).tolist()
-                    )
+                        # ===================== 1) EXCLUIR =====================
+                        rows_to_delete = set()
                 
-                # (b) fallback pelo DataFrame de existentes (índice + 2)
-                if cN and not valores_existentes_df.empty:
-                    for nkey in entrada_por_n.keys():
-                        idxs = valores_existentes_df.index[valores_existentes_df[cN].astype(str).str.strip() == nkey].tolist()
-                        rows_to_delete.update(i+2 for i in idxs)
+                        # (a) linhas pré-mapeadas via grid
+                        if "__sheet_row" in df_conf.columns:
+                            rows_to_delete.update(
+                                df_conf.loc[df_conf["Origem"]=="🔴 Google Sheets","__sheet_row"]
+                                .dropna().astype(int).tolist()
+                            )
                 
-                # (c) varredura DIRETA na COLUNA N do Sheet (mais robusto)
-                try:
-                    headers = aba_destino.row_values(1)
-                    if "N" in headers:
-                        n_col_idx = headers.index("N") + 1  # 1-indexed
-                        colN = aba_destino.col_values(n_col_idx)
-                        for nkey in entrada_por_n.keys():
-                            # normaliza e compara
-                            matches = [i+1 for i, v in enumerate(colN) if _normN(v) == _normN(nkey)]
-                            rows_to_delete.update(matches)
-                        dlog("Varredura direta na coluna N", {
-                            "n_col_idx": n_col_idx,
-                            "rows_found": sorted(rows_to_delete)
-                        })
-                except Exception as e:
-                    st.warning(f"Não consegui varrer a coluna N diretamente: {e}")
+                        # (b) fallback pelo DF existente (índice + 2)
+                        if cN and not valores_existentes_df.empty:
+                            for nkey in entrada_por_n.keys():
+                                idxs = valores_existentes_df.index[
+                                    valores_existentes_df[cN].astype(str).str.strip() == nkey
+                                ].tolist()
+                                rows_to_delete.update(i+2 for i in idxs)
                 
-                # remove cabeçalho caso tenha entrado por engano
-                rows_to_delete.discard(1)
+                        # (c) varredura DIRETA na COLUNA N do Sheet
+                        try:
+                            if "N" in headers:
+                                n_col_idx = headers.index("N") + 1  # 1-indexado
+                                colN = aba_destino.col_values(n_col_idx)  # inclui header
+                                for nkey in entrada_por_n.keys():
+                                    matches = [i+1 for i, v in enumerate(colN) if _normN(v) == _normN(nkey)]
+                                    rows_to_delete.update(matches)
+                            dlog("Varredura direta na coluna N", {"rows_found": sorted(rows_to_delete)})
+                        except Exception as e:
+                            dlog("Falha ao varrer coluna N", str(e))
                 
-                # executa exclusão em ordem decrescente
-                for row_idx in sorted(rows_to_delete, reverse=True):
-                    try:
-                        aba_destino.delete_rows(row_idx)
-                        deletados += 1
-                    except Exception as e:
-                        st.error(f"❌ Erro ao excluir linha {row_idx}: {e}")
-
-
-                        # 2) inserir: “Novo Arquivo” por N
+                        # remove header por segurança
+                        rows_to_delete.discard(1)
+                
+                        # executa exclusão em ordem decrescente
+                        for row_idx in sorted(rows_to_delete, reverse=True):
+                            try:
+                                aba_destino.delete_rows(row_idx)
+                                deletados += 1
+                            except Exception as e:
+                                st.error(f"❌ Erro ao excluir linha {row_idx}: {e}")
+                
+                        # ===================== 2) INSERIR NOVO ARQUIVO (por N) =====================
                         for nkey, d_in in entrada_por_n.items():
-                            row_values = build_row_values(headers, d_in)
-                            if len(row_values) < num_cols: row_values += [""]*(num_cols - len(row_values))
-                            elif len(row_values) > num_cols: row_values = row_values[:num_cols]
+                            row_values = build_row_values(headers, d_in)  # já alinha com o cabeçalho real
+                            if len(row_values) < num_cols:
+                                row_values += [""] * (num_cols - len(row_values))
+                            elif len(row_values) > num_cols:
+                                row_values = row_values[:num_cols]
+                
                             try:
                                 aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
                                 adicionados += 1
                             except Exception as e:
                                 st.error(f"❌ Erro ao inserir (N={nkey}): {e}")
-
-                        # 3) enviar NOVOS sem conflito
-                        enviados_novos = 0
+                
+                        # ===================== 3) ENVIAR NOVOS SEM CONFLITO =====================
                         if len(df_novos) > 0:
-                            headers_envio = aba_destino.row_values(1)
-                            payload = df_novos.reindex(columns=headers_envio).fillna("").astype(object).values.tolist()
+                            payload = df_novos.reindex(columns=headers).fillna("").astype(object).values.tolist()
                             if payload:
                                 aba_destino.append_rows(payload, value_input_option="USER_ENTERED")
                                 enviados_novos = len(payload)
-
+                
                         st.success(
-                            f"✅ Substituição concluída: {adicionados} inserido(s) | {deletados} excluído(s) | {enviados_novos} novo(s) sem conflito."
+                            f"✅ Substituição concluída: {adicionados} inserido(s) | "
+                            f"{deletados} excluído(s) | {enviados_novos} novo(s) sem conflito."
                         )
                         _set_status(True, "Google Sheets atualizado com sucesso.", {
                             "substituidos": adicionados, "excluidos": deletados, "novos_sem_conflito": enviados_novos
                         })
+                
                     except Exception as e:
                         st.error(f"❌ Falha ao substituir: {e}")
                         _set_status(False, f"Falha ao substituir: {e}")
-            else:
-                st.caption("Sem suspeitos por N. Nada a substituir.")
+
 
             # ====== ENVIO DIRETO dos NOVOS (sem conflitos) ======
             def _is_na_code(x):

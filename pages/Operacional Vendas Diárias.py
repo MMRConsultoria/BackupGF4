@@ -1325,8 +1325,7 @@ with st.spinner("⏳ Processando..."):
                                     planilha_destino = gc.open("Vendas diarias")
                                     aba_destino = planilha_destino.worksheet("Fat Sistema Externo")
                         
-                                st.caption(f"📄 Planilha alvo: {aba_destino.spreadsheet.title} / Aba: {aba_destino.title} (sheetId={aba_destino.id})")
-                        
+                                
                                 # --- 1) Sanity check e normalizações robustas ---
                                 need = ["Manter", "_origem_", "Linha Sheet"]
                                 miss = [c for c in need if c not in edited_conf.columns]
@@ -1348,7 +1347,7 @@ with st.spinner("⏳ Processando..."):
                                 mask_google = origem_series.str.contains("google", na=False)
                         
                                 alvo = edited_conf[ mask_google & (manter_series) ].copy()
-                                st.caption(f"🔎 Selecionadas p/ excluir (origem Google): {len(alvo)}")
+                                
                         
                                 if alvo.empty:
                                     st.info("ℹ️ Nenhuma linha de Google Sheets marcada com 'Manter'.")
@@ -1358,12 +1357,14 @@ with st.spinner("⏳ Processando..."):
                                 linhas = pd.to_numeric(alvo["Linha Sheet"], errors="coerce").dropna().astype(int).tolist()
                                 # remove duplicados e ordena DESC (evita deslocamento)
                                 linhas = sorted({ln for ln in linhas if ln >= 2}, reverse=True)
-                                st.caption(f"🧮 Linhas a excluir (1-based): {linhas}")
-                        
+                                
                                 if not linhas:
                                     st.warning("⚠️ 'Linha Sheet' vazia/ineválida nas linhas marcadas. Nada a excluir.")
                                     st.stop()
-                        
+                                st.warning(f"📄 Planilha alvo: {aba_destino.spreadsheet.title} / Aba: {aba_destino.title} (sheetId={aba_destino.id})")
+                                st.warning(f"🔎 Selecionadas p/ excluir (origem Google): {len(alvo)}")
+                                st.warning(f"🧮 Linhas a excluir (1-based): {linhas}")
+
                                 # --- 3) Exclusão robusta via batchUpdate/deleteDimension ---
                                 sheet_id = int(aba_destino.id)
                                 requests = [

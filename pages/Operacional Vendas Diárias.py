@@ -360,7 +360,32 @@ with st.spinner("⏳ Processando..."):
             _inject_button_css()
             st.session_state["css_buttons_applied"] = True
 
+        # 🔧 Modo debug (instanciar UMA vez com key única)
+        if "_debug_toggle_inited" not in st.session_state:
+            st.session_state["_debug_toggle_inited"] = True
+            # cria o widget com key fixa única desta página
+            st.session_state["_modo_debug"] = st.sidebar.toggle(
+                "🔍 Modo debug",
+                value=False,
+                help="Exibe diagnósticos detalhados",
+                key="_debug_toggle_operacional"  # <= key única
+            )
+        else:
+            # na reexecução, apenas lê o valor atual do widget
+            st.session_state["_modo_debug"] = st.session_state.get("_modo_debug", False)
         
+        MODO_DEBUG = st.session_state["_modo_debug"]
+        
+        def dlog(msg, data=None):
+            if MODO_DEBUG:
+                st.caption(f"🧪 {msg}")
+                if data is not None:
+                    try:
+                        import json as _json
+                        st.code(_json.dumps(data, ensure_ascii=False, indent=2) if not isinstance(data, str) else data, language="json")
+                    except Exception:
+                        st.code(str(data))
+
 
     
         # ------------------------ RETRY para DRE ------------------------

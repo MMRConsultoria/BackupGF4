@@ -1304,12 +1304,48 @@ with st.spinner("⏳ Processando..."):
                         
                         st.markdown("<div style='color:#555; font-size:0.9rem; font-weight:500; margin:10px 0;'>🔴 Possíveis duplicados — marque o(s) que deseja manter</div>", unsafe_allow_html=True)
                         
+
+                        # ... você já montou df_conf e fez o reindex:
+                        # df_conf = df_conf.reindex(columns=cols_final, fill_value="")
+                        
+                        # === SANEAR TIPOS p/ evitar ArrowTypeError no st.data_editor ===
+                        num_cols = ["Fat. Total", "Serv/Tx", "Fat.Real", "Ticket"]
+                        for c in num_cols:
+                            if c in df_conf.columns:
+                                df_conf[c] = pd.to_numeric(df_conf[c], errors="coerce").astype("Float64")
+                        
+                        if "Linha Sheet" in df_conf.columns:
+                            df_conf["Linha Sheet"] = pd.to_numeric(df_conf["Linha Sheet"], errors="coerce").astype("Int64")
+                        
+                        if "Manter" in df_conf.columns:
+                            df_conf["Manter"] = (
+                                df_conf["Manter"].astype(str).str.strip().str.lower()
+                                .isin(["true","1","yes","y","sim","verdadeiro"])
+                            ).astype("boolean")
+                        
+                        # Demais colunas em string para não sobrar 'object' com tipos mistos
+                        _proteger = set(num_cols + ["Linha Sheet", "Manter"])
+                        for c in df_conf.columns:
+                            if c not in _proteger:
+                                df_conf[c] = df_conf[c].astype(str)
+                        # === FIM SANEAR TIPOS ===
+                        
+                        # (agora vem exatamente o seu form)
                         with st.form("form_conflitos_globais"):
                             edited_conf = st.data_editor(
-                                df_conf, use_container_width=True, hide_index=True, key="editor_conflitos",
-                                column_config={"Manter": st.column_config.CheckboxColumn(help="Marque quais linhas (de cada N) deseja manter", default=False)}
+                                df_conf,
+                                use_container_width=True,
+                                hide_index=True,
+                                key="editor_conflitos",
+                                column_config={
+                                    "Manter": st.column_config.CheckboxColumn(
+                                        help="Marque quais linhas (de cada N) deseja manter",
+                                        default=False
+                                    )
+                                }
                             )
                             aplicar_tudo = st.form_submit_button("✅ Atualizar planilha")
+
                         
                     
                         if aplicar_tudo:

@@ -1312,36 +1312,87 @@ with st.spinner("⏳ Processando..."):
                             aplicar_tudo = st.form_submit_button("✅ Atualizar planilha")
                         
                         if aplicar_tudo:
+                 
                             try:
-                                atualizados=0; adicionados=0; pulados=0
-                                entrada_por_n_norm = {_normN(k):v for k,v in entrada_por_n.items()}
+                                atualizados = 0
+                                adicionados = 0
+                                removidos   = 0
+                                pulados     = 0
+                        
+                                # mapa rápido de entrada por N normalizado (linha "Nova Arquivo")
+                                entrada_por_n_norm = { _normN(k): v for k, v in entrada_por_n.items() }
+                        
                                 if "N" not in edited_conf.columns:
-                                    st.error("❌ Não foi possível identificar a coluna N.")
+                                    st.error("❌ Não foi possível identificar a coluna N na tabela de conflitos.")
                                 else:
+                                    # normaliza coluna Linha Sheet (se existir)
+                                    tem_linha_sheet = "Linha Sheet" in edited_conf.columns
+                                    if tem_linha_sheet:
+                                        # garante numérico ou NaN
+                                        edited_conf["Linha Sheet"] = pd.to_numeric(edited_conf["Linha Sheet"], errors="coerce")
+                        
+                                    # agrupa por N
                                     for nkey, bloco in edited_conf.groupby(edited_conf["N"].map(_normN)):
-                                        manter_novo  = any((bloco["_origem_"]=="🟢 Nova Arquivo") & (bloco["Manter"]))
-                                        manter_velho = any((bloco["_origem_"]=="🔴 Google Sheets") & (bloco["Manter"]))
-                                        d_in = entrada_por_n_norm.get(nkey,None)
-                                        if d_in is None: pulados+=1; continue
-                                        row_values=[d_in.get(h,"") for h in headers]
-                                        if manter_novo and manter_velho:
-                                            aba_destino.append_row(row_values,value_input_option="USER_ENTERED"); adicionados+=1
-                                        elif manter_novo and not manter_velho:
+                                        manter_novo  = any((bloco["_origem_"] == "🟢 Nova Arquivo")  & (bloco["Manter"]))
+                                        manter_velho = any((bloco["_origem_"] == "🔴 Google Sheets") & (bloco["Manter"]))
+                        
+                                        # se não marcou nada para esse N, ignora
+                                        if not manter_novo and not manter_velho:
+                                            pulados += 1
+                                            continue
+                        
+                                        # dados de entrada (nova linha) para esse N
+                                        d_in = entrada_por_n_norm.get(nkey, None)
+                        
+                                        # 1) Descobrir quais linhas do Sheet remover para esse N
+                                        linhas_sheet = []
+                                        if tem_linha_sheet:
+                                            # pega direto do bloco editado (mais preciso, já filtrado pelo usuário)
+                                            linhas_sheet = bloco.loc[
+                                                (bloco["_origem_"] == "🔴 Google Sheets") & (bloco["Linha Sheet"].notna()),
+                                                "Linha Sheet"
+                                            ].astype(int).tolist()
+                        
+                                        # fallback: caso não tenha "Linha Sheet" na tabela, procura por N no DF do sheet
+                                        if not linhas_sheet:
                                             if "N" in valores_existentes_df.columns:
-                                                idxs=valores_existentes_df.index[valores_existentes_df["N"]==nkey].tolist()
-                                            else: idxs=[]
-                                            if idxs:
-                                                sheet_row=idxs[0]+2
-                                                aba_destino.update(f"A{sheet_row}",[row_values],value_input_option="USER_ENTERED"); atualizados+=1
-                                                valores_existentes_df.loc[idxs[0], list(valores_existentes_df.columns.intersection(headers))] = row_values[:len(headers)]
+                                                idxs = valores_existentes_df.index[valores_existentes_df["N"].map(_normN) == nkey].tolist()
+                                                # converte índices do DF para linhas reais (idx + 2)
+                                                linhas_sheet = [i + 2 for i in idxs]
+                        
+                                        # 2) Se marcou "Nova Arquivo", primeiro REMOVER as linhas antigas do Sheet
+                                        if manter_novo:
+                                            # remove de baixo para cima para não deslocar índices
+                                            for ln in sorted(set(linhas_sheet), reverse=True):
+                                                try:
+                                                    aba_destino.delete_rows(ln)
+                                                    removidos += 1
+                                                except Exception as _e:
+                                                    st.warning(f"⚠️ Falha ao remover linha {ln} do Sheet para N={nkey}: {_e}")
+                        
+                                            if d_in is None:
+                                                # não tem a linha nova correspondente (deveria ter), então pula
+                                                pulados += 1
                                             else:
-                                                aba_destino.append_row(row_values,value_input_option="USER_ENTERED"); adicionados+=1
-                                        elif not manter_novo and manter_velho: pulados+=1
-                                        else: pulados+=1
-                                st.success(f"✅ Concluído: {adicionados} adicionado(s), {atualizados} substituído(s), {pulados} ignorado(s).")
-                                st.info("ℹ️ Recarregue o Google Sheets para ver as mudanças.")
+                                                # monta a nova linha na ordem exata do cabeçalho 'headers'
+                                                row_values = [d_in.get(h, "") for h in headers]
+                                                try:
+                                                    aba_destino.append_row(row_values, value_input_option="USER_ENTERED")
+                                                    adicionados += 1
+                                                except Exception as _e:
+                                                    st.error(f"❌ Erro ao inserir nova linha para N={nkey}: {_e}")
+                        
+                                        # 3) Se marcou "Google Sheets" e NÃO marcou "Nova Arquivo", mantém como está (não apaga nem insere)
+                                        if (not manter_novo) and manter_velho:
+                                            # nada a fazer — mantido
+                                            pass
+                        
+                                st.success(f"✅ Concluído: {adicionados} adicionado(s), {removidos} removido(s), {pulados} ignorado(s).")
+                                st.info("ℹ️ Recarregue o Google Sheets no navegador para ver as mudanças.")
+                        
                             except Exception as e:
                                 st.error(f"❌ Erro ao aplicar escolhas: {e}")
+
                         
                         pode_enviar=False
                         # ================== /CONFLITOS GLOBAIS ==================

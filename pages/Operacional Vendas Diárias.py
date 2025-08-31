@@ -1148,7 +1148,7 @@ with st.spinner("⏳ Processando..."):
                             sheet_por_n[nkey] = valores_existentes_df[valores_existentes_df["N"] == nkey].copy()
                     
                         # ================== CONFLITOS: TABELA ÚNICA + BOTÃO ÚNICO ==================
-                        # ================== CONFLITOS: TABELA ÚNICA + BOTÃO ÚNICO ==================
+
                         import unicodedata, re
                         
                         def _fmt_serial_to_br(x):
@@ -1162,10 +1162,9 @@ with st.spinner("⏳ Processando..."):
                                 except Exception:
                                     return x
                         
-                        def _normN(x):
-                            return str(x).strip().replace(".0", "")
+                        def _normN(x): return str(x).strip().replace(".0", "")
                         
-                        # ---------- Canonização de nomes (evita colunas duplicadas tipo Fat.Total x Fat. Total) ----------
+                        # ---------- Canonização de nomes ----------
                         def _norm_key(s: str) -> str:
                             s = str(s or "").strip().lower()
                             s = unicodedata.normalize("NFD", s)
@@ -1174,71 +1173,40 @@ with st.spinner("⏳ Processando..."):
                             return s
                         
                         CANON_MAP = {
-                            "codigo everest": "Codigo Everest",
-                            "cod everest": "Codigo Everest",
-                            "codigo ev": "Codigo Everest",
-                            "código everest": "Codigo Everest",
-                        
-                            "codigo grupo everest": "Cod Grupo Empresas",
-                            "codigo grupo empresas": "Cod Grupo Empresas",
-                            "cod grupo empresas": "Cod Grupo Empresas",
-                            "código grupo everest": "Cod Grupo Empresas",
-                            "cód grupo empresas": "Cod Grupo Empresas",
-                            "cod grupo": "Cod Grupo Empresas",
-                        
-                            "serv tx": "Serv/Tx",
-                            "servico": "Serv/Tx",
-                            "serv": "Serv/Tx",
-                        
-                            "fat real": "Fat.Real",
-                            "fat.real": "Fat.Real",
-                        
-                            "loja": "Loja",
-                            "grupo": "Grupo",
-                            "data": "Data",
-                            "mes": "Mês",
-                            "mês": "Mês",
-                            "ano": "Ano",
-                            "dia da semana": "Dia da Semana",
-                            "m": "M",
-                            "n": "N",
+                            "codigo everest":"Codigo Everest","cod everest":"Codigo Everest","codigo ev":"Codigo Everest","código everest":"Codigo Everest",
+                            "codigo grupo everest":"Cod Grupo Empresas","codigo grupo empresas":"Cod Grupo Empresas","cod grupo empresas":"Cod Grupo Empresas",
+                            "código grupo everest":"Cod Grupo Empresas","cód grupo empresas":"Cod Grupo Empresas","cod grupo":"Cod Grupo Empresas",
+                            "serv tx":"Serv/Tx","servico":"Serv/Tx","serv":"Serv/Tx",
+                            "fat real":"Fat.Real","fat.real":"Fat.Real",
+                            "loja":"Loja","grupo":"Grupo","data":"Data","mes":"Mês","mês":"Mês","ano":"Ano","dia da semana":"Dia da Semana","m":"M","n":"N",
                         }
-                        
                         def canon_colname(name: str) -> str:
-                            # trata explicitamente fat.total/fat total
-                            if str(name).strip().lower() in ("fat.total", "fat total"):
-                                return "Fat. Total"
+                            if str(name).strip().lower() in ("fat.total","fat total"): return "Fat. Total"
                             k = _norm_key(name)
-                            if k == "fat total":
-                                return "Fat. Total"
+                            if k == "fat total": return "Fat. Total"
                             return CANON_MAP.get(k, name)
-                        
                         def canonize_cols_df(df: pd.DataFrame) -> pd.DataFrame:
-                            if df is None or df.empty: return df
-                            return df.rename(columns={c: canon_colname(c) for c in df.columns})
-                        
+                            return df.rename(columns={c: canon_colname(c) for c in df.columns}) if (df is not None and not df.empty) else df
                         def canonize_dict(d: dict) -> dict:
-                            if not isinstance(d, dict): return d
-                            return {canon_colname(k): v for k, v in d.items()}
-                        # -----------------------------------------------------------------------------------------------
+                            return {canon_colname(k): v for k, v in d.items()} if isinstance(d, dict) else d
+                        # ------------------------------------------
                         
-                        # normaliza N do espelho lido do Sheet
+                        # Normaliza N no espelho do Sheet
                         valores_existentes_df = valores_existentes_df.copy()
                         if "N" in valores_existentes_df.columns:
                             valores_existentes_df["N"] = valores_existentes_df["N"].map(_normN)
                         
-                        # (1) Monta lista única: entrada (nova) + linhas do Sheet do mesmo N (com Linha Sheet)
+                        # (1) Monta lista única: entrada + matching do Sheet (com Linha Sheet)
                         conflitos_linhas = []
                         for nkey in sorted(entrada_por_n.keys()):
-                            # --- entrada / Nova Arquivo ---
+                            # entrada (Nova Arquivo)
                             d_in = canonize_dict(entrada_por_n[nkey].copy())
                             d_in["_origem_"] = "Nova Arquivo"
                             d_in["N"] = _normN(d_in.get("N", ""))
-                            if "Data" in d_in:
-                                d_in["Data"] = _fmt_serial_to_br(d_in["Data"])
+                            if "Data" in d_in: d_in["Data"] = _fmt_serial_to_br(d_in["Data"])
                             conflitos_linhas.append(d_in)
                         
-                            # --- sheet / linhas com mesmo N ---
+                            # sheet (Google Sheets)
                             df_sh = sheet_por_n[nkey].copy()
                             df_sh = canonize_cols_df(df_sh)
                             if "Data" in df_sh.columns:
@@ -1248,15 +1216,14 @@ with st.spinner("⏳ Processando..."):
                                         df_sh["Data"] = pd.to_datetime(ser, origin="1899-12-30", unit="D", errors="coerce").dt.strftime("%d/%m/%Y")
                                     else:
                                         df_sh["Data"] = pd.to_datetime(df_sh["Data"], dayfirst=True, errors="coerce").dt.strftime("%d/%m/%Y")
-                                except Exception:
-                                    pass
+                                except Exception: pass
                             for idx, row in df_sh.iterrows():
                                 d_sh = canonize_dict(row.to_dict())
                                 d_sh["_origem_"] = "Google Sheets"
-                                d_sh["Linha Sheet"] = idx + 2  # 1 header + base 0
+                                d_sh["Linha Sheet"] = idx + 2  # índice do DF -> linha real (1=header)
                                 conflitos_linhas.append(d_sh)
                         
-                        # (2) DataFrame consolidado
+                        # (2) Consolidado
                         df_conf = pd.DataFrame(conflitos_linhas).copy()
                         df_conf = canonize_cols_df(df_conf)
                         
@@ -1272,8 +1239,7 @@ with st.spinner("⏳ Processando..."):
                         # (4) Origem com emoji
                         if "_origem_" in df_conf.columns:
                             df_conf["_origem_"] = df_conf["_origem_"].replace({
-                                "Nova Arquivo": "🟢 Nova Arquivo",
-                                "Google Sheets": "🔴 Google Sheets"
+                                "Nova Arquivo":"🟢 Nova Arquivo","Google Sheets":"🔴 Google Sheets"
                             })
                         
                         # (5) Coluna Manter
@@ -1292,10 +1258,10 @@ with st.spinner("⏳ Processando..."):
                             fill_value=""
                         )
                         
-                        st.markdown("<div style='color:#555; font-size:0.9rem; font-weight:500; margin:10px 0;'>🔴 Possíveis duplicados — marque o(s) que deseja manter</div>", unsafe_allow_html=True)
+                        st.markdown("<div style='color:#555; font-size:0.9rem; font-weight:500; margin:10px 0;'>🔴 Possíveis duplicados — marque as linhas do lado Google que deseja EXCLUIR</div>", unsafe_allow_html=True)
                         
-                        # (7) SANEAR TIPOS (evita ArrowTypeError no editor)
-                        num_cols = ["Fat. Total", "Serv/Tx", "Fat.Real", "Ticket"]
+                        # (7) SANEAR TIPOS (evita ArrowTypeError)
+                        num_cols = ["Fat. Total","Serv/Tx","Fat.Real","Ticket"]
                         for c in num_cols:
                             if c in df_conf.columns:
                                 df_conf[c] = pd.to_numeric(df_conf[c], errors="coerce").astype("Float64")
@@ -1306,12 +1272,12 @@ with st.spinner("⏳ Processando..."):
                                 df_conf["Manter"].astype(str).str.strip().str.lower()
                                 .isin(["true","1","yes","y","sim","verdadeiro"])
                             ).astype("boolean")
-                        _proteger = set(num_cols + ["Linha Sheet", "Manter"])
+                        _proteger = set(num_cols + ["Linha Sheet","Manter"])
                         for c in df_conf.columns:
                             if c not in _proteger:
                                 df_conf[c] = df_conf[c].astype("string").fillna("")
                         
-                        # (8) Editor + botão
+                        # (8) Editor + botão (usa o mesmo rótulo que você clica)
                         with st.form("form_conflitos_globais"):
                             edited_conf = st.data_editor(
                                 df_conf,
@@ -1320,17 +1286,17 @@ with st.spinner("⏳ Processando..."):
                                 key="editor_conflitos",
                                 column_config={
                                     "Manter": st.column_config.CheckboxColumn(
-                                        help="Marque as linhas do lado 🔴 Google Sheets que deseja EXCLUIR da planilha",
+                                        help="Marque as linhas 🔴 Google Sheets que deseja EXCLUIR da planilha",
                                         default=False
                                     )
                                 }
                             )
-                            aplicar_tudo = st.form_submit_button("🗑️ Excluir linhas do Google Sheets")
+                            aplicar_tudo = st.form_submit_button("Atualizar SheetsS")
                         
-                        # (9) Ação: excluir APENAS as linhas marcadas do lado Google Sheets
+                        # (9) EXCLUIR linhas marcadas do lado Google Sheets
                         if aplicar_tudo:
                             try:
-                                # garante que a aba está acessível
+                                # Garante que a aba existe neste escopo
                                 try:
                                     _ = aba_destino.id
                                 except Exception:
@@ -1338,7 +1304,7 @@ with st.spinner("⏳ Processando..."):
                                     planilha_destino = gc.open("Vendas diarias")
                                     aba_destino = planilha_destino.worksheet("Fat Sistema Externo")
                         
-                                # normaliza 'Manter' (pode vir string) e filtra origem Google
+                                # Normaliza Manter e filtra origem Google
                                 manter_series = edited_conf["Manter"]
                                 if manter_series.dtype != bool:
                                     manter_series = manter_series.astype(str).str.strip().str.lower().isin(
@@ -1346,7 +1312,7 @@ with st.spinner("⏳ Processando..."):
                                     )
                                 mask_google = edited_conf["_origem_"].astype(str).str.contains("google", case=False, na=False)
                         
-                                # linhas reais 1-based da coluna "Linha Sheet"
+                                # Linhas 1-based a excluir, vindas da coluna "Linha Sheet"
                                 linhas = (
                                     pd.to_numeric(edited_conf.loc[mask_google & manter_series, "Linha Sheet"], errors="coerce")
                                     .dropna().astype(int).tolist()
@@ -1373,26 +1339,21 @@ with st.spinner("⏳ Processando..."):
                                             }
                                         }
                                     }
-                                    for ln in linhas   # já vem DESC
+                                    for ln in linhas   # já em ordem DESC
                                 ]
                                 aba_destino.spreadsheet.batch_update({"requests": requests})
                         
                                 st.success(f"🗑️ {len(linhas)} linha(s) excluída(s) do Google Sheets. Atualize a planilha no navegador para ver.")
-                                st.stop()  # impede que código abaixo interfira
+                                st.stop()  # garante que as mensagens fiquem na tela
+                        
                             except Exception as e:
                                 st.error(f"❌ Erro ao excluir linhas do Google Sheets: {e}")
                                 st.stop()
                         
-                        # bloqueia envio automático enquanto houver conflitos
+                        # Enquanto houver conflitos, não envia automaticamente
                         pode_enviar = False
                         # ================== /CONFLITOS GLOBAIS ==================
-
-                        
-                        # ================== /CONFLITOS GLOBAIS ==================
-
-
-
-
+ 
                     # 8) Envio
                     if todas_lojas_ok and pode_enviar:
                         try:

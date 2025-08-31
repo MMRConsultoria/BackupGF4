@@ -1315,58 +1315,54 @@ with st.spinner("⏳ Processando..."):
                         if aplicar_tudo:
                             try:
                                 removidos = 0
-                                pulados   = 0
                         
-                                # 1) sanity-check
-                                need = ["Manter", "_origem_", "N"]
-                                miss = [c for c in need if c not in edited_conf.columns]
-                                if miss:
-                                    st.error("❌ Faltam colunas na tabela: " + ", ".join(miss))
+                                # 1) checagens mínimas
+                                req = ["Manter", "_origem_", "Linha Sheet"]
+                                faltam = [c for c in req if c not in edited_conf.columns]
+                                if faltam:
+                                    st.error("❌ Faltam as colunas na tabela: " + ", ".join(faltam))
                                 else:
-                                    # 2) pegue SOMENTE as linhas do lado Google Sheets marcadas
-                                    #    (usa contains em vez de igualdade, para não depender do emoji)
-                                    mask_gs = edited_conf["_origem_"].astype(str).str.contains("google", case=False, na=False)
-                                    alvo = edited_conf[ mask_gs & (edited_conf["Manter"] == True) ].copy()
-                        
-                                    st.caption(f"🔎 Marcadas (origem Google) = {len(alvo)}")
+                                    # 2) filtra SOMENTE as linhas marcadas do lado Google Sheets
+                                    mask_google = edited_conf["_origem_"].astype(str).str.contains("google", case=False, na=False)
+                                    alvo = edited_conf[ mask_google & (edited_conf["Manter"] == True) ].copy()
                         
                                     if alvo.empty:
-                                        st.info("ℹ️ Nenhuma linha de Google Sheets marcada para excluir.")
+                                        st.info("ℹ️ Nenhuma linha (origem Google Sheets) marcada para exclusão.")
                                     else:
-                                        # 3) usar 'Linha Sheet' diretamente
-                                        if "Linha Sheet" not in alvo.columns:
-                                            st.error("❌ Coluna 'Linha Sheet' não está na tabela. Sem ela, não dá para excluir de forma exata.")
+                                        # 3) coleta as linhas reais da planilha (1-based). Ignora inválidas.
+                                        linhas = (
+                                            pd.to_numeric(alvo["Linha Sheet"], errors="coerce")
+                                            .dropna().astype(int).tolist()
+                                        )
+                                        linhas = sorted({ln for ln in linhas if ln >= 2}, reverse=True)
+                                        st.caption(f"🧮 Linhas a excluir: {linhas}")
+                        
+                                        if not linhas:
+                                            st.warning("⚠️ 'Linha Sheet' vazia ou inválida nas linhas marcadas.")
                                         else:
-                                            linhas = (
-                                                pd.to_numeric(alvo["Linha Sheet"], errors="coerce")
-                                                .dropna().astype(int).tolist()
-                                            )
-                                            # limpa e ordena DESC para não deslocar as próximas
-                                            linhas = sorted({ln for ln in linhas if ln >= 2}, reverse=True)
+                                            # 4) EXCLUSÃO via batchUpdate (robusto, independe da versão do gspread)
+                                            sheet_id = int(aba_destino.id)  # sheetId da aba
+                                            requests = [
+                                                {
+                                                    "deleteDimension": {
+                                                        "range": {
+                                                            "sheetId": sheet_id,
+                                                            "dimension": "ROWS",
+                                                            "startIndex": ln - 1,  # 0-based
+                                                            "endIndex": ln        # exclusivo
+                                                        }
+                                                    }
+                                                }
+                                                for ln in linhas  # já em ordem DESC para não deslocar as seguintes
+                                            ]
+                                            aba_destino.spreadsheet.batch_update({"requests": requests})
+                                            removidos = len(linhas)
+                                            st.success(f"🗑️ {removidos} linha(s) excluída(s) do Google Sheets.")
                         
-                                            st.caption(f"🧮 Linhas a excluir no Google Sheets: {linhas}")
-                        
-                                            if not linhas:
-                                                st.warning("⚠️ Nada para excluir: 'Linha Sheet' vazia/inesperada nas linhas marcadas.")
-                                            else:
-                                                falhas = 0
-                                                for ln in linhas:
-                                                    try:
-                                                        aba_destino.delete_rows(ln)
-                                                        removidos += 1
-                                                    except Exception as err:
-                                                        falhas += 1
-                                                        st.warning(f"⚠️ Falha ao excluir a linha {ln}: {err}")
-                        
-                                                if removidos > 0:
-                                                    st.success(f"🗑️ {removidos} linha(s) do Google Sheets excluída(s).")
-                                                if pulados > 0:
-                                                    st.info(f"ℹ️ {pulados} registro(s) ignorado(s).")
-                                                if falhas == 0 and removidos == 0:
-                                                    st.info("ℹ️ Nenhuma linha foi excluída.")
-                        
+                                st.info("ℹ️ Abra/atualize a planilha para ver o resultado. (A tabela da tela não se atualiza automaticamente.)")
                             except Exception as e:
                                 st.error(f"❌ Erro ao excluir linhas do Google Sheets: {e}")
+
 
 
                         

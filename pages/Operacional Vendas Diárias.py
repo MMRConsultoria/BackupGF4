@@ -360,17 +360,7 @@ with st.spinner("⏳ Processando..."):
             _inject_button_css()
             st.session_state["css_buttons_applied"] = True
 
-        # --- Toggle Debug Global (adicione no topo da página) ---
-        MODO_DEBUG = st.sidebar.toggle("🔍 Modo debug", value=False, help="Exibe diagnósticos detalhados")
-        def dlog(msg, data=None):
-            if MODO_DEBUG:
-                st.caption(f"🧪 {msg}")
-                if data is not None:
-                    try:
-                        import json as _json
-                        st.code(_json.dumps(data, ensure_ascii=False, indent=2) if not isinstance(data, str) else data, language="json")
-                    except Exception:
-                        st.code(str(data))
+        
 
     
         # ------------------------ RETRY para DRE ------------------------

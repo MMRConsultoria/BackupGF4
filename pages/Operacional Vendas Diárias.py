@@ -1311,109 +1311,104 @@ with st.spinner("⏳ Processando..."):
                             )
                             aplicar_tudo = st.form_submit_button("✅ Atualizar planilha")
                         
+                       
                         if aplicar_tudo:
-             
-                           
                             try:
                                 removidos = 0
                                 pulados   = 0
                         
-                                # validações mínimas
+                                # 1) Checagens básicas
                                 required_cols = ["Manter", "_origem_", "N"]
                                 missing = [c for c in required_cols if c not in edited_conf.columns]
                                 if missing:
                                     st.error("❌ Faltam colunas na tabela de conflitos: " + ", ".join(missing))
                                 else:
-                                    # Seleciona SOMENTE linhas do Google Sheets marcadas para Manter
+                                    # 2) Seleciona SOMENTE as linhas do Google Sheets marcadas para Manter
                                     alvo = edited_conf[
                                         (edited_conf["_origem_"] == "🔴 Google Sheets") &
                                         (edited_conf["Manter"] == True)
                                     ].copy()
                         
+                                    # DEBUG: quantas linhas o usuário marcou no lado Google Sheets?
+                                    st.caption(f"🔎 Marcadas para excluir (origem 🔴 Google Sheets): {len(alvo)} linha(s).")
+                        
                                     if alvo.empty:
                                         st.info("ℹ️ Nenhuma linha do Google Sheets marcada para exclusão.")
                                     else:
+                                        # 3) Computa as linhas a excluir
                                         linhas_para_excluir = []
                         
-                                        # 1) Preferência: usar 'Linha Sheet' quando disponível
+                                        # 3.1) Caminho principal: 'Linha Sheet'
                                         if "Linha Sheet" in alvo.columns:
-                                            linhas_com_idx = (
+                                            linhas_sheet_validas = (
                                                 pd.to_numeric(alvo["Linha Sheet"], errors="coerce")
-                                                .dropna().astype(int).tolist()
+                                                .dropna()
+                                                .astype(int)
+                                                .tolist()
                                             )
-                                            linhas_para_excluir.extend(linhas_com_idx)
+                                            linhas_para_excluir.extend(linhas_sheet_validas)
                         
-                                        # 2) Fallback por N (e M, se existir) para linhas sem 'Linha Sheet'
-                                        #    — tenta achar a linha EXATA no DF já lido do Sheet
-                                        # helpers de normalização
+                                        # 3.2) Fallback por N (e M) — só para as marcadas sem 'Linha Sheet'
                                         def _normN_local(x):
                                             return str(x).strip().replace(".0", "")
-                        
                                         def _normM_local(x):
                                             return str(x).strip()
                         
-                                        # prepara colunas normalizadas no espelho do Sheet
                                         ve = valores_existentes_df.copy()
                                         if "N" in ve.columns:
                                             ve["_N_norm_"] = ve["N"].astype(str).str.strip().str.replace(".0", "", regex=False)
                                         if "M" in ve.columns:
                                             ve["_M_norm_"] = ve["M"].astype(str).str.strip()
                         
-                                        # percorre somente as linhas marcadas que NÃO têm Linha Sheet válida
                                         if ("Linha Sheet" not in alvo.columns) or alvo["Linha Sheet"].isna().any():
-                                            for _, r in alvo.iterrows():
-                                                linha_sheet_val = None
-                                                if "Linha Sheet" in r and pd.notna(r["Linha Sheet"]):
-                                                    # essa linha já foi coberta no passo 1
-                                                    continue
+                                            faltantes = alvo[ (("Linha Sheet" not in alvo.columns) | (alvo["Linha Sheet"].isna())) ].copy()
+                                            for _, r in faltantes.iterrows():
                                                 nkey = _normN_local(r.get("N", ""))
+                                                mkey = _normM_local(r.get("M", ""))
                                                 if not nkey:
                                                     pulados += 1
                                                     continue
-                        
-                                                # candidatos pelo N
                                                 if "N" not in ve.columns:
-                                                    # sem coluna N no sheet não dá para localizar
                                                     pulados += 1
                                                     continue
-                        
                                                 cand = ve.index[ve["_N_norm_"] == nkey].tolist()
-                        
-                                                # se existir M nas duas pontas, refina
-                                                mkey = _normM_local(r.get("M", ""))
-                                                if cand and "M" in ve.columns and isinstance(mkey, str) and mkey != "":
+                                                if cand and "M" in ve.columns and mkey:
                                                     cand = [i for i in cand if _normM_local(ve.loc[i, "M"]) == mkey]
-                        
                                                 if cand:
-                                                    idx0 = cand[0]
-                                                    linha_sheet_val = int(idx0) + 2  # 1 cabeçalho + base 0
-                                                    linhas_para_excluir.append(linha_sheet_val)
+                                                    linhas_para_excluir.append(int(cand[0]) + 2)  # índice DF -> linha Sheet
                                                 else:
                                                     pulados += 1
                         
-                                        # 3) Exclui no Google Sheets (ordenado desc p/ não deslocar)
+                                        # 4) Normaliza, deduplica e ordena DESC (evitar deslocamento)
                                         linhas_para_excluir = sorted({ln for ln in linhas_para_excluir if isinstance(ln, int) and ln >= 2}, reverse=True)
                         
+                                        # DEBUG: mostra quais linhas pretende excluir
+                                        st.caption(f"🧮 Linhas a excluir no Google Sheets: {linhas_para_excluir}")
+                        
                                         if not linhas_para_excluir:
-                                            st.info("ℹ️ Nada para excluir: não há 'Linha Sheet' válida nem correspondência inequívoca por N/M.")
+                                            st.warning("⚠️ Nada para excluir: não há 'Linha Sheet' válida nem correspondência por N/M para as linhas marcadas.")
                                         else:
+                                            # 5) Excluir de baixo para cima
+                                            falhas = 0
                                             for ln in linhas_para_excluir:
                                                 try:
                                                     aba_destino.delete_rows(ln)
                                                     removidos += 1
                                                 except Exception as _e:
+                                                    falhas += 1
                                                     st.warning(f"⚠️ Falha ao excluir a linha {ln} no Google Sheets: {_e}")
                         
-                                            # Atualiza o espelho local (opcional): remove os índices correspondentes aos deletes por fallback
-                                            # OBS: quando usamos 'Linha Sheet' direta, não atualizamos o DataFrame local porque não temos
-                                            # o índice original; isso não afeta o funcionamento do fluxo atual.
-                                            # Se quiser sincronizar totalmente, poderíamos reler a aba após as exclusões.
+                                            # Feedback final
+                                            if removidos > 0:
+                                                st.success(f"🗑️ Exclusão concluída: {removidos} removido(s).")
+                                            if pulados > 0:
+                                                st.info(f"ℹ️ {pulados} registro(s) marcado(s) sem posição identificável no Sheet (N/M ausentes).")
+                                            if falhas == 0 and removidos == 0:
+                                                st.info("ℹ️ Nenhuma linha foi excluída (verifique se marcou 'Manter' no lado 🔴 Google Sheets).")
                         
-                                st.success(f"🗑️ Exclusão concluída: {removidos} removido(s), {pulados} ignorado(s).")
-                                st.info("ℹ️ Recarregue o Google Sheets no navegador para ver as mudanças.")
+                                st.info("ℹ️ Dica: confirme se a coluna **Linha Sheet** aparece nas linhas do 🔴 Google Sheets e se você marcou **Manter** nelas.")
                             except Exception as e:
                                 st.error(f"❌ Erro ao excluir linhas do Google Sheets: {e}")
-
 
 
                         

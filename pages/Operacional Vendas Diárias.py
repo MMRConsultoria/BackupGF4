@@ -147,7 +147,12 @@ with st.spinner("⏳ Processando..."):
     # ================================
     # 📄 Aba 1 - Upload e Processamento
     # ================================
+    # ---- Helper para controle de aba ativa ----
+    import streamlit as st
     
+    if "marcar_aba_ativa" not in globals():
+        def marcar_aba_ativa(tab_key: str):
+            st.session_state["_aba_ativa"] = tab_key
     with aba1:
         marcar_aba_ativa("Upload e Processamento")
         uploaded_file = st.file_uploader(
@@ -313,10 +318,12 @@ with st.spinner("⏳ Processando..."):
     
     
     
-    # 🔧 HELPER GLOBAL (coloque uma única vez no topo do app, ex.: logo após imports principais)
-    def marcar_aba_ativa(tab_key: str):
-        st.session_state["_aba_ativa"] = tab_key
-
+   # ---- Helper para controle de aba ativa ----
+    import streamlit as st
+    
+    if "marcar_aba_ativa" not in globals():
+        def marcar_aba_ativa(tab_key: str):
+            st.session_state["_aba_ativa"] = tab_key
     
     # =======================================
     # Atualizar Google Sheets (Evitar duplicação)
@@ -1368,7 +1375,12 @@ with st.spinner("⏳ Processando..."):
     from datetime import date
     import streamlit as st
     import pandas as pd
+     # ---- Helper para controle de aba ativa ----
+    import streamlit as st
     
+    if "marcar_aba_ativa" not in globals():
+        def marcar_aba_ativa(tab_key: str):
+            st.session_state["_aba_ativa"] = tab_key
     # =======================================
     # Aba 4 - Integração Everest (independente do upload)
     # =======================================

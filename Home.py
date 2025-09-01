@@ -20,8 +20,13 @@ import streamlit as st
 # ⚙️ Config da página (sempre no topo)
 st.set_page_config(page_title="Portal de Relatórios | MMR Consultoria")
 
-# 🔎 Indicadores para provar o deploy
-st.sidebar.write("🔄 Build time:", time.strftime("%Y-%m-%d %H:%M:%S"))
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+# ⏰ Agora em Brasília
+now_br = datetime.now(ZoneInfo("America/Sao_Paulo"))
+
+st.sidebar.write("🔄 Build time (Brasília):", now_br.strftime("%Y-%m-%d %H:%M:%S"))
 
 def app_version():
     h = hashlib.sha256()

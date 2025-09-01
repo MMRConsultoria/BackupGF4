@@ -1044,7 +1044,7 @@ with st.spinner("⏳ Processando..."):
                         )
                     }
                 )
-                aplicar_tudo = st.form_submit_button("🗑️ Excluir selecionadas do Google Sheets")
+                aplicar_tudo = st.form_submit_button("🗑️ Google Sheets")
     
             if aplicar_tudo:
                 try:

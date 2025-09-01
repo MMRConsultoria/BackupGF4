@@ -879,8 +879,8 @@ with st.spinner("⏳ Processando..."):
                 # --- 3) Resumo consolidado (sem listar os incluídos) ---
                 st.markdown(
                     f"**Resumo:** 🟢 Enviados: **{q_novos}** &nbsp;&nbsp;|&nbsp;&nbsp; "
-                    f"❌ Duplicados (M): **{q_dup_m}** &nbsp;&nbsp;|&nbsp;&nbsp; "
-                    f"🔴 Possíveis duplicados (N): **{q_sus_n}**"
+                    f"❌ Duplicados : **{q_dup_m}** &nbsp;&nbsp;|&nbsp;&nbsp; "
+                    f"🔴 Possíveis duplicados : **{q_sus_n}**"
                 )
                 
                 

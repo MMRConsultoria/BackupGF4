@@ -997,11 +997,11 @@ with st.spinner("⏳ Processando..."):
                     #st.success("✅ Processo concluído.")
         if "_resumo_envio" in st.session_state:
                     r = st.session_state._resumo_envio
-                    st.markdown(
-                        f"**Resumo:** 🟢 Enviados: **{r['enviados']}** &nbsp;|&nbsp; "
-                        f"❌ Duplicados (M): **{r['dup_m']}** &nbsp;|&nbsp; "
-                        f"🔴 Possíveis duplicados (N): **{r['sus_n']}**"
-                    )
+                    #st.markdown(
+                    #    f"**Resumo:** 🟢 Enviados: **{r['enviados']}** &nbsp;|&nbsp; "
+                    #    f"❌ Duplicados (M): **{r['dup_m']}** &nbsp;|&nbsp; "
+                    #    f"🔴 Possíveis duplicados (N): **{r['sus_n']}**"
+                    #)
                     del st.session_state._resumo_envio
         # ========================== FASE 2: FORM DE CONFLITOS ==========================
         if st.session_state.get("modo_conflitos", False) and st.session_state.get("conflitos_df_conf") is not None:

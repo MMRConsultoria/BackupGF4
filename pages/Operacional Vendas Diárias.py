@@ -658,8 +658,8 @@ with st.spinner("⏳ Processando..."):
                         st.success(f"✅ {q_novos} novo(s) enviado(s).")
                     except Exception as e:
                         st.error(f"❌ Erro ao enviar novos: {e}")
-                else:
-                    st.info("ℹ️ Nenhum novo para enviar.")
+                #else:
+                #    st.info("ℹ️ Nenhum novo para enviar.")
                 
                 # === SE HÁ SUSPEITOS POR N, PREPARA O PAINEL DE CONFLITOS ===
                 if q_sus_n > 0:

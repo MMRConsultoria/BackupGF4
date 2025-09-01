@@ -353,54 +353,7 @@ with st.spinner("⏳ Processando..."):
             credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
             return gspread.authorize(credentials)
     
-        # ======= TESTE DIRETO DE EXCLUSÃO =======
-        try:
-            gc_dbg = get_gc()
-            sh_dbg = gc_dbg.open("Vendas diarias")
-            ws_dbg = sh_dbg.worksheet("Fat Sistema Externo")
-        except Exception as e:
-            st.error(f"❌ Falha ao abrir planilha/aba no teste: {e}")
-            ws_dbg = None
-    
-        with st.expander("🔧 Teste rápido de exclusão (fora do fluxo)", expanded=False):
-            if ws_dbg is not None:
-                st.warning(f"📄 {sh_dbg.title} | 📑 {ws_dbg.title} | sheetId={ws_dbg.id}")
-                st.markdown(f"[Abrir aba](https://docs.google.com/spreadsheets/d/{sh_dbg.id}/edit#gid={ws_dbg.id})")
-                ln_test = st.number_input("Linha", min_value=2, value=10, step=1, key="ln_delete_debug")
-                c1, c2 = st.columns(2)
-                if c1.button("delete_rows()", key="btn_delrows_debug"):
-                    try:
-                        ws_dbg.delete_rows(int(ln_test))
-                        st.success(f"✅ delete_rows: excluída a linha {ln_test}.")
-                    except Exception as e:
-                        st.error(f"❌ delete_rows falhou: {e}")
-                if c2.button("batchUpdate()", key="btn_batch_debug"):
-                    try:
-                        requests_ = [{
-                            "deleteDimension": {
-                                "range": {
-                                    "sheetId": int(ws_dbg.id),
-                                    "dimension": "ROWS",
-                                    "startIndex": int(ln_test) - 1,
-                                    "endIndex": int(ln_test)
-                                }
-                            }
-                        }]
-                        resp = sh_dbg.batch_update({"requests": requests_})
-                        st.success(f"✅ batchUpdate: solicitei exclusão da linha {ln_test}.")
-                        st.caption(f"Resposta: {resp}")
-                    except Exception as e:
-                        st.error(f"❌ batchUpdate falhou: {e}")
-            else:
-                st.info("Teste desativado porque não consegui abrir a planilha/aba.")
-    
-            # Quem está operando?
-            try:
-                cred = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
-                st.caption(f"👤 Service Account: {cred.get('client_email','(sem email)')}")
-                st.caption("⚠️ Este e-mail precisa ser **Editor** na planilha.")
-            except Exception:
-                pass
+        
     
         # ------------------------ ESTILO (botões pequenos, cinza) ------------------------
         def _inject_button_css():

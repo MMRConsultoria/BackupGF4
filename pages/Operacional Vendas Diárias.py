@@ -143,12 +143,15 @@ with st.spinner("⏳ Processando..."):
     # 3. Separação em ABAS
     # ================================
     aba1, aba3, aba4 = st.tabs(["📄 Upload e Processamento", "🔄 Atualizar Google Sheets","📊 Auditar integração Everest"])
-    
+    # ---- Helper para saber qual aba está ativa ----
+    def marcar_aba_ativa(tab_key: str):
+        st.session_state["_aba_ativa"] = tab_key
     # ================================
     # 📄 Aba 1 - Upload e Processamento
     # ================================
     
     with aba1:
+        marcar_aba_ativa("Upload e Processamento")
         uploaded_file = st.file_uploader(
             "📁 Clique para selecionar ou arraste aqui o arquivo Excel com os dados de faturamento",
             type=["xls", "xlsx"]
@@ -332,7 +335,30 @@ with st.spinner("⏳ Processando..."):
         from oauth2client.service_account import ServiceAccountCredentials
         from gspread_dataframe import get_as_dataframe
         from gspread_formatting import CellFormat, NumberFormat, format_cell_range
-    
+        marcar_aba_ativa("Atualizar Google Sheets")
+        # --- RESET ao entrar nesta aba ---
+        TAB_KEY = "Atualizar Google Sheets"          # ✅ igual ao usado acima
+        if st.session_state.get("_aba_ativa") != TAB_KEY:
+            for k in [
+                "modo_conflitos",
+                "conflitos_df_conf",
+                "conflitos_spreadsheet_id",
+                "conflitos_sheet_id",
+                "_resumo_envio",
+                # "df_final",  # ❌ NÃO LIMPAR (mantém o botão habilitado)
+                "show_manual_editor",
+                "manual_df",
+                "editor_manual",
+                "editor_conflitos",
+                "btn_enviar_auto_header",
+                "btn_toggle_manual",
+                "btn_atualizar_dre",
+                "btn_enviar_manual",
+            ]:
+                st.session_state.pop(k, None)
+            st.session_state["_aba_ativa"] = TAB_KEY
+
+        
         # --- estado para o modo de conflitos + df/ids persistidos ---
         if "modo_conflitos" not in st.session_state:
             st.session_state.modo_conflitos = False
@@ -1375,6 +1401,7 @@ with st.spinner("⏳ Processando..."):
     # =======================================
     
     with aba4:
+        marcar_aba_ativa("Auditar integração Everest")
         try:
             planilha = gc.open("Vendas diarias")
             aba_everest = planilha.worksheet("Everest")

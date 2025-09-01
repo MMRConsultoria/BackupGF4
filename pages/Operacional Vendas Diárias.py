@@ -41,7 +41,7 @@ st.markdown("""
 # ======================
 # Spinner durante todo o processamento
 # ======================
-#with st.spinner("⏳ Processando..."):
+with st.spinner("⏳ Processando..."):
 
     # ================================
     # 1. Conexão com Google Sheets

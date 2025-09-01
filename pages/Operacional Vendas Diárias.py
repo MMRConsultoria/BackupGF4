@@ -1376,102 +1376,59 @@ with aba3:
                         
                        
                         if aplicar_tudo:
+                       
                             try:
-                                removidos = 0
-                                pulados   = 0
+                                # Reabre aba se necessário
+                                try:
+                                    _ = aba_destino.id
+                                except Exception:
+                                    gc = get_gc()
+                                    planilha_destino = gc.open("Vendas diarias")
+                                    aba_destino = planilha_destino.worksheet("Fat Sistema Externo")
                         
-                                # 1) Checagens básicas
-                                required_cols = ["Manter", "_origem_", "N"]
-                                missing = [c for c in required_cols if c not in edited_conf.columns]
-                                if missing:
-                                    st.error("❌ Faltam colunas na tabela de conflitos: " + ", ".join(missing))
-                                else:
-                                    # 2) Seleciona SOMENTE as linhas do Google Sheets marcadas para Manter
-                                    alvo = edited_conf[
-                                        (edited_conf["_origem_"] == "🔴 Google Sheets") &
-                                        (edited_conf["Manter"] == True)
-                                    ].copy()
+                                # Normaliza 'Manter'
+                                manter_series = edited_conf["Manter"]
+                                if manter_series.dtype != bool:
+                                    manter_series = manter_series.astype(str).str.strip().str.lower().isin(
+                                        ["true","1","yes","y","sim","verdadeiro"]
+                                    )
                         
-                                    # DEBUG: quantas linhas o usuário marcou no lado Google Sheets?
-                                    st.caption(f"🔎 Marcadas para excluir (origem 🔴 Google Sheets): {len(alvo)} linha(s).")
+                                # Filtra apenas linhas do lado Google marcadas
+                                mask_google = edited_conf["_origem_"].astype(str).str.contains("google", case=False, na=False)
+                                linhas = (
+                                    pd.to_numeric(edited_conf.loc[mask_google & manter_series, "Linha Sheet"], errors="coerce")
+                                    .dropna().astype(int).tolist()
+                                )
+                                linhas = sorted({ln for ln in linhas if ln >= 2}, reverse=True)
                         
-                                    if alvo.empty:
-                                        st.info("ℹ️ Nenhuma linha do Google Sheets marcada para exclusão.")
-                                    else:
-                                        # 3) Computa as linhas a excluir
-                                        linhas_para_excluir = []
+                                st.warning(f"🧮 Linhas selecionadas para excluir: {linhas}")
                         
-                                        # 3.1) Caminho principal: 'Linha Sheet'
-                                        if "Linha Sheet" in alvo.columns:
-                                            linhas_sheet_validas = (
-                                                pd.to_numeric(alvo["Linha Sheet"], errors="coerce")
-                                                .dropna()
-                                                .astype(int)
-                                                .tolist()
-                                            )
-                                            linhas_para_excluir.extend(linhas_sheet_validas)
+                                if not linhas:
+                                    st.error("Nenhuma linha do Google Sheets marcada. Marque a coluna 'Manter' no lado Google.")
+                                    st.stop()
                         
-                                        # 3.2) Fallback por N (e M) — só para as marcadas sem 'Linha Sheet'
-                                        def _normN_local(x):
-                                            return str(x).strip().replace(".0", "")
-                                        def _normM_local(x):
-                                            return str(x).strip()
+                                # Excluir usando o mesmo método que já funcionou no teste
+                                sheet_id = int(aba_destino.id)
+                                requests = [{
+                                    "deleteDimension": {
+                                        "range": {
+                                            "sheetId": sheet_id,
+                                            "dimension": "ROWS",
+                                            "startIndex": ln - 1,
+                                            "endIndex": ln
+                                        }
+                                    }
+                                } for ln in linhas]
                         
-                                        ve = valores_existentes_df.copy()
-                                        if "N" in ve.columns:
-                                            ve["_N_norm_"] = ve["N"].astype(str).str.strip().str.replace(".0", "", regex=False)
-                                        if "M" in ve.columns:
-                                            ve["_M_norm_"] = ve["M"].astype(str).str.strip()
+                                resp = aba_destino.spreadsheet.batch_update({"requests": requests})
                         
-                                        if ("Linha Sheet" not in alvo.columns) or alvo["Linha Sheet"].isna().any():
-                                            faltantes = alvo[ (("Linha Sheet" not in alvo.columns) | (alvo["Linha Sheet"].isna())) ].copy()
-                                            for _, r in faltantes.iterrows():
-                                                nkey = _normN_local(r.get("N", ""))
-                                                mkey = _normM_local(r.get("M", ""))
-                                                if not nkey:
-                                                    pulados += 1
-                                                    continue
-                                                if "N" not in ve.columns:
-                                                    pulados += 1
-                                                    continue
-                                                cand = ve.index[ve["_N_norm_"] == nkey].tolist()
-                                                if cand and "M" in ve.columns and mkey:
-                                                    cand = [i for i in cand if _normM_local(ve.loc[i, "M"]) == mkey]
-                                                if cand:
-                                                    linhas_para_excluir.append(int(cand[0]) + 2)  # índice DF -> linha Sheet
-                                                else:
-                                                    pulados += 1
+                                st.success(f"🗑️ {len(linhas)} linha(s) excluída(s) do Google Sheets.")
+                                st.caption(f"Resposta: {resp}")
+                                st.stop()
                         
-                                        # 4) Normaliza, deduplica e ordena DESC (evitar deslocamento)
-                                        linhas_para_excluir = sorted({ln for ln in linhas_para_excluir if isinstance(ln, int) and ln >= 2}, reverse=True)
-                        
-                                        # DEBUG: mostra quais linhas pretende excluir
-                                        st.caption(f"🧮 Linhas a excluir no Google Sheets: {linhas_para_excluir}")
-                        
-                                        if not linhas_para_excluir:
-                                            st.warning("⚠️ Nada para excluir: não há 'Linha Sheet' válida nem correspondência por N/M para as linhas marcadas.")
-                                        else:
-                                            # 5) Excluir de baixo para cima
-                                            falhas = 0
-                                            for ln in linhas_para_excluir:
-                                                try:
-                                                    aba_destino.delete_rows(ln)
-                                                    removidos += 1
-                                                except Exception as _e:
-                                                    falhas += 1
-                                                    st.warning(f"⚠️ Falha ao excluir a linha {ln} no Google Sheets: {_e}")
-                        
-                                            # Feedback final
-                                            if removidos > 0:
-                                                st.success(f"🗑️ Exclusão concluída: {removidos} removido(s).")
-                                            if pulados > 0:
-                                                st.info(f"ℹ️ {pulados} registro(s) marcado(s) sem posição identificável no Sheet (N/M ausentes).")
-                                            if falhas == 0 and removidos == 0:
-                                                st.info("ℹ️ Nenhuma linha foi excluída (verifique se marcou 'Manter' no lado 🔴 Google Sheets).")
-                        
-                                st.info("ℹ️ Dica: confirme se a coluna **Linha Sheet** aparece nas linhas do 🔴 Google Sheets e se você marcou **Manter** nelas.")
                             except Exception as e:
-                                st.error(f"❌ Erro ao excluir linhas do Google Sheets: {e}")
+                                st.error(f"❌ Erro ao excluir: {e}")
+                                st.stop()
 
 
                         

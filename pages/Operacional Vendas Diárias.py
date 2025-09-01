@@ -628,26 +628,32 @@ with st.spinner("⏳ Processando..."):
                 is_dup_M = M_in.isin(dados_existentes)
                 is_dup_N = N_in.isin(dados_n_existentes)
         
-                mask_suspeitos = (~is_dup_M) & is_dup_N    # N já existe
-                mask_novos     = (~is_dup_M) & (~is_dup_N) # novo
-        
+
+                # classificar
+                M_in = df_final["M"].astype(str).str.strip()
+                N_in = df_final["N"].astype(str).str.strip()
+                is_dup_M = M_in.isin(dados_existentes)
+                is_dup_N = N_in.isin(dados_n_existentes)
+                mask_suspeitos = (~is_dup_M) & is_dup_N
+                mask_novos     = (~is_dup_M) & (~is_dup_N)
+                
                 df_suspeitos = df_final.loc[mask_suspeitos].copy()
                 df_novos     = df_final.loc[mask_novos].copy()
-                df_dup_M     = df_final.loc[is_dup_M].copy()
-        
-                # ===== 6) Enviar NOVOS imediatamente =====
-                q_novos = len(df_novos)
-                q_dup_m = len(df_dup_M)
-                q_sus_n = len(df_suspeitos)
-        
+                df_dup_M     = df_final.loc[is_dup_M].copy()  # <- para contar duplicados por M
+                
+                # === CONTAGENS ===
+                q_novos = int(len(df_novos))
+                q_dup_m = int(len(df_dup_M))
+                q_sus_n = int(len(df_suspeitos))
+                
+                # === ENVIA NOVOS MESMO HAVENDO SUSPEITOS ===
                 if q_novos > 0:
                     try:
                         dados_para_enviar = df_novos.fillna("").values.tolist()
                         inicio = len(aba_destino.col_values(1)) + 1
                         aba_destino.append_rows(dados_para_enviar, value_input_option='USER_ENTERED')
                         fim = inicio + q_novos - 1
-        
-                        # formatação (ajuste colunas se necessário)
+                
                         if inicio <= fim:
                             data_format   = CellFormat(numberFormat=NumberFormat(type='DATE',   pattern='dd/mm/yyyy'))
                             numero_format = CellFormat(numberFormat=NumberFormat(type='NUMBER', pattern='0'))
@@ -655,38 +661,39 @@ with st.spinner("⏳ Processando..."):
                             format_cell_range(aba_destino, f"D{inicio}:D{fim}", numero_format)
                             format_cell_range(aba_destino, f"F{inicio}:F{fim}", numero_format)
                             format_cell_range(aba_destino, f"L{inicio}:L{fim}", numero_format)
-        
+                
                         st.success(f"✅ {q_novos} novo(s) enviado(s).")
                     except Exception as e:
                         st.error(f"❌ Erro ao enviar novos: {e}")
                 else:
                     st.info("ℹ️ Nenhum novo para enviar.")
-        
-                # ===== 7) Resumo (sem listar incluídos) =====
-                st.markdown(
-                    f"**Resumo:** 🟢 Enviados: **{q_novos}** &nbsp;&nbsp;|&nbsp;&nbsp; "
-                    f"❌ Duplicados (M): **{q_dup_m}** &nbsp;&nbsp;|&nbsp;&nbsp; "
-                    f"🔴 Possíveis duplicados (N): **{q_sus_n}**"
-                )
-        
-                # ===== 8) Preparar painel de conflitos (se houver) — sem st.rerun =====
+                
+                # === SE HÁ SUSPEITOS POR N, PREPARA O PAINEL DE CONFLITOS ===
                 if q_sus_n > 0:
-                    # normaliza N do sheet
+                    st.warning("🔎 Existem possíveis duplicados por N. Revise-os na seção de conflitos.")
+                
+                    # normaliza N do sheet para casar
                     def _normN(x): return str(x).strip().replace(".0", "")
-                    vexist = valores_existentes_df.copy()
-                    if "N" in vexist.columns:
-                        vexist["N"] = vexist["N"].map(_normN)
-        
-                    # map N -> entrada/sheet
-                    entrada_por_n = { _normN(r["N"]): r.to_dict() for _, r in df_suspeitos.iterrows() }
-                    sheet_por_n = { nkey: vexist[vexist["N"] == nkey].copy() for nkey in entrada_por_n.keys() }
-        
+                    valores_existentes_df2 = valores_existentes_df.copy()
+                    if "N" in valores_existentes_df2.columns:
+                        valores_existentes_df2["N"] = valores_existentes_df2["N"].map(_normN)
+                
+                    entrada_por_n = {}
+                    for _, r in df_suspeitos.iterrows():
+                        nkey = _normN(r.get("N",""))
+                        entrada_por_n[nkey] = r.to_dict()
+                
+                    sheet_por_n = {nkey: valores_existentes_df2[valores_existentes_df2["N"] == nkey].copy()
+                                   for nkey in entrada_por_n.keys()}
+                
+                    # canonização leve
                     def _norm_key(s: str) -> str:
                         s = str(s or "").strip().lower()
                         s = unicodedata.normalize("NFD", s)
                         s = "".join(c for c in s if unicodedata.category(c) != "Mn")
                         s = re.sub(r"[^a-z0-9]+", " ", s).strip()
                         return s
+                
                     CANON_MAP = {
                         "codigo everest": "Codigo Everest",
                         "cod everest": "Codigo Everest",
@@ -724,13 +731,15 @@ with st.spinner("⏳ Processando..."):
                         return {canon_colname(k): v for k, v in d.items()} if isinstance(d, dict) else d
                     def _fmt_serial_to_br(x):
                         try:
-                            return pd.to_datetime(pd.Series([x]), origin="1899-12-30", unit="D", errors="coerce").dt.strftime("%d/%m/%Y").iloc[0]
+                            return pd.to_datetime(pd.Series([x]), origin="1899-12-30", unit="D", errors="coerce")\
+                                     .dt.strftime("%d/%m/%Y").iloc[0]
                         except Exception:
                             try:
-                                return pd.to_datetime(pd.Series([x]), dayfirst=True, errors="coerce").dt.strftime("%d/%m/%Y").iloc[0]
+                                return pd.to_datetime(pd.Series([x]), dayfirst=True, errors="coerce")\
+                                         .dt.strftime("%d/%m/%Y").iloc[0]
                             except Exception:
                                 return x
-        
+                
                     conflitos_linhas = []
                     for nkey in sorted(entrada_por_n.keys()):
                         # entrada
@@ -739,7 +748,7 @@ with st.spinner("⏳ Processando..."):
                         d_in["N"] = _normN(d_in.get("N",""))
                         if "Data" in d_in: d_in["Data"] = _fmt_serial_to_br(d_in["Data"])
                         conflitos_linhas.append(d_in)
-        
+                
                         # sheet
                         df_sh = sheet_por_n[nkey].copy()
                         df_sh = canonize_cols_df(df_sh)
@@ -755,13 +764,13 @@ with st.spinner("⏳ Processando..."):
                         for idx, row in df_sh.iterrows():
                             d_sh = canonize_dict(row.to_dict())
                             d_sh["_origem_"] = "Google Sheets"
-                            d_sh["Linha Sheet"] = idx + 2   # linha real (1=cabecalho)
+                            d_sh["Linha Sheet"] = idx + 2   # 1 = cabeçalho
                             conflitos_linhas.append(d_sh)
-        
+                
                     df_conf = pd.DataFrame(conflitos_linhas).copy()
                     df_conf = canonize_cols_df(df_conf)
-        
-                    # derivados data
+                
+                    # derivados de data
                     if "Data" in df_conf.columns:
                         _dt = pd.to_datetime(df_conf["Data"], dayfirst=True, errors="coerce")
                         nomes_dia = ["segunda-feira","terça-feira","quarta-feira","quinta-feira","sexta-feira","sábado","domingo"]
@@ -769,7 +778,7 @@ with st.spinner("⏳ Processando..."):
                         nomes_mes = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]
                         df_conf["Mês"] = _dt.dt.month.map(lambda m: nomes_mes[m-1] if pd.notna(m) else "")
                         df_conf["Ano"] = _dt.dt.year.fillna("").astype(str).replace("nan","")
-        
+                
                     if "_origem_" in df_conf.columns:
                         df_conf["_origem_"] = df_conf["_origem_"].replace({
                             "Nova Arquivo":"🟢 Nova Arquivo",
@@ -777,7 +786,7 @@ with st.spinner("⏳ Processando..."):
                         })
                     if "Manter" not in df_conf.columns:
                         df_conf.insert(0,"Manter",False)
-        
+                
                     ordem_final = [
                         "Manter","_origem_","Linha Sheet","Data","Dia da Semana","Loja",
                         "Codigo Everest","Grupo","Cod Grupo Empresas",
@@ -788,22 +797,28 @@ with st.spinner("⏳ Processando..."):
                                 [c for c in df_conf.columns if c not in ordem_final],
                         fill_value=""
                     )
-        
-                    # salva no estado para a FASE 2 (form já existente abaixo)
+                
+                    # ——— salvar estado p/ FASE 2 + resumo e rerun ———
                     st.session_state.conflitos_df_conf = df_conf
                     st.session_state.conflitos_spreadsheet_id = planilha_destino.id
                     st.session_state.conflitos_sheet_id = int(aba_destino.id)
                     st.session_state.modo_conflitos = True
-        
-                    st.warning("🔎 Existem possíveis duplicados por N. Revise-os na seção de conflitos abaixo.")
-                else:
-                    # garante que não fica preso no modo conflitos quando não há
-                    st.session_state.modo_conflitos = False
-                    st.session_state.conflitos_df_conf = None
-                    st.session_state.conflitos_spreadsheet_id = None
-                    st.session_state.conflitos_sheet_id = None
-        
+                
+                    # guarda o resumo para exibir no topo após o rerun
+                    st.session_state._resumo_envio = {"enviados": q_novos, "dup_m": q_dup_m, "sus_n": q_sus_n}
+                
+                    st.rerun()
+                
+                # === SEM SUSPEITOS: limpar estado e concluir ===
+                st.session_state.modo_conflitos = False
+                st.session_state.conflitos_df_conf = None
+                st.session_state.conflitos_spreadsheet_id = None
+                st.session_state.conflitos_sheet_id = None
+                
+                # também guarda e mostra o resumo quando não há conflitos
+                st.session_state._resumo_envio = {"enviados": q_novos, "dup_m": q_dup_m, "sus_n": q_sus_n}
                 return True
+
 
                    
               

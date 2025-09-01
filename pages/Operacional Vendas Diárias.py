@@ -867,49 +867,228 @@ with st.spinner("⏳ Processando..."):
     
             if aplicar_tudo:
                 try:
+                    # --- IDs salvos quando você preparou os conflitos ---
                     spreadsheet_id = st.session_state.conflitos_spreadsheet_id
                     sheet_id = st.session_state.conflitos_sheet_id
                     if not spreadsheet_id or sheet_id is None:
                         st.error("❌ Ids da planilha não encontrados. Clique em 'Atualizar SheetsS' novamente.")
                         st.stop()
     
-                    manter = edited_conf["Manter"]
-                    if manter.dtype != bool:
-                        manter = manter.astype(str).str.strip().str.lower().isin(
-                            ["true","1","yes","y","sim","verdadeiro"]
-                        )
-                    mask_google = edited_conf["_origem_"].astype(str).str.contains("google", case=False, na=False)
+                    # --- Normalizações auxiliares ---
+                    def _ns(s: str) -> str:
+                        s = str(s or "").strip().lower()
+                        s = unicodedata.normalize("NFD", s)
+                        s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+                        s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+                        return s
     
-                    linhas = (
-                        pd.to_numeric(edited_conf.loc[mask_google & manter, "Linha Sheet"], errors="coerce")
-                        .dropna().astype(int).tolist()
-                    )
-                    linhas = sorted({ln for ln in linhas if ln >= 2}, reverse=True)
+                    def _to_serial_1899_12_30(date_str: str):
+                        dt = pd.to_datetime(str(date_str), dayfirst=True, errors="coerce")
+                        if pd.isna(dt):
+                            return ""
+                        return int((dt - pd.Timestamp("1899-12-30")).days)
     
-                    st.warning(f"🧮 Linhas (1-based) para excluir: {linhas}")
+                    def _yyyy_mm_dd(date_str: str):
+                        dt = pd.to_datetime(str(date_str), dayfirst=True, errors="coerce")
+                        return "" if pd.isna(dt) else dt.strftime("%Y-%m-%d")
     
-                    if not linhas:
-                        st.error("Nenhuma linha 🔴 Google Sheets marcada. Marque 'Manter' e tente de novo.")
-                        st.stop()
+                    def _to_num(x, default=0):
+                        try:
+                            v = pd.to_numeric(x, errors="coerce")
+                            return default if pd.isna(v) else float(v)
+                        except:
+                            return default
     
+                    def _to_intstr(x):
+                        try:
+                            if str(x).strip() == "":
+                                return ""
+                            return str(int(float(str(x).strip())))
+                        except:
+                            return ""
+    
+                    # --- Reabre planilha/aba e lê cabeçalho real ---
                     gc2 = get_gc()
                     sh2 = gc2.open_by_key(spreadsheet_id)
-                    reqs = [{
-                        "deleteDimension": {
-                            "range": {
-                                "sheetId": int(sheet_id),
-                                "dimension": "ROWS",
-                                "startIndex": ln - 1,
-                                "endIndex": ln
-                            }
+                    try:
+                        ws2 = sh2.get_worksheet_by_id(int(sheet_id))
+                    except Exception:
+                        ws2 = None
+                        for w in sh2.worksheets():
+                            if int(getattr(w, "id", -1)) == int(sheet_id):
+                                ws2 = w
+                                break
+                    if ws2 is None:
+                        st.error("❌ Não consegui acessar a worksheet pelo sheetId.")
+                        st.stop()
+    
+                    headers_raw = ws2.row_values(1)
+                    headers = [h.strip() for h in headers_raw]
+                    lookup = {_ns(h): h for h in headers}
+    
+                    # mapeamento de nomes “canônicos” do df_conf -> cabeçalho real do Sheet
+                    def map_col(name: str):
+                        k = _ns(name)
+                        if k in lookup:
+                            return lookup[k]
+                        aliases = {
+                            "codigo everest": ["código everest", "codigo ev", "cod everest", "cod ev"],
+                            "codigo grupo everest": ["cod grupo empresas", "codigo grupo", "codigo grupo empresas"],
+                            "fat total": ["fat.total", "fat total"],
+                            "serv tx": ["serv/tx", "servico", "serv"],
+                            "fat real": ["fat.real", "fat real"],
+                            "mes": ["mês", "mes"],
+                            "dia da semana": ["dia da semana"],
                         }
-                    } for ln in linhas]
-                    resp = sh2.batch_update({"requests": reqs})
+                        for canonical, vars_ in aliases.items():
+                            if k == _ns(canonical) or k in [_ns(v) for v in vars_]:
+                                for v in [canonical] + vars_:
+                                    nv = _ns(v)
+                                    if nv in lookup:
+                                        return lookup[nv]
+                        # casos especiais do seu df_conf
+                        if k == _ns("Cod Grupo Empresas"):
+                            nv = _ns("codigo grupo everest")
+                            return lookup.get(nv)
+                        if k == _ns("Codigo Everest"):
+                            nv = _ns("codigo everest")
+                            return lookup.get(nv)
+                        return None  # sem mapeamento direto
     
-                    st.success(f"🗑️ {len(linhas)} linha(s) excluída(s) do Google Sheets.")
-                    st.caption(f"Resposta: {resp}")
+                    # --- Separa marcados: excluir (Google) e incluir (Nova Arquivo) ---
+                    manter = edited_conf["Manter"]
+                    if manter.dtype != bool:
+                        manter = manter.astype(str).str.strip().str.lower().isin(["true","1","yes","y","sim","verdadeiro"])
     
-                    # limpa estado
+                    is_google = edited_conf["_origem_"].astype(str).str.contains("google", case=False, na=False)
+                    is_novo   = edited_conf["_origem_"].astype(str).str.contains("nova",   case=False, na=False)
+    
+                    # 1) Linhas reais (1-based) a excluir (lado Google)
+                    linhas_excluir = (
+                        pd.to_numeric(edited_conf.loc[is_google & manter, "Linha Sheet"], errors="coerce")
+                        .dropna().astype(int).tolist()
+                    )
+                    linhas_excluir = sorted({ln for ln in linhas_excluir if ln >= 2}, reverse=True)
+    
+                    # 2) Registros a incluir (lado Nova Arquivo)
+                    novos_marcados = edited_conf.loc[is_novo & manter].copy()
+    
+                    # Constrói linhas no formato do Sheet (ordem = headers)
+                    rows_to_append = []
+                    for _, r in novos_marcados.iterrows():
+                        d = r.to_dict()
+    
+                        # pega/normaliza campos básicos
+                        data_br   = d.get("Data", "")
+                        loja      = str(d.get("Loja", "") or "")
+                        grupo     = str(d.get("Grupo", "") or "")
+                        fat_total = _to_num(d.get("Fat. Total", d.get("Fat.Total", 0)), 0)
+                        serv_tx   = _to_num(d.get("Serv/Tx", 0), 0)
+                        fat_real  = _to_num(d.get("Fat.Real", 0), 0)
+                        ticket    = _to_num(d.get("Ticket", 0), 0)
+                        mes_lbl   = str(d.get("Mês", "") or "")
+                        ano_val   = _to_intstr(d.get("Ano", ""))
+    
+                        cod_emp   = _to_intstr(d.get("Codigo Everest", d.get("Código Everest", "")))
+                        cod_grp   = _to_intstr(d.get("Cod Grupo Empresas", d.get("Código Grupo Everest", "")))
+    
+                        # Data: serial + yyyy-mm-dd para M/N
+                        data_serial = _to_serial_1899_12_30(data_br)
+                        data_ymd    = _yyyy_mm_dd(data_br)
+    
+                        # Calcula M/N se existirem no cabeçalho
+                        col_M = lookup.get(_ns("M"))
+                        col_N = lookup.get(_ns("N"))
+                        M_val = (data_ymd + str(fat_total) + loja) if col_M else None
+                        N_val = (data_ymd + cod_emp)             if col_N else None
+    
+                        # monta dict seguindo cabeçalho
+                        row_out = {h: "" for h in headers}
+                        # Data
+                        col_data = map_col("Data")
+                        if col_data:
+                            row_out[col_data] = data_serial
+                        # Dia da Semana
+                        col_dia = map_col("Dia da Semana")
+                        if col_dia:
+                            row_out[col_dia] = d.get("Dia da Semana", "")
+                        # Loja
+                        col_loja = map_col("Loja")
+                        if col_loja:
+                            row_out[col_loja] = loja
+                        # Grupo
+                        col_grupo = map_col("Grupo")
+                        if col_grupo:
+                            row_out[col_grupo] = grupo
+                        # Códigos
+                        col_cod = map_col("Codigo Everest")
+                        if col_cod:
+                            row_out[col_cod] = cod_emp
+                        col_codg = map_col("Cod Grupo Empresas")
+                        if col_codg:
+                            row_out[col_codg] = cod_grp
+                        # Valores
+                        col_fat = map_col("Fat. Total")
+                        if col_fat:
+                            row_out[col_fat] = fat_total
+                        col_srv = map_col("Serv/Tx")
+                        if col_srv:
+                            row_out[col_srv] = serv_tx
+                        col_real = map_col("Fat.Real")
+                        if col_real:
+                            row_out[col_real] = fat_real
+                        col_tic = map_col("Ticket")
+                        if col_tic:
+                            row_out[col_tic] = ticket
+                        # Mês/Ano
+                        col_mes = map_col("Mês")
+                        if col_mes:
+                            row_out[col_mes] = mes_lbl
+                        col_ano = map_col("Ano")
+                        if col_ano:
+                            row_out[col_ano] = ano_val
+                        # M / N
+                        if col_M:
+                            row_out[col_M] = M_val
+                        if col_N:
+                            row_out[col_N] = N_val
+    
+                        # garante que a ordem é a do headers
+                        rows_to_append.append([row_out[h] for h in headers])
+    
+                    # --- Executa: 1) excluir, 2) incluir ---
+                    removidos = 0
+                    inseridos = 0
+    
+                    # Exclusão (se houver)
+                    if linhas_excluir:
+                        reqs_del = [{
+                            "deleteDimension": {
+                                "range": {
+                                    "sheetId": int(sheet_id),
+                                    "dimension": "ROWS",
+                                    "startIndex": ln - 1,
+                                    "endIndex": ln
+                                }
+                            }
+                        } for ln in linhas_excluir]
+                        sh2.batch_update({"requests": reqs_del})
+                        removidos = len(linhas_excluir)
+    
+                    # Inclusão (se houver)
+                    if rows_to_append:
+                        ws2.append_rows(rows_to_append, value_input_option='USER_ENTERED')
+                        inseridos = len(rows_to_append)
+    
+                    if removidos == 0 and inseridos == 0:
+                        st.info("ℹ️ Nada a fazer: nenhuma linha marcada para excluir ou incluir.")
+                    else:
+                        st.success(f"✅ Concluído: {removidos} excluída(s) e {inseridos} incluída(s).")
+                        st.markdown(
+                            f"[Abrir a aba no Google Sheets](https://docs.google.com/spreadsheets/d/{sh2.id}/edit#gid={sheet_id})"
+                        )
+    
+                    # limpa estado e encerra
                     st.session_state.modo_conflitos = False
                     st.session_state.conflitos_df_conf = None
                     st.session_state.conflitos_spreadsheet_id = None
@@ -917,8 +1096,9 @@ with st.spinner("⏳ Processando..."):
                     st.stop()
     
                 except Exception as e:
-                    st.error(f"❌ Erro ao excluir: {e}")
+                    st.error(f"❌ Erro ao aplicar exclusões/inclusões: {e}")
                     st.stop()
+
         # ======================== /FASE 2: FORM DE CONFLITOS ==========================
     
         # ------------------------ HEADER / BOTÕES ------------------------

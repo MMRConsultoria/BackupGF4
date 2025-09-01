@@ -147,14 +147,8 @@ with st.spinner("⏳ Processando..."):
     # ================================
     # 📄 Aba 1 - Upload e Processamento
     # ================================
-    # ---- Helper para controle de aba ativa ----
-    import streamlit as st
     
-    if "marcar_aba_ativa" not in globals():
-        def marcar_aba_ativa(tab_key: str):
-            st.session_state["_aba_ativa"] = tab_key
     with aba1:
-        marcar_aba_ativa("Upload e Processamento")
         uploaded_file = st.file_uploader(
             "📁 Clique para selecionar ou arraste aqui o arquivo Excel com os dados de faturamento",
             type=["xls", "xlsx"]
@@ -318,12 +312,7 @@ with st.spinner("⏳ Processando..."):
     
     
     
-   # ---- Helper para controle de aba ativa ----
-    import streamlit as st
     
-    if "marcar_aba_ativa" not in globals():
-        def marcar_aba_ativa(tab_key: str):
-            st.session_state["_aba_ativa"] = tab_key
     
     # =======================================
     # Atualizar Google Sheets (Evitar duplicação)
@@ -364,29 +353,29 @@ with st.spinner("⏳ Processando..."):
             credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
             return gspread.authorize(credentials)
 
-        # ✅ Marcar esta aba como ativa (CHAME ISSO EM TODAS AS ABAS)
+        # --- RESET ao entrar na aba "Atualizar Google Sheets" ---
         TAB_KEY = "aba_atualizar_google_sheets"
     
         if st.session_state.get("_aba_ativa") != TAB_KEY:
+            # Limpa tudo que não deve persistir ao reabrir a aba
             for k in [
                 "modo_conflitos",
                 "conflitos_df_conf",
                 "conflitos_spreadsheet_id",
                 "conflitos_sheet_id",
                 "_resumo_envio",
-                # "df_final",            # ❌ NÃO LIMPE MAIS AQUI
+                "df_final",              # <- zera os dados carregados
                 "show_manual_editor",
                 "manual_df",
-                "editor_manual",
-                "editor_conflitos",
-                "btn_enviar_auto_header",
-                "btn_toggle_manual",
-                "btn_atualizar_dre",
-                "btn_enviar_manual",
             ]:
                 st.session_state.pop(k, None)
     
+            # Marca esta aba como ativa
             st.session_state["_aba_ativa"] = TAB_KEY
+
+        
+
+
     
         # ------------------------ ESTILO (botões pequenos, cinza) ------------------------
         def _inject_button_css():
@@ -1380,18 +1369,12 @@ with st.spinner("⏳ Processando..."):
     from datetime import date
     import streamlit as st
     import pandas as pd
-     # ---- Helper para controle de aba ativa ----
-    import streamlit as st
     
-    if "marcar_aba_ativa" not in globals():
-        def marcar_aba_ativa(tab_key: str):
-            st.session_state["_aba_ativa"] = tab_key
     # =======================================
     # Aba 4 - Integração Everest (independente do upload)
     # =======================================
     
     with aba4:
-        marcar_aba_ativa("Auditar integração Everest")
         try:
             planilha = gc.open("Vendas diarias")
             aba_everest = planilha.worksheet("Everest")

@@ -674,8 +674,21 @@ with st.spinner("⏳ Processando..."):
     
         # ==== Filtros principais ====
         # ==== Filtros principais ====
-        data_min = df_vendas["Data"].min()
-        data_max = df_vendas["Data"].max()
+        # ==== Salvaguardas de datas (logo após a normalização de df_vendas) ====
+        if df_vendas.empty or df_vendas["Data"].dropna().empty:
+            st.warning("⚠️ Não há dados de vendas com datas válidas.")
+            st.stop()
+        
+        data_min = pd.to_datetime(df_vendas["Data"].min())
+        data_max = pd.to_datetime(df_vendas["Data"].max())
+        
+        if pd.isna(data_min) or pd.isna(data_max):
+            st.warning("⚠️ Datas inválidas na base.")
+            st.stop()
+        
+        # ==== Seletor de Tipo (garante 'Todos' e evita default inválido) ====
+        tipos_disponiveis = sorted([t for t in df_vendas["Tipo"].dropna().unique() if str(t).strip() != ""])
+        tipos_disponiveis = ["Todos"] + tipos_disponiveis
         
         col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
         
@@ -699,78 +712,105 @@ with st.spinner("⏳ Processando..."):
             modo_periodo = st.selectbox("🕒 Período:", ["Diário", "Mensal", "Anual"], key="modo_periodo_relatorio")
     
         with col4:
-            tipos_disponiveis = sorted(df_vendas["Tipo"].dropna().unique())
-            tipos_disponiveis.insert(0, "Todos")
             tipo_selecionado = st.selectbox("🏪 Tipo:", options=tipos_disponiveis, index=0)
-    
         
         
         # ==== Filtro por período ====
         # ==== Filtro por período ====
         if modo_periodo == "Diário":
-            # 📅 Intervalo com validação
-                datas_selecionadas = st.date_input(
-                    "📅 Intervalo de datas:",
-                    value=(data_max, data_max),
-                    min_value=data_min,
-                    max_value=data_max,
-                    key="data_vendas_relatorio"
-                )
-            
-                if isinstance(datas_selecionadas, (tuple, list)) and len(datas_selecionadas) == 2:
-                    data_inicio, data_fim = datas_selecionadas
-                else:
-                    st.warning("⚠️ Por favor, selecione um intervalo com **duas datas** (início e fim).")
-                    st.stop()
-            
-                df_filtrado = df_vendas[
-                    (df_vendas["Data"] >= pd.to_datetime(data_inicio)) &
-                    (df_vendas["Data"] <= pd.to_datetime(data_fim))
-                ]
-                # ==== Aplica filtro de Tipo ====
-                if tipo_selecionado != "Todos":
-                    df_filtrado = df_filtrado[df_filtrado["Tipo"] == tipo_selecionado]
-    
-                df_filtrado["Período"] = df_filtrado["Data"].dt.strftime("%d/%m/%Y")
-    
+            # Evita problemas quando min==max
+            _min = min(data_min, data_max)
+            _max = max(data_min, data_max)
+        
+            datas_selecionadas = st.date_input(
+                "📅 Intervalo de datas:",
+                value=(_max.date(), _max.date()),
+                min_value=_min.date(),
+                max_value=_max.date(),
+                key="data_vendas_relatorio"
+            )
+        
+            if isinstance(datas_selecionadas, (tuple, list)) and len(datas_selecionadas) == 2:
+                data_inicio, data_fim = datas_selecionadas
+                data_inicio = pd.to_datetime(data_inicio)
+                data_fim = pd.to_datetime(data_fim)
+            else:
+                st.warning("⚠️ Por favor, selecione um intervalo com **duas datas** (início e fim).")
+                st.stop()
+        
+            df_filtrado = df_vendas[(df_vendas["Data"] >= data_inicio) & (df_vendas["Data"] <= data_fim)]
+        
+            if tipo_selecionado != "Todos":
+                df_filtrado = df_filtrado[df_filtrado["Tipo"] == tipo_selecionado]
+        
+            df_filtrado["Período"] = df_filtrado["Data"].dt.strftime("%d/%m/%Y")
+
         
         elif modo_periodo == "Mensal":
+
             df_vendas["Mes/Ano"] = df_vendas["Data"].dt.strftime("%m/%Y")
+        
             meses_disponiveis = sorted(
-                df_vendas["Mes/Ano"].unique(),
+                df_vendas["Mes/Ano"].dropna().unique().tolist(),
                 key=lambda x: datetime.strptime("01/" + x, "%d/%m/%Y")
             )
+        
+            if not meses_disponiveis:
+                st.warning("⚠️ Não há meses disponíveis na base.")
+                st.stop()
+        
+            mes_padrao = [meses_disponiveis[-1]]
+        
             meses_selecionados = st.multiselect(
                 "🗓️ Selecione os meses:",
                 options=meses_disponiveis,
-                default=[datetime.today().strftime("%m/%Y")]
+                default=[m for m in mes_padrao if m in meses_disponiveis],
+                key="meses_relatorio"
             )
+        
+            if not meses_selecionados:
+                meses_selecionados = mes_padrao
+        
             df_filtrado = df_vendas[df_vendas["Mes/Ano"].isin(meses_selecionados)]
             df_filtrado["Período"] = df_filtrado["Data"].dt.strftime("%m/%Y")
-    
+        
             if tipo_selecionado != "Todos":
                 df_filtrado = df_filtrado[df_filtrado["Tipo"] == tipo_selecionado]
+
     
         
         elif modo_periodo == "Anual":
             df_vendas["Ano"] = df_vendas["Data"].dt.strftime("%Y")
-            anos_disponiveis = sorted(df_vendas["Ano"].unique())
+            anos_disponiveis = sorted(df_vendas["Ano"].dropna().unique().tolist())
+        
+            if not anos_disponiveis:
+                st.warning("⚠️ Não há anos disponíveis na base.")
+                st.stop()
+        
+            ano_padrao = [anos_disponiveis[-1]]
+        
             anos_selecionados = st.multiselect(
                 "📅 Selecione os anos:",
                 options=anos_disponiveis,
-                default=[datetime.today().strftime("%Y")]
+                default=[a for a in ano_padrao if a in anos_disponiveis],
+                key="anos_relatorio"
             )
+        
+            if not anos_selecionados:
+                anos_selecionados = ano_padrao
+        
             df_filtrado = df_vendas[df_vendas["Ano"].isin(anos_selecionados)]
             df_filtrado["Período"] = df_filtrado["Data"].dt.strftime("%Y")
-    
+        
             if tipo_selecionado != "Todos":
+                df_filtrado = df_filtrado[df_filtrado["Tipo"] == tipo_selecionado]
+
                 df_filtrado = df_filtrado[df_filtrado["Tipo"] == tipo_selecionado]
     
         
         # ==== Aplica filtro de Loja ou Grupo ====
-        if selecao != todos:
+        if selecao != todos and selecao in df_filtrado.get(modo_exibicao, pd.Series(dtype=str)).astype(str).unique():
             df_filtrado = df_filtrado[df_filtrado[modo_exibicao] == selecao]
-    
         
             
     

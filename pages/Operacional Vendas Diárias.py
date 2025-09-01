@@ -1280,75 +1280,85 @@ with st.spinner("⏳ Processando..."):
                     st.error(f"❌ Erro ao aplicar exclusões/inclusões: {e}")
                     st.stop()
 
-        # ======================== /FASE 2: FORM DE CONFLITOS ==========================
-    
         
-
-
-    
-        # ------------------------ EDITOR MANUAL ------------------------
+        # ------------------------ EDITOR MANUAL (somente processa no final) ------------------------
         if "show_manual_editor" not in st.session_state:
             st.session_state.show_manual_editor = False
         if "manual_df" not in st.session_state:
             st.session_state.manual_df = template_manuais(10)
-    
+        
         if st.session_state.get("show_manual_editor", False):
             st.subheader("Lançamentos manuais")
-    
+        
+            # Catálogo p/ preencher códigos (pode ficar fora do submit; é leve)
             gc_ = get_gc()
             catalogo = carregar_catalogo_codigos(gc_, nome_planilha="Vendas diarias", aba_catalogo="Tabela Empresa")
-            lojas_options = sorted(catalogo["Loja"].dropna().astype(str).str.strip().unique().tolist()) if not catalogo.empty else []
-    
+            lojas_options = sorted(
+                catalogo["Loja"].dropna().astype(str).str.strip().unique().tolist()
+            ) if not catalogo.empty else []
+        
             PLACEHOLDER_LOJA = "— selecione a loja —"
             lojas_options_ui = [PLACEHOLDER_LOJA] + lojas_options
-    
+        
+            # Base exibida (não processa nada aqui)
             df_disp = st.session_state.manual_df.copy()
             df_disp["Loja"] = df_disp["Loja"].fillna("").astype(str).str.strip()
             df_disp.loc[df_disp["Loja"] == "", "Loja"] = PLACEHOLDER_LOJA
-    
             df_disp["Data"] = pd.to_datetime(df_disp["Data"], errors="coerce")
             for c in ["Fat.Total","Serv/Tx","Fat.Real","Ticket"]:
                 df_disp[c] = pd.to_numeric(df_disp[c], errors="coerce")
-    
+        
             df_disp = df_disp[["Data","Loja","Fat.Total","Serv/Tx","Fat.Real","Ticket"]]
-    
-            edited_df = st.data_editor(
-                df_disp,
-                num_rows="dynamic",
-                use_container_width=True,
-                column_config={
-                    "Data":      st.column_config.DateColumn(format="DD/MM/YYYY"),
-                    "Loja":      st.column_config.SelectboxColumn(
-                                    options=lojas_options_ui,
-                                    default=PLACEHOLDER_LOJA,
-                                    help="Clique e escolha a loja (digite para filtrar)"
-                                ),
-                    "Fat.Total": st.column_config.NumberColumn(step=0.01),
-                    "Serv/Tx":   st.column_config.NumberColumn(step=0.01),
-                    "Fat.Real":  st.column_config.NumberColumn(step=0.01),
-                    "Ticket":    st.column_config.NumberColumn(step=0.01),
-                },
-                key="editor_manual",
-            )
-    
-            col_esq, _ = st.columns([2, 8])
-            with col_esq:
-                enviar_manuais = st.button("Salvar Lançamentos",
-                                           key="btn_enviar_manual",
-                                           use_container_width=True)
-    
-            if enviar_manuais:
+        
+            # 🔒 Dentro do formulário: nenhuma edição dispara rerun
+            with st.form("form_lancamentos_manuais"):
+                edited_df = st.data_editor(
+                    df_disp,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    column_config={
+                        "Data":      st.column_config.DateColumn(format="DD/MM/YYYY"),
+                        "Loja":      st.column_config.SelectboxColumn(
+                                        options=lojas_options_ui,
+                                        default=PLACEHOLDER_LOJA,
+                                        help="Clique e escolha a loja (digite para filtrar)"
+                                    ),
+                        "Fat.Total": st.column_config.NumberColumn(step=0.01),
+                        "Serv/Tx":   st.column_config.NumberColumn(step=0.01),
+                        "Fat.Real":  st.column_config.NumberColumn(step=0.01),
+                        "Ticket":    st.column_config.NumberColumn(step=0.01),
+                    },
+                    key="editor_manual",
+                )
+        
+                col_esq, col_dir = st.columns([2, 8])
+                salvar = col_esq.form_submit_button("Salvar Lançamentos", use_container_width=True)
+                limpar = col_dir.form_submit_button("Limpar linhas")
+        
+            # ✅ Só aqui processa de verdade (apenas após clicar em Salvar)
+            if salvar:
+                edited_df = edited_df.copy()
                 edited_df["Loja"] = edited_df["Loja"].replace({PLACEHOLDER_LOJA: ""}).astype(str).str.strip()
+        
+                # Atualiza o que fica salvo na sessão (útil se quiser reabrir e continuar)
+                st.session_state.manual_df = edited_df.copy()
+        
                 df_pronto = preparar_manuais_para_envio(edited_df, catalogo)
-    
+        
                 if df_pronto.empty:
-                    st.warning("Nenhuma linha com Loja preenchida para enviar.")
+                    st.warning("Nenhuma linha válida para enviar (preencha 'Loja' e 'Data').")
                 else:
                     ok = enviar_para_sheets(df_pronto, titulo_origem="manuais")
                     if ok:
+                        # Se quiser limpar a grade depois do envio bem-sucedido:
                         st.session_state.manual_df = template_manuais(10)
                         st.rerun()
-    
+        
+            # Botão opcional para limpar sem enviar
+            if limpar:
+                st.session_state.manual_df = template_manuais(10)
+                st.rerun()
+
         # ---------- ENVIO AUTOMÁTICO (botão principal) ----------
         #if st.button("Atualizar SheetsS (usar df do Upload)", use_container_width=True, disabled=('df_final' not in st.session_state or st.session_state.df_final.empty), key="btn_enviar_auto_footer"):
         #    if 'df_final' not in st.session_state or st.session_state.df_final.empty:

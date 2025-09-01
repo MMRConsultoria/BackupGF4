@@ -504,7 +504,7 @@ with st.spinner("⏳ Processando..."):
                 st.info("ℹ️ Nada a enviar.")
                 return True
         
-            with st.spinner(f"🔄 Processando {titulo_origem} e verificando duplicidades..."):
+            #with st.spinner(f"🔄 Processando {titulo_origem} e verificando duplicidades..."):
                 df_final = df_input.copy()
         
                 # ===== 1) Preparos =====

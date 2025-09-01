@@ -1026,7 +1026,7 @@ with st.spinner("⏳ Processando..."):
     
             st.markdown(
                 "<div style='color:#555; font-size:0.9rem; font-weight:500; margin:10px 0;'>"
-                "🔴 Possíveis duplicados — <b>marque as linhas do lado Google Sheets que você quer EXCLUIR</b>"
+                "🔴 Possíveis duplicados — <b>marque as linhas do lado Google Sheets que você quer EXCLUIR</b>, 🟢 Marque para incluir os valores corretamente "
                 "</div>",
                 unsafe_allow_html=True
             )

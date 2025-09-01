@@ -633,8 +633,6 @@ with st.spinner("⏳ Processando..."):
                         st.rerun()
     
         # ---------- ENVIO AUTOMÁTICO + CONFLITOS ----------
-
-        # ---------- ENVIO AUTOMÁTICO + CONFLITOS ----------
         if enviar_auto:
             if 'df_final' not in st.session_state or st.session_state.df_final.empty:
                 st.error("Não há dados para enviar.")
@@ -1100,7 +1098,7 @@ with st.spinner("⏳ Processando..."):
                                 st.error(f"❌ Erro ao aplicar exclusões/inclusões: {e}")
                                 st.stop()
                     else:
-                    st.info("🔎 Nenhum possível duplicado por N encontrado.")
+                        st.info("🔎 Nenhum possível duplicado por N encontrado.")
 
         
     

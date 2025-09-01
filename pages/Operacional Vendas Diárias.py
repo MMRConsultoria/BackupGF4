@@ -1154,7 +1154,7 @@ with st.spinner("⏳ Processando..."):
                         ws2.append_rows(rows_to_append, value_input_option='USER_ENTERED')
                         inseridos = len(rows_to_append)
     
-                    else removidos == 0 and inseridos == 0:
+                    if removidos == 0 and inseridos == 0:
                         st.info("ℹ️ Nada a fazer: nenhuma linha marcada para excluir ou incluir.")
                     #else:
                         #st.success(f"✅ Concluído: {removidos} excluída(s) e {inseridos} incluída(s).")

@@ -352,7 +352,6 @@ with st.spinner("⏳ Processando..."):
             credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
             credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
             return gspread.authorize(credentials)
-    
         # --- RESET ao entrar na aba "Atualizar Google Sheets" ---
         TAB_KEY = "aba_atualizar_google_sheets"
         if st.session_state.get("_aba_ativa") != TAB_KEY:
@@ -367,14 +366,8 @@ with st.spinner("⏳ Processando..."):
             ]:
                 st.session_state.pop(k, None)
             st.session_state["_aba_ativa"] = TAB_KEY
+            
         
-        # ✅ GARANTE que as chaves existem após o reset
-        st.session_state.setdefault("modo_conflitos", False)
-        st.session_state.setdefault("conflitos_df_conf", None)
-        st.session_state.setdefault("conflitos_spreadsheet_id", None)
-        st.session_state.setdefault("conflitos_sheet_id", None)
-        st.session_state.setdefault("show_manual_editor", False)
-        st.session_state.setdefault("manual_df", template_manuais(10))
 
 
     
@@ -485,6 +478,7 @@ with st.spinner("⏳ Processando..."):
                 "Ticket":    pd.Series([0.0]*n, dtype="float"),
             })
             return df[["Data","Loja","Fat.Total","Serv/Tx","Fat.Real","Ticket"]]
+
     
         _DIA_PT = {0:"segunda-feira",1:"terça-feira",2:"quarta-feira",3:"quinta-feira",4:"sexta-feira",5:"sábado",6:"domingo"}
         def _mes_label_pt(dt: pd.Series) -> pd.Series:
@@ -558,7 +552,7 @@ with st.spinner("⏳ Processando..."):
                     df_final['Código Grupo Everest'] = df_final['Código Grupo Everest'].apply(to_int_safe)
                 if 'Ano' in df_final.columns:
                     df_final['Ano'] = df_final['Ano'].apply(to_int_safe)
-        
+         
                 # ===== 2) Conecta planilha =====
                 gc = get_gc()
                 planilha_destino = gc.open("Vendas diarias")
@@ -824,7 +818,15 @@ with st.spinner("⏳ Processando..."):
                     st.session_state._resumo_envio = {"enviados": q_novos, "dup_m": q_dup_m, "sus_n": q_sus_n}
                 
                     st.rerun()
+                # ✅ Defaults após as funções estarem definidas
+                st.session_state.setdefault("modo_conflitos", False)
+                st.session_state.setdefault("conflitos_df_conf", None)
+                st.session_state.setdefault("conflitos_spreadsheet_id", None)
+                st.session_state.setdefault("conflitos_sheet_id", None)
+                st.session_state.setdefault("show_manual_editor", False)
                 
+                if "manual_df" not in st.session_state:
+                    st.session_state["manual_df"] = template_manuais(10)
                 # === SEM SUSPEITOS: limpar estado e concluir ===
                 st.session_state.modo_conflitos = False
                 st.session_state.conflitos_df_conf = None

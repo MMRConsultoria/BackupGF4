@@ -633,512 +633,475 @@ with st.spinner("⏳ Processando..."):
                         st.rerun()
     
         # ---------- ENVIO AUTOMÁTICO + CONFLITOS ----------
+
         # ---------- ENVIO AUTOMÁTICO + CONFLITOS ----------
-        if enviar_auto:
-            if 'df_final' not in st.session_state or st.session_state.df_final.empty:
-                st.error("Não há dados para enviar.")
-            else:
-                df_final = st.session_state.df_final.copy()
-        
-                with st.spinner("🔄 Processando dados e verificando duplicidades..."):
-                    # 1) Lojas sem Código Everest
-                    lojas_nao_cadastradas = df_final[df_final["Código Everest"].isna()]["Loja"].unique() if "Código Everest" in df_final.columns else []
-                    todas_lojas_ok = len(lojas_nao_cadastradas) == 0
-        
-                    # 2) Normalizações básicas
-                    for coln in ['Fat.Total','Serv/Tx','Fat.Real','Ticket']:
-                        if coln in df_final.columns:
-                            df_final[coln] = pd.to_numeric(df_final[coln], errors="coerce").fillna(0.0)
-        
-                    df_final['Data'] = pd.to_datetime(
-                        df_final['Data'].astype(str).replace("'", "", regex=True).str.strip(),
-                        dayfirst=True, errors="coerce"
-                    )
-                    df_final['Data'] = (df_final['Data'] - pd.Timestamp("1899-12-30")).dt.days
-        
-                    def to_int_safe(x):
+    if enviar_auto:
+        if 'df_final' not in st.session_state or st.session_state.df_final.empty:
+            st.error("Não há dados para enviar.")
+        else:
+            df_final = st.session_state.df_final.copy()
+    
+            with st.spinner("🔄 Processando dados e verificando duplicidades..."):
+                # 1) Lojas sem Código Everest
+                lojas_nao_cadastradas = df_final[df_final["Código Everest"].isna()]["Loja"].unique() if "Código Everest" in df_final.columns else []
+                todas_lojas_ok = len(lojas_nao_cadastradas) == 0
+    
+                # 2) Normalizações básicas
+                for coln in ['Fat.Total','Serv/Tx','Fat.Real','Ticket']:
+                    if coln in df_final.columns:
+                        df_final[coln] = pd.to_numeric(df_final[coln], errors="coerce").fillna(0.0)
+    
+                df_final['Data'] = pd.to_datetime(
+                    df_final['Data'].astype(str).replace("'", "", regex=True).str.strip(),
+                    dayfirst=True, errors="coerce"
+                )
+                df_final['Data'] = (df_final['Data'] - pd.Timestamp("1899-12-30")).dt.days
+    
+                def to_int_safe(x):
+                    try:
+                        x_clean = str(x).replace("'", "").strip()
+                        return int(float(x_clean)) if x_clean not in ("", "nan", "None") else ""
+                    except:
+                        return ""
+    
+                if 'Ano' in df_final.columns:
+                    df_final['Ano'] = df_final['Ano'].apply(to_int_safe)
+                if 'Código Everest' in df_final.columns:
+                    df_final['Código Everest'] = df_final['Código Everest'].apply(to_int_safe)
+                if 'Código Grupo Everest' in df_final.columns:
+                    df_final['Código Grupo Everest'] = df_final['Código Grupo Everest'].apply(to_int_safe)
+    
+                # 3) Conecta Sheets e lê existentes
+                gc = get_gc()
+                planilha_destino = gc.open("Vendas diarias")
+                aba_destino = planilha_destino.worksheet("Fat Sistema Externo")
+    
+                valores_existentes_df = get_as_dataframe(aba_destino, evaluate_formulas=True, dtype=str).fillna("")
+                colunas_df_existente = valores_existentes_df.columns.str.strip().tolist()
+    
+                dados_existentes   = set(valores_existentes_df["M"].astype(str).str.strip()) if "M" in colunas_df_existente else set()
+                dados_n_existentes = set(valores_existentes_df["N"].astype(str).str.strip()) if "N" in colunas_df_existente else set()
+    
+                if "M" not in colunas_df_existente:
+                    st.warning("⚠️ A coluna 'M' não foi encontrada na planilha. Checagem parcial.")
+                if "N" not in colunas_df_existente:
+                    st.warning("⚠️ A coluna 'N' não foi encontrada na planilha. Checagem parcial.")
+    
+                # 4) Alinhar colunas ao cabeçalho real do Sheets (normalizando nomes)
+                headers_raw = aba_destino.row_values(1)
+                headers = [h.strip() for h in headers_raw]
+    
+                def _norm_simple(s: str) -> str:
+                    import unicodedata, re
+                    s = str(s or "").strip().lower()
+                    s = unicodedata.normalize("NFD", s)
+                    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+                    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+                    return s
+    
+                lookup = {_norm_simple(h): h for h in headers}
+                aliases = {
+                    "codigo everest": ["codigo ev", "cod everest", "código everest", "codigo everest", "cod ev"],
+                    "codigo grupo everest": ["cod grupo empresas", "codigo grupo", "cód grupo empresas", "codigo grupo empresas"],
+                    "fat total": ["fat.total", "fat total"],
+                    "serv tx": ["serv/tx", "serv tx", "servico", "serv"],
+                    "fat real": ["fat.real", "fat real"],
+                    "mes": ["mês", "mes"],
+                }
+    
+                # Renomeia df_final para bater com o cabeçalho do Sheet
+                rename_map = {}
+                for col in list(df_final.columns):
+                    k = _norm_simple(col)
+                    if k in lookup:
+                        rename_map[col] = lookup[k]
+                        continue
+                    for canonical, variations in aliases.items():
+                        if k == canonical or k in variations:
+                            for v in [canonical] + variations:
+                                kv = _norm_simple(v)
+                                if kv in lookup:
+                                    rename_map[col] = lookup[kv]
+                                    break
+                            break
+                if rename_map:
+                    df_final = df_final.rename(columns=rename_map)
+    
+                # --- Helper robusto para escolher colunas por "intenção" ---
+                def pick_col(df, headers, target_norm, *cands):
+                    for h in headers:
+                        if _norm_simple(h) == target_norm and h in df.columns:
+                            return h
+                    for c in cands:
+                        if c in df.columns:
+                            return c
+                    for c in df.columns:
+                        if _norm_simple(c) == target_norm:
+                            return c
+                    return None
+    
+                fat_col   = pick_col(df_final, headers, "fat total", "Fat.Total", "Fat Total")
+                loja_col  = pick_col(df_final, headers, "loja", "Loja")
+                cod_col   = pick_col(df_final, headers, "codigo everest", "Codigo Everest", "Código Everest")
+                data_col  = pick_col(df_final, headers, "data", "Data")
+    
+                missing = [n for n,v in {"Data":data_col,"Loja":loja_col,"Fat.Total/Fat Total":fat_col,"Codigo Everest":cod_col}.items() if v is None]
+                if missing:
+                    st.error(f"Colunas obrigatórias ausentes para calcular M/N: {', '.join(missing)}")
+                    st.stop()
+    
+                # 5) Criar chaves M e N definitivas
+                df_final["Data_Formatada"] = pd.to_datetime(
+                    df_final[data_col], origin="1899-12-30", unit="D", errors="coerce"
+                ).dt.strftime("%Y-%m-%d")
+    
+                df_final[fat_col] = pd.to_numeric(df_final[fat_col], errors="coerce").fillna(0)
+    
+                df_final["M"] = (
+                    df_final["Data_Formatada"].fillna("") +
+                    df_final[fat_col].astype(str) +
+                    df_final[loja_col].astype(str)
+                ).str.strip()
+    
+                df_final[cod_col] = pd.to_numeric(df_final[cod_col], errors="coerce").fillna(0).astype(int).astype(str)
+                df_final["N"] = (
+                    df_final["Data_Formatada"].fillna("") +
+                    df_final[cod_col].astype(str)
+                ).str.strip()
+    
+                df_final = df_final.drop(columns=["Data_Formatada"], errors="ignore")
+    
+                # 6) Reindex para ordem do Sheet (mantém extras ao final)
+                extras = [c for c in df_final.columns if c not in headers]
+                df_final = df_final.reindex(columns=headers + extras, fill_value="")
+                colunas_df = df_final.columns.tolist()
+                rows = df_final.fillna("").values.tolist()
+    
+                # 7) Classificação: novos / duplicados(M) / suspeitos(N)
+                duplicados, suspeitos_n, novos_dados = [], [], []
+                for linha in rows:
+                    linha_dict = dict(zip(colunas_df, linha))
+                    chave_m = str(linha_dict.get("M", "")).strip()
+                    chave_n = str(linha_dict.get("N", "")).strip()
+    
+                    if chave_m not in dados_existentes:
+                        if chave_n in dados_n_existentes and chave_n != "":
+                            suspeitos_n.append(linha)
+                        else:
+                            novos_dados.append(linha)
+                        dados_existentes.add(chave_m)
+                    else:
+                        duplicados.append(linha)
+    
+                # 8) Resumo de contagens
+                q_novos = len(novos_dados)
+                q_dup_m = len(duplicados)
+                q_sus_n = len(suspeitos_n)
+    
+                st.markdown(
+                    f"**Resumo:** 🟢 Novos enviados agora: **{q_novos}** &nbsp;&nbsp;|&nbsp;&nbsp; "
+                    f"❌ Duplicados por M ignorados: **{q_dup_m}** &nbsp;&nbsp;|&nbsp;&nbsp; "
+                    f"🔴 Possíveis duplicados por N: **{q_sus_n}**"
+                )
+    
+                # 9) Enviar NOVOS imediatamente (mesmo havendo suspeitos)
+                if not todas_lojas_ok:
+                    st.error("🚫 Há lojas sem **Código Everest** cadastradas. Corrija e tente novamente.")
+                else:
+                    if q_novos > 0:
                         try:
-                            x_clean = str(x).replace("'", "").strip()
-                            return int(float(x_clean)) if x_clean not in ("", "nan", "None") else ""
-                        except:
-                            return ""
-        
-                    if 'Ano' in df_final.columns:
-                        df_final['Ano'] = df_final['Ano'].apply(to_int_safe)
-                    if 'Código Everest' in df_final.columns:
-                        df_final['Código Everest'] = df_final['Código Everest'].apply(to_int_safe)
-                    if 'Código Grupo Everest' in df_final.columns:
-                        df_final['Código Grupo Everest'] = df_final['Código Grupo Everest'].apply(to_int_safe)
-        
-                    # 3) Conecta Sheets e lê existentes
-                    gc = get_gc()
-                    planilha_destino = gc.open("Vendas diarias")
-                    aba_destino = planilha_destino.worksheet("Fat Sistema Externo")
-        
-                    valores_existentes_df = get_as_dataframe(aba_destino, evaluate_formulas=True, dtype=str).fillna("")
-                    colunas_df_existente = valores_existentes_df.columns.str.strip().tolist()
-        
-                    dados_existentes   = set(valores_existentes_df["M"].astype(str).str.strip()) if "M" in colunas_df_existente else set()
-                    dados_n_existentes = set(valores_existentes_df["N"].astype(str).str.strip()) if "N" in colunas_df_existente else set()
-        
-                    if "M" not in colunas_df_existente:
-                        st.warning("⚠️ A coluna 'M' não foi encontrada na planilha. Checagem parcial.")
-                    if "N" not in colunas_df_existente:
-                        st.warning("⚠️ A coluna 'N' não foi encontrada na planilha. Checagem parcial.")
-        
-                    # 4) Alinhar colunas ao cabeçalho real do Sheets (normalizando nomes)
-                    headers_raw = aba_destino.row_values(1)
-                    headers = [h.strip() for h in headers_raw]
-        
-                    def _norm_simple(s: str) -> str:
-                        import unicodedata, re
+                            inicio = len(aba_destino.col_values(1)) + 1
+                            aba_destino.append_rows(novos_dados, value_input_option='USER_ENTERED')
+                            fim = inicio + q_novos - 1
+    
+                            # formatação
+                            if inicio <= fim:
+                                from gspread_formatting import CellFormat, NumberFormat, format_cell_range
+                                data_format   = CellFormat(numberFormat=NumberFormat(type='DATE',   pattern='dd/mm/yyyy'))
+                                numero_format = CellFormat(numberFormat=NumberFormat(type='NUMBER', pattern='0'))
+                                format_cell_range(aba_destino, f"A{inicio}:A{fim}", data_format)
+                                format_cell_range(aba_destino, f"D{inicio}:D{fim}", numero_format)
+                                format_cell_range(aba_destino, f"F{inicio}:F{fim}", numero_format)
+                                format_cell_range(aba_destino, f"L{inicio}:L{fim}", numero_format)
+    
+                            st.success(f"✅ {q_novos} novo(s) enviado(s). ❌ {q_dup_m} duplicado(s) por M ignorado(s).")
+                        except Exception as e:
+                            st.error(f"❌ Erro ao enviar novos: {e}")
+                    else:
+                        st.info("ℹ️ Nenhum registro novo para enviar.")
+    
+                # 10) Painel de conflitos (suspeitos por N) para decidir excluir/incluir
+                if q_sus_n:
+                    st.markdown(
+                        "<div style='color:#555; font-size:0.9rem; font-weight:500; margin:10px 0;'>"
+                        "🔴 <b>Possíveis duplicados por N</b> — marque 🔴 (Google) para <b>EXCLUIR</b> e 🟢 (Nova Arquivo) para <b>INCLUIR</b>."
+                        "</div>",
+                        unsafe_allow_html=True
+                    )
+    
+                    # -------- Helpers locais --------
+                    def _normN(x): return str(x).strip().replace(".0", "")
+    
+                    valores_existentes_df = valores_existentes_df.copy()
+                    if "N" in valores_existentes_df.columns:
+                        valores_existentes_df["N"] = valores_existentes_df["N"].map(_normN)
+    
+                    entrada_por_n = {}
+                    for linha in suspeitos_n:
+                        d = dict(zip(colunas_df, linha))
+                        nkey = _normN(d.get("N", ""))
+                        entrada_por_n[nkey] = d
+    
+                    sheet_por_n = {}
+                    for nkey in entrada_por_n.keys():
+                        sheet_por_n[nkey] = valores_existentes_df[valores_existentes_df["N"] == nkey].copy()
+    
+                    import unicodedata, re
+                    def _fmt_serial_to_br(x):
+                        try:
+                            return pd.to_datetime(pd.Series([x]), origin="1899-12-30", unit="D", errors="coerce").dt.strftime("%d/%m/%Y").iloc[0]
+                        except Exception:
+                            try:
+                                return pd.to_datetime(pd.Series([x]), dayfirst=True, errors="coerce").dt.strftime("%d/%m/%Y").iloc[0]
+                            except Exception:
+                                return x
+                    def _norm_key(s: str) -> str:
                         s = str(s or "").strip().lower()
                         s = unicodedata.normalize("NFD", s)
                         s = "".join(c for c in s if unicodedata.category(c) != "Mn")
                         s = re.sub(r"[^a-z0-9]+", " ", s).strip()
                         return s
-        
-                    lookup = {_norm_simple(h): h for h in headers}
-                    aliases = {
-                        "codigo everest": ["codigo ev", "cod everest", "código everest", "codigo everest", "cod ev"],
-                        "codigo grupo everest": ["cod grupo empresas", "codigo grupo", "cód grupo empresas", "codigo grupo empresas"],
-                        "fat total": ["fat.total", "fat total"],
-                        "serv tx": ["serv/tx", "serv tx", "servico", "serv"],
-                        "fat real": ["fat.real", "fat real"],
-                        "mes": ["mês", "mes"],
+                    CANON_MAP = {
+                        "codigo everest":"Codigo Everest","cod everest":"Codigo Everest","codigo ev":"Codigo Everest","código everest":"Codigo Everest",
+                        "codigo grupo everest":"Cod Grupo Empresas","codigo grupo empresas":"Cod Grupo Empresas","cod grupo empresas":"Cod Grupo Empresas","cod grupo":"Cod Grupo Empresas",
+                        "fat total":"Fat. Total","serv tx":"Serv/Tx","servico":"Serv/Tx","serv":"Serv/Tx",
+                        "fat real":"Fat.Real","fat.real":"Fat.Real",
+                        "loja":"Loja","grupo":"Grupo","data":"Data","mes":"Mês","mês":"Mês","ano":"Ano","dia da semana":"Dia da Semana","m":"M","n":"N",
                     }
-        
-                    # Renomeia df_final para bater com o cabeçalho do Sheet
-                    rename_map = {}
-                    for col in list(df_final.columns):
-                        k = _norm_simple(col)
-                        if k in lookup:
-                            rename_map[col] = lookup[k]
-                            continue
-                        for canonical, variations in aliases.items():
-                            if k == canonical or k in variations:
-                                for v in [canonical] + variations:
-                                    kv = _norm_simple(v)
-                                    if kv in lookup:
-                                        rename_map[col] = lookup[kv]
-                                        break
-                                break
-                    if rename_map:
-                        df_final = df_final.rename(columns=rename_map)
-        
-                    # --- Helper robusto para escolher colunas por "intenção" ---
-                    def pick_col(df, headers, target_norm, *cands):
-                        for h in headers:
-                            if _norm_simple(h) == target_norm and h in df.columns:
-                                return h
-                        for c in cands:
-                            if c in df.columns:
-                                return c
-                        for c in df.columns:
-                            if _norm_simple(c) == target_norm:
-                                return c
-                        return None
-        
-                    fat_col   = pick_col(df_final, headers, "fat total", "Fat.Total", "Fat Total")
-                    loja_col  = pick_col(df_final, headers, "loja", "Loja")
-                    cod_col   = pick_col(df_final, headers, "codigo everest", "Codigo Everest", "Código Everest")
-                    data_col  = pick_col(df_final, headers, "data", "Data")
-        
-                    missing = [n for n,v in {"Data":data_col,"Loja":loja_col,"Fat.Total/Fat Total":fat_col,"Codigo Everest":cod_col}.items() if v is None]
-                    if missing:
-                        st.error(f"Colunas obrigatórias ausentes para calcular M/N: {', '.join(missing)}")
-                        st.stop()
-        
-                    # 5) Criar chaves M e N definitivas
-                    df_final["Data_Formatada"] = pd.to_datetime(
-                        df_final[data_col], origin="1899-12-30", unit="D", errors="coerce"
-                    ).dt.strftime("%Y-%m-%d")
-        
-                    df_final[fat_col] = pd.to_numeric(df_final[fat_col], errors="coerce").fillna(0)
-        
-                    df_final["M"] = (
-                        df_final["Data_Formatada"].fillna("") +
-                        df_final[fat_col].astype(str) +
-                        df_final[loja_col].astype(str)
-                    ).str.strip()
-        
-                    df_final[cod_col] = pd.to_numeric(df_final[cod_col], errors="coerce").fillna(0).astype(int).astype(str)
-                    df_final["N"] = (
-                        df_final["Data_Formatada"].fillna("") +
-                        df_final[cod_col].astype(str)
-                    ).str.strip()
-        
-                    df_final = df_final.drop(columns=["Data_Formatada"], errors="ignore")
-        
-                    # 6) Reindex para ordem do Sheet (mantém extras ao final)
-                    extras = [c for c in df_final.columns if c not in headers]
-                    df_final = df_final.reindex(columns=headers + extras, fill_value="")
-                    colunas_df = df_final.columns.tolist()
-                    rows = df_final.fillna("").values.tolist()
-        
-                    # 7) Classificação: novos / duplicados(M) / suspeitos(N)
-                    duplicados, suspeitos_n, novos_dados = [], [], []
-                    for linha in rows:
-                        linha_dict = dict(zip(colunas_df, linha))
-                        chave_m = str(linha_dict.get("M", "")).strip()
-                        chave_n = str(linha_dict.get("N", "")).strip()
-        
-                        if chave_m not in dados_existentes:
-                            if chave_n in dados_n_existentes and chave_n != "":
-                                suspeitos_n.append(linha)
-                            else:
-                                novos_dados.append(linha)
-                            dados_existentes.add(chave_m)
-                        else:
-                            duplicados.append(linha)
-        
-                    # 8) Resumo de contagens
-                    q_novos = len(novos_dados)
-                    q_dup_m = len(duplicados)
-                    q_sus_n = len(suspeitos_n)
-        
-                    st.markdown(
-                        f"**Resumo:** 🟢 Novos: **{q_novos}** &nbsp;&nbsp;|&nbsp;&nbsp; ❌ Duplicados por M: **{q_dup_m}** "
-                        f"&nbsp;&nbsp;|&nbsp;&nbsp; 🔴 Possíveis duplicados por N: **{q_sus_n}**"
-                    )
-        
-                    # 9) Enviar NOVOS imediatamente (mesmo havendo suspeitos)
-                    if not todas_lojas_ok:
-                        st.error("🚫 Há lojas sem **Código Everest** cadastradas. Corrija e tente novamente.")
-                    else:
-                        if q_novos > 0:
+                    def canon_colname(name: str) -> str:
+                        k = _norm_key(name)
+                        if k == "fat total" or name.strip().lower() in ("fat.total","fat total"):
+                            return "Fat. Total"
+                        return CANON_MAP.get(k, name)
+                    def canonize_cols_df(df: pd.DataFrame) -> pd.DataFrame:
+                        return df.rename(columns={c: canon_colname(c) for c in df.columns}) if (df is not None and not df.empty) else df
+                    def canonize_dict(d: dict) -> dict:
+                        return {canon_colname(k): v for k, v in d.items()} if isinstance(d, dict) else d
+    
+                    conflitos_linhas = []
+                    for nkey in sorted(entrada_por_n.keys()):
+                        d_in = canonize_dict(entrada_por_n[nkey].copy())
+                        d_in["_origem_"] = "Nova Arquivo"
+                        d_in["N"] = _normN(d_in.get("N",""))
+                        if "Data" in d_in:
+                            d_in["Data"] = _fmt_serial_to_br(d_in["Data"])
+                        conflitos_linhas.append(d_in)
+    
+                        df_sh = sheet_por_n[nkey].copy()
+                        df_sh = canonize_cols_df(df_sh)
+                        if "Data" in df_sh.columns:
                             try:
-                                inicio = len(aba_destino.col_values(1)) + 1
-                                aba_destino.append_rows(novos_dados, value_input_option='USER_ENTERED')
-                                fim = inicio + q_novos - 1
-        
-                                # formatação
-                                if inicio <= fim:
-                                    data_format   = CellFormat(numberFormat=NumberFormat(type='DATE',   pattern='dd/mm/yyyy'))
-                                    numero_format = CellFormat(numberFormat=NumberFormat(type='NUMBER', pattern='0'))
-                                    format_cell_range(aba_destino, f"A{inicio}:A{fim}", data_format)
-                                    format_cell_range(aba_destino, f"D{inicio}:D{fim}", numero_format)
-                                    format_cell_range(aba_destino, f"F{inicio}:F{fim}", numero_format)
-                                    format_cell_range(aba_destino, f"L{inicio}:L{fim}", numero_format)
-        
-                                st.success(f"✅ {q_novos} novo(s) enviado(s). ❌ {q_dup_m} duplicado(s) por M ignorado(s).")
-                            except Exception as e:
-                                st.error(f"❌ Erro ao enviar novos: {e}")
-                        else:
-                            st.info("ℹ️ Nenhum registro novo para enviar.")
-        
-                    # 10) Mostrar a lista de novos (opcional)
-                    st.markdown("### 🟢 Novos enviados agora")
-                    if q_novos > 0:
-                        df_n = pd.DataFrame(novos_dados, columns=colunas_df).copy()
-                        if "Data" in df_n.columns:
-                            df_n["Data"] = pd.to_datetime(df_n["Data"], origin="1899-12-30", unit="D", errors="coerce").dt.strftime("%d/%m/%Y")
-                        st.dataframe(df_n, use_container_width=True)
-                    else:
-                        st.caption("Nenhum novo registro.")
-        
-                    # 11) Painel de conflitos (suspeitos por N) para decidir excluir/incluir
-                    if q_sus_n:
-                        st.markdown(
-                            "<div style='color:#555; font-size:0.9rem; font-weight:500; margin:10px 0;'>"
-                            "🔴 **Possíveis duplicados por N** — marque 🔴 (Google) para **EXCLUIR** e 🟢 (Nova Arquivo) para **INCLUIR**."
-                            "</div>",
-                            unsafe_allow_html=True
-                        )
-        
-                        # -------- Helpers locais (mesmos do seu bloco anterior) --------
-                        def _normN(x): return str(x).strip().replace(".0", "")
-        
-                        valores_existentes_df = valores_existentes_df.copy()
-                        if "N" in valores_existentes_df.columns:
-                            valores_existentes_df["N"] = valores_existentes_df["N"].map(_normN)
-        
-                        entrada_por_n = {}
-                        for linha in suspeitos_n:
-                            d = dict(zip(colunas_df, linha))
-                            nkey = _normN(d.get("N", ""))
-                            entrada_por_n[nkey] = d
-        
-                        sheet_por_n = {}
-                        for nkey in entrada_por_n.keys():
-                            sheet_por_n[nkey] = valores_existentes_df[valores_existentes_df["N"] == nkey].copy()
-        
-                        import unicodedata, re
-                        def _fmt_serial_to_br(x):
-                            try:
-                                return pd.to_datetime(pd.Series([x]), origin="1899-12-30", unit="D", errors="coerce").dt.strftime("%d/%m/%Y").iloc[0]
-                            except Exception:
-                                try:
-                                    return pd.to_datetime(pd.Series([x]), dayfirst=True, errors="coerce").dt.strftime("%d/%m/%Y").iloc[0]
-                                except Exception:
-                                    return x
-                        def _norm_key(s: str) -> str:
-                            s = str(s or "").strip().lower()
-                            s = unicodedata.normalize("NFD", s)
-                            s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-                            s = re.sub(r"[^a-z0-9]+", " ", s).strip()
-                            return s
-                        CANON_MAP = {
-                            "codigo everest":"Codigo Everest","cod everest":"Codigo Everest","codigo ev":"Codigo Everest","código everest":"Codigo Everest",
-                            "codigo grupo everest":"Cod Grupo Empresas","codigo grupo empresas":"Cod Grupo Empresas","cod grupo empresas":"Cod Grupo Empresas","cod grupo":"Cod Grupo Empresas",
-                            "fat total":"Fat. Total","serv tx":"Serv/Tx","servico":"Serv/Tx","serv":"Serv/Tx",
-                            "fat real":"Fat.Real","fat.real":"Fat.Real",
-                            "loja":"Loja","grupo":"Grupo","data":"Data","mes":"Mês","mês":"Mês","ano":"Ano","dia da semana":"Dia da Semana","m":"M","n":"N",
-                        }
-                        def canon_colname(name: str) -> str:
-                            k = _norm_key(name)
-                            if k == "fat total" or name.strip().lower() in ("fat.total","fat total"):
-                                return "Fat. Total"
-                            return CANON_MAP.get(k, name)
-                        def canonize_cols_df(df: pd.DataFrame) -> pd.DataFrame:
-                            return df.rename(columns={c: canon_colname(c) for c in df.columns}) if (df is not None and not df.empty) else df
-                        def canonize_dict(d: dict) -> dict:
-                            return {canon_colname(k): v for k, v in d.items()} if isinstance(d, dict) else d
-        
-                        conflitos_linhas = []
-                        for nkey in sorted(entrada_por_n.keys()):
-                            d_in = canonize_dict(entrada_por_n[nkey].copy())
-                            d_in["_origem_"] = "Nova Arquivo"
-                            d_in["N"] = _normN(d_in.get("N",""))
-                            if "Data" in d_in:
-                                d_in["Data"] = _fmt_serial_to_br(d_in["Data"])
-                            conflitos_linhas.append(d_in)
-        
-                            df_sh = sheet_por_n[nkey].copy()
-                            df_sh = canonize_cols_df(df_sh)
-                            if "Data" in df_sh.columns:
-                                try:
-                                    ser = pd.to_numeric(df_sh["Data"], errors="coerce")
-                                    if ser.notna().any():
-                                        df_sh["Data"] = pd.to_datetime(ser, origin="1899-12-30", unit="D", errors="coerce").dt.strftime("%d/%m/%Y")
-                                    else:
-                                        df_sh["Data"] = pd.to_datetime(df_sh["Data"], dayfirst=True, errors="coerce").dt.strftime("%d/%m/%Y")
-                                except Exception:
-                                    pass
-                            for idx, row in df_sh.iterrows():
-                                d_sh = canonize_dict(row.to_dict())
-                                d_sh["_origem_"] = "Google Sheets"
-                                d_sh["Linha Sheet"] = idx + 2
-                                conflitos_linhas.append(d_sh)
-        
-                        df_conf = pd.DataFrame(conflitos_linhas).copy()
-                        df_conf = canonize_cols_df(df_conf)
-        
-                        if "Data" in df_conf.columns:
-                            _dt = pd.to_datetime(df_conf["Data"], dayfirst=True, errors="coerce")
-                            nomes_dia = ["segunda-feira","terça-feira","quarta-feira","quinta-feira","sexta-feira","sábado","domingo"]
-                            df_conf["Dia da Semana"] = _dt.dt.dayofweek.map(lambda i: nomes_dia[i].title() if pd.notna(i) else "")
-                            nomes_mes = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]
-                            df_conf["Mês"] = _dt.dt.month.map(lambda m: nomes_mes[m-1] if pd.notna(m) else "")
-                            df_conf["Ano"] = _dt.dt.year.fillna("").astype(str).replace("nan","")
-        
-                        df_conf["_origem_"] = df_conf["_origem_"].replace({
-                            "Nova Arquivo": "🟢 Nova Arquivo",
-                            "Google Sheets": "🔴 Google Sheets"
-                        })
-        
-                        if "Manter" not in df_conf.columns:
-                            df_conf.insert(0,"Manter",False)
-        
-                        ordem_final = [
-                            "Manter","_origem_","Linha Sheet","Data","Dia da Semana","Loja",
-                            "Codigo Everest","Grupo","Cod Grupo Empresas",
-                            "Fat. Total","Serv/Tx","Fat.Real","Ticket","Mês","Ano","M","N"
-                        ]
-                        cols_final = [c for c in ordem_final if c in df_conf.columns] + [c for c in df_conf.columns if c not in ordem_final]
-                        df_conf = df_conf.reindex(columns=cols_final, fill_value="")
-        
-                        with st.form("form_conflitos_globais"):
-                            edited_conf = st.data_editor(
-                                df_conf, use_container_width=True, hide_index=True, key="editor_conflitos",
-                                column_config={"Manter": st.column_config.CheckboxColumn(
-                                    help="Marque 🔴 (Google) para EXCLUIR e 🟢 (Nova Arquivo) para INCLUIR", default=False)}
-                            )
-                            aplicar_tudo = st.form_submit_button("✅ Aplicar exclusões/inclusões")
-        
-                        if aplicar_tudo:
-                            try:
-                                # helpers p/ saída
-                                def _ns(s: str) -> str:
-                                    s = str(s or "").strip().lower()
-                                    s = unicodedata.normalize("NFD", s)
-                                    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
-                                    s = re.sub(r"[^a-z0-9]+", " ", s).strip()
-                                    return s
-                                def _to_serial_1899_12_30(date_str: str):
-                                    dt = pd.to_datetime(str(date_str), dayfirst=True, errors="coerce")
-                                    if pd.isna(dt): return ""
-                                    return int((dt - pd.Timestamp("1899-12-30")).days)
-                                def _yyyy_mm_dd(date_str: str):
-                                    dt = pd.to_datetime(str(date_str), dayfirst=True, errors="coerce")
-                                    return "" if pd.isna(dt) else dt.strftime("%Y-%m-%d")
-                                def _to_num(x, default=0):
-                                    try:
-                                        v = pd.to_numeric(x, errors="coerce")
-                                        return default if pd.isna(v) else float(v)
-                                    except:
-                                        return default
-                                def _to_intstr(x):
-                                    try:
-                                        s = str(x).strip()
-                                        if s == "": return ""
-                                        return str(int(float(s)))
-                                    except:
-                                        return ""
-        
-                                headers_raw = aba_destino.row_values(1)
-                                headers = [h.strip() for h in headers_raw]
-                                lookup = {_ns(h): h for h in headers}
-        
-                                def map_col(name: str):
-                                    k = _ns(name)
-                                    if k in lookup:
-                                        return lookup[k]
-                                    aliases = {
-                                        "codigo everest": ["código everest", "codigo ev", "cod everest", "cod ev", "codigo everest"],
-                                        "codigo grupo everest": ["cod grupo empresas", "codigo grupo", "codigo grupo empresas"],
-                                        "fat total": ["fat.total", "fat total"],
-                                        "serv tx": ["serv/tx", "servico", "serv"],
-                                        "fat real": ["fat.real", "fat real"],
-                                        "mes": ["mês", "mes"],
-                                        "dia da semana": ["dia da semana"],
-                                    }
-                                    for canonical, vars_ in aliases.items():
-                                        if k == _ns(canonical) or k in [_ns(v) for v in vars_]:
-                                            for v in [canonical] + vars_:
-                                                nv = _ns(v)
-                                                if nv in lookup:
-                                                    return lookup[nv]
-                                    if k == _ns("Cod Grupo Empresas"):
-                                        return lookup.get(_ns("codigo grupo everest"))
-                                    if k == _ns("Codigo Everest"):
-                                        return lookup.get(_ns("codigo everest"))
-                                    return None
-        
-                                manter = edited_conf["Manter"]
-                                if manter.dtype != bool:
-                                    manter = manter.astype(str).str.strip().str.lower().isin(
-                                        ["true","1","yes","y","sim","verdadeiro"]
-                                    )
-                                is_google = edited_conf["_origem_"].astype(str).str.contains("google", case=False, na=False)
-                                is_novo   = edited_conf["_origem_"].astype(str).str.contains("nova",   case=False, na=False)
-        
-                                linhas_excluir = (
-                                    pd.to_numeric(edited_conf.loc[is_google & manter, "Linha Sheet"], errors="coerce")
-                                    .dropna().astype(int).tolist()
-                                )
-                                linhas_excluir = sorted({ln for ln in linhas_excluir if ln >= 2}, reverse=True)
-        
-                                novos_marcados = edited_conf.loc[is_novo & manter].copy()
-        
-                                rows_to_append = []
-                                for _, r in novos_marcados.iterrows():
-                                    d = r.to_dict()
-                                    data_br   = d.get("Data", "")
-                                    loja      = str(d.get("Loja", "") or "")
-                                    grupo     = str(d.get("Grupo", "") or "")
-                                    fat_total = _to_num(d.get("Fat. Total", d.get("Fat.Total", 0)), 0)
-                                    serv_tx   = _to_num(d.get("Serv/Tx", 0), 0)
-                                    fat_real  = _to_num(d.get("Fat.Real", 0), 0)
-                                    ticket    = _to_num(d.get("Ticket", 0), 0)
-                                    mes_lbl   = str(d.get("Mês", "") or "")
-                                    ano_val   = _to_intstr(d.get("Ano", ""))
-        
-                                    cod_emp   = _to_intstr(d.get("Codigo Everest", d.get("Código Everest", "")))
-                                    cod_grp   = _to_intstr(d.get("Cod Grupo Empresas", d.get("Código Grupo Everest", "")))
-        
-                                    data_serial = _to_serial_1899_12_30(data_br)
-                                    data_ymd    = _yyyy_mm_dd(data_br)
-        
-                                    col_M = lookup.get(_ns("M"))
-                                    col_N = lookup.get(_ns("N"))
-                                    M_val = (data_ymd + str(fat_total) + loja) if col_M else None
-                                    N_val = (data_ymd + cod_emp)               if col_N else None
-        
-                                    row_out = {h: "" for h in headers}
-                                    if map_col("Data"):            row_out[map_col("Data")] = data_serial
-                                    if map_col("Dia da Semana"):   row_out[map_col("Dia da Semana")] = d.get("Dia da Semana", "")
-                                    if map_col("Loja"):            row_out[map_col("Loja")] = loja
-                                    if map_col("Grupo"):           row_out[map_col("Grupo")] = grupo
-                                    if map_col("Codigo Everest"):  row_out[map_col("Codigo Everest")] = cod_emp
-                                    if map_col("Cod Grupo Empresas"): row_out[map_col("Cod Grupo Empresas")] = cod_grp
-                                    if map_col("Fat. Total"):      row_out[map_col("Fat. Total")] = fat_total
-                                    if map_col("Serv/Tx"):         row_out[map_col("Serv/Tx")] = serv_tx
-                                    if map_col("Fat.Real"):        row_out[map_col("Fat.Real")] = fat_real
-                                    if map_col("Ticket"):          row_out[map_col("Ticket")] = ticket
-                                    if map_col("Mês"):             row_out[map_col("Mês")] = mes_lbl
-                                    if map_col("Ano"):             row_out[map_col("Ano")] = ano_val
-                                    if col_M:                      row_out[col_M] = M_val
-                                    if col_N:                      row_out[col_N] = N_val
-        
-                                    rows_to_append.append([row_out[h] for h in headers])
-        
-                                removidos = 0
-                                inseridos = 0
-        
-                                if linhas_excluir:
-                                    reqs_del = [{
-                                        "deleteDimension": {
-                                            "range": {
-                                                "sheetId": int(aba_destino.id),
-                                                "dimension": "ROWS",
-                                                "startIndex": ln - 1,
-                                                "endIndex": ln
-                                            }
-                                        }
-                                    } for ln in linhas_excluir]
-                                    planilha_destino.batch_update({"requests": reqs_del})
-                                    removidos = len(linhas_excluir)
-        
-                                if rows_to_append:
-                                    aba_destino.append_rows(rows_to_append, value_input_option='USER_ENTERED')
-                                    inseridos = len(rows_to_append)
-        
-                                if removidos == 0 and inseridos == 0:
-                                    st.info("ℹ️ Nada a fazer: nenhuma linha marcada para excluir ou incluir.")
+                                ser = pd.to_numeric(df_sh["Data"], errors="coerce")
+                                if ser.notna().any():
+                                    df_sh["Data"] = pd.to_datetime(ser, origin="1899-12-30", unit="D", errors="coerce").dt.strftime("%d/%m/%Y")
                                 else:
-                                    st.success(f"✅ Concluído: {removidos} excluída(s) e {inseridos} incluída(s).")
-                                    st.markdown(
-                                        f"[Abrir a aba no Google Sheets](https://docs.google.com/spreadsheets/d/{planilha_destino.id}/edit#gid={aba_destino.id})"
-                                    )
-                                st.stop()
-        
-                            except Exception as e:
-                                st.error(f"❌ Erro ao aplicar exclusões/inclusões: {e}")
-                                st.stop()
-                    else:
-                        st.info("🔎 Nenhum possível duplicado por N encontrado.")
-
+                                    df_sh["Data"] = pd.to_datetime(df_sh["Data"], dayfirst=True, errors="coerce").dt.strftime("%d/%m/%Y")
+                            except Exception:
+                                pass
+                        for idx, row in df_sh.iterrows():
+                            d_sh = canonize_dict(row.to_dict())
+                            d_sh["_origem_"] = "Google Sheets"
+                            d_sh["Linha Sheet"] = idx + 2
+                            conflitos_linhas.append(d_sh)
     
-                        pode_enviar = False  # bloqueia envio automático enquanto houveram conflitos
+                    df_conf = pd.DataFrame(conflitos_linhas).copy()
+                    df_conf = canonize_cols_df(df_conf)
     
-                    # 10) Envio automático dos novos (se não houve conflitos)
-                    if todas_lojas_ok and pode_enviar:
+                    if "Data" in df_conf.columns:
+                        _dt = pd.to_datetime(df_conf["Data"], dayfirst=True, errors="coerce")
+                        nomes_dia = ["segunda-feira","terça-feira","quarta-feira","quinta-feira","sexta-feira","sábado","domingo"]
+                        df_conf["Dia da Semana"] = _dt.dt.dayofweek.map(lambda i: nomes_dia[i].title() if pd.notna(i) else "")
+                        nomes_mes = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]
+                        df_conf["Mês"] = _dt.dt.month.map(lambda m: nomes_mes[m-1] if pd.notna(m) else "")
+                        df_conf["Ano"] = _dt.dt.year.fillna("").astype(str).replace("nan","")
+    
+                    df_conf["_origem_"] = df_conf["_origem_"].replace({
+                        "Nova Arquivo": "🟢 Nova Arquivo",
+                        "Google Sheets": "🔴 Google Sheets"
+                    })
+    
+                    if "Manter" not in df_conf.columns:
+                        df_conf.insert(0,"Manter",False)
+    
+                    ordem_final = [
+                        "Manter","_origem_","Linha Sheet","Data","Dia da Semana","Loja",
+                        "Codigo Everest","Grupo","Cod Grupo Empresas",
+                        "Fat. Total","Serv/Tx","Fat.Real","Ticket","Mês","Ano","M","N"
+                    ]
+                    cols_final = [c for c in ordem_final if c in df_conf.columns] + [c for c in df_conf.columns if c not in ordem_final]
+                    df_conf = df_conf.reindex(columns=cols_final, fill_value="")
+    
+                    with st.form("form_conflitos_globais"):
+                        edited_conf = st.data_editor(
+                            df_conf, use_container_width=True, hide_index=True, key="editor_conflitos",
+                            column_config={"Manter": st.column_config.CheckboxColumn(
+                                help="Marque 🔴 (Google) para EXCLUIR e 🟢 (Nova Arquivo) para INCLUIR", default=False)}
+                        )
+                        aplicar_tudo = st.form_submit_button("✅ Aplicar exclusões/inclusões")
+    
+                    if aplicar_tudo:
                         try:
-                            dados_para_enviar = novos_dados
-                            if len(dados_para_enviar) == 0:
-                                st.info(f"ℹ️ {len(duplicados)} registros duplicados. Nada a enviar.")
+                            import unicodedata, re
+                            def _ns(s: str) -> str:
+                                s = str(s or "").strip().lower()
+                                s = unicodedata.normalize("NFD", s)
+                                s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+                                s = re.sub(r"[^a-z0-9]+", " ", s).strip()
+                                return s
+                            def _to_serial_1899_12_30(date_str: str):
+                                dt = pd.to_datetime(str(date_str), dayfirst=True, errors="coerce")
+                                if pd.isna(dt): return ""
+                                return int((dt - pd.Timestamp("1899-12-30")).days)
+                            def _yyyy_mm_dd(date_str: str):
+                                dt = pd.to_datetime(str(date_str), dayfirst=True, errors="coerce")
+                                return "" if pd.isna(dt) else dt.strftime("%Y-%m-%d")
+                            def _to_num(x, default=0):
+                                try:
+                                    v = pd.to_numeric(x, errors="coerce")
+                                    return default if pd.isna(v) else float(v)
+                                except:
+                                    return default
+                            def _to_intstr(x):
+                                try:
+                                    s = str(x).strip()
+                                    if s == "": return ""
+                                    return str(int(float(s)))
+                                except:
+                                    return ""
+    
+                            headers_raw = aba_destino.row_values(1)
+                            headers = [h.strip() for h in headers_raw]
+                            lookup = {_ns(h): h for h in headers}
+    
+                            def map_col(name: str):
+                                k = _ns(name)
+                                if k in lookup:
+                                    return lookup[k]
+                                aliases = {
+                                    "codigo everest": ["código everest", "codigo ev", "cod everest", "cod ev", "codigo everest"],
+                                    "codigo grupo everest": ["cod grupo empresas", "codigo grupo", "codigo grupo empresas"],
+                                    "fat total": ["fat.total", "fat total"],
+                                    "serv tx": ["serv/tx", "servico", "serv"],
+                                    "fat real": ["fat.real", "fat real"],
+                                    "mes": ["mês", "mes"],
+                                    "dia da semana": ["dia da semana"],
+                                }
+                                for canonical, vars_ in aliases.items():
+                                    if k == _ns(canonical) or k in [_ns(v) for v in vars_]:
+                                        for v in [canonical] + vars_:
+                                            nv = _ns(v)
+                                            if nv in lookup:
+                                                return lookup[nv]
+                                if k == _ns("Cod Grupo Empresas"):
+                                    return lookup.get(_ns("codigo grupo everest"))
+                                if k == _ns("Codigo Everest"):
+                                    return lookup.get(_ns("codigo everest"))
+                                return None
+    
+                            manter = edited_conf["Manter"]
+                            if manter.dtype != bool:
+                                manter = manter.astype(str).str.strip().str.lower().isin(
+                                    ["true","1","yes","y","sim","verdadeiro"]
+                                )
+                            is_google = edited_conf["_origem_"].astype(str).str.contains("google", case=False, na=False)
+                            is_novo   = edited_conf["_origem_"].astype(str).str.contains("nova",   case=False, na=False)
+    
+                            linhas_excluir = (
+                                pd.to_numeric(edited_conf.loc[is_google & manter, "Linha Sheet"], errors="coerce")
+                                .dropna().astype(int).tolist()
+                            )
+                            linhas_excluir = sorted({ln for ln in linhas_excluir if ln >= 2}, reverse=True)
+    
+                            novos_marcados = edited_conf.loc[is_novo & manter].copy()
+    
+                            rows_to_append = []
+                            for _, r in novos_marcados.iterrows():
+                                d = r.to_dict()
+                                data_br   = d.get("Data", "")
+                                loja      = str(d.get("Loja", "") or "")
+                                grupo     = str(d.get("Grupo", "") or "")
+                                fat_total = _to_num(d.get("Fat. Total", d.get("Fat.Total", 0)), 0)
+                                serv_tx   = _to_num(d.get("Serv/Tx", 0), 0)
+                                fat_real  = _to_num(d.get("Fat.Real", 0), 0)
+                                ticket    = _to_num(d.get("Ticket", 0), 0)
+                                mes_lbl   = str(d.get("Mês", "") or "")
+                                ano_val   = _to_intstr(d.get("Ano", ""))
+    
+                                cod_emp   = _to_intstr(d.get("Codigo Everest", d.get("Código Everest", "")))
+                                cod_grp   = _to_intstr(d.get("Cod Grupo Empresas", d.get("Código Grupo Everest", "")))
+    
+                                data_serial = _to_serial_1899_12_30(data_br)
+                                data_ymd    = _yyyy_mm_dd(data_br)
+    
+                                col_M = lookup.get(_ns("M"))
+                                col_N = lookup.get(_ns("N"))
+                                M_val = (data_ymd + str(fat_total) + loja) if col_M else None
+                                N_val = (data_ymd + cod_emp)               if col_N else None
+    
+                                row_out = {h: "" for h in headers}
+                                if map_col("Data"):            row_out[map_col("Data")] = data_serial
+                                if map_col("Dia da Semana"):   row_out[map_col("Dia da Semana")] = d.get("Dia da Semana", "")
+                                if map_col("Loja"):            row_out[map_col("Loja")] = loja
+                                if map_col("Grupo"):           row_out[map_col("Grupo")] = grupo
+                                if map_col("Codigo Everest"):  row_out[map_col("Codigo Everest")] = cod_emp
+                                if map_col("Cod Grupo Empresas"): row_out[map_col("Cod Grupo Empresas")] = cod_grp
+                                if map_col("Fat. Total"):      row_out[map_col("Fat. Total")] = fat_total
+                                if map_col("Serv/Tx"):         row_out[map_col("Serv/Tx")] = serv_tx
+                                if map_col("Fat.Real"):        row_out[map_col("Fat.Real")] = fat_real
+                                if map_col("Ticket"):          row_out[map_col("Ticket")] = ticket
+                                if map_col("Mês"):             row_out[map_col("Mês")] = mes_lbl
+                                if map_col("Ano"):             row_out[map_col("Ano")] = ano_val
+                                if col_M:                      row_out[col_M] = M_val
+                                if col_N:                      row_out[col_N] = N_val
+    
+                                rows_to_append.append([row_out[h] for h in headers])
+    
+                            removidos = 0
+                            inseridos = 0
+    
+                            if linhas_excluir:
+                                reqs_del = [{
+                                    "deleteDimension": {
+                                        "range": {
+                                            "sheetId": int(aba_destino.id),
+                                            "dimension": "ROWS",
+                                            "startIndex": ln - 1,
+                                            "endIndex": ln
+                                        }
+                                    }
+                                } for ln in linhas_excluir]
+                                planilha_destino.batch_update({"requests": reqs_del})
+                                removidos = len(linhas_excluir)
+    
+                            if rows_to_append:
+                                aba_destino.append_rows(rows_to_append, value_input_option='USER_ENTERED')
+                                inseridos = len(rows_to_append)
+    
+                            if removidos == 0 and inseridos == 0:
+                                st.info("ℹ️ Nada a fazer: nenhuma linha marcada para excluir ou incluir.")
                             else:
-                                inicio = len(aba_destino.col_values(1)) + 1
-                                aba_destino.append_rows(dados_para_enviar, value_input_option='USER_ENTERED')
-                                fim = inicio + len(dados_para_enviar) - 1
+                                st.success(f"✅ Concluído: {removidos} excluída(s) e {inseridos} incluída(s).")
+                                st.markdown(
+                                    f"[Abrir a aba no Google Sheets](https://docs.google.com/spreadsheets/d/{planilha_destino.id}/edit#gid={aba_destino.id})"
+                                )
+                            st.stop()
     
-                                if inicio <= fim:
-                                    data_format   = CellFormat(numberFormat=NumberFormat(type='DATE',   pattern='dd/mm/yyyy'))
-                                    numero_format = CellFormat(numberFormat=NumberFormat(type='NUMBER', pattern='0'))
-                                    format_cell_range(aba_destino, f"A{inicio}:A{fim}", data_format)
-                                    format_cell_range(aba_destino, f"L{inicio}:L{fim}", numero_format)
-                                    format_cell_range(aba_destino, f"D{inicio}:D{fim}", numero_format)
-                                    format_cell_range(aba_destino, f"F{inicio}:F{fim}", numero_format)
-    
-                                st.success(f"✅ {len(dados_para_enviar)} registro(s) enviado(s) com sucesso para o Google Sheets!")
-                                if duplicados:
-                                    st.warning(f"⚠️ {len(duplicados)} registro(s) duplicados na google sheets, não foram enviados.")
                         except Exception as e:
-                            st.error(f"❌ Erro ao atualizar o Google Sheets: {e}")
-                    else:
-                        if not todas_lojas_ok:
-                            st.error("🚫 Há lojas sem **Código Everest** cadastradas. Corrija e tente novamente.")
+                            st.error(f"❌ Erro ao aplicar exclusões/inclusões: {e}")
+                            st.stop()
+                else:
+                st.info("🔎 Nenhum possível duplicado por N encontrado.")
+
         
     
     

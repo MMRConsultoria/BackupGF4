@@ -353,7 +353,27 @@ with st.spinner("⏳ Processando..."):
             credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
             return gspread.authorize(credentials)
     
+        # --- RESET ao entrar na aba "Atualizar Google Sheets" ---
+        TAB_KEY = "aba_atualizar_google_sheets"
         
+        if st.session_state.get("_aba_ativa") != TAB_KEY:
+            # zera apenas estados usados por ESTA aba
+            for k in [
+                "modo_conflitos",
+                "conflitos_df_conf",
+                "conflitos_spreadsheet_id",
+                "conflitos_sheet_id",
+                "_resumo_envio",
+                "show_manual_editor",
+                # se quiser zerar o editor manual também:
+                "manual_df",
+            ]:
+                st.session_state.pop(k, None)
+        
+            # marque esta aba como ativa
+            st.session_state["_aba_ativa"] = TAB_KEY
+            # não precisa st.rerun(); a própria troca de aba já reexecuta o script
+
     
         # ------------------------ ESTILO (botões pequenos, cinza) ------------------------
         def _inject_button_css():

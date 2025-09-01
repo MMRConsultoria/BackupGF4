@@ -757,10 +757,32 @@ with st.spinner("⏳ Processando..."):
                     st.success("✅ Conflitos preparados. Role a página até a seção de conflitos para marcar e excluir.")
                     st.rerun()
     
-                # se não há suspeitos, envia novos
-                dados_para_enviar = df_novos.fillna("").values.tolist()
-                if len(dados_para_enviar) == 0:
-                    st.info("ℹ️ 0 novos a enviar.")
+                # se não há suspeitos, envia novos + informa duplicados por M
+                q_novos = len(df_novos) if isinstance(df_novos, pd.DataFrame) else 0
+                q_dup_m = len(df_dup_M) if isinstance(df_dup_M, pd.DataFrame) else 0
+                
+                if q_novos == 0:
+                    st.info(f"ℹ️ 0 novo(s) a enviar. ❌ {q_dup_m} duplicado(s) por M ignorado(s).")
+                else:
+                    try:
+                        dados_para_enviar = df_novos.fillna("").values.tolist()
+                        inicio = len(aba_destino.col_values(1)) + 1
+                        aba_destino.append_rows(dados_para_enviar, value_input_option="USER_ENTERED")
+                        fim = inicio + q_novos - 1
+                
+                        # formatação (ajuste as colunas conforme seu sheet)
+                        if inicio <= fim:
+                            data_format   = CellFormat(numberFormat=NumberFormat(type="DATE",   pattern="dd/mm/yyyy"))
+                            numero_format = CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="0"))
+                            format_cell_range(aba_destino, f"A{inicio}:A{fim}", data_format)
+                            format_cell_range(aba_destino, f"D{inicio}:D{fim}", numero_format)
+                            format_cell_range(aba_destino, f"F{inicio}:F{fim}", numero_format)
+                            format_cell_range(aba_destino, f"L{inicio}:L{fim}", numero_format)
+                
+                        st.success(f"✅ {q_novos} novo(s) enviado(s). ❌ {q_dup_m} duplicado(s) por M ignorado(s).")
+                    except Exception as e:
+                        st.error(f"❌ Erro ao enviar novos: {e}")
+
                 else:
                     inicio = len(aba_destino.col_values(1)) + 1
                     aba_destino.append_rows(dados_para_enviar, value_input_option='USER_ENTERED')

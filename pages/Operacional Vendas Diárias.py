@@ -797,9 +797,8 @@ with st.spinner("⏳ Processando..."):
                     q_sus_n = len(suspeitos_n)
         
                     st.markdown(
-                        f"**Resumo:** 🟢 Novos enviados agora: **{q_novos}** &nbsp;&nbsp;|&nbsp;&nbsp; "
-                        f"❌ Duplicados por M ignorados: **{q_dup_m}** &nbsp;&nbsp;|&nbsp;&nbsp; "
-                        f"🔴 Possíveis duplicados por N: **{q_sus_n}**"
+                        f"**Resumo:** 🟢 Novos: **{q_novos}** &nbsp;&nbsp;|&nbsp;&nbsp; ❌ Duplicados por M: **{q_dup_m}** "
+                        f"&nbsp;&nbsp;|&nbsp;&nbsp; 🔴 Possíveis duplicados por N: **{q_sus_n}**"
                     )
         
                     # 9) Enviar NOVOS imediatamente (mesmo havendo suspeitos)
@@ -814,7 +813,6 @@ with st.spinner("⏳ Processando..."):
         
                                 # formatação
                                 if inicio <= fim:
-                                    from gspread_formatting import CellFormat, NumberFormat, format_cell_range
                                     data_format   = CellFormat(numberFormat=NumberFormat(type='DATE',   pattern='dd/mm/yyyy'))
                                     numero_format = CellFormat(numberFormat=NumberFormat(type='NUMBER', pattern='0'))
                                     format_cell_range(aba_destino, f"A{inicio}:A{fim}", data_format)
@@ -828,16 +826,26 @@ with st.spinner("⏳ Processando..."):
                         else:
                             st.info("ℹ️ Nenhum registro novo para enviar.")
         
-                    # 10) Painel de conflitos (suspeitos por N) para decidir excluir/incluir
+                    # 10) Mostrar a lista de novos (opcional)
+                    st.markdown("### 🟢 Novos enviados agora")
+                    if q_novos > 0:
+                        df_n = pd.DataFrame(novos_dados, columns=colunas_df).copy()
+                        if "Data" in df_n.columns:
+                            df_n["Data"] = pd.to_datetime(df_n["Data"], origin="1899-12-30", unit="D", errors="coerce").dt.strftime("%d/%m/%Y")
+                        st.dataframe(df_n, use_container_width=True)
+                    else:
+                        st.caption("Nenhum novo registro.")
+        
+                    # 11) Painel de conflitos (suspeitos por N) para decidir excluir/incluir
                     if q_sus_n:
                         st.markdown(
                             "<div style='color:#555; font-size:0.9rem; font-weight:500; margin:10px 0;'>"
-                            "🔴 <b>Possíveis duplicados por N</b> — marque 🔴 (Google) para <b>EXCLUIR</b> e 🟢 (Nova Arquivo) para <b>INCLUIR</b>."
+                            "🔴 **Possíveis duplicados por N** — marque 🔴 (Google) para **EXCLUIR** e 🟢 (Nova Arquivo) para **INCLUIR**."
                             "</div>",
                             unsafe_allow_html=True
                         )
         
-                        # -------- Helpers locais --------
+                        # -------- Helpers locais (mesmos do seu bloco anterior) --------
                         def _normN(x): return str(x).strip().replace(".0", "")
         
                         valores_existentes_df = valores_existentes_df.copy()
@@ -949,7 +957,7 @@ with st.spinner("⏳ Processando..."):
         
                         if aplicar_tudo:
                             try:
-                                import unicodedata, re
+                                # helpers p/ saída
                                 def _ns(s: str) -> str:
                                     s = str(s or "").strip().lower()
                                     s = unicodedata.normalize("NFD", s)
@@ -1099,6 +1107,7 @@ with st.spinner("⏳ Processando..."):
                                 st.stop()
                     else:
                         st.info("🔎 Nenhum possível duplicado por N encontrado.")
+
 
         
     

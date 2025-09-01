@@ -41,7 +41,7 @@ st.markdown("""
 # ======================
 # Spinner durante todo o processamento
 # ======================
-with st.spinner("⏳ Processando..."):
+#with st.spinner("⏳ Processando..."):
 
     # ================================
     # 1. Conexão com Google Sheets
@@ -151,7 +151,7 @@ with st.spinner("⏳ Processando..."):
     # ================================
     
     with aba1:
-        marcar_aba_ativa("Upload e Processamento")
+       
         uploaded_file = st.file_uploader(
             "📁 Clique para selecionar ou arraste aqui o arquivo Excel com os dados de faturamento",
             type=["xls", "xlsx"]
@@ -335,31 +335,7 @@ with st.spinner("⏳ Processando..."):
         from oauth2client.service_account import ServiceAccountCredentials
         from gspread_dataframe import get_as_dataframe
         from gspread_formatting import CellFormat, NumberFormat, format_cell_range
-        TAB_KEY = "Atualizar Google Sheets"   # use exatamente a mesma string em todos os lugares
-        prev_tab = st.session_state.get("_aba_ativa")  # 1) qual era a aba anterior?
-    
-        marcar_aba_ativa(TAB_KEY)             # 2) agora sim, marca a aba atual
-    
-        # 3) se acabamos de ENTRAR nesta aba, reseta só o estado temporário
-        if prev_tab != TAB_KEY:
-            for k in [
-                "modo_conflitos",
-                "conflitos_df_conf",
-                "conflitos_spreadsheet_id",
-                "conflitos_sheet_id",
-                "_resumo_envio",
-                # "df_final",  # ❌ NÃO LIMPAR! mantém o botão habilitado
-                "show_manual_editor",
-                "manual_df",
-                "editor_manual",
-                "editor_conflitos",
-                "btn_enviar_auto_header",
-                "btn_toggle_manual",
-                "btn_atualizar_dre",
-                "btn_enviar_manual",
-            ]:
-                st.session_state.pop(k, None)
-
+        
         
         # --- estado para o modo de conflitos + df/ids persistidos ---
         if "modo_conflitos" not in st.session_state:
@@ -934,12 +910,28 @@ with st.spinner("⏳ Processando..."):
     
         with c1:
             enviar_auto = st.button(
-                "Atualizar Google Sheets",   # <- ajuste aqui se quiser
+                "Atualizar Google Sheets",
                 use_container_width=True,
                 disabled=not has_df,
-                #help=None if has_df else "Carregue os dados para habilitar",
                 key="btn_enviar_auto_header",
             )
+        
+        if enviar_auto:
+            if not has_df:
+                st.error("Não há dados para enviar.")
+            else:
+                ok = enviar_para_sheets(st.session_state.df_final.copy(), titulo_origem="upload")
+                # Se houver suspeitos por N, a função faz st.rerun() e abrirá o painel.
+                # Se não houver, cai aqui e mostramos o resumo.
+        
+        # ✅ Mostra o resumo sempre que existir (fora do if enviar_auto)
+        r = st.session_state.get("_resumo_envio")
+        if r:
+            st.success(
+                f"🟢 Enviados: **{r['enviados']}**  |  ❌ Duplicados (M): **{r['dup_m']}**  |  🔴 Suspeitos (N): **{r['sus_n']}**"
+            )
+            # (opcional) não delete aqui; deixe o resumo visível até o próximo envio
+            # del st.session_state._resumo_envio
     
         with c2:
             aberto = st.session_state.get("show_manual_editor", False)
@@ -1384,7 +1376,7 @@ with st.spinner("⏳ Processando..."):
     # =======================================
     
     with aba4:
-        marcar_aba_ativa("Auditar integração Everest")
+
         try:
             planilha = gc.open("Vendas diarias")
             aba_everest = planilha.worksheet("Everest")

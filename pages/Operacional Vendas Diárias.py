@@ -663,7 +663,7 @@ with st.spinner("⏳ Processando..."):
                 
                 # === SE HÁ SUSPEITOS POR N, PREPARA O PAINEL DE CONFLITOS ===
                 if q_sus_n > 0:
-                    st.warning("🔎 Existem possíveis duplicados por N. Revise-os na seção de conflitos.")
+                    #st.warning("🔎 Existem possíveis duplicados por N. Revise-os na seção de conflitos.")
                 
                     # normaliza N do sheet para casar
                     def _normN(x): return str(x).strip().replace(".0", "")

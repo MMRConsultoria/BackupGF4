@@ -315,35 +315,45 @@ with st.spinner("⏳ Processando..."):
     # =======================================
     # Atualizar Google Sheets (Evitar duplicação)
     # =======================================
-    
-    with aba3:
-        # ------------------------ IMPORTS ------------------------
-        import streamlit as st
-        import pandas as pd
-        import numpy as np
-        import json
-        import re, unicodedata
-        from datetime import date, datetime, timedelta
-        import requests
-        from requests.adapters import HTTPAdapter
-        from urllib3.util.retry import Retry
-    
-        import gspread
-        from oauth2client.service_account import ServiceAccountCredentials
-        from gspread_dataframe import get_as_dataframe
-        from gspread_formatting import CellFormat, NumberFormat, format_cell_range
-            # imports...
-        import streamlit as st
-        import json
-        # ...suas defs (get_gc, etc.)
-        
-        # ABRE A PLANILHA AQUI NO TOPO
+with aba3:
+    # ----- IMPORTS -----
+    import streamlit as st
+    import pandas as pd
+    import numpy as np
+    import json, re, unicodedata
+    from datetime import date, datetime, timedelta
+    import requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
+    from gspread_dataframe import get_as_dataframe
+    from gspread_formatting import CellFormat, NumberFormat, format_cell_range
+
+    # ======= DEFINA get_gc() ANTES DE QUALQUER USO =======
+    def get_gc():
+        scope = [
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+        return gspread.authorize(credentials)
+
+    # (se tiver outras helpers obrigatórias pro teste, defina aqui em cima tb)
+
+    # ======= TESTE DIRETO DE EXCLUSÃO (fora do fluxo) =======
+    try:
         gc_dbg = get_gc()
         sh_dbg = gc_dbg.open("Vendas diarias")
         ws_dbg = sh_dbg.worksheet("Fat Sistema Externo")
-        
-        # TESTE DIRETO (fora de qualquer condição)
-        with st.expander("🔧 Teste rápido de exclusão (fora do fluxo)"):
+    except Exception as e:
+        st.error(f"❌ Falha ao abrir planilha/aba no teste: {e}")
+        ws_dbg = None
+
+    with st.expander("🔧 Teste rápido de exclusão (fora do fluxo)", expanded=True):
+        if ws_dbg is not None:
             st.warning(f"📄 {sh_dbg.title} | 📑 {ws_dbg.title} | sheetId={ws_dbg.id}")
             st.markdown(f"[Abrir aba](https://docs.google.com/spreadsheets/d/{sh_dbg.id}/edit#gid={ws_dbg.id})")
             ln_test = st.number_input("Linha", min_value=2, value=10, step=1, key="ln_delete_debug")
@@ -358,8 +368,12 @@ with st.spinner("⏳ Processando..."):
                 try:
                     requests = [{
                         "deleteDimension": {
-                            "range": {"sheetId": int(ws_dbg.id), "dimension": "ROWS",
-                                      "startIndex": int(ln_test)-1, "endIndex": int(ln_test)}
+                            "range": {
+                                "sheetId": int(ws_dbg.id),
+                                "dimension": "ROWS",
+                                "startIndex": int(ln_test) - 1,
+                                "endIndex": int(ln_test)
+                            }
                         }
                     }]
                     resp = sh_dbg.batch_update({"requests": requests})
@@ -367,13 +381,20 @@ with st.spinner("⏳ Processando..."):
                     st.caption(f"Resposta: {resp}")
                 except Exception as e:
                     st.error(f"❌ batchUpdate falhou: {e}")
-            # Quem está operando?
-            try:
-                cred = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
-                st.caption(f"👤 Service Account: {cred.get('client_email','(sem email)')}")
-                st.caption("⚠️ Este e-mail precisa ser Editor na planilha.")
-            except Exception:
-                pass
+        else:
+            st.info("Teste desativado porque não consegui abrir a planilha/aba.")
+
+        # Quem está operando?
+        try:
+            cred = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+            st.caption(f"👤 Service Account: {cred.get('client_email','(sem email)')}")
+            st.caption("⚠️ Este e-mail precisa ser **Editor** na planilha.")
+        except Exception:
+            pass
+
+    # ======= (DAQUI PRA BAIXO) RESTANTE DO SEU CÓDIGO =======
+    # _inject_button_css(), fetch_with_retry(), etc...
+
 
         # ------------------------ ESTILO (botões pequenos, cinza) ------------------------
         def _inject_button_css():

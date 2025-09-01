@@ -893,11 +893,11 @@ with st.spinner("⏳ Processando..."):
                         st.info("ℹ️ Nenhum novo para enviar.")
                 
                 # --- 3) Resumo consolidado (sem listar os incluídos) ---
-                st.markdown(
-                    f"**Resumo:** 🟢 Enviados: **{q_novos}** &nbsp;&nbsp;|&nbsp;&nbsp; "
-                    f"❌ Duplicados : **{q_dup_m}** &nbsp;&nbsp;|&nbsp;&nbsp; "
-                    f"🔴 Possíveis duplicados : **{q_sus_n}**"
-                )
+                #st.markdown(
+                 #   f"**Resumo:** 🟢 Enviados: **{q_novos}** &nbsp;&nbsp;|&nbsp;&nbsp; "
+                  #  f"❌ Duplicados : **{q_dup_m}** &nbsp;&nbsp;|&nbsp;&nbsp; "
+                   # f"🔴 Possíveis duplicados : **{q_sus_n}**"
+                #)
                 
                 
         # ------------------------ HEADER / BOTÕES ------------------------

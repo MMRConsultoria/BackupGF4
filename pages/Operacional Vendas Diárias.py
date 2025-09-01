@@ -894,7 +894,85 @@ with st.spinner("⏳ Processando..."):
                 # if q_sus_n > 0:
                 #     st.markdown("🔎 Existem possíveis duplicados por N. Revise-os abaixo.")
                 #     ... (seu editor de conflitos) ...
+        # ------------------------ HEADER / BOTÕES ------------------------
+        LINK_SHEET = "https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU/edit?usp=sharing"
+        has_df = ('df_final' in st.session_state
+                  and isinstance(st.session_state.df_final, pd.DataFrame)
+                  and not st.session_state.df_final.empty)
+    
+        c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+    
+        with c1:
+            enviar_auto = st.button(
+                "Atualizar Google Sheets",   # <- ajuste aqui se quiser
+                use_container_width=True,
+                disabled=not has_df,
+                help=None if has_df else "Carregue os dados para habilitar",
+                key="btn_enviar_auto_header",
+            )
+    
+        with c2:
+            aberto = st.session_state.get("show_manual_editor", False)
+            label_toggle = "❌ Fechar lançamentos" if aberto else "Lançamentos manuais"
+            if st.button(label_toggle, key="btn_toggle_manual", use_container_width=True):
+                novo_estado = not aberto
+                st.session_state["show_manual_editor"] = novo_estado
+                st.session_state.manual_df = template_manuais(10)
+                st.rerun()
+    
+        with c3:
+            try:
+                st.link_button("Abrir Google Sheets", LINK_SHEET, use_container_width=True)
+            except Exception:
+                st.markdown(
+                    f"""
+                    <a href="{LINK_SHEET}" target="_blank">
+                        <button style="width:100%;background:#e0e0e0;color:#000;border:1px solid #b3b3b3;
+                        padding:0.45em;border-radius:6px;font-weight:600;cursor:pointer;width:100%;">
+                        Abrir Google Sheets
+                        </button>
+                    </a>
+                    """, unsafe_allow_html=True
+                )
+    
+        with c4:
+            atualizar_dre = st.button(
+                "Atualizar DRE",
+                use_container_width=True,
+                key="btn_atualizar_dre",
+                help="Dispara a atualização do DRE agora",
+            )
+        if atualizar_dre:
+            SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw-gK_KYcSyqyfimHTuXFLEDxKvWdW4k0o_kOPE-r-SWxL-SpogE2U9wiZt7qCZoH-gqQ/exec"
+            try:
+                with st.spinner("Atualizando DRE..."):
+                    resp = fetch_with_retry(SCRIPT_URL, connect_timeout=10, read_timeout=180, retries=3, backoff=1.5)
+                if resp is None:
+                    st.error("❌ Falha inesperada: sem resposta do servidor.")
+                elif resp.status_code == 200:
+                    st.success("✅ DRE atualizada com sucesso!")
+                    st.caption(resp.text[:1000] if resp.text else "OK")
+                else:
+                    st.error(f"❌ Erro HTTP {resp.status_code} ao executar o script.")
+                    if resp.text:
+                        st.caption(resp.text[:1000])
+            except requests.exceptions.ReadTimeout:
+                st.error("❌ Tempo limite de leitura atingido. Tente novamente.")
+            except requests.exceptions.ConnectTimeout:
+                st.error("❌ Tempo limite de conexão atingido. Verifique sua rede e tente novamente.")
+            except Exception as e:
+                st.error(f"❌ Falha ao conectar: {e}")
 
+        # === Handler do botão superior "Atualizar SheetsS" ===
+        if enviar_auto:
+            if not has_df:
+                st.error("Não há dados para enviar.")
+            else:
+                ok = enviar_para_sheets(st.session_state.df_final.copy(), titulo_origem="upload")
+                # Se a função abriu o painel de conflitos, ela já dá st.rerun().
+                # Só mostramos "concluído" quando NÃO ficou em modo de conflitos.
+                if ok and not st.session_state.get("modo_conflitos", False):
+                    st.success("✅ Processo concluído.")
 
         # ========================== FASE 2: FORM DE CONFLITOS ==========================
         if st.session_state.modo_conflitos and st.session_state.conflitos_df_conf is not None:
@@ -1175,85 +1253,7 @@ with st.spinner("⏳ Processando..."):
 
         # ======================== /FASE 2: FORM DE CONFLITOS ==========================
     
-        # ------------------------ HEADER / BOTÕES ------------------------
-        LINK_SHEET = "https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU/edit?usp=sharing"
-        has_df = ('df_final' in st.session_state
-                  and isinstance(st.session_state.df_final, pd.DataFrame)
-                  and not st.session_state.df_final.empty)
-    
-        c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
-    
-        with c1:
-            enviar_auto = st.button(
-                "Atualizar Google Sheets",   # <- ajuste aqui se quiser
-                use_container_width=True,
-                disabled=not has_df,
-                help=None if has_df else "Carregue os dados para habilitar",
-                key="btn_enviar_auto_header",
-            )
-    
-        with c2:
-            aberto = st.session_state.get("show_manual_editor", False)
-            label_toggle = "❌ Fechar lançamentos" if aberto else "Lançamentos manuais"
-            if st.button(label_toggle, key="btn_toggle_manual", use_container_width=True):
-                novo_estado = not aberto
-                st.session_state["show_manual_editor"] = novo_estado
-                st.session_state.manual_df = template_manuais(10)
-                st.rerun()
-    
-        with c3:
-            try:
-                st.link_button("Abrir Google Sheets", LINK_SHEET, use_container_width=True)
-            except Exception:
-                st.markdown(
-                    f"""
-                    <a href="{LINK_SHEET}" target="_blank">
-                        <button style="width:100%;background:#e0e0e0;color:#000;border:1px solid #b3b3b3;
-                        padding:0.45em;border-radius:6px;font-weight:600;cursor:pointer;width:100%;">
-                        Abrir Google Sheets
-                        </button>
-                    </a>
-                    """, unsafe_allow_html=True
-                )
-    
-        with c4:
-            atualizar_dre = st.button(
-                "Atualizar DRE",
-                use_container_width=True,
-                key="btn_atualizar_dre",
-                help="Dispara a atualização do DRE agora",
-            )
-        if atualizar_dre:
-            SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw-gK_KYcSyqyfimHTuXFLEDxKvWdW4k0o_kOPE-r-SWxL-SpogE2U9wiZt7qCZoH-gqQ/exec"
-            try:
-                with st.spinner("Atualizando DRE..."):
-                    resp = fetch_with_retry(SCRIPT_URL, connect_timeout=10, read_timeout=180, retries=3, backoff=1.5)
-                if resp is None:
-                    st.error("❌ Falha inesperada: sem resposta do servidor.")
-                elif resp.status_code == 200:
-                    st.success("✅ DRE atualizada com sucesso!")
-                    st.caption(resp.text[:1000] if resp.text else "OK")
-                else:
-                    st.error(f"❌ Erro HTTP {resp.status_code} ao executar o script.")
-                    if resp.text:
-                        st.caption(resp.text[:1000])
-            except requests.exceptions.ReadTimeout:
-                st.error("❌ Tempo limite de leitura atingido. Tente novamente.")
-            except requests.exceptions.ConnectTimeout:
-                st.error("❌ Tempo limite de conexão atingido. Verifique sua rede e tente novamente.")
-            except Exception as e:
-                st.error(f"❌ Falha ao conectar: {e}")
-
-        # === Handler do botão superior "Atualizar SheetsS" ===
-        if enviar_auto:
-            if not has_df:
-                st.error("Não há dados para enviar.")
-            else:
-                ok = enviar_para_sheets(st.session_state.df_final.copy(), titulo_origem="upload")
-                # Se a função abriu o painel de conflitos, ela já dá st.rerun().
-                # Só mostramos "concluído" quando NÃO ficou em modo de conflitos.
-                if ok and not st.session_state.get("modo_conflitos", False):
-                    st.success("✅ Processo concluído.")
+        
 
 
     

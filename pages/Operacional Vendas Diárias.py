@@ -928,7 +928,7 @@ with st.spinner("⏳ Processando..."):
         r = st.session_state.get("_resumo_envio")
         if r:
             st.success(
-                f"🟢 Enviados: **{r['enviados']}**  |  ❌ Duplicados (M): **{r['dup_m']}**  |  🔴 Suspeitos (N): **{r['sus_n']}**"
+                f"🟢 Enviados: **{r['enviados']}**  |  ❌ Duplicados: **{r['dup_m']}**  |  🔴 Suspeitos: **{r['sus_n']}**"
             )
             # (opcional) não delete aqui; deixe o resumo visível até o próximo envio
             # del st.session_state._resumo_envio

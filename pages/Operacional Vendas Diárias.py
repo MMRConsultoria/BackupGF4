@@ -655,7 +655,7 @@ with st.spinner("⏳ Processando..."):
                             format_cell_range(aba_destino, f"F{inicio}:F{fim}", numero_format)
                             format_cell_range(aba_destino, f"L{inicio}:L{fim}", numero_format)
                 
-                        st.success(f"✅ {q_novos} novo(s) enviado(s).")
+                        #st.success(f"✅ {q_novos} novo(s) enviado(s).")
                     except Exception as e:
                         st.error(f"❌ Erro ao enviar novos: {e}")
                 #else:

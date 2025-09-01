@@ -1185,7 +1185,7 @@ with st.spinner("⏳ Processando..."):
     
         with c1:
             enviar_auto = st.button(
-                "Atualizar SheetsS",
+                "Atualizar Google Sheets",   # <- ajuste aqui se quiser
                 use_container_width=True,
                 disabled=not has_df,
                 help=None if has_df else "Carregue os dados para habilitar",
@@ -1308,14 +1308,14 @@ with st.spinner("⏳ Processando..."):
                         st.rerun()
     
         # ---------- ENVIO AUTOMÁTICO (botão principal) ----------
-        if st.button("Atualizar SheetsS (usar df do Upload)", use_container_width=True, disabled=('df_final' not in st.session_state or st.session_state.df_final.empty), key="btn_enviar_auto_footer"):
-            if 'df_final' not in st.session_state or st.session_state.df_final.empty:
-                st.error("Não há dados para enviar.")
-            else:
-                # Reaproveita a função enviar_para_sheets com o DF do upload (aba 1)
-                ok = enviar_para_sheets(st.session_state.df_final.copy(), titulo_origem="upload")
-                if ok:
-                    st.success("✅ Processo concluído.")
+        #if st.button("Atualizar SheetsS (usar df do Upload)", use_container_width=True, disabled=('df_final' not in st.session_state or st.session_state.df_final.empty), key="btn_enviar_auto_footer"):
+        #    if 'df_final' not in st.session_state or st.session_state.df_final.empty:
+        #        st.error("Não há dados para enviar.")
+        #    else:
+        #        # Reaproveita a função enviar_para_sheets com o DF do upload (aba 1)
+        #        ok = enviar_para_sheets(st.session_state.df_final.copy(), titulo_origem="upload")
+        #        if ok:
+        #            st.success("✅ Processo concluído.")
 
         
     

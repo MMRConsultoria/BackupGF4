@@ -353,14 +353,7 @@ with st.spinner("⏳ Processando..."):
             credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
             return gspread.authorize(credentials)
     
-        if "_resumo_envio" in st.session_state:
-            r = st.session_state._resumo_envio
-            st.markdown(
-                f"**Resumo:** 🟢 Enviados: **{r['enviados']}** &nbsp;|&nbsp; "
-                f"❌ Duplicados (M): **{r['dup_m']}** &nbsp;|&nbsp; "
-                f"🔴 Possíveis duplicados (N): **{r['sus_n']}**"
-            )
-            del st.session_state._resumo_envio
+        
     
         # ------------------------ ESTILO (botões pequenos, cinza) ------------------------
         def _inject_button_css():

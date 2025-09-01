@@ -961,8 +961,8 @@ with st.spinner("⏳ Processando..."):
                 ok = enviar_para_sheets(st.session_state.df_final.copy(), titulo_origem="upload")
                 # Se a função abriu o painel de conflitos, ela já dá st.rerun().
                 # Só mostramos "concluído" quando NÃO ficou em modo de conflitos.
-                if ok and not st.session_state.get("modo_conflitos", False):
-                    st.success("✅ Processo concluído.")
+                #if ok and not st.session_state.get("modo_conflitos", False):
+                    #st.success("✅ Processo concluído.")
         if "_resumo_envio" in st.session_state:
                     r = st.session_state._resumo_envio
                     st.markdown(

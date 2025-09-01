@@ -352,21 +352,27 @@ with st.spinner("⏳ Processando..."):
             credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
             credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
             return gspread.authorize(credentials)
+
         # --- RESET ao entrar na aba "Atualizar Google Sheets" ---
         TAB_KEY = "aba_atualizar_google_sheets"
+    
         if st.session_state.get("_aba_ativa") != TAB_KEY:
+            # Limpa tudo que não deve persistir ao reabrir a aba
             for k in [
                 "modo_conflitos",
                 "conflitos_df_conf",
                 "conflitos_spreadsheet_id",
                 "conflitos_sheet_id",
                 "_resumo_envio",
+                "df_final",              # <- zera os dados carregados
                 "show_manual_editor",
                 "manual_df",
             ]:
                 st.session_state.pop(k, None)
+    
+            # Marca esta aba como ativa
             st.session_state["_aba_ativa"] = TAB_KEY
-            
+
         
 
 

@@ -355,9 +355,7 @@ with st.spinner("⏳ Processando..."):
     
         # --- RESET ao entrar na aba "Atualizar Google Sheets" ---
         TAB_KEY = "aba_atualizar_google_sheets"
-        
         if st.session_state.get("_aba_ativa") != TAB_KEY:
-            # zera apenas estados usados por ESTA aba
             for k in [
                 "modo_conflitos",
                 "conflitos_df_conf",
@@ -365,14 +363,19 @@ with st.spinner("⏳ Processando..."):
                 "conflitos_sheet_id",
                 "_resumo_envio",
                 "show_manual_editor",
-                # se quiser zerar o editor manual também:
                 "manual_df",
             ]:
                 st.session_state.pop(k, None)
-        
-            # marque esta aba como ativa
             st.session_state["_aba_ativa"] = TAB_KEY
-            # não precisa st.rerun(); a própria troca de aba já reexecuta o script
+        
+        # ✅ GARANTE que as chaves existem após o reset
+        st.session_state.setdefault("modo_conflitos", False)
+        st.session_state.setdefault("conflitos_df_conf", None)
+        st.session_state.setdefault("conflitos_spreadsheet_id", None)
+        st.session_state.setdefault("conflitos_sheet_id", None)
+        st.session_state.setdefault("show_manual_editor", False)
+        st.session_state.setdefault("manual_df", template_manuais(10))
+
 
     
         # ------------------------ ESTILO (botões pequenos, cinza) ------------------------
@@ -992,7 +995,7 @@ with st.spinner("⏳ Processando..."):
                     )
                     del st.session_state._resumo_envio
         # ========================== FASE 2: FORM DE CONFLITOS ==========================
-        if st.session_state.modo_conflitos and st.session_state.conflitos_df_conf is not None:
+        if st.session_state.get("modo_conflitos", False) and st.session_state.get("conflitos_df_conf") is not None:
             df_conf = st.session_state.conflitos_df_conf.copy()
     
             # sanear tipos p/ st.data_editor

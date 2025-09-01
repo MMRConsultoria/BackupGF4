@@ -1154,13 +1154,13 @@ with st.spinner("⏳ Processando..."):
                         ws2.append_rows(rows_to_append, value_input_option='USER_ENTERED')
                         inseridos = len(rows_to_append)
     
-                    if removidos == 0 and inseridos == 0:
+                    else removidos == 0 and inseridos == 0:
                         st.info("ℹ️ Nada a fazer: nenhuma linha marcada para excluir ou incluir.")
-                    else:
-                        st.success(f"✅ Concluído: {removidos} excluída(s) e {inseridos} incluída(s).")
-                        st.markdown(
-                            f"[Abrir a aba no Google Sheets](https://docs.google.com/spreadsheets/d/{sh2.id}/edit#gid={sheet_id})"
-                        )
+                    #else:
+                        #st.success(f"✅ Concluído: {removidos} excluída(s) e {inseridos} incluída(s).")
+                        #st.markdown(
+                        #    f"[Abrir a aba no Google Sheets](https://docs.google.com/spreadsheets/d/{sh2.id}/edit#gid={sheet_id})"
+                        #)
     
                     # limpa estado e encerra
                     st.session_state.modo_conflitos = False

@@ -1243,6 +1243,19 @@ with st.spinner("⏳ Processando..."):
                 st.error("❌ Tempo limite de conexão atingido. Verifique sua rede e tente novamente.")
             except Exception as e:
                 st.error(f"❌ Falha ao conectar: {e}")
+
+        # === Handler do botão superior "Atualizar SheetsS" ===
+        if enviar_auto:
+            if not has_df:
+                st.error("Não há dados para enviar.")
+            else:
+                ok = enviar_para_sheets(st.session_state.df_final.copy(), titulo_origem="upload")
+                # Se a função abriu o painel de conflitos, ela já dá st.rerun().
+                # Só mostramos "concluído" quando NÃO ficou em modo de conflitos.
+                if ok and not st.session_state.get("modo_conflitos", False):
+                    st.success("✅ Processo concluído.")
+
+
     
         # ------------------------ EDITOR MANUAL ------------------------
         if "show_manual_editor" not in st.session_state:

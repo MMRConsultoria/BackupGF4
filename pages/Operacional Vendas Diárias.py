@@ -366,22 +366,27 @@ with st.spinner("⏳ Processando..."):
 
         # ✅ Marcar esta aba como ativa (CHAME ISSO EM TODAS AS ABAS)
         TAB_KEY = "aba_atualizar_google_sheets"
-        # se viemos de outra aba, limpa tudo
+    
         if st.session_state.get("_aba_ativa") != TAB_KEY:
             for k in [
-                "modo_conflitos", "conflitos_df_conf",
-                "conflitos_spreadsheet_id", "conflitos_sheet_id",
-                "_resumo_envio", "df_final",
-                "show_manual_editor", "manual_df",
-                "editor_manual", "editor_conflitos",
-                "btn_enviar_auto_header", "btn_toggle_manual",
-                "btn_atualizar_dre", "btn_enviar_manual",
+                "modo_conflitos",
+                "conflitos_df_conf",
+                "conflitos_spreadsheet_id",
+                "conflitos_sheet_id",
+                "_resumo_envio",
+                # "df_final",            # ❌ NÃO LIMPE MAIS AQUI
+                "show_manual_editor",
+                "manual_df",
+                "editor_manual",
+                "editor_conflitos",
+                "btn_enviar_auto_header",
+                "btn_toggle_manual",
+                "btn_atualizar_dre",
+                "btn_enviar_manual",
             ]:
                 st.session_state.pop(k, None)
-            # marca esta como ativa
+    
             st.session_state["_aba_ativa"] = TAB_KEY
-
-
     
         # ------------------------ ESTILO (botões pequenos, cinza) ------------------------
         def _inject_button_css():

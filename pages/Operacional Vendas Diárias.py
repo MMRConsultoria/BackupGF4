@@ -945,9 +945,9 @@ with st.spinner("⏳ Processando..."):
                 
         # ------------------------ HEADER / BOTÕES ------------------------
         LINK_SHEET = "https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU/edit?usp=sharing"
-        has_df = ('df_final' in st.session_state
-                  and isinstance(st.session_state.df_final, pd.DataFrame)
-                  and not st.session_state.df_final.empty)
+        df_sess = st.session_state.get("df_final")
+        has_df = isinstance(df_sess, pd.DataFrame) and not df_sess.empty  # ✅ simples e robusto
+
     
         c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
     
@@ -956,7 +956,7 @@ with st.spinner("⏳ Processando..."):
                 "Atualizar Google Sheets",   # <- ajuste aqui se quiser
                 use_container_width=True,
                 disabled=not has_df,
-                help=None if has_df else "Carregue os dados para habilitar",
+                #help=None if has_df else "Carregue os dados para habilitar",
                 key="btn_enviar_auto_header",
             )
     

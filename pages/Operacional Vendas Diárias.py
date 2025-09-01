@@ -761,40 +761,76 @@ with st.spinner("⏳ Processando..."):
                 # Envia NOVOS (se existirem) e informa contagens de NOVOS e DUPLICADOS por M
                 # Funciona tanto com df_novos/df_dup_M (DataFrames) quanto com novos_dados/duplicados (listas)
                 
-                # 1) Detecta contagens de forma resiliente
-                if 'df_novos' in locals() and isinstance(df_novos, pd.DataFrame):
-                    q_novos = len(df_novos)
-                    dados_para_enviar = df_novos.fillna("").values.tolist()
-                else:
-                    q_novos = len(novos_dados) if 'novos_dados' in locals() else 0
-                    dados_para_enviar = novos_dados if 'novos_dados' in locals() else []
+
+                # === ENVIO DE NOVOS + RESUMO (Enviados / Duplicados M / Possíveis duplicados N) ===
+                # Suporta tanto DataFrames (df_novos/df_dup_M/df_suspeitos) quanto listas (novos_dados/duplicados/suspeitos_n)
                 
+                # --- 1) Preparar dados e contagens de forma resiliente ---
+                # Novos
+                if 'df_novos' in locals() and isinstance(df_novos, pd.DataFrame):
+                    dados_para_enviar = df_novos.fillna("").values.tolist()
+                    q_novos = len(dados_para_enviar)
+                elif 'novos_dados' in locals():
+                    dados_para_enviar = novos_dados
+                    q_novos = len(novos_dados)
+                else:
+                    dados_para_enviar = []
+                    q_novos = 0
+                
+                # Duplicados por M (ignorados)
                 if 'df_dup_M' in locals() and isinstance(df_dup_M, pd.DataFrame):
                     q_dup_m = len(df_dup_M)
+                elif 'duplicados' in locals():
+                    q_dup_m = len(duplicados)
                 else:
-                    q_dup_m = len(duplicados) if 'duplicados' in locals() else 0
+                    q_dup_m = 0
                 
-                # 2) Se não há novos, apenas informa as contagens
-                if q_novos == 0:
-                    st.info(f"ℹ️ 0 novo(s) a enviar. ❌ {q_dup_m} duplicado(s) por M ignorado(s).")
+                # Possíveis duplicados por N (para revisão)
+                if 'df_suspeitos' in locals() and isinstance(df_suspeitos, pd.DataFrame):
+                    q_sus_n = len(df_suspeitos)
+                elif 'suspeitos_n' in locals():
+                    q_sus_n = len(suspeitos_n)
                 else:
-                    # 3) Envia os novos e formata colunas
-                    try:
-                        inicio = len(aba_destino.col_values(1)) + 1
-                        aba_destino.append_rows(dados_para_enviar, value_input_option="USER_ENTERED")
-                        fim = inicio + q_novos - 1
+                    q_sus_n = 0
                 
-                        if inicio <= fim:
-                            data_format   = CellFormat(numberFormat=NumberFormat(type="DATE",   pattern="dd/mm/yyyy"))
-                            numero_format = CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="0"))
-                            format_cell_range(aba_destino, f"A{inicio}:A{fim}", data_format)   # Data
-                            format_cell_range(aba_destino, f"D{inicio}:D{fim}", numero_format) # ajuste se necessário
-                            format_cell_range(aba_destino, f"F{inicio}:F{fim}", numero_format)
-                            format_cell_range(aba_destino, f"L{inicio}:L{fim}", numero_format)
+                # --- 2) Enviar automaticamente os NOVOS (se houver) ---
+                # Se você usa a checagem de lojas, respeita-a; caso contrário, remove o bloco 'todas_lojas_ok'
+                if 'todas_lojas_ok' in locals() and not todas_lojas_ok:
+                    st.error("🚫 Há lojas sem **Código Everest** cadastradas. Corrija e tente novamente.")
+                else:
+                    if q_novos > 0:
+                        try:
+                            inicio = len(aba_destino.col_values(1)) + 1
+                            aba_destino.append_rows(dados_para_enviar, value_input_option="USER_ENTERED")
+                            fim = inicio + q_novos - 1
                 
-                        st.success(f"✅ {q_novos} novo(s) enviado(s). ❌ {q_dup_m} duplicado(s) por M ignorado(s).")
-                    except Exception as e:
-                        st.error(f"❌ Erro ao enviar novos: {e}")
+                            # Formatação (ajuste as colunas conforme seu Sheet)
+                            if inicio <= fim:
+                                data_format   = CellFormat(numberFormat=NumberFormat(type="DATE",   pattern="dd/mm/yyyy"))
+                                numero_format = CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="0"))
+                                format_cell_range(aba_destino, f"A{inicio}:A{fim}", data_format)   # Data
+                                format_cell_range(aba_destino, f"D{inicio}:D{fim}", numero_format) # ex.: Fat.Total
+                                format_cell_range(aba_destino, f"F{inicio}:F{fim}", numero_format)
+                                format_cell_range(aba_destino, f"L{inicio}:L{fim}", numero_format)
+                
+                            st.success(f"✅ {q_novos} novo(s) enviado(s).")
+                        except Exception as e:
+                            st.error(f"❌ Erro ao enviar novos: {e}")
+                    else:
+                        st.info("ℹ️ Nenhum novo para enviar.")
+                
+                # --- 3) Resumo consolidado (sem listar os incluídos) ---
+                st.markdown(
+                    f"**Resumo:** 🟢 Enviados: **{q_novos}** &nbsp;&nbsp;|&nbsp;&nbsp; "
+                    f"❌ Duplicados (M): **{q_dup_m}** &nbsp;&nbsp;|&nbsp;&nbsp; "
+                    f"🔴 Possíveis duplicados (N): **{q_sus_n}**"
+                )
+                
+                # (Opcional) Se quiser, abaixo você pode abrir o painel de revisão para q_sus_n
+                # if q_sus_n > 0:
+                #     st.markdown("🔎 Existem possíveis duplicados por N. Revise-os abaixo.")
+                #     ... (seu editor de conflitos) ...
+
 
         # ========================== FASE 2: FORM DE CONFLITOS ==========================
         if st.session_state.modo_conflitos and st.session_state.conflitos_df_conf is not None:

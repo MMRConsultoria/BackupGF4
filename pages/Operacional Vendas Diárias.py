@@ -805,15 +805,7 @@ with st.spinner("⏳ Processando..."):
         
                 return True
 
-                    # já existe:
-                    st.session_state.conflitos_df_conf = df_conf
-                    st.session_state.conflitos_spreadsheet_id = planilha_destino.id
-                    st.session_state.conflitos_sheet_id = int(aba_destino.id)
-                    st.session_state.modo_conflitos = True
-                
-                    # ADICIONE estas 2 linhas:
-                    st.session_state._resumo_envio = {"enviados": int(q_novos), "dup_m": int(q_dup_m), "sus_n": int(q_sus_n)}
-                    st.rerun()
+                   
               
                 # Envia NOVOS (se existirem) e informa contagens de NOVOS e DUPLICADOS por M
                 # Funciona tanto com df_novos/df_dup_M (DataFrames) quanto com novos_dados/duplicados (listas)

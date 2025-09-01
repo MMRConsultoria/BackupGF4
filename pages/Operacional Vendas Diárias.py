@@ -335,17 +335,20 @@ with st.spinner("⏳ Processando..."):
         from oauth2client.service_account import ServiceAccountCredentials
         from gspread_dataframe import get_as_dataframe
         from gspread_formatting import CellFormat, NumberFormat, format_cell_range
-        marcar_aba_ativa("Atualizar Google Sheets")
-        # --- RESET ao entrar nesta aba ---
-        TAB_KEY = "Atualizar Google Sheets"          # ✅ igual ao usado acima
-        if st.session_state.get("_aba_ativa") != TAB_KEY:
+        TAB_KEY = "Atualizar Google Sheets"   # use exatamente a mesma string em todos os lugares
+        prev_tab = st.session_state.get("_aba_ativa")  # 1) qual era a aba anterior?
+    
+        marcar_aba_ativa(TAB_KEY)             # 2) agora sim, marca a aba atual
+    
+        # 3) se acabamos de ENTRAR nesta aba, reseta só o estado temporário
+        if prev_tab != TAB_KEY:
             for k in [
                 "modo_conflitos",
                 "conflitos_df_conf",
                 "conflitos_spreadsheet_id",
                 "conflitos_sheet_id",
                 "_resumo_envio",
-                # "df_final",  # ❌ NÃO LIMPAR (mantém o botão habilitado)
+                # "df_final",  # ❌ NÃO LIMPAR! mantém o botão habilitado
                 "show_manual_editor",
                 "manual_df",
                 "editor_manual",
@@ -356,7 +359,6 @@ with st.spinner("⏳ Processando..."):
                 "btn_enviar_manual",
             ]:
                 st.session_state.pop(k, None)
-            st.session_state["_aba_ativa"] = TAB_KEY
 
         
         # --- estado para o modo de conflitos + df/ids persistidos ---

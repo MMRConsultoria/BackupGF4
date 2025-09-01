@@ -890,10 +890,7 @@ with st.spinner("⏳ Processando..."):
                     f"🔴 Possíveis duplicados (N): **{q_sus_n}**"
                 )
                 
-                # (Opcional) Se quiser, abaixo você pode abrir o painel de revisão para q_sus_n
-                # if q_sus_n > 0:
-                #     st.markdown("🔎 Existem possíveis duplicados por N. Revise-os abaixo.")
-                #     ... (seu editor de conflitos) ...
+                
         # ------------------------ HEADER / BOTÕES ------------------------
         LINK_SHEET = "https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU/edit?usp=sharing"
         has_df = ('df_final' in st.session_state
@@ -973,7 +970,14 @@ with st.spinner("⏳ Processando..."):
                 # Só mostramos "concluído" quando NÃO ficou em modo de conflitos.
                 if ok and not st.session_state.get("modo_conflitos", False):
                     st.success("✅ Processo concluído.")
-
+        if "_resumo_envio" in st.session_state:
+                    r = st.session_state._resumo_envio
+                    st.markdown(
+                        f"**Resumo:** 🟢 Enviados: **{r['enviados']}** &nbsp;|&nbsp; "
+                        f"❌ Duplicados (M): **{r['dup_m']}** &nbsp;|&nbsp; "
+                        f"🔴 Possíveis duplicados (N): **{r['sus_n']}**"
+                    )
+                    del st.session_state._resumo_envio
         # ========================== FASE 2: FORM DE CONFLITOS ==========================
         if st.session_state.modo_conflitos and st.session_state.conflitos_df_conf is not None:
             df_conf = st.session_state.conflitos_df_conf.copy()

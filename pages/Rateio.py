@@ -385,110 +385,149 @@ with st.spinner("⏳ Processando..."):
                            file_name=f"Rateio_%Faturamento_{datetime.now().strftime('%Y%m%d')}.pdf",
                            mime="application/pdf", key="dl_pdf_fat")
 
+
     # ----------------------------------------------------------------------
-    # ABA 2 - VOLUMETRIA  (tudo desta aba fica aqui dentro)
+    # ABA 2 - VOLUMETRIA  (Funcionários por GRUPO, mesclado com faturamento do mês)
     # ----------------------------------------------------------------------
     with aba2:
-        # 👉 quando você me disser qual coluna é a de quantidade (ex.: 'Qtde'),
-        #    troco 'metric_vol' abaixo para essa coluna.
-        metric_vol = "Fat.Total"  # TEMPORÁRIO: mesma métrica até definirmos a coluna de volume
-
-        # --------- Filtros ---------
+        # ========= 1) Ler planilha externa (A = Mês, D = Grupo, F = Funcionários) =========
+        url_vol = "https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU/edit?gid=1461552258#gid=1461552258"
+        gid_vol = 1461552258
+    
+        ss_vol = gc.open_by_url(url_vol)
+        try:
+            ws_vol = ss_vol.get_worksheet_by_id(gid_vol)
+        except Exception:
+            ws_vol = ss_vol.get_worksheet(0)
+    
+        rows = ws_vol.get_all_values()
+        dados = rows[1:] if rows else []  # pula cabeçalho
+    
+        colA = [r[0] if len(r) >= 1 else "" for r in dados]  # mês
+        colD = [r[3] if len(r) >= 4 else "" for r in dados]  # grupo
+        colF = [r[5] if len(r) >= 6 else "" for r in dados]  # funcionários
+    
+        def parse_mes(s: str) -> str:
+            from datetime import datetime
+            s = (s or "").strip()
+            if not s: return None
+            fmts = ["%d/%m/%Y", "%m/%Y", "%Y-%m-%d", "%Y/%m/%d", "%b/%Y", "%b-%Y", "%B/%Y", "%B-%Y"]
+            for f in fmts:
+                try:
+                    d = datetime.strptime(s, f)
+                    return d.strftime("%m/%Y")
+                except Exception:
+                    pass
+            # casos tipo YYYY-MM / YYYY/MM
+            try:
+                if "-" in s and len(s) == 7:
+                    y, m = s.split("-"); return f"{int(m):02d}/{y}"
+                if "/" in s and len(s) == 7:
+                    y, m = s.split("/"); return f"{int(m):02d}/{y}"
+            except Exception:
+                pass
+            return None
+    
+        def to_number(x):
+            x = str(x).strip()
+            if x == "": return 0.0
+            x = x.replace(".", "").replace(",", ".")
+            try: return float(x)
+            except: return 0.0
+    
+        df_funcs = pd.DataFrame({
+            "Mes/Ano": [parse_mes(x) for x in colA],
+            "Grupo":   [str(x).strip().upper() for x in colD],
+            "Funcionarios": [to_number(x) for x in colF],
+        }).dropna(subset=["Mes/Ano"])
+    
+        # agrega funcionários por mês+grupo (caso haja linhas repetidas)
+        df_funcs = df_funcs.groupby(["Mes/Ano","Grupo"], as_index=False)["Funcionarios"].sum()
+    
+        # ========= 2) Filtros (meses vindos do faturamento) =========
+        df_vendas["Mes/Ano"] = df_vendas["Data"].dt.strftime("%m/%Y")
+    
         col1, col2, col3 = st.columns([1, 1, 2])
-
         with col1:
             tipos = sorted(df_vendas["Tipo"].dropna().unique())
             tipos.insert(0, "Todos")
             tipo_sel = st.selectbox("🏪 Tipo:", options=tipos, index=0, key="tipo_vol")
-
+    
         with col2:
             grupos = sorted(df_vendas["Grupo"].dropna().unique())
             grupos.insert(0, "Todos")
             grupo_sel = st.selectbox("👥 Grupo:", options=grupos, index=0, key="grupo_vol")
-
+    
         with col3:
-            df_vendas["Mes/Ano"] = df_vendas["Data"].dt.strftime("%m/%Y")
-
-            def _ord_key2(mmyyyy: str):
-                try:
-                    return datetime.strptime("01/" + str(mmyyyy), "%d/%m/%Y")
-                except Exception:
-                    return datetime.min
-
-            meses_opts = sorted([m for m in df_vendas["Mes/Ano"].dropna().unique()], key=_ord_key2)
+            def _ordkey(mmyyyy: str):
+                from datetime import datetime
+                try: return datetime.strptime("01/" + str(mmyyyy), "%d/%m/%Y")
+                except Exception: return datetime.min
+    
+            meses_opts = sorted(df_vendas["Mes/Ano"].dropna().unique().tolist(), key=_ordkey)
             mes_atual = datetime.today().strftime("%m/%Y")
-            default_meses = [mes_atual] if meses_opts and mes_atual in meses_opts else (meses_opts[-1:] if meses_opts else [])
-
-            if meses_opts:
-                meses_sel = st.multiselect(
-                    "🗓️ Selecione os meses:",
-                    options=meses_opts,
-                    default=default_meses,
-                    key="ms_meses_vol"
-                )
-            else:
-                st.warning("⚠️ Nenhum mês disponível nos dados (verifique a coluna 'Data').")
-                meses_sel = []
-
-        # --------- Aplica filtros ---------
+            default_meses = [mes_atual] if mes_atual in meses_opts else (meses_opts[-1:] if meses_opts else [])
+            meses_sel = st.multiselect("🗓️ Selecione os meses:", options=meses_opts,
+                                       default=default_meses, key="ms_meses_vol")
+    
+        # ========= 3) Base de faturamento (para listar grupos e exibir valor) =========
         if meses_sel:
             df_f = df_vendas[df_vendas["Mes/Ano"].isin(meses_sel)].copy()
         else:
             df_f = df_vendas.iloc[0:0].copy()
-
-        df_f["Período"] = df_f["Data"].dt.strftime("%m/%Y")
+    
         if tipo_sel != "Todos":
             df_f = df_f[df_f["Tipo"] == tipo_sel]
         if grupo_sel != "Todos":
             df_f = df_f[df_f["Grupo"] == grupo_sel]
-
-        # --------- Agrupamento ---------
-        if grupo_sel == "Todos":
-            chaves = ["Tipo", "Grupo"]
+    
+        # agregamos faturamento por Tipo+Grupo (SEM loja)
+        df_fat = (
+            df_f.groupby(["Tipo","Grupo"], as_index=False)["Fat.Total"]
+                .sum().rename(columns={"Fat.Total":"Faturamento"})
+        )
+    
+        # ========= 4) Funcionários por Grupo (somando meses selecionados) =========
+        if meses_sel:
+            df_funcs_sel = df_funcs[df_funcs["Mes/Ano"].isin(meses_sel)].copy()
         else:
-            chaves = ["Grupo", "Loja"]
-
-        df_ag = df_f.groupby(chaves + ["Período"], as_index=False)[metric_vol].sum()
-        df_fin = df_ag.groupby(chaves, as_index=False)[metric_vol].sum().rename(columns={metric_vol: "Total"})
-        df_fin["Rateio"] = 0.0
-
-        # --------- % e Subtotais ---------
-        if grupo_sel == "Todos":
-            total_geral = df_fin["Total"].sum()
-            df_fin["% Total"] = (df_fin["Total"] / total_geral) if total_geral else 0.0
-
-            subt = df_fin.groupby("Tipo")["Total"].sum().reset_index().sort_values(by="Total", ascending=False)
-            ordem_tipos = subt["Tipo"].tolist()
-            df_fin["ord_tipo"] = df_fin["Tipo"].apply(lambda x: ordem_tipos.index(x) if x in ordem_tipos else 999)
-            df_fin = df_fin.sort_values(by=["ord_tipo", "Total"], ascending=[True, False]).drop(columns="ord_tipo")
-
-            linhas = []
-            for t in ordem_tipos:
-                bloco = df_fin[df_fin["Tipo"] == t].copy()
-                linhas.append(bloco)
-                subtotal = bloco.drop(columns=["Tipo", "Grupo"]).sum(numeric_only=True)
-                subtotal["Tipo"] = t
-                subtotal["Grupo"] = f"Subtotal {t}"
-                linhas.append(pd.DataFrame([subtotal]))
-            df_fin = pd.concat(linhas, ignore_index=True)
-        else:
-            total_geral = df_fin["Total"].sum()
-            df_fin["% Total"] = (df_fin["Total"] / total_geral) if total_geral else 0.0
-
-            df_fin = df_fin.sort_values(by=["Grupo", "Total"], ascending=[True, False])
-
-            linhas = []
-            for g in df_fin["Grupo"].unique():
-                bloco = df_fin[df_fin["Grupo"] == g].copy()
-                linhas.append(bloco)
-                subtotal = bloco.drop(columns=["Grupo", "Loja"]).sum(numeric_only=True)
-                subtotal["Grupo"] = g
-                subtotal["Loja"] = f"Subtotal {g}"
-                linhas.append(pd.DataFrame([subtotal]))
-            df_fin = pd.concat(linhas, ignore_index=True)
-
-        # --------- TOTAL no topo ---------
-        cols_drop = [c for c in ["Tipo","Grupo","Loja"] if c in df_fin.columns]
+            df_funcs_sel = df_funcs.iloc[0:0].copy()
+    
+        # total de funcionarios por Grupo nos meses selecionados
+        df_fun_g = df_funcs_sel.groupby("Grupo", as_index=False)["Funcionarios"].sum()
+    
+        # ========= 5) Juntar: manter TODOS os grupos que tiveram faturamento; Funcionários = 0 se não houver na planilha externa =========
+        df_fin = df_fat.merge(df_fun_g, on="Grupo", how="left")
+        df_fin["Funcionarios"] = df_fin["Funcionarios"].fillna(0.0)
+    
+        # ========= 6) Percentual por funcionários (dentro de cada Tipo) =========
+        # (se funcionário total do tipo = 0, percentuais vão 0)
+        df_fin["% Total"] = 0.0
+        for t in df_fin["Tipo"].dropna().unique():
+            mask_t = (df_fin["Tipo"] == t)
+            total_fun_t = df_fin.loc[mask_t, "Funcionarios"].sum()
+            if total_fun_t > 0:
+                df_fin.loc[mask_t, "% Total"] = df_fin.loc[mask_t, "Funcionarios"] / total_fun_t * 100
+    
+        # ========= 7) Subtotais por Tipo =========
+        subt_list = []
+        ordem_tipos = (df_fin.groupby("Tipo")["Faturamento"].sum()
+                       .sort_values(ascending=False).index.tolist())
+        df_fin["ord_tipo"] = df_fin["Tipo"].apply(lambda x: ordem_tipos.index(x) if x in ordem_tipos else 999)
+        df_fin = df_fin.sort_values(["ord_tipo","Funcionarios"], ascending=[True, False]).drop(columns="ord_tipo")
+    
+        for t in ordem_tipos:
+            bloco = df_fin[df_fin["Tipo"] == t].copy()
+            subt_list.append(bloco)
+            sub = bloco.drop(columns=["Tipo","Grupo"]).sum(numeric_only=True)
+            sub["Tipo"] = t
+            sub["Grupo"] = f"Subtotal {t}"
+            subt_list.append(pd.DataFrame([sub]))
+        if len(subt_list) > 0:
+            df_fin = pd.concat(subt_list, ignore_index=True)
+    
+        # ========= 8) Linha TOTAL no topo =========
+        cols_drop = [c for c in ["Tipo","Grupo"] if c in df_fin.columns]
         apenas = df_fin.copy()
         for c in cols_drop:
             apenas = apenas[~apenas[c].astype(str).str.startswith("Subtotal", na=False)]
@@ -497,107 +536,82 @@ with st.spinner("⏳ Processando..."):
             linha_total[c] = ""
         linha_total[cols_drop[0] if cols_drop else "Grupo"] = "TOTAL"
         df_fin = pd.concat([pd.DataFrame([linha_total]), df_fin], ignore_index=True)
-
-        # --------- RATEIO ---------
-        df_fin["% Total"] = 0.0
-        df_fin["Rateio"] = 0.0
-
-        if grupo_sel == "Todos":
-            def moeda_para_float2(s: str) -> float:
-                try: return float(s.replace(".", "").replace(",", "."))
-                except: return 0.0
-            tipos_unicos = [t for t in df_fin["Tipo"].dropna().unique()
-                            if str(t).strip() not in ["", "TOTAL"] and not str(t).startswith("Subtotal")]
-            valores_rateio = {}
-            COLS_POR_LINHA = 3
-            for i in range(0, len(tipos_unicos), COLS_POR_LINHA):
-                linha = tipos_unicos[i:i+COLS_POR_LINHA]
-                cols = st.columns(len(linha))
-                for c, t in zip(cols, linha):
-                    with c:
-                        valor_str = st.text_input(f"💰 Rateio — {t}", value="0,00", key=f"rateio_{t}_vol")
-                        valores_rateio[t] = moeda_para_float2(valor_str)
-
-            for t in df_fin["Tipo"].unique():
-                mask = ((df_fin["Tipo"] == t) &
-                        (~df_fin["Grupo"].astype(str).str.startswith("Subtotal")) &
-                        (df_fin["Grupo"] != "TOTAL"))
-                subtotal_t = df_fin.loc[df_fin["Grupo"] == f"Subtotal {t}", "Total"].sum()
-                if subtotal_t > 0:
-                    df_fin.loc[mask, "% Total"] = (df_fin.loc[mask, "Total"] / subtotal_t) * 100
-                df_fin.loc[df_fin["Grupo"] == f"Subtotal {t}", "% Total"] = 100
-
-                valor_rateio = valores_rateio.get(t, 0.0)
-                df_fin.loc[mask, "Rateio"] = df_fin.loc[mask, "% Total"] / 100 * valor_rateio
-                df_fin.loc[df_fin["Grupo"] == f"Subtotal {t}", "Rateio"] = df_fin.loc[mask, "Rateio"].sum()
-        else:
-            total_rateio = st.number_input(f"💰 Rateio — {grupo_sel}",
-                                           min_value=0.0, step=100.0, format="%.2f",
-                                           key=f"rateio_{grupo_sel}_vol")
-            mask_lojas = ((df_fin["Grupo"] == grupo_sel) &
-                          (~df_fin["Loja"].astype(str).str.startswith("Subtotal")) &
-                          (df_fin["Loja"] != "TOTAL"))
-            subtotal_g = df_fin.loc[df_fin["Loja"] == f"Subtotal {grupo_sel}", "Total"].sum()
-            if subtotal_g > 0:
-                df_fin.loc[mask_lojas, "% Total"] = (df_fin.loc[mask_lojas, "Total"] / subtotal_g) * 100
-                df_fin.loc[df_fin["Loja"] == f"Subtotal {grupo_sel}", "% Total"] = 100
-                df_fin.loc[mask_lojas, "Rateio"] = df_fin.loc[mask_lojas, "% Total"] / 100 * total_rateio
-                df_fin.loc[df_fin["Loja"] == f"Subtotal {grupo_sel}", "Rateio"] = df_fin.loc[mask_lojas, "Rateio"].sum()
-        # === Reordenar colunas (Aba 2) ===
-        if grupo_sel == "Todos":
-            col_order = ["Tipo", "Grupo", "Total", "% Total", "Rateio"]
-        else:
-            col_order = ["Grupo", "Loja", "Total", "% Total", "Rateio"]
-        
+    
+        # ========= 9) INPUT MANUAL: Total a ratear (distribui pelos % de funcionários) =========
+        total_rateio = st.number_input(
+            "📦 Total a ratear (Volumetria por funcionários)",
+            min_value=0.0, step=1.0, format="%.0f",
+            key="rateio_total_vol"
+        )
+        df_fin["Rateio"] = df_fin["% Total"] / 100 * float(total_rateio)
+    
+        # ========= 10) “Total” da aba Volumetria = Funcionários (como você pediu) =========
+        df_fin["Total"] = df_fin["Funcionarios"]
+    
+        # Ajusta linha TOTAL (Rateio/Total)
+        mask_total = (df_fin.get("Grupo","") == "TOTAL")
+        if mask_total.any():
+            df_fin.loc[mask_total, "Rateio"] = df_fin.loc[~mask_total, "Rateio"].sum()
+            df_fin.loc[mask_total, "Total"]  = df_fin.loc[~mask_total, "Total"].sum()
+            df_fin.loc[mask_total, "% Total"] = 100
+    
+        # === Reordenar colunas: mantém sua ordem e adiciona Faturamento ao final ===
+        col_order = ["Tipo","Grupo","Total","% Total","Rateio","Faturamento"]
         df_fin = df_fin[[c for c in col_order if c in df_fin.columns]]
-
-        # --------- Visual ---------
+    
+        # ========= 11) Visual =========
         df_view = df_fin.copy()
-        def fmt_moeda2(v):
-            try: return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    
+        def fmt_int_br(v):
+            try: return f"{int(round(float(v))):,}".replace(",", ".")
             except: return v
-        for c in ["Total","Rateio"]:
-            if c in df_view.columns:
-                df_view[c] = df_view[c].apply(lambda x: fmt_moeda2(x) if pd.notnull(x) and x != "" else x)
+        def fmt_moeda(v):
+            try: return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            except: return v
+    
+        if "Total" in df_view.columns:
+            df_view["Total"] = df_view["Total"].apply(lambda x: fmt_int_br(x) if pd.notnull(x) and x != "" else x)
+        if "Rateio" in df_view.columns:
+            df_view["Rateio"] = df_view["Rateio"].apply(lambda x: fmt_int_br(x) if pd.notnull(x) and x != "" else x)
+        if "Faturamento" in df_view.columns:
+            df_view["Faturamento"] = df_view["Faturamento"].apply(lambda x: fmt_moeda(x) if pd.notnull(x) and x != "" else x)
         if "% Total" in df_view.columns:
             df_view["% Total"] = pd.to_numeric(df_view["% Total"], errors="coerce").apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "")
-
-        def aplicar_estilo_vol(df_in):
-            def estilo(row):
-                if "Grupo" in df_in.columns and row["Grupo"] == "TOTAL":
+    
+        def estilo_vol(df_in):
+            def _row(row):
+                if row.get("Grupo","") == "TOTAL":
                     return ["background-color: #f4b084; font-weight: bold"] * len(row)
-                if "Loja" in df_in.columns and isinstance(row.get("Loja",""), str) and row["Loja"].startswith("Subtotal"):
-                    return ["background-color: #d9d9d9; font-weight: bold"] * len(row)
-                if "Grupo" in df_in.columns and isinstance(row.get("Grupo",""), str) and row["Grupo"].startswith("Subtotal"):
+                if isinstance(row.get("Grupo",""), str) and row["Grupo"].startswith("Subtotal"):
                     return ["background-color: #d9d9d9; font-weight: bold"] * len(row)
                 return ["" for _ in row]
-            return df_in.style.apply(estilo, axis=1)
-
-        st.dataframe(aplicar_estilo_vol(df_view), use_container_width=True, height=700)
-
-        # --------- Exportar Excel ---------
+            return df_in.style.apply(_row, axis=1)
+    
+        st.dataframe(estilo_vol(df_view), use_container_width=True, height=700)
+    
+        # ========= 12) Exportar Excel =========
         df_excel = df_fin.copy()
+        # percentuais em fração para Excel
         if "% Total" in df_excel.columns:
             df_excel["% Total"] = pd.to_numeric(df_excel["% Total"], errors="coerce") / 100
+    
         out = BytesIO()
         with pd.ExcelWriter(out, engine="openpyxl") as writer:
             df_excel.to_excel(writer, index=False, sheet_name="Relatório")
         out.seek(0)
         wb = load_workbook(out); ws = wb["Relatório"]
-
+    
         header_font = Font(bold=True, color="FFFFFF")
         header_fill = PatternFill("solid", fgColor="305496")
         center_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
-
+    
         for cell in ws[1]:
             cell.font = header_font; cell.fill = header_fill
             cell.alignment = center_alignment; cell.border = border
-
+    
         for row in ws.iter_rows(min_row=2, max_row=ws.max_row, max_col=ws.max_column):
-            grupo_val = None
-            try: grupo_val = row[1].value
-            except: pass
+            grupo_val = row[1].value if ws.cell(row=1, column=2).value == "Grupo" else None
             estilo_fundo = None
             if isinstance(grupo_val, str):
                 if grupo_val.strip().upper() == "TOTAL": estilo_fundo = PatternFill("solid", fgColor="F4B084")
@@ -607,65 +621,46 @@ with st.spinner("⏳ Processando..."):
                 if estilo_fundo: cell.fill = estilo_fundo
                 col_name = ws.cell(row=1, column=cell.column).value
                 if isinstance(cell.value, (int,float)):
-                    cell.number_format = '0.00%' if col_name == "% Total" else '"R$" #,##0.00'
-
+                    if col_name == "% Total":
+                        cell.number_format = '0.00%'
+                    elif col_name == "Faturamento":
+                        cell.number_format = '"R$" #,##0.00'
+                    else:
+                        # Total e Rateio em inteiros
+                        cell.number_format = '#,##0'
+    
         for i, col_cells in enumerate(ws.iter_cols(min_row=1, max_row=ws.max_row), start=1):
             max_len = max((len(str(c.value)) for c in col_cells if c.value), default=0)
             ws.column_dimensions[get_column_letter(i)].width = max_len + 2
-
-        for col_nome in ["Tipo","Grupo","Loja"]:
+    
+        for col_nome in ["Tipo","Grupo"]:
             if col_nome in df_excel.columns:
                 col_idx = df_excel.columns.get_loc(col_nome) + 1
                 for cell in ws.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx):
                     for c in cell: c.alignment = Alignment(horizontal="left")
-
+    
         out_final = BytesIO(); wb.save(out_final); out_final.seek(0)
         st.download_button("📥 Baixar Excel", data=out_final,
-                           file_name="Resumo_Volumetria.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           key="dl_excel_vol")
-
-        # --------- Exportar PDF ---------
+                            file_name="Resumo_Volumetria.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_excel_vol")
+    
+        # ========= 13) Exportar PDF =========
         usuario = st.session_state.get("usuario_logado", "Usuário Desconhecido")
         sele = meses_sel
-        if not sele: mes_rateio = "(sem dados)"
-        elif len(sele) == 1: mes_rateio = sele[0]
-        elif len(sele) == 2: mes_rateio = f"{sele[0]} e {sele[1]}"
-        else: mes_rateio = f"{', '.join(sele[:-1])} e {sele[-1]}"
-
+        if not sele: mes_lbl = "(sem dados)"
+        elif len(sele) == 1: mes_lbl = sele[0]
+        elif len(sele) == 2: mes_lbl = f"{sele[0]} e {sele[1]}"
+        else: mes_lbl = f"{', '.join(sele[:-1])} e {sele[-1]}"
+    
         buf = io.BytesIO()
         doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=30, bottomMargin=30, leftMargin=20, rightMargin=20)
+        from reportlab.platypus import Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet
+    
         elems = []; estilos = getSampleStyleSheet(); normal = estilos["Normal"]; h1 = estilos["Heading1"]
         try:
             logo_url = "https://raw.githubusercontent.com/MMRConsultoria/mmr-site/main/logo_grupofit.png"
             img = RLImg(logo_url, width=100, height=40); elems.append(img)
         except: pass
-        elems.append(Paragraph(f"<b>Rateio - {mes_rateio}</b>", h1))
-        fuso = pytz.timezone("America/Sao_Paulo")
-        data_ger = datetime.now(fuso).strftime("%d/%m/%Y %H:%M")
-        elems.append(Paragraph(f"<b>Usuário:</b> {usuario}", normal))
-        elems.append(Paragraph(f"<b>Data de Geração:</b> {data_ger}", normal)); elems.append(Spacer(1,12))
-        dados = [df_view.columns.tolist()] + df_view.values.tolist()
-        tabela = Table(dados, repeatRows=1)
-        tabela.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#003366")),
-            ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-            ("ALIGN",(1,1),(-1,-1),"CENTER"),
-            ("ALIGN",(0,0),(0,-1),"LEFT"),
-            ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
-            ("FONTSIZE",(0,0),(-1,-1),8),
-            ("BOTTOMPADDING",(0,0),(-1,0),8),
-            ("GRID",(0,0),(-1,-1),0.25,colors.grey),
-        ]))
-        for i in range(1, len(dados)):
-            txt = str(dados[i][1]).strip().lower() if len(dados[i])>1 else ""
-            if "subtotal" in txt or txt == "total":
-                tabela.setStyle(TableStyle([("BACKGROUND",(0,i),(-1,i),colors.HexColor("#BFBFBF")),
-                                            ("FONTNAME",(0,i),(-1,i),"Helvetica-Bold")]))
-            else:
-                tabela.setStyle(TableStyle([("BACKGROUND",(0,i),(-1,i),colors.HexColor("#F2F2F2"))]))
-        elems.append(tabela); doc.build(elems)
-        pdf_bytes = buf.getvalue(); buf.close()
-        st.download_button("📄 Baixar PDF", data=pdf_bytes,
-                           file_name=f"Rateio_Volumetria_{datetime.now().strftime('%Y%m%d')}.pdf",
-                           mime="application/pdf", key="dl_pdf_vol")

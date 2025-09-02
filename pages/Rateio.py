@@ -593,7 +593,34 @@ with st.spinner("⏳ Processando..."):
             min_value=0.0, step=1.0, format="%.0f",
             key="rateio_total_vol"
         )
-        df_fin["Rateio"] = df_fin["% Total"] / 100 * float(total_rateio)
+        # >>> Rateio per capita: (total_rateio ÷ total_funcionarios) × funcionarios_do_grupo
+        # considere apenas as linhas normais (sem TOTAL/Subtotal) para o somatório
+        mask_regular = (
+            ~df_fin["Grupo"].astype(str).str.startswith("Subtotal")
+            & (df_fin["Grupo"].astype(str) != "TOTAL")
+            & (df_fin["Tipo"].astype(str)  != "TOTAL")
+        )
+        
+        total_func = df_fin.loc[mask_regular, "Funcionarios"].sum()
+        valor_por_func = (float(total_rateio) / total_func) if total_func > 0 else 0.0
+        
+        # aplica o per-capita nos grupos
+        df_fin.loc[mask_regular, "Rateio"] = df_fin.loc[mask_regular, "Funcionarios"] * valor_por_func
+        
+        # Subtotais por Tipo (somatório do rateio das linhas do tipo)
+        for t in df_fin["Tipo"].dropna().unique():
+            mask_tipo_regular   = mask_regular & (df_fin["Tipo"] == t)
+            mask_subtotal_tipo  = (df_fin["Grupo"].astype(str) == f"Subtotal {t}")
+            df_fin.loc[mask_subtotal_tipo, "Rateio"] = df_fin.loc[mask_tipo_regular, "Rateio"].sum()
+        
+        # Linha TOTAL (seja o "TOTAL" apareça em Grupo ou em Tipo)
+        mask_total_grupo = (df_fin["Grupo"].astype(str) == "TOTAL")
+        mask_total_tipo  = (df_fin["Tipo"].astype(str)  == "TOTAL")
+        soma_rateio = df_fin.loc[mask_regular, "Rateio"].sum()
+        if mask_total_grupo.any():
+            df_fin.loc[mask_total_grupo, "Rateio"] = soma_rateio
+        elif mask_total_tipo.any():
+            df_fin.loc[mask_total_tipo, "Rateio"] = soma_rateio
     
         # ========= 10) Visão: esconder % Total e Faturamento; renomear Funcionários (com acento) =========
         df_view = df_fin.copy()

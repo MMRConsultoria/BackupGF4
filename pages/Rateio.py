@@ -555,95 +555,92 @@ with st.spinner("⏳ Processando..."):
             df_fin.loc[mask_total, "Total"]  = df_fin.loc[~mask_total, "Total"].sum()
             df_fin.loc[mask_total, "% Total"] = 100
     
-        # === Reordenar colunas: mantém sua ordem e adiciona Faturamento ao final ===
-        col_order = ["Tipo","Grupo","Total","% Total","Rateio","Faturamento"]
-        df_fin = df_fin[[c for c in col_order if c in df_fin.columns]]
-    
-        # ========= 11) Visual =========
-        df_view = df_fin.copy()
-    
+        # >>> Preparar colunas da aba Volumetria (substitui o bloco de 'Reordenar colunas')
+        # Renomeia 'Total' (que aqui representa funcionários) para 'Funcionários'
+        df_fin.rename(columns={"Total": "Funcionários"}, inplace=True)
+        
+        # Monta a visão só com as colunas visíveis (sem % Total e sem Faturamento)
+        cols_show = ["Tipo", "Grupo", "Funcionários", "Rateio"]
+        df_view = df_fin[[c for c in cols_show if c in df_fin.columns]].copy()
+
+        # --------- Visual (sem % Total e sem Faturamento) ---------
         def fmt_int_br(v):
-            try: return f"{int(round(float(v))):,}".replace(",", ".")
-            except: return v
-        def fmt_moeda(v):
-            try: return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            except: return v
-    
-        if "Total" in df_view.columns:
-            df_view["Total"] = df_view["Total"].apply(lambda x: fmt_int_br(x) if pd.notnull(x) and x != "" else x)
+            try:
+                return f"{int(round(float(v))):,}".replace(",", ".")
+            except:
+                return v
+        
+        if "Funcionários" in df_view.columns:
+            df_view["Funcionários"] = df_view["Funcionários"].apply(lambda x: fmt_int_br(x) if pd.notnull(x) and x != "" else x)
         if "Rateio" in df_view.columns:
             df_view["Rateio"] = df_view["Rateio"].apply(lambda x: fmt_int_br(x) if pd.notnull(x) and x != "" else x)
-        if "Faturamento" in df_view.columns:
-            df_view["Faturamento"] = df_view["Faturamento"].apply(lambda x: fmt_moeda(x) if pd.notnull(x) and x != "" else x)
-        if "% Total" in df_view.columns:
-            df_view["% Total"] = pd.to_numeric(df_view["% Total"], errors="coerce").apply(lambda x: f"{x:.2f}%" if pd.notnull(x) else "")
-    
-        def estilo_vol(df_in):
-            def _row(row):
+        
+        def aplicar_estilo_vol(df_in):
+            def estilo(row):
                 if row.get("Grupo","") == "TOTAL":
                     return ["background-color: #f4b084; font-weight: bold"] * len(row)
                 if isinstance(row.get("Grupo",""), str) and row["Grupo"].startswith("Subtotal"):
                     return ["background-color: #d9d9d9; font-weight: bold"] * len(row)
                 return ["" for _ in row]
-            return df_in.style.apply(_row, axis=1)
+            return df_in.style.apply(estilo, axis=1)
+        
+        st.dataframe(aplicar_estilo_vol(df_view), use_container_width=True, height=700)
+
     
-        st.dataframe(estilo_vol(df_view), use_container_width=True, height=700)
-    
-        # ========= 12) Exportar Excel =========
-        df_excel = df_fin.copy()
-        # percentuais em fração para Excel
-        if "% Total" in df_excel.columns:
-            df_excel["% Total"] = pd.to_numeric(df_excel["% Total"], errors="coerce") / 100
-    
+        # --------- Exportar Excel (apenas Tipo, Grupo, Funcionários, Rateio) ---------
+        df_excel = df_view.copy()  # <- usa apenas as colunas visíveis
         out = BytesIO()
         with pd.ExcelWriter(out, engine="openpyxl") as writer:
             df_excel.to_excel(writer, index=False, sheet_name="Relatório")
         out.seek(0)
         wb = load_workbook(out); ws = wb["Relatório"]
-    
+        
         header_font = Font(bold=True, color="FFFFFF")
         header_fill = PatternFill("solid", fgColor="305496")
         center_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
-    
+        
         for cell in ws[1]:
             cell.font = header_font; cell.fill = header_fill
             cell.alignment = center_alignment; cell.border = border
-    
+        
         for row in ws.iter_rows(min_row=2, max_row=ws.max_row, max_col=ws.max_column):
-            grupo_val = row[1].value if ws.cell(row=1, column=2).value == "Grupo" else None
+            # pinta TOTAL / SUBTOTAL se aparecerem na coluna 'Grupo'
+            try:
+                grupo_val = row[1].value  # col B = Grupo
+            except:
+                grupo_val = None
             estilo_fundo = None
             if isinstance(grupo_val, str):
-                if grupo_val.strip().upper() == "TOTAL": estilo_fundo = PatternFill("solid", fgColor="F4B084")
-                elif "SUBTOTAL" in grupo_val.strip().upper(): estilo_fundo = PatternFill("solid", fgColor="D9D9D9")
+                if grupo_val.strip().upper() == "TOTAL":
+                    estilo_fundo = PatternFill("solid", fgColor="F4B084")
+                elif "SUBTOTAL" in grupo_val.strip().upper():
+                    estilo_fundo = PatternFill("solid", fgColor="D9D9D9")
             for cell in row:
                 cell.border = border; cell.alignment = center_alignment
                 if estilo_fundo: cell.fill = estilo_fundo
-                col_name = ws.cell(row=1, column=cell.column).value
-                if isinstance(cell.value, (int,float)):
-                    if col_name == "% Total":
-                        cell.number_format = '0.00%'
-                    elif col_name == "Faturamento":
-                        cell.number_format = '"R$" #,##0.00'
-                    else:
-                        # Total e Rateio em inteiros
-                        cell.number_format = '#,##0'
-    
+                # Funcionários e Rateio em inteiros
+                if isinstance(cell.value, (int, float)):
+                    cell.number_format = '#,##0'
+        
+        # auto width
         for i, col_cells in enumerate(ws.iter_cols(min_row=1, max_row=ws.max_row), start=1):
             max_len = max((len(str(c.value)) for c in col_cells if c.value), default=0)
             ws.column_dimensions[get_column_letter(i)].width = max_len + 2
-    
+        
+        # alinha texto à esquerda em colunas de texto
         for col_nome in ["Tipo","Grupo"]:
             if col_nome in df_excel.columns:
                 col_idx = df_excel.columns.get_loc(col_nome) + 1
                 for cell in ws.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx):
                     for c in cell: c.alignment = Alignment(horizontal="left")
-    
+        
         out_final = BytesIO(); wb.save(out_final); out_final.seek(0)
         st.download_button("📥 Baixar Excel", data=out_final,
-                            file_name="Resumo_Volumetria.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_excel_vol")
+                           file_name="Resumo_Volumetria.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           key="dl_excel_vol")
+
     
         # ========= 13) Exportar PDF =========
         usuario = st.session_state.get("usuario_logado", "Usuário Desconhecido")

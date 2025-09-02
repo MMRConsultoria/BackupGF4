@@ -175,19 +175,53 @@ with st.spinner("⏳ Processando..."):
         grupo_selecionado = st.selectbox("👥 Grupo:", options=grupos_disponiveis, index=0)
     
     with col3:
+  
         df_vendas["Mes/Ano"] = df_vendas["Data"].dt.strftime("%m/%Y")
+        # ordena cronologicamente pelo 1º dia de cada mês/ano
+        def _ord_key(mmyyyy: str):
+            try:
+                return datetime.strptime("01/" + str(mmyyyy), "%d/%m/%Y")
+            except Exception:
+                # fallback para manter no fim se houver formatos estranhos
+                return datetime.min
+        
         meses_disponiveis = sorted(
-            df_vendas["Mes/Ano"].unique(),
-            key=lambda x: datetime.strptime("01/" + x, "%d/%m/%Y")
+            [m for m in df_vendas["Mes/Ano"].dropna().unique()],
+            key=_ord_key
         )
-        meses_selecionados = st.multiselect(
-            "🗓️ Selecione os meses:",
-            options=meses_disponiveis,
-            default=[datetime.today().strftime("%m/%Y")]
-        )
+        
+        # calcula default seguro
+        mes_atual = datetime.today().strftime("%m/%Y")
+        if meses_disponiveis:
+            if mes_atual in meses_disponiveis:
+                default_meses = [mes_atual]
+            else:
+                # pré-seleciona o último mês existente nos dados
+                default_meses = [meses_disponiveis[-1]]
+        else:
+            default_meses = []  # sem opções → sem default
+        
+        # widget: só passa default se ele for subset de options
+        if meses_disponiveis:
+            meses_selecionados = st.multiselect(
+                "🗓️ Selecione os meses:",
+                options=meses_disponiveis,
+                default=default_meses,
+                key="ms_meses"
+            )
+        else:
+            st.warning("⚠️ Nenhum mês disponível nos dados (verifique a coluna 'Data').")
+            meses_selecionados = []
+
     
     # ==== Aplica filtros ====
-    df_filtrado = df_vendas[df_vendas["Mes/Ano"].isin(meses_selecionados)]
+    # ==== Aplica filtros ====
+    if meses_selecionados:
+        df_filtrado = df_vendas[df_vendas["Mes/Ano"].isin(meses_selecionados)].copy()
+    else:
+        # Se usuário limpou tudo (ou não há meses), mantenha vazio; ajuste se quiser outro comportamento.
+        df_filtrado = df_vendas.iloc[0:0].copy()
+    
     df_filtrado["Período"] = df_filtrado["Data"].dt.strftime("%m/%Y")
     
     if tipo_selecionado != "Todos":
@@ -532,8 +566,9 @@ with st.spinner("⏳ Processando..."):
     # ====== Chamada no seu Streamlit ======
     usuario_logado = st.session_state.get("usuario_logado", "Usuário Desconhecido")
     
-    # monta o título a partir do multiselect existente: `meses_selecionados` (ex.: "08/2025")
-    sele = meses_selecionados if meses_selecionados else [datetime.today().strftime("%m/%Y")]
+    # Usa os meses selecionados; se vazio, tenta o último disponível; senão "(sem dados)"
+    sele = meses_selecionados if meses_selecionados else (meses_disponiveis[-1:] if 'meses_disponiveis' in locals() and meses_disponiveis else ["(sem dados)"])
+    
     if len(sele) == 1:
         mes_rateio = sele[0]
     elif len(sele) == 2:

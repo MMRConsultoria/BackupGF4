@@ -257,7 +257,15 @@ with st.spinner("⏳ Processando..."):
                 df_fin.loc[df_fin["Loja"] == f"Subtotal {grupo_sel}", "% Total"] = 100
                 df_fin.loc[mask_lojas, "Rateio"] = df_fin.loc[mask_lojas, "% Total"] / 100 * total_rateio
                 df_fin.loc[df_fin["Loja"] == f"Subtotal {grupo_sel}", "Rateio"] = df_fin.loc[mask_lojas, "Rateio"].sum()
-
+        # === Reordenar colunas (Aba 1) ===
+        if grupo_sel == "Todos":
+            col_order = ["Tipo", "Grupo", "Total", "% Total", "Rateio"]
+        else:
+            # quando filtra um grupo específico, aparece "Loja"
+            col_order = ["Grupo", "Loja", "Total", "% Total", "Rateio"]
+        
+        # mantém só as colunas nessa ordem (as que existirem)
+        df_fin = df_fin[[c for c in col_order if c in df_fin.columns]]
         # --------- Visual ---------
         df_view = df_fin.copy()
         def fmt_moeda(v):
@@ -535,6 +543,13 @@ with st.spinner("⏳ Processando..."):
                 df_fin.loc[df_fin["Loja"] == f"Subtotal {grupo_sel}", "% Total"] = 100
                 df_fin.loc[mask_lojas, "Rateio"] = df_fin.loc[mask_lojas, "% Total"] / 100 * total_rateio
                 df_fin.loc[df_fin["Loja"] == f"Subtotal {grupo_sel}", "Rateio"] = df_fin.loc[mask_lojas, "Rateio"].sum()
+        # === Reordenar colunas (Aba 2) ===
+        if grupo_sel == "Todos":
+            col_order = ["Tipo", "Grupo", "Total", "% Total", "Rateio"]
+        else:
+            col_order = ["Grupo", "Loja", "Total", "% Total", "Rateio"]
+        
+        df_fin = df_fin[[c for c in col_order if c in df_fin.columns]]
 
         # --------- Visual ---------
         df_view = df_fin.copy()

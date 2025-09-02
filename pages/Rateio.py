@@ -588,11 +588,22 @@ with st.spinner("⏳ Processando..."):
         df_fin = pd.concat([pd.DataFrame([linha_total]), df_fin], ignore_index=True)
     
         # ========= 9) INPUT MANUAL: Total a ratear (R$) =========
-        valor_str = st.text_input(
-            "📦 Total a ratear (R$)",
-            value="0,00",
-            key="rateio_total_vol_str"
-        )
+        # ========= 9) INPUT MANUAL: Despesa + Total a ratear (R$) =========
+        c1, c2 = st.columns([2, 1])
+        
+        with c1:
+            despesa_str = st.text_input(
+                "🧾 Despesa",
+                value=st.session_state.get("despesa_vol_str", ""),
+                key="despesa_vol_str"
+            )
+        
+        with c2:
+            valor_str = st.text_input(
+                "📦 Total a ratear (R$)",
+                value="0,00",
+                key="rateio_total_vol_str"
+            )
         
         def moeda_ptbr_to_float(s: str) -> float:
             s = str(s or "").strip()
@@ -605,7 +616,6 @@ with st.spinner("⏳ Processando..."):
         total_rateio = moeda_ptbr_to_float(valor_str)
         
         # >>> Rateio per capita: (total_rateio ÷ total_funcionarios) × funcionarios_do_grupo
-        # considere apenas as linhas normais (sem TOTAL/Subtotal) para o somatório
         mask_regular = (
             ~df_fin["Grupo"].astype(str).str.startswith("Subtotal")
             & (df_fin["Grupo"].astype(str) != "TOTAL")
@@ -627,7 +637,7 @@ with st.spinner("⏳ Processando..."):
             mask_subtotal_tipo  = (df_fin["Grupo"].astype(str) == f"Subtotal {t}")
             df_fin.loc[mask_subtotal_tipo, "Rateio"] = df_fin.loc[mask_tipo_regular, "Rateio"].sum()
         
-        # Linha TOTAL (seja o "TOTAL" apareça em Grupo ou em Tipo)
+        # Linha TOTAL
         mask_total_grupo = (df_fin["Grupo"].astype(str) == "TOTAL")
         mask_total_tipo  = (df_fin["Tipo"].astype(str)  == "TOTAL")
         soma_rateio = df_fin.loc[mask_regular, "Rateio"].sum()
@@ -639,9 +649,15 @@ with st.spinner("⏳ Processando..."):
         # arredonda para 2 casas (centavos)
         df_fin["Rateio"] = df_fin["Rateio"].round(2)
         
-        # ========= 10) Visão: esconder %/Faturamento; renomear Funcionários (com acento) =========
-        df_view = df_fin.rename(columns={"Funcionarios": "Funcionários"})[["Tipo", "Grupo", "Funcionários", "Rateio"]].copy()
+        # Nova coluna com a descrição da despesa
+        df_fin["Despesa"] = (despesa_str or "").strip()
 
+        
+        # ========= 10) Visão: esconder %/Faturamento; renomear Funcionários (com acento) =========
+        # ========= 10) Visão: esconder %/Faturamento; renomear Funcionários; incluir Despesa =========
+        df_view = df_fin.rename(columns={"Funcionarios": "Funcionários"})[
+            ["Tipo", "Grupo", "Funcionários", "Despesa", "Rateio"]
+        ].copy()
        
     
         # --------- Visual (Funcionários em inteiro; Rateio em R$) ---------
@@ -675,13 +691,22 @@ with st.spinner("⏳ Processando..."):
 
     
         # --------- Exportar Excel (Tipo, Grupo, Funcionários, Rateio) ---------
-        df_excel = df_fin.rename(columns={"Funcionarios": "Funcionários"})[["Tipo","Grupo","Funcionários","Rateio"]].copy()
+        # --------- Exportar Excel (Aba 2: Tipo, Grupo, Funcionários, Despesa, Rateio) ---------
+        df_excel = df_fin.rename(columns={"Funcionarios": "Funcionários"})[
+            ["Tipo", "Grupo", "Funcionários", "Despesa", "Rateio"]
+        ].copy()
         
         out = BytesIO()
         with pd.ExcelWriter(out, engine="openpyxl") as writer:
             df_excel.to_excel(writer, index=False, sheet_name="Relatório")
         out.seek(0)
         wb = load_workbook(out); ws = wb["Relatório"]
+        
+        # (deixe a parte de formatação igual: cabeçalho azul, bordas, auto-width etc.)
+        # Só garanta que a formatação numérica fique assim:
+        # - Funcionários: '#,##0'
+        # - Rateio: '"R$" #,##0.00'
+
         
         header_font = Font(bold=True, color="FFFFFF")
         header_fill = PatternFill("solid", fgColor="305496")

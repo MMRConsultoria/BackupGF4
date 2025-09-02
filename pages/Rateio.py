@@ -469,36 +469,47 @@ with st.spinner("⏳ Processando..."):
             df_funcs = df_funcs.groupby(["Mes/Ano","Grupo"], as_index=False)["Funcionarios"].sum()
     
         # ========= 2) Filtros (meses = união faturamento + volumetria) =========
+        # ========= 2) Filtros (meses = união faturamento + volumetria) =========
+        # cria as colunas de filtros SÓ desta aba
+        col1, col2, col3 = st.columns([1, 1, 2])
+        
+        # Mes/Ano nas duas bases
         df_vendas["Mes/Ano"] = df_vendas["Data"].dt.strftime("%m/%Y")
-    
-        # opções de Tipo/Grupo como união das fontes
+        
         with col1:
+            # UNIÃO dos tipos do faturamento + o tipo "ADM"
             tipos_fat = set(df_vendas["Tipo"].dropna().astype(str).str.strip())
             tipos = sorted(tipos_fat | {"ADM"})
             tipos.insert(0, "Todos")
             tipo_sel = st.selectbox("🏪 Tipo:", options=tipos, index=0, key="tipo_vol")
-    
+        
         with col2:
+            # UNIÃO de grupos: faturamento + volumetria
             grupos_fat = set(df_vendas["Grupo"].dropna().astype(str).str.strip().str.upper())
             grupos_vol = set(df_funcs["Grupo"].dropna().astype(str).str.strip().str.upper()) if not df_funcs.empty else set()
             grupos = sorted(grupos_fat | grupos_vol)
             grupos.insert(0, "Todos")
             grupo_sel = st.selectbox("👥 Grupo:", options=grupos, index=0, key="grupo_vol")
-    
+        
         with col3:
             from datetime import datetime
             def _ordkey(mmyyyy: str):
                 try: return datetime.strptime("01/" + str(mmyyyy), "%d/%m/%Y")
                 except Exception: return datetime.min
-    
+        
             meses_fat = set(df_vendas["Mes/Ano"].dropna().unique().tolist())
             meses_fun = set(df_funcs["Mes/Ano"].dropna().unique().tolist()) if not df_funcs.empty else set()
             meses_opts = sorted(meses_fat | meses_fun, key=_ordkey)
-    
+        
             mes_atual = datetime.today().strftime("%m/%Y")
             default_meses = [mes_atual] if mes_atual in meses_opts else (meses_opts[-1:] if meses_opts else [])
-            meses_sel = st.multiselect("🗓️ Selecione os meses:", options=meses_opts,
-                                       default=default_meses, key="ms_meses_vol")
+            meses_sel = st.multiselect(
+                "🗓️ Selecione os meses:",
+                options=meses_opts,
+                default=default_meses,
+                key="ms_meses_vol"
+            )
+
     
         # ========= 3) Base de faturamento (para manter grupos do mês e exibir o valor) =========
         if meses_sel:

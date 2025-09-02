@@ -117,10 +117,12 @@ with st.spinner("⏳ Processando..."):
     # ================================
     # 3. Separação em ABAS
     # ================================
+   
+    aba1, aba2,  = st.tabs(["📄 %Faturamento", "🔄 Volumetria"])
     
     
     # ================================
-    # Aba 3: Relatórios Vendas
+    # Aba 3: Rateio % Faturamento
     # ================================
     
     
@@ -158,7 +160,11 @@ with st.spinner("⏳ Processando..."):
         .str.replace(",", ".", regex=False)
     )
     df_vendas["Fat.Total"] = pd.to_numeric(df_vendas["Fat.Total"], errors="coerce")
+    # ================================
+    # 📄 Aba 1 - %Faturamento
+    # ================================
     
+    with aba1:
     
     # ==== Filtros lado a lado ====
     
@@ -584,3 +590,9 @@ with st.spinner("⏳ Processando..."):
         file_name=f"Rateio_{datetime.now().strftime('%Y%m%d')}.pdf",
         mime="application/pdf"
     )
+
+      # ================================
+    # 📄 Aba 1 - %Faturamento
+    # ================================
+    
+    with aba2:

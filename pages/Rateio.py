@@ -449,12 +449,17 @@ with st.spinner("⏳ Processando..."):
     
         col1, col2, col3 = st.columns([1, 1, 2])
         with col1:
-            tipos = sorted(df_vendas["Tipo"].dropna().unique())
+            # UNIÃO dos tipos do faturamento + o tipo "ADM"
+            tipos_fat = set(df_vendas["Tipo"].dropna().astype(str).str.strip())
+            tipos = sorted(tipos_fat | {"ADM"})
             tipos.insert(0, "Todos")
             tipo_sel = st.selectbox("🏪 Tipo:", options=tipos, index=0, key="tipo_vol")
-    
+        
         with col2:
-            grupos = sorted(df_vendas["Grupo"].dropna().unique())
+            # UNIÃO de grupos: faturamento + volumetria (df_funcs)
+            grupos_fat = set(df_vendas["Grupo"].dropna().astype(str).str.strip().str.upper())
+            grupos_vol = set(df_funcs["Grupo"].dropna().astype(str).str.strip().str.upper())
+            grupos = sorted(grupos_fat | grupos_vol)
             grupos.insert(0, "Todos")
             grupo_sel = st.selectbox("👥 Grupo:", options=grupos, index=0, key="grupo_vol")
     
@@ -497,8 +502,22 @@ with st.spinner("⏳ Processando..."):
         df_fun_g = df_funcs_sel.groupby("Grupo", as_index=False)["Funcionarios"].sum()
     
         # ========= 5) Juntar: manter TODOS os grupos que tiveram faturamento; Funcionários = 0 se não houver na planilha externa =========
-        df_fin = df_fat.merge(df_fun_g, on="Grupo", how="left")
+        # Mantém TODOS os grupos: tanto os que vêm do faturamento quanto os que existem só na Volumetria
+        df_fin = df_fat.merge(df_fun_g, on="Grupo", how="outer")
+        
+        # Se o grupo vier só da Volumetria, não terá Tipo: marcamos como "ADM"
+        df_fin["Tipo"] = df_fin["Tipo"].fillna("ADM")
+        
+        # Preenche faltantes
+        df_fin["Faturamento"] = df_fin["Faturamento"].fillna(0.0)
         df_fin["Funcionarios"] = df_fin["Funcionarios"].fillna(0.0)
+        
+        # Se o usuário filtrou por Tipo/Grupo, aplicamos o filtro DEPOIS da união
+        if tipo_sel != "Todos":
+            df_fin = df_fin[df_fin["Tipo"] == tipo_sel]
+        if grupo_sel != "Todos":
+            df_fin = df_fin[df_fin["Grupo"] == grupo_sel]
+
     
         # ========= 6) Percentual por funcionários (dentro de cada Tipo) =========
         # (se funcionário total do tipo = 0, percentuais vão 0)

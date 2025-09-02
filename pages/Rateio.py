@@ -587,12 +587,23 @@ with st.spinner("⏳ Processando..."):
         linha_total[cols_drop[0] if cols_drop else "Grupo"] = "TOTAL"
         df_fin = pd.concat([pd.DataFrame([linha_total]), df_fin], ignore_index=True)
     
-        # ========= 9) INPUT MANUAL: Total a ratear (proporcional a Funcionários) =========
-        total_rateio = st.number_input(
-            "📦 Total a ratear (Volumetria por funcionários)",
-            min_value=0.0, step=1.0, format="%.0f",
-            key="rateio_total_vol"
+        # ========= 9) INPUT MANUAL: Total a ratear (R$) =========
+        valor_str = st.text_input(
+            "📦 Total a ratear (R$)",
+            value="0,00",
+            key="rateio_total_vol_str"
         )
+        
+        def moeda_ptbr_to_float(s: str) -> float:
+            s = str(s or "").strip()
+            s = s.replace("R$", "").replace(" ", "").replace(".", "").replace(",", ".")
+            try:
+                return float(s)
+            except:
+                return 0.0
+        
+        total_rateio = moeda_ptbr_to_float(valor_str)
+        
         # >>> Rateio per capita: (total_rateio ÷ total_funcionarios) × funcionarios_do_grupo
         # considere apenas as linhas normais (sem TOTAL/Subtotal) para o somatório
         mask_regular = (
@@ -601,8 +612,11 @@ with st.spinner("⏳ Processando..."):
             & (df_fin["Tipo"].astype(str)  != "TOTAL")
         )
         
+        # garante numérico
+        df_fin["Funcionarios"] = pd.to_numeric(df_fin["Funcionarios"], errors="coerce").fillna(0)
+        
         total_func = df_fin.loc[mask_regular, "Funcionarios"].sum()
-        valor_por_func = (float(total_rateio) / total_func) if total_func > 0 else 0.0
+        valor_por_func = (total_rateio / total_func) if total_func > 0 else 0.0
         
         # aplica o per-capita nos grupos
         df_fin.loc[mask_regular, "Rateio"] = df_fin.loc[mask_regular, "Funcionarios"] * valor_por_func
@@ -621,22 +635,33 @@ with st.spinner("⏳ Processando..."):
             df_fin.loc[mask_total_grupo, "Rateio"] = soma_rateio
         elif mask_total_tipo.any():
             df_fin.loc[mask_total_tipo, "Rateio"] = soma_rateio
+        
+        # arredonda para 2 casas (centavos)
+        df_fin["Rateio"] = df_fin["Rateio"].round(2)
+        
+        # ========= 10) Visão: esconder %/Faturamento; renomear Funcionários (com acento) =========
+        df_view = df_fin.rename(columns={"Funcionarios": "Funcionários"})[["Tipo", "Grupo", "Funcionários", "Rateio"]].copy()
+
+       
     
-        # ========= 10) Visão: esconder % Total e Faturamento; renomear Funcionários (com acento) =========
-        df_view = df_fin.copy()
-        df_view = df_view.rename(columns={"Funcionarios": "Funcionários"})
-        df_view = df_view[["Tipo", "Grupo", "Funcionários", "Rateio"]]
-    
-        # ========= 11) Visual =========
+        # --------- Visual (Funcionários em inteiro; Rateio em R$) ---------
+        def fmt_moeda_br(v):
+            try:
+                return "R$ " + f"{float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            except:
+                return v
+        
         def fmt_int_br(v):
-            try: return f"{int(round(float(v))):,}".replace(",", ".")
-            except: return v
-    
+            try:
+                return f"{int(round(float(v))):,}".replace(",", ".")
+            except:
+                return v
+        
         if "Funcionários" in df_view.columns:
             df_view["Funcionários"] = df_view["Funcionários"].apply(lambda x: fmt_int_br(x) if pd.notnull(x) and x != "" else x)
         if "Rateio" in df_view.columns:
-            df_view["Rateio"] = df_view["Rateio"].apply(lambda x: fmt_int_br(x) if pd.notnull(x) and x != "" else x)
-    
+            df_view["Rateio"] = df_view["Rateio"].apply(lambda x: fmt_moeda_br(x) if pd.notnull(x) and x != "" else x)
+        
         def aplicar_estilo_vol(df_in):
             def estilo(row):
                 if row.get("Grupo","") == "TOTAL":
@@ -645,54 +670,69 @@ with st.spinner("⏳ Processando..."):
                     return ["background-color: #d9d9d9; font-weight: bold"] * len(row)
                 return ["" for _ in row]
             return df_in.style.apply(estilo, axis=1)
-    
+        
         st.dataframe(aplicar_estilo_vol(df_view), use_container_width=True, height=700)
+
     
-        # ========= 12) Exportar Excel (somente colunas visíveis) =========
-        df_excel = df_view.copy()
+        # --------- Exportar Excel (Tipo, Grupo, Funcionários, Rateio) ---------
+        df_excel = df_fin.rename(columns={"Funcionarios": "Funcionários"})[["Tipo","Grupo","Funcionários","Rateio"]].copy()
+        
         out = BytesIO()
         with pd.ExcelWriter(out, engine="openpyxl") as writer:
             df_excel.to_excel(writer, index=False, sheet_name="Relatório")
         out.seek(0)
         wb = load_workbook(out); ws = wb["Relatório"]
-    
+        
         header_font = Font(bold=True, color="FFFFFF")
         header_fill = PatternFill("solid", fgColor="305496")
         center_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
-    
+        
         for cell in ws[1]:
             cell.font = header_font; cell.fill = header_fill
             cell.alignment = center_alignment; cell.border = border
-    
+        
         for row in ws.iter_rows(min_row=2, max_row=ws.max_row, max_col=ws.max_column):
-            try: grupo_val = row[1].value  # coluna B = Grupo
-            except: grupo_val = None
+            try:
+                grupo_val = row[1].value  # col B = Grupo
+            except:
+                grupo_val = None
             estilo_fundo = None
             if isinstance(grupo_val, str):
-                if grupo_val.strip().upper() == "TOTAL": estilo_fundo = PatternFill("solid", fgColor="F4B084")
-                elif "SUBTOTAL" in grupo_val.strip().upper(): estilo_fundo = PatternFill("solid", fgColor="D9D9D9")
+                if grupo_val.strip().upper() == "TOTAL":
+                    estilo_fundo = PatternFill("solid", fgColor="F4B084")
+                elif "SUBTOTAL" in grupo_val.strip().upper():
+                    estilo_fundo = PatternFill("solid", fgColor="D9D9D9")
+        
             for cell in row:
                 cell.border = border; cell.alignment = center_alignment
                 if estilo_fundo: cell.fill = estilo_fundo
+                # formatos: Funcionários = inteiro; Rateio = moeda R$
+                col_name = ws.cell(row=1, column=cell.column).value
                 if isinstance(cell.value, (int,float)):
-                    cell.number_format = '#,##0'  # Funcionários e Rateio em inteiros
-    
+                    if col_name == "Rateio":
+                        cell.number_format = '"R$" #,##0.00'
+                    elif col_name == "Funcionários":
+                        cell.number_format = '#,##0'
+        
+        # auto width
         for i, col_cells in enumerate(ws.iter_cols(min_row=1, max_row=ws.max_row), start=1):
             max_len = max((len(str(c.value)) for c in col_cells if c.value), default=0)
             ws.column_dimensions[get_column_letter(i)].width = max_len + 2
-    
+        
+        # alinha textos à esquerda
         for col_nome in ["Tipo","Grupo"]:
             if col_nome in df_excel.columns:
                 col_idx = df_excel.columns.get_loc(col_nome) + 1
                 for cell in ws.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx):
                     for c in cell: c.alignment = Alignment(horizontal="left")
-    
+        
         out_final = BytesIO(); wb.save(out_final); out_final.seek(0)
         st.download_button("📥 Baixar Excel", data=out_final,
-                            file_name="Resumo_Volumetria.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_excel_vol")
+                           file_name="Resumo_Volumetria.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           key="dl_excel_vol")
+
     
         # ========= 13) Exportar PDF (usa df_view: já sem %/Faturamento) =========
         usuario = st.session_state.get("usuario_logado", "Usuário Desconhecido")

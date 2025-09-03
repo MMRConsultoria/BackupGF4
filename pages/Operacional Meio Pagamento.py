@@ -290,63 +290,66 @@ with st.spinner("⏳ Processando..."):
         elif not all(c in st.session_state.df_meio_pagamento.columns for c in ["Meio de Pagamento","Loja","Data"]):
             st.warning("⚠️ O arquivo processado não tem as colunas necessárias.")
         else:
-                   
+          
             # =======================================================
             # 1) Base: copia do que foi montado na Aba 1
             # =======================================================
             df_final = st.session_state.df_meio_pagamento.copy()
-
+        
             # =======================================================
-            # 2) Garantir "Tipo de Pagamento"
-            #    (se por algum motivo não veio da Aba 1, mapeamos aqui)
+            # 2) Garantir "Tipo de Pagamento" e "Tipo DRE"
+            #    (se por algum motivo não vieram da Aba 1, mapeamos aqui)
             # =======================================================
             # normaliza "Meio de Pagamento" para casarmos com a tabela
             df_final["Meio de Pagamento"] = (
                 df_final["Meio de Pagamento"].astype(str).str.strip().str.lower()
             )
-
+        
             # df_meio_pgto_google já foi carregado no topo do app (Aba "Tabela Meio Pagamento")
-            # garantir colunas
             df_meio_pgto_google.columns = [str(c).strip() for c in df_meio_pgto_google.columns]
             for c in ["Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE"]:
                 if c not in df_meio_pgto_google.columns:
                     df_meio_pgto_google[c] = ""
-            
-            # normaliza para join
-            df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].astype(str).str.strip().str.lower()
-            pgto_map = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip()))
-            dre_map  = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"].astype(str).str.strip()))
-            
+        
+            df_meio_pgto_google["Meio de Pagamento"] = (
+                df_meio_pgto_google["Meio de Pagamento"].astype(str).str.strip().str.lower()
+            )
+            df_meio_pgto_google["Tipo de Pagamento"] = (
+                df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip()
+            )
+            df_meio_pgto_google["Tipo DRE"] = (
+                df_meio_pgto_google["Tipo DRE"].astype(str).str.strip()
+            )
+        
+            # mapas
+            pgto_map = dict(zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo de Pagamento"]))
+            dre_map  = dict(zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo DRE"]))
+        
+            # chave normalizada no df_final
             df_final["__meio_norm__"] = df_final["Meio de Pagamento"].astype(str).str.strip().str.lower()
-            
-            # insere/completa Tipo de Pagamento
+        
+            # ---- Tipo de Pagamento (logo após Meio) ----
             if "Tipo de Pagamento" not in df_final.columns:
-                df_final.insert(
-                    loc=df_final.columns.get_loc("Meio de Pagamento") + 1,
-                    column="Tipo de Pagamento",
-                    value=df_final["__meio_norm__"].map(pgto_map)
-                )
+                pos = df_final.columns.get_loc("Meio de Pagamento") + 1
+                df_final.insert(pos, "Tipo de Pagamento", df_final["__meio_norm__"].map(pgto_map))
             else:
                 df_final["Tipo de Pagamento"] = df_final["Tipo de Pagamento"].fillna(df_final["__meio_norm__"].map(pgto_map))
-            
-            # insere/completa Tipo DRE logo após Tipo de Pagamento
+        
+            # ---- Tipo DRE (logo após Tipo de Pagamento) ----
             if "Tipo DRE" not in df_final.columns:
-                df_final.insert(
-                    loc=df_final.columns.get_loc("Meio de Pagamento") + 2,
-                    column="Tipo DRE",
-                    value=df_final["__meio_norm__"].map(dre_map)
-                )
+                pos = df_final.columns.get_loc("Tipo de Pagamento") + 1
+                df_final.insert(pos, "Tipo DRE", df_final["__meio_norm__"].map(dre_map))
             else:
                 df_final["Tipo DRE"] = df_final["Tipo DRE"].fillna(df_final["__meio_norm__"].map(dre_map))
-            
+        
             df_final.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
-
+        
             # =======================================================
             # 3) Ordenar colunas (deixa Tipo imediatamente após Meio)
             # =======================================================
             cols_preferidas = [
                 "Data", "Dia da Semana",
-                "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",  # <-- aqui também
+                "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",   # <-- acrescentado aqui
                 "Loja", "Código Everest", "Grupo", "Código Grupo Everest",
                 "Valor (R$)", "Mês", "Ano"
             ]
@@ -354,13 +357,13 @@ with st.spinner("⏳ Processando..."):
             cols_ordenadas = [c for c in cols_preferidas if c in df_final.columns] + \
                              [c for c in df_final.columns if c not in cols_preferidas and c != "M"]
             df_final = df_final[cols_ordenadas]
-
+        
             # =======================================================
             # 4) Chave M + conversões (igual antes)
             # =======================================================
             df_final['M'] = pd.to_datetime(df_final['Data'], format='%d/%m/%Y').dt.strftime('%Y-%m-%d') + \
                             df_final['Meio de Pagamento'] + df_final['Loja']
-
+        
             # valor para float
             df_final['Valor (R$)'] = df_final['Valor (R$)'].apply(lambda x: float(str(x).replace(',', '.')))
             # data para serial do Sheets
@@ -369,67 +372,54 @@ with st.spinner("⏳ Processando..."):
             for col in ["Código Everest", "Código Grupo Everest", "Ano"]:
                 if col in df_final.columns:
                     df_final[col] = df_final[col].apply(lambda x: int(x) if pd.notnull(x) and str(x).strip() != "" else "")
-
+        
             # garante M no final
             if "M" in df_final.columns:
                 df_final = df_final[[c for c in df_final.columns if c != "M"] + ["M"]]
-
-
+        
             # =======================================================
-            # 5) Planilha destino + duplicidade usando a coluna "M"
+            # 5) Planilha destino + duplicidade usando índice dinâmico de 'M'
             # =======================================================
             aba_destino = gc.open("Vendas diarias").worksheet("Faturamento Meio Pagamento")
             valores_existentes = aba_destino.get_all_values()
-            
-            if len(valores_existentes) == 0:
-                # Se a planilha estiver vazia, cria o header com as colunas do df_final
-                header_sheet = list(df_final.columns)
-                # garante "M" no fim do header
-                if "M" not in header_sheet:
-                    header_sheet.append("M")
-                aba_destino.append_row(header_sheet)
-                valores_existentes = [header_sheet]
-            else:
-                header_sheet = valores_existentes[0]
-            
-            # Índice 0-based da coluna "M" (já existe no cabeçalho)
-            M_IDX = header_sheet.index("M")
-            
-            # Conjunto de chaves M existentes
+        
+            m_idx = -1
+            if valores_existentes:
+                header = [h.strip() for h in valores_existentes[0]]
+                header_lower = [h.lower() for h in header]
+                if "m" in header_lower:
+                    m_idx = header_lower.index("m")
+        
+            # coleção de chaves M existentes
             if len(valores_existentes) > 1:
-                dados_existentes = set(
-                    linha[M_IDX]
-                    for linha in valores_existentes[1:]
-                    if len(linha) > M_IDX and str(linha[M_IDX]).strip() != ""
-                )
+                if m_idx >= 0:
+                    dados_existentes = set(
+                        linha[m_idx] for linha in valores_existentes[1:] if len(linha) > m_idx
+                    )
+                else:
+                    # fallback: considera última coluna como M
+                    dados_existentes = set(
+                        linha[-1] for linha in valores_existentes[1:] if len(linha) > 0
+                    )
             else:
                 dados_existentes = set()
-            
-            # Alinha df_final à ordem do cabeçalho (mantendo "M" por último)
-            cols_for_sheet = [c for c in header_sheet if c in df_final.columns and c != "M"]
-            if "M" not in df_final.columns:
-                # cria M caso não exista (deve existir pelo seu código, mas fica o fallback)
-                df_final["M"] = pd.to_datetime(df_final["Data"], unit='D', origin="1899-12-30") \
-                                    .dt.strftime('%Y-%m-%d') + df_final["Meio de Pagamento"] + df_final["Loja"]
-            cols_for_sheet = [c for c in cols_for_sheet if c != "M"] + ["M"]
-            df_final = df_final[cols_for_sheet]
-            
+        
             novos_dados, duplicados = [], []
             for linha in df_final.fillna("").values.tolist():
-                chave_m = linha[-1]  # "M" é a última coluna
+                chave_m = linha[-1]  # M é a última coluna do df_final
                 if chave_m not in dados_existentes:
                     novos_dados.append(linha)
                     dados_existentes.add(chave_m)
                 else:
                     duplicados.append(linha)
-
+        
             # =======================================================
             # 6) Envio
             # =======================================================
             lojas_nao_cadastradas = df_final[df_final["Código Everest"].astype(str).isin(["", "nan"])]['Loja'].unique() \
                 if "Código Everest" in df_final.columns else []
             todas_lojas_ok = len(lojas_nao_cadastradas) == 0
-
+        
             if todas_lojas_ok and st.button("📥 Enviar dados para o Google Sheets"):
                 with st.spinner("🔄 Atualizando..."):
                     if novos_dados:

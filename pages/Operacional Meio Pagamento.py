@@ -8,7 +8,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 st.set_page_config(page_title="Meio de Pagamento", layout="wide")
-import streamlit as st
+
 
 
 # 🔥 CSS para estilizar as abas
@@ -61,25 +61,39 @@ with st.spinner("⏳ Processando..."):
     planilha = gc.open("Vendas diarias")
     
     df_empresa = pd.DataFrame(planilha.worksheet("Tabela Empresa").get_all_records())
+    # === Carga e normalização da Tabela Meio Pagamento ===
+ 
     df_meio_pgto_google = pd.DataFrame(planilha.worksheet("Tabela Meio Pagamento").get_all_records())
-
-    # Padroniza nomes de colunas e garante que as colunas existam
+    
+    # 1) Padroniza nomes de colunas
     df_meio_pgto_google.columns = [str(c).strip() for c in df_meio_pgto_google.columns]
+    
+    # 2) Garante colunas necessárias
     if "Meio de Pagamento" not in df_meio_pgto_google.columns:
         df_meio_pgto_google["Meio de Pagamento"] = ""
     if "Tipo de Pagamento" not in df_meio_pgto_google.columns:
         df_meio_pgto_google["Tipo de Pagamento"] = ""
+    if "Tipo DRE" not in df_meio_pgto_google.columns:
+        df_meio_pgto_google["Tipo DRE"] = ""
     
-    # Normaliza os valores para o join
+    # 3) Normaliza valores usados no join
     df_meio_pgto_google["Meio de Pagamento"] = (
-        df_meio_pgto_google["Meio de Pagamento"].astype(str).str.strip().str.lower()
+        df_meio_pgto_google["Meio de Pagamento"].astype(str).str.strip()
     )
     df_meio_pgto_google["Tipo de Pagamento"] = (
         df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip()
     )
+    df_meio_pgto_google["Tipo DRE"] = (
+        df_meio_pgto_google["Tipo DRE"].astype(str).str.strip()
+    )
     
-    # Evita duplicados na chave de junção
-    df_meio_pgto_google = df_meio_pgto_google.drop_duplicates(subset=["Meio de Pagamento"], keep="first")
+    # 4) Cria chave normalizada (minúsculas) e remove duplicados na chave
+    df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].str.lower()
+    df_meio_pgto_google = df_meio_pgto_google.drop_duplicates(subset=["__meio_norm__"], keep="first")
+    
+    # 5) Dicionários de mapeamento (pela chave normalizada)
+    tipo_pgto_map = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"]))
+    tipo_dre_map  = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"]))
 
     
     # 🔥 Título
@@ -173,21 +187,46 @@ with st.spinner("⏳ Processando..."):
                     df_empresa["Loja"] = df_empresa["Loja"].str.strip().str.lower()
                     df_meio_pagamento = pd.merge(df_meio_pagamento, df_empresa, on="Loja", how="left")
                     # >>> NOVO: mapear "Tipo de Pagamento" pela chave "Meio de Pagamento"
-                    tipo_map = dict(
-                        zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo de Pagamento"])
+                    # === Normaliza a chave no df_meio_pagamento para casar com o mapa ===
+                    if "Meio de Pagamento" not in df_meio_pagamento.columns:
+                        df_meio_pagamento["Meio de Pagamento"] = ""
+                    
+                    df_meio_pagamento["__meio_norm__"] = (
+                        df_meio_pagamento["Meio de Pagamento"].astype(str).str.strip().str.lower()
                     )
+                    
+                    # === Mapeia Tipo de Pagamento e Tipo DRE a partir da Tabela Meio Pagamento ===
+                    col_meio_idx = df_meio_pagamento.columns.get_loc("Meio de Pagamento")
+                    
+                    # Insere "Tipo de Pagamento" logo após "Meio de Pagamento"
                     df_meio_pagamento.insert(
-                        loc=df_meio_pagamento.columns.get_loc("Meio de Pagamento") + 1,
+                        loc=col_meio_idx + 1,
                         column="Tipo de Pagamento",
-                        value=df_meio_pagamento["Meio de Pagamento"].map(tipo_map)
-                    )    
+                        value=df_meio_pagamento["__meio_norm__"].map(tipo_pgto_map).fillna("")
+                    )
+                    
+                    # Insere "Tipo DRE" imediatamente após "Tipo de Pagamento"
+                    df_meio_pagamento.insert(
+                        loc=col_meio_idx + 2,
+                        column="Tipo DRE",
+                        value=df_meio_pagamento["__meio_norm__"].map(tipo_dre_map).fillna("")
+                    )
+                    
+                    # (Opcional) Remove a chave técnica
+                    df_meio_pagamento.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
+
+
+
+                    
+                    
+                       
                     df_meio_pagamento["Mês"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.month.map({
                         1:'jan',2:'fev',3:'mar',4:'abr',5:'mai',6:'jun',7:'jul',8:'ago',9:'set',10:'out',11:'nov',12:'dez'})
                     df_meio_pagamento["Ano"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.year
     
                     df_meio_pagamento = df_meio_pagamento[[
                         "Data", "Dia da Semana",
-                        "Meio de Pagamento", "Tipo de Pagamento",  # <-- novo ao lado
+                        "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",  # <-- inclui aqui
                         "Loja", "Código Everest",
                         "Grupo", "Código Grupo Everest",
                         "Valor (R$)", "Mês", "Ano"
@@ -201,10 +240,15 @@ with st.spinner("⏳ Processando..."):
                     col2.markdown(f"<div style='font-size:1.2rem;'>💰 Valor total<br><span style='color:green;'>{valor_total}</span></div>", unsafe_allow_html=True)
     
                     # Validação das lojas e meios de pagamento
-                    empresas_nao_localizadas = df_meio_pagamento[df_meio_pagamento["Código Everest"].isna()]["Loja"].unique()
+                    empresas_nao_localizadas = df_meio_pagamento[
+                        df_meio_pagamento["Código Everest"].astype(str).str.strip().isin(["", "nan"])
+                    ]["Loja"].unique()
+                   # ⬇️ SUBSTITUA o cálculo antigo de meios_nao_localizados por este:
+                    meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
                     meios_nao_localizados = df_meio_pagamento[
-                        ~df_meio_pagamento["Meio de Pagamento"].isin(df_meio_pgto_google["Meio de Pagamento"])
+                        ~df_meio_pagamento["Meio de Pagamento"].str.strip().str.lower().isin(meios_norm_tabela)
                     ]["Meio de Pagamento"].unique()
+
     
                     if len(empresas_nao_localizadas) == 0 and len(meios_nao_localizados) == 0:
                         st.success("✅ Todas as empresas e todos os meios de pagamento foram localizados!")
@@ -262,41 +306,47 @@ with st.spinner("⏳ Processando..."):
             )
 
             # df_meio_pgto_google já foi carregado no topo do app (Aba "Tabela Meio Pagamento")
+            # garantir colunas
             df_meio_pgto_google.columns = [str(c).strip() for c in df_meio_pgto_google.columns]
-            if "Meio de Pagamento" not in df_meio_pgto_google.columns:
-                df_meio_pgto_google["Meio de Pagamento"] = ""
-            if "Tipo de Pagamento" not in df_meio_pgto_google.columns:
-                df_meio_pgto_google["Tipo de Pagamento"] = ""
-
-            df_meio_pgto_google["Meio de Pagamento"] = (
-                df_meio_pgto_google["Meio de Pagamento"].astype(str).str.strip().str.lower()
-            )
-            df_meio_pgto_google["Tipo de Pagamento"] = (
-                df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip()
-            )
-
-            tipo_map = dict(
-                zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo de Pagamento"])
-            )
-
+            for c in ["Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE"]:
+                if c not in df_meio_pgto_google.columns:
+                    df_meio_pgto_google[c] = ""
+            
+            # normaliza para join
+            df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].astype(str).str.strip().str.lower()
+            pgto_map = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip()))
+            dre_map  = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"].astype(str).str.strip()))
+            
+            df_final["__meio_norm__"] = df_final["Meio de Pagamento"].astype(str).str.strip().str.lower()
+            
+            # insere/completa Tipo de Pagamento
             if "Tipo de Pagamento" not in df_final.columns:
                 df_final.insert(
                     loc=df_final.columns.get_loc("Meio de Pagamento") + 1,
                     column="Tipo de Pagamento",
-                    value=df_final["Meio de Pagamento"].map(tipo_map)
+                    value=df_final["__meio_norm__"].map(pgto_map)
                 )
             else:
-                # completa nulos se houver
-                df_final["Tipo de Pagamento"] = df_final["Tipo de Pagamento"].fillna(
-                    df_final["Meio de Pagamento"].map(tipo_map)
+                df_final["Tipo de Pagamento"] = df_final["Tipo de Pagamento"].fillna(df_final["__meio_norm__"].map(pgto_map))
+            
+            # insere/completa Tipo DRE logo após Tipo de Pagamento
+            if "Tipo DRE" not in df_final.columns:
+                df_final.insert(
+                    loc=df_final.columns.get_loc("Meio de Pagamento") + 2,
+                    column="Tipo DRE",
+                    value=df_final["__meio_norm__"].map(dre_map)
                 )
+            else:
+                df_final["Tipo DRE"] = df_final["Tipo DRE"].fillna(df_final["__meio_norm__"].map(dre_map))
+            
+            df_final.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
 
             # =======================================================
             # 3) Ordenar colunas (deixa Tipo imediatamente após Meio)
             # =======================================================
             cols_preferidas = [
                 "Data", "Dia da Semana",
-                "Meio de Pagamento", "Tipo de Pagamento",
+                "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",  # <-- aqui também
                 "Loja", "Código Everest", "Grupo", "Código Grupo Everest",
                 "Valor (R$)", "Mês", "Ano"
             ]
@@ -325,32 +375,55 @@ with st.spinner("⏳ Processando..."):
                 df_final = df_final[[c for c in df_final.columns if c != "M"] + ["M"]]
 
             # =======================================================
-            # 5) Planilha destino + duplicidade usando COLUNA L (0-based = 11)
+            # =======================================================
+            # 5) Planilha destino + duplicidade usando a coluna "M" (índice dinâmico)
             # =======================================================
             aba_destino = gc.open("Vendas diarias").worksheet("Faturamento Meio Pagamento")
             valores_existentes = aba_destino.get_all_values()
-
-            # Coluna L é a 12ª coluna -> índice 0-based = 11
-            L_IDX = 11
-
-            # coleção de chaves existentes a partir da coluna L
+            
+            if len(valores_existentes) == 0:
+                header_sheet = list(df_final.columns)  # se não tem nada ainda, usa as colunas do df_final
+                aba_destino.append_row(header_sheet)
+                valores_existentes = [header_sheet]
+            else:
+                header_sheet = valores_existentes[0]
+            
+            # Detecta o índice (0-based) da coluna "M" no Sheets
+            try:
+                M_IDX = header_sheet.index("M")
+            except ValueError:
+                # Se não existir (planilha antiga), cria a coluna M no fim do header
+                header_sheet = header_sheet + ["M"]
+                aba_destino.update('A1', [header_sheet])
+                M_IDX = len(header_sheet) - 1
+                valores_existentes = [header_sheet] + valores_existentes[1:]
+            
+            # Conjunto de chaves M já existentes
             if len(valores_existentes) > 1:
-                header_len = len(valores_existentes[0])
-                if header_len <= L_IDX:
-                    # fallback (se a planilha tiver menos de 12 colunas por algum motivo)
-                    L_IDX = header_len - 1
                 dados_existentes = set(
-                    linha[L_IDX]
+                    linha[M_IDX]
                     for linha in valores_existentes[1:]
-                    if len(linha) > L_IDX and str(linha[L_IDX]).strip() != ""
+                    if len(linha) > M_IDX and str(linha[M_IDX]).strip() != ""
                 )
             else:
                 dados_existentes = set()
-
+            
+            # Garante que a ordem das colunas do df_final bate com o header do Sheets
+            # (exceto "M", que colocamos sempre por último)
+            cols_for_sheet = [c for c in header_sheet if c in df_final.columns and c != "M"]
+            if "M" in df_final.columns:
+                cols_for_sheet = [c for c in cols_for_sheet if c != "M"] + ["M"]
+            else:
+                # Se o DF não tiver M por algum motivo, cria agora
+                df_final["M"] = pd.to_datetime(df_final["Data"], unit='D', origin="1899-12-30").dt.strftime('%Y-%m-%d') + \
+                                df_final["Meio de Pagamento"] + df_final["Loja"]
+                cols_for_sheet = [c for c in cols_for_sheet if c != "M"] + ["M"]
+            
+            df_final = df_final[cols_for_sheet]
+            
             novos_dados, duplicados = [], []
             for linha in df_final.fillna("").values.tolist():
-                # df_final foi ordenado para que 'M' seja a ÚLTIMA coluna -> deve cair em L no Sheets
-                chave_m = linha[-1]
+                chave_m = linha[-1]  # "M" é a última da lista cols_for_sheet
                 if chave_m not in dados_existentes:
                     novos_dados.append(linha)
                     dados_existentes.add(chave_m)

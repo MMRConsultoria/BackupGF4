@@ -374,31 +374,28 @@ with st.spinner("⏳ Processando..."):
             if "M" in df_final.columns:
                 df_final = df_final[[c for c in df_final.columns if c != "M"] + ["M"]]
 
+
             # =======================================================
-            # =======================================================
-            # 5) Planilha destino + duplicidade usando a coluna "M" (índice dinâmico)
+            # 5) Planilha destino + duplicidade usando a coluna "M"
             # =======================================================
             aba_destino = gc.open("Vendas diarias").worksheet("Faturamento Meio Pagamento")
             valores_existentes = aba_destino.get_all_values()
             
             if len(valores_existentes) == 0:
-                header_sheet = list(df_final.columns)  # se não tem nada ainda, usa as colunas do df_final
+                # Se a planilha estiver vazia, cria o header com as colunas do df_final
+                header_sheet = list(df_final.columns)
+                # garante "M" no fim do header
+                if "M" not in header_sheet:
+                    header_sheet.append("M")
                 aba_destino.append_row(header_sheet)
                 valores_existentes = [header_sheet]
             else:
                 header_sheet = valores_existentes[0]
             
-            # Detecta o índice (0-based) da coluna "M" no Sheets
-            try:
-                M_IDX = header_sheet.index("M")
-            except ValueError:
-                # Se não existir (planilha antiga), cria a coluna M no fim do header
-                header_sheet = header_sheet + ["M"]
-                aba_destino.update('A1', [header_sheet])
-                M_IDX = len(header_sheet) - 1
-                valores_existentes = [header_sheet] + valores_existentes[1:]
+            # Índice 0-based da coluna "M" (já existe no cabeçalho)
+            M_IDX = header_sheet.index("M")
             
-            # Conjunto de chaves M já existentes
+            # Conjunto de chaves M existentes
             if len(valores_existentes) > 1:
                 dados_existentes = set(
                     linha[M_IDX]
@@ -408,22 +405,18 @@ with st.spinner("⏳ Processando..."):
             else:
                 dados_existentes = set()
             
-            # Garante que a ordem das colunas do df_final bate com o header do Sheets
-            # (exceto "M", que colocamos sempre por último)
+            # Alinha df_final à ordem do cabeçalho (mantendo "M" por último)
             cols_for_sheet = [c for c in header_sheet if c in df_final.columns and c != "M"]
-            if "M" in df_final.columns:
-                cols_for_sheet = [c for c in cols_for_sheet if c != "M"] + ["M"]
-            else:
-                # Se o DF não tiver M por algum motivo, cria agora
-                df_final["M"] = pd.to_datetime(df_final["Data"], unit='D', origin="1899-12-30").dt.strftime('%Y-%m-%d') + \
-                                df_final["Meio de Pagamento"] + df_final["Loja"]
-                cols_for_sheet = [c for c in cols_for_sheet if c != "M"] + ["M"]
-            
+            if "M" not in df_final.columns:
+                # cria M caso não exista (deve existir pelo seu código, mas fica o fallback)
+                df_final["M"] = pd.to_datetime(df_final["Data"], unit='D', origin="1899-12-30") \
+                                    .dt.strftime('%Y-%m-%d') + df_final["Meio de Pagamento"] + df_final["Loja"]
+            cols_for_sheet = [c for c in cols_for_sheet if c != "M"] + ["M"]
             df_final = df_final[cols_for_sheet]
             
             novos_dados, duplicados = [], []
             for linha in df_final.fillna("").values.tolist():
-                chave_m = linha[-1]  # "M" é a última da lista cols_for_sheet
+                chave_m = linha[-1]  # "M" é a última coluna
                 if chave_m not in dados_existentes:
                     novos_dados.append(linha)
                     dados_existentes.add(chave_m)

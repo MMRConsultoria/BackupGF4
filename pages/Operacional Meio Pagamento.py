@@ -62,12 +62,25 @@ with st.spinner("⏳ Processando..."):
     
     df_empresa = pd.DataFrame(planilha.worksheet("Tabela Empresa").get_all_records())
     df_meio_pgto_google = pd.DataFrame(planilha.worksheet("Tabela Meio Pagamento").get_all_records())
+
+    # Padroniza nomes de colunas e garante que as colunas existam
+    df_meio_pgto_google.columns = [str(c).strip() for c in df_meio_pgto_google.columns]
+    if "Meio de Pagamento" not in df_meio_pgto_google.columns:
+        df_meio_pgto_google["Meio de Pagamento"] = ""
+    if "Tipo de Pagamento" not in df_meio_pgto_google.columns:
+        df_meio_pgto_google["Tipo de Pagamento"] = ""
     
-    # Normaliza coluna Meio de Pagamento
-    if "Meio de Pagamento" in df_meio_pgto_google.columns:
-        df_meio_pgto_google["Meio de Pagamento"] = df_meio_pgto_google["Meio de Pagamento"].astype(str).str.strip().str.lower()
-    else:
-        df_meio_pgto_google = pd.DataFrame({"Meio de Pagamento": []})
+    # Normaliza os valores para o join
+    df_meio_pgto_google["Meio de Pagamento"] = (
+        df_meio_pgto_google["Meio de Pagamento"].astype(str).str.strip().str.lower()
+    )
+    df_meio_pgto_google["Tipo de Pagamento"] = (
+        df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip()
+    )
+    
+    # Evita duplicados na chave de junção
+    df_meio_pgto_google = df_meio_pgto_google.drop_duplicates(subset=["Meio de Pagamento"], keep="first")
+
     
     # 🔥 Título
     st.markdown("""
@@ -159,14 +172,25 @@ with st.spinner("⏳ Processando..."):
                     df_meio_pagamento["Loja"] = df_meio_pagamento["Loja"].str.strip().str.replace(r"^\d+\s*-\s*", "", regex=True).str.lower()
                     df_empresa["Loja"] = df_empresa["Loja"].str.strip().str.lower()
                     df_meio_pagamento = pd.merge(df_meio_pagamento, df_empresa, on="Loja", how="left")
-    
+                    # >>> NOVO: mapear "Tipo de Pagamento" pela chave "Meio de Pagamento"
+                    tipo_map = dict(
+                        zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo de Pagamento"])
+                    )
+                    df_meio_pagamento.insert(
+                        loc=df_meio_pagamento.columns.get_loc("Meio de Pagamento") + 1,
+                        column="Tipo de Pagamento",
+                        value=df_meio_pagamento["Meio de Pagamento"].map(tipo_map)
+                    )    
                     df_meio_pagamento["Mês"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.month.map({
                         1:'jan',2:'fev',3:'mar',4:'abr',5:'mai',6:'jun',7:'jul',8:'ago',9:'set',10:'out',11:'nov',12:'dez'})
                     df_meio_pagamento["Ano"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.year
     
                     df_meio_pagamento = df_meio_pagamento[[
-                        "Data","Dia da Semana","Meio de Pagamento","Loja","Código Everest",
-                        "Grupo","Código Grupo Everest","Valor (R$)","Mês","Ano"
+                        "Data", "Dia da Semana",
+                        "Meio de Pagamento", "Tipo de Pagamento",  # <-- novo ao lado
+                        "Loja", "Código Everest",
+                        "Grupo", "Código Grupo Everest",
+                        "Valor (R$)", "Mês", "Ano"
                     ]]
     
                     st.session_state.df_meio_pagamento = df_meio_pagamento

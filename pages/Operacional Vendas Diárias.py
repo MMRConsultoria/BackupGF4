@@ -497,6 +497,7 @@ with st.spinner("⏳ Processando..."):
             df["Mês"] = _mes_label_pt(df["Data"])
             df["Ano"] = df["Data"].dt.year
             df = preencher_codigos_por_loja(df, catalogo)
+    
             cols_preferidas = [
                 "Data","Dia da Semana","Loja","Código Everest","Grupo","Código Grupo Everest",
                 "Fat.Total","Serv/Tx","Fat.Real","Ticket","Mês","Ano"
@@ -512,7 +513,20 @@ with st.spinner("⏳ Processando..."):
         
             with st.spinner(f""):
                 df_final = df_input.copy()
-        
+                # >>> SISTEMA (preenche só para enviar ao Google Sheets; não aparece na UI)
+                if "Sistema" not in df_final.columns:
+                    if str(titulo_origem).lower() == "manuais":
+                        # Lançamentos digitados na tela
+                        df_final["Sistema"] = "Lançamento manual"
+                    else:
+                        # Upload: Kopp = CISS; demais = Colibri
+                        if "Grupo" in df_final.columns:
+                            is_kopp = df_final["Grupo"].astype(str).str.contains("kopp", case=False, na=False)
+                        else:
+                            is_kopp = pd.Series([False] * len(df_final))
+                        df_final["Sistema"] = np.where(is_kopp, "CISS", "Colibri")
+                # <<< fim SISTEMA
+
                 # ===== 1) Preparos =====
                 # M provisório (funciona se Data vier dd/mm/yyyy; senão cai no serial)
                 try:

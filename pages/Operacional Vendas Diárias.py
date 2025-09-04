@@ -507,19 +507,15 @@ with st.spinner("⏳ Processando..."):
         
             with st.spinner(f""):
                 df_final = df_input.copy()
-                # >>> SISTEMA (preenche só para enviar ao Google Sheets; não aparece na UI)
-                if "Sistema" not in df_final.columns:
+                # >>> SISTEMA (preencher sempre que ausente OU vazio)
+                if ("Sistema" not in df_final.columns) or df_final["Sistema"].astype(str).str.strip().eq("").all():
                     if str(titulo_origem).lower() == "manuais":
-                        # Lançamentos digitados na tela
                         df_final["Sistema"] = "Lançamento manual"
                     else:
-                        # Upload: Kopp = CISS; demais = Colibri
-                        if "Grupo" in df_final.columns:
-                            is_kopp = df_final["Grupo"].astype(str).str.contains("kopp", case=False, na=False)
-                        else:
-                            is_kopp = pd.Series([False] * len(df_final))
-                        df_final["Sistema"] = np.where(is_kopp, "CISS", "Colibri")
+                        grp_norm = df_final.get("Grupo", "").astype(str).str.strip().str.lower()
+                        df_final["Sistema"] = np.where(grp_norm.str.contains(r"\bkopp\b", regex=True), "CISS", "Colibri")
                 # <<< fim SISTEMA
+
 
                 # ===== 1) Preparos =====
                 # M provisório (funciona se Data vier dd/mm/yyyy; senão cai no serial)
@@ -1167,7 +1163,12 @@ with st.spinner("⏳ Processando..."):
     
                     # 2) Registros a incluir (lado Nova Arquivo)
                     novos_marcados = edited_conf.loc[is_novo & manter].copy()
-    
+                    # mapeia a coluna "Sistema" no cabeçalho do Sheet
+                    col_sis = map_col("Sistema")
+                    if not col_sis:
+                        # fallback se o cabeçalho tiver variação/espacos/caixa
+                        col_sis = next((h for h in headers if _ns(h) == "sistema"), None)
+
                     # Constrói linhas no formato do Sheet (ordem = headers)
                     rows_to_append = []
                     for _, r in novos_marcados.iterrows():
@@ -1247,10 +1248,17 @@ with st.spinner("⏳ Processando..."):
                             row_out[col_M] = M_val
                         if col_N:
                             row_out[col_N] = N_val
-    
+                        # --- Sistema ---
+                        if col_sis:
+                            sis_val = str(d.get("Sistema", "") or "").strip()
+                            if not sis_val:
+                                # fallback: se vier vazio do df_conf, deduz a partir do Grupo
+                                grp = str(d.get("Grupo", "") or "")
+                                sis_val = "CISS" if re.search(r"kopp", grp, flags=re.I) else "Colibri"
+                            row_out[col_sis] = sis_val
                         # garante que a ordem é a do headers
                         rows_to_append.append([row_out[h] for h in headers])
-    
+                    
                     # --- Executa: 1) excluir, 2) incluir ---
                     removidos = 0
                     inseridos = 0

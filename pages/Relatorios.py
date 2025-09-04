@@ -1191,37 +1191,27 @@ with st.spinner("⏳ Processando..."):
     
         
         data_inicio_dt = pd.to_datetime(data_inicio)
-        data_fim_dt = pd.to_datetime(data_fim)
+        data_fim_dt    = pd.to_datetime(data_fim)
         primeiro_dia_mes = data_fim_dt.replace(day=1)
-        datas_periodo = pd.date_range(start=data_inicio_dt, end=data_fim_dt)
+        datas_periodo  = pd.date_range(start=data_inicio_dt, end=data_fim_dt)
         
-        # Base combinada com 0s
-        # ===========================
-        # (BASE) Lojas do período (apenas ativas) x dias do intervalo
-        # ===========================
+        # === 1) Grelha Loja (apenas ativas) x Data do intervalo ===
         df_lojas_grupos = df_emp_ativas[["Loja", "Grupo"]].drop_duplicates()
         
-        # Grelha Loja x Data (para garantir 0 quando não há venda)
         df_base_completa = pd.MultiIndex.from_product(
             [df_lojas_grupos["Loja"], datas_periodo], names=["Loja", "Data"]
         ).to_frame(index=False)
         df_base_completa = df_base_completa.merge(df_lojas_grupos, on="Loja", how="left")
         
-        # Filtra vendas no intervalo e agrega
-        df_filtro_dias = df_vendas[
-            (df_vendas["Data"] >= data_inicio_dt) & (df_vendas["Data"] <= data_fim_dt)
-        ]
-        df_agrupado_dias = (
-            df_filtro_dias.groupby(["Data", "Loja", "Grupo"], as_index=False)["Fat.Total"].sum()
-        )
+        # === 2) Vendas no intervalo e agregação diária ===
+        df_filtro_dias = df_vendas[(df_vendas["Data"] >= data_inicio_dt) & (df_vendas["Data"] <= data_fim_dt)]
+        df_agrupado_dias = df_filtro_dias.groupby(["Data", "Loja", "Grupo"], as_index=False)["Fat.Total"].sum()
         
-        # Junta grelha com vendas do intervalo; onde não tem, vira 0
-        df_completo = df_base_completa.merge(
-            df_agrupado_dias, on=["Data", "Loja", "Grupo"], how="left"
-        )
+        # === 3) Junta grelha com vendas e preenche 0 onde não tem ===
+        df_completo = df_base_completa.merge(df_agrupado_dias, on=["Data", "Loja", "Grupo"], how="left")
         df_completo["Fat.Total"] = df_completo["Fat.Total"].fillna(0)
         
-        # Pivot diário
+        # === 4) Pivot diário (colunas por dia) ===
         df_pivot = df_completo.pivot_table(
             index=["Grupo", "Loja"], columns="Data", values="Fat.Total",
             aggfunc="sum", fill_value=0
@@ -1231,18 +1221,25 @@ with st.spinner("⏳ Processando..."):
             for col in df_pivot.columns
         ]
         
-        # Acumulado do mês (01 até data_fim_dt), mantendo TODAS as lojas ativas
-        df_mes = df_vendas[
-            (df_vendas["Data"] >= primeiro_dia_mes) & (df_vendas["Data"] <= data_fim_dt)
-        ]
+        # === 5) Acumulado no mês (01 até data_fim_dt), mantendo TODAS as lojas ativas ===
+        df_mes = df_vendas[(df_vendas["Data"] >= primeiro_dia_mes) & (df_vendas["Data"] <= data_fim_dt)]
         df_acumulado = df_mes.groupby(["Loja", "Grupo"], as_index=False)["Fat.Total"].sum()
         df_acumulado = df_lojas_grupos.merge(df_acumulado, on=["Loja", "Grupo"], how="left")
         df_acumulado["Fat.Total"] = df_acumulado["Fat.Total"].fillna(0)
         col_acumulado = f"Acumulado Mês (01/{data_fim_dt.strftime('%m')} até {data_fim_dt.strftime('%d/%m')})"
         df_acumulado = df_acumulado.rename(columns={"Fat.Total": col_acumulado})
         
-        # Base principal (NÃO filtrar acumulado=0 aqui!)
+        # === 6) Base principal (NÃO filtre zeros aqui!) ===
         df_base = df_pivot.merge(df_acumulado, on=["Grupo", "Loja"], how="left")
+        
+        # === 7) Anexar Tipo/PDV (somente das ativas) ===
+        cols_tipo_pdv = [c for c in ["Loja", "Tipo", "PDV"] if c in df_emp_ativas.columns]
+        df_base = df_base.merge(
+            df_emp_ativas[cols_tipo_pdv].drop_duplicates(),
+            on="Loja", how="left", validate="many_to_one"
+        )
+
+
 
         # Pivot com datas
         df_pivot = df_completo.pivot_table(

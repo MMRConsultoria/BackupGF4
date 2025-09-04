@@ -1126,12 +1126,7 @@ with st.spinner("⏳ Processando..."):
         
         # (daqui em diante continue sua lógica da grelha MultiIndex + pivot + acumulado...)
         # ...
-        # Quando for anexar Tipo/PDV, use SOMENTE as ativas:
-        df_base = df_base.merge(
-            df_emp_ativas[["Loja", "Tipo", "PDV"]].drop_duplicates(),
-            on="Loja", how="left", validate="many_to_one"
-        )
-
+       
 
         
         # Filtros

@@ -1281,7 +1281,7 @@ with st.spinner("⏳ Processando..."):
             how="left", 
             validate="many_to_one"
         )
-        
+                
         
         df_base["Meta"] = df_base["Meta"].fillna(0)
         

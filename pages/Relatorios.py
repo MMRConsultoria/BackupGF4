@@ -1084,12 +1084,14 @@ with st.spinner("⏳ Processando..."):
         df_vendas["Fat.Total"] = pd.to_numeric(df_vendas["Fat.Total"], errors="coerce")
         
         # === Status de loja ativa ===
-        # === Status de loja ativa ===
+        # =========================================
+        # Base combinada com 0s (somente lojas ativas)
+        # + inclusão de metas "órfãs"
+        # =========================================
+        
+        # 0) Determina lojas ATIVAS a partir da Tabela Empresa
         possiveis_nomes_ativa = {"ATIVA","ATIVO","LOJA ATIVA","ATIVA S/N","ATIVA S N","STATUS","STATUS LOJA"}
-        
-        # mapeia NOME-EM-CAIXA-ALTA -> nome original da coluna
         mapa_upper = {str(c).strip().upper(): c for c in df_empresa.columns}
-        
         col_ativa = next((mapa_upper[n] for n in possiveis_nomes_ativa if n in mapa_upper), None)
         if col_ativa is None and len(df_empresa.columns) >= 6:
             col_ativa = df_empresa.columns[5]  # fallback: coluna F
@@ -1098,102 +1100,54 @@ with st.spinner("⏳ Processando..."):
             status_norm = df_empresa[col_ativa].astype(str).str.strip().str.upper()
             df_emp_ativas = df_empresa[status_norm.isin(["S","SIM","ATIVA","ATIVO","1","TRUE"])].copy()
         else:
-            df_emp_ativas = df_empresa.copy()  # se não achar coluna de status, não filtra
-
-
+            df_emp_ativas = df_empresa.copy()  # se não houver coluna de status, não filtra
         
-        # Filtros
-        data_min = df_vendas["Data"].min()
-        data_max = df_vendas["Data"].max()
-        col1, col2, col3 = st.columns([2, 2, 2])
-        ultimo_dia_disponivel = df_vendas["Data"].max()
-        data_min = df_vendas["Data"].min()
-        data_max = df_vendas["Data"].max()
-        
-        with col1:
-            datas_selecionadas = st.date_input(
-                "📅 Intervalo de datas:",
-                value=(data_max, data_max),
-                min_value=data_min,
-                max_value=data_max
-            )
-            
-            # Validação para garantir que foram selecionadas 2 datas
-            if isinstance(datas_selecionadas, (tuple, list)) and len(datas_selecionadas) == 2:
-                data_inicio, data_fim = datas_selecionadas
-    
-                # ⚠️ Bloqueia seleção entre meses diferentes
-                if data_inicio.month != data_fim.month or data_inicio.year != data_fim.year:
-                    st.warning("⚠️ Selecione datas **dentro do mesmo mês** e **ano**. Não é permitido misturar meses no intervalo.")
-                    st.stop()
-            else:
-                st.warning("⚠️ Por favor, selecione um intervalo com **duas datas** (início e fim).")
-                st.stop()
-    
-    
-    
-           
-        with col2:
-            modo_exibicao = st.selectbox("🧭 Ver por:", ["Loja", "Grupo"])
-        
-        # -----------------------------------
-        # 🎛️ Seletor dinâmico de colunas extras (sem dependência de "Meta" ou "Sem Meta")
-        # -----------------------------------
-        st.markdown("### 🎛️ Personalize sua visualização")
-        
-        colunas_opcionais = {
-            "🎯 Meta da Loja": "Meta",
-            "📊 % Atingido": "%Atingido",
-            "🏬 % Loja X Operação": "%LojaXGrupo",
-            "🧮 % Operação no Total": "%Grupo"
-        }
-        
-        opcoes_selecionadas = st.multiselect(
-            "➕ Escolha os indicadores que deseja **exibir**:",
-            options=list(colunas_opcionais.keys()),
-            default=["🎯 Meta da Loja", "📊 % Atingido", "🧮 % Operação no Total"]
-        )
-        
-        # Mapeia as escolhas visuais para os nomes reais das colunas
-        colunas_escolhidas = [colunas_opcionais[op] for op in opcoes_selecionadas]
-    
-        
-        data_inicio_dt = pd.to_datetime(data_inicio)
-        data_fim_dt = pd.to_datetime(data_fim)
-        primeiro_dia_mes = data_fim_dt.replace(day=1)
-        datas_periodo = pd.date_range(start=data_inicio_dt, end=data_fim_dt)
-        
-        # Base combinada com 0s
+        # 1) Grelha Loja (ativas) x Data do intervalo
         df_lojas_grupos = df_emp_ativas[["Loja", "Grupo"]].drop_duplicates()
         df_base_completa = pd.MultiIndex.from_product(
             [df_lojas_grupos["Loja"], datas_periodo], names=["Loja", "Data"]
         ).to_frame(index=False)
         df_base_completa = df_base_completa.merge(df_lojas_grupos, on="Loja", how="left")
+        
+        # 2) Vendas no intervalo e agregação diária
         df_filtro_dias = df_vendas[(df_vendas["Data"] >= data_inicio_dt) & (df_vendas["Data"] <= data_fim_dt)]
         df_agrupado_dias = df_filtro_dias.groupby(["Data", "Loja", "Grupo"], as_index=False)["Fat.Total"].sum()
+        
+        # 3) Junta grelha com vendas e preenche 0 onde não tem
         df_completo = df_base_completa.merge(df_agrupado_dias, on=["Data", "Loja", "Grupo"], how="left")
         df_completo["Fat.Total"] = df_completo["Fat.Total"].fillna(0)
         
-        # Pivot com datas
+        # 4) Pivot diário (colunas por dia)
         df_pivot = df_completo.pivot_table(
-            index=["Grupo", "Loja"], columns="Data", values="Fat.Total", aggfunc="sum", fill_value=0
+            index=["Grupo", "Loja"], columns="Data", values="Fat.Total",
+            aggfunc="sum", fill_value=0
         ).reset_index()
         df_pivot.columns = [
             col if isinstance(col, str) else f"Fat Total {col.strftime('%d/%m/%Y')}"
             for col in df_pivot.columns
         ]
         
-        # Acumulado do mês
+        # 5) Acumulado do mês (01 até data_fim_dt), mantendo TODAS as lojas ativas
         df_mes = df_vendas[(df_vendas["Data"] >= primeiro_dia_mes) & (df_vendas["Data"] <= data_fim_dt)]
         df_acumulado = df_mes.groupby(["Loja", "Grupo"], as_index=False)["Fat.Total"].sum()
         df_acumulado = df_lojas_grupos.merge(df_acumulado, on=["Loja", "Grupo"], how="left")
         df_acumulado["Fat.Total"] = df_acumulado["Fat.Total"].fillna(0)
         col_acumulado = f"Acumulado Mês (01/{data_fim_dt.strftime('%m')} até {data_fim_dt.strftime('%d/%m')})"
         df_acumulado = df_acumulado.rename(columns={"Fat.Total": col_acumulado})
-        df_base = df_pivot.merge(df_acumulado, on=["Grupo", "Loja"], how="left")
-    
         
-        # Adiciona coluna de Meta
+        # 6) Base principal (NÃO filtrar zeros!)
+        df_base = df_pivot.merge(df_acumulado, on=["Grupo", "Loja"], how="left")
+        
+        # 7) (opcional) Completa Tipo/PDV a partir das ATIVAS (sem mexer em nada do resto)
+        cols_tipo_pdv = [c for c in ["Loja", "Tipo", "PDV"] if c in df_emp_ativas.columns]
+        if cols_tipo_pdv:
+            tmp_tp = df_emp_ativas[cols_tipo_pdv].drop_duplicates()
+            tmp_tp["Loja"] = tmp_tp["Loja"].astype(str).str.strip().str.upper()
+            df_base = df_base.merge(tmp_tp, on="Loja", how="left", validate="many_to_one")
+        
+        # =========================================
+        # Metas do mês + inclusão de metas "órfãs"
+        # =========================================
         df_metas = pd.DataFrame(planilha_empresa.worksheet("Metas").get_all_records())
         df_metas["Loja"] = df_metas["Loja Vendas"].astype(str).str.strip().str.upper()
         mapa_meses = {
@@ -1203,8 +1157,7 @@ with st.spinner("⏳ Processando..."):
         df_metas["Mês"] = df_metas["Mês"].astype(str).str.strip().str.upper().map(mapa_meses)
         df_metas["Ano"] = df_metas["Ano"].astype(str).str.strip()
         df_metas["Meta"] = (
-            df_metas["Meta"]
-            .astype(str)
+            df_metas["Meta"].astype(str)
             .str.replace("R$", "", regex=False)
             .str.replace("(", "-", regex=False)
             .str.replace(")", "", regex=False)
@@ -1213,10 +1166,13 @@ with st.spinner("⏳ Processando..."):
             .str.replace(",", ".", regex=False)
         )
         df_metas["Meta"] = pd.to_numeric(df_metas["Meta"], errors="coerce").fillna(0)
+        
         mes_filtro = data_fim_dt.strftime("%m")
         ano_filtro = data_fim_dt.strftime("%Y")
         df_metas_filtrado = df_metas[(df_metas["Mês"] == mes_filtro) & (df_metas["Ano"] == ano_filtro)].copy()
+        
         df_base["Loja"] = df_base["Loja"].astype(str).str.strip().str.upper()
+        
         # 🧩 Incluir lojas que têm Meta mas não estão no df_base (metas "órfãs")
         lojas_meta  = set(df_metas_filtrado["Loja"].astype(str).str.strip().str.upper())
         lojas_base  = set(df_base["Loja"].astype(str).str.strip().str.upper())
@@ -1233,6 +1189,7 @@ with st.spinner("⏳ Processando..."):
                 .drop_duplicates()
                 .copy()
             )
+        
             # se alguma faltante não existir na Tabela Empresa, cria placeholders
             lojas_sem_cadastro = set(faltantes) - set(extras["Loja"].astype(str).str.upper())
             if lojas_sem_cadastro:
@@ -1257,6 +1214,10 @@ with st.spinner("⏳ Processando..."):
                        [col_acumulado]
             extras = extras[cols_min]
             df_base = pd.concat([df_base, extras], ignore_index=True)
+        
+        # 👉 Agora sim: merge da Meta (mantém igual ao seu)
+        df_base = df_base.merge(df_metas_filtrado[["Loja", "Meta"]], on="Loja", how="left")
+
         df_base = df_base.merge(df_metas_filtrado[["Loja", "Meta"]], on="Loja", how="left")
         
         # Adiciona coluna Tipo (vindo de Tabela Empresa)

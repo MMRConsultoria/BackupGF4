@@ -1178,16 +1178,45 @@ with st.spinner("⏳ Processando..."):
         # Normaliza (garante consistência)
         df_lojas_mov["Loja"] = df_lojas_mov["Loja"].astype(str).str.strip().str.upper()
         df_lojas_mov["Grupo"] = df_lojas_mov["Grupo"].astype(str).str.strip()
+        # --- Lojas que têm META no mês selecionado (apenas para compor a grade) ---
+        df_metas_lojas = pd.DataFrame(planilha_empresa.worksheet("Metas").get_all_records())
+        
+        # Normaliza campos
+        df_metas_lojas["Loja"] = df_metas_lojas["Loja Vendas"].astype(str).str.strip().str.upper()
+        mapa_meses = {
+            "JAN": "01", "FEV": "02", "MAR": "03", "ABR": "04", "MAI": "05", "JUN": "06",
+            "JUL": "07", "AGO": "08", "SET": "09", "OUT": "10", "NOV": "11", "DEZ": "12"
+        }
+        df_metas_lojas["Mês"] = df_metas_lojas["Mês"].astype(str).str.strip().str.upper().map(mapa_meses)
+        df_metas_lojas["Ano"] = df_metas_lojas["Ano"].astype(str).str.strip()
+        
+        mes_filtro = data_fim_dt.strftime("%m")
+        ano_filtro = data_fim_dt.strftime("%Y")
+        df_metas_lojas = df_metas_lojas[
+            (df_metas_lojas["Mês"] == mes_filtro) & (df_metas_lojas["Ano"] == ano_filtro)
+        ].copy()
+        
+        # Lista de lojas com meta e seu Grupo (puxado da Tabela Empresa)
+        df_lojas_meta = (
+            df_metas_lojas[["Loja"]].drop_duplicates()
+            .merge(df_empresa[["Loja", "Grupo"]].drop_duplicates(), on="Loja", how="left")
+        )
 
         # Base combinada com 0s
         # União: TODAS as ativas + (inativas que tiveram movimento no período)
+        # União: ATIVAS + (INATIVAS COM MOVIMENTO) + (LOJAS COM META MESMO SEM MOVIMENTO)
         df_lojas_grupos_uniao = pd.concat(
             [
-                df_empresa_ativas[["Loja", "Grupo"]].drop_duplicates(),  # preferimos o Grupo da Tabela Empresa
-                df_lojas_mov.drop_duplicates(subset=["Loja", "Grupo"])   # complementa com inativas com venda
+                df_empresa_ativas[["Loja", "Grupo"]].drop_duplicates(),           # prioridade 1: Empresa (ativas)
+                df_lojas_mov.drop_duplicates(subset=["Loja", "Grupo"]),           # prioridade 2: movimento
+                df_lojas_meta.drop_duplicates(subset=["Loja", "Grupo"])           # prioridade 3: meta no mês
             ],
             ignore_index=True
-        ).drop_duplicates(subset=["Loja"], keep="first")  # se a mesma loja aparecer duas vezes, mantém a 1ª (Empresa)
+        ).drop_duplicates(subset=["Loja"], keep="first")  # mantém a 1ª ocorrência (Empresa > movimento > meta)
+        
+        df_lojas_grupos = df_lojas_grupos_uniao.copy()
+
+
         
         # Use esta base de lojas para montar a grade
         df_lojas_grupos = df_lojas_grupos_uniao.copy()

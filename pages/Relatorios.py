@@ -1083,51 +1083,7 @@ with st.spinner("⏳ Processando..."):
         )
         df_vendas["Fat.Total"] = pd.to_numeric(df_vendas["Fat.Total"], errors="coerce")
         
-        # ------------------------------
-        # Detecta/normaliza coluna "Ativa" (coluna F da Tabela Empresa)
-        # Aceita valores: S, SIM, ATIVA, ATIVO, 1, TRUE
-        # ------------------------------
-        # ------------------------------
-        # Detecta/normaliza coluna "Ativa" (coluna F da Tabela Empresa)
-        # Aceita valores: S, SIM, ATIVA, ATIVO, 1, TRUE, ATIVO/INATIVO
-        # ------------------------------
-        possiveis_nomes_ativa = {
-            "ATIVA", "ATIVO", "LOJA ATIVA", "ATIVA S/N", "ATIVA S N", "STATUS", "STATUS LOJA"
-        }
-        mapa_upper = {str(c).strip().upper(): c for c in df_empresa.columns}
-        col_ativa_nome = None
-        for cand in possiveis_nomes_ativa:
-            if cand in mapa_upper:
-                col_ativa_nome = mapa_upper[cand]
-                break
         
-        # Se não achou por nome, assume coluna F (6ª) como fallback
-        if col_ativa_nome is None and len(df_empresa.columns) >= 6:
-            col_ativa_nome = df_empresa.columns[5]  # índice 5 = coluna F
-        
-        # Cria flag booleana __Ativa__ com critérios comuns
-        df_empresa["__Ativa__"] = False
-        if col_ativa_nome is not None:
-            status_norm = (
-                df_empresa[col_ativa_nome]
-                .astype(str).str.strip().str.upper()
-            )
-            df_empresa["__Ativa__"] = status_norm.isin(["S", "SIM", "ATIVA", "ATIVO", "1", "TRUE"])
-        
-        # Padroniza chaves
-        df_empresa["Loja"]  = df_empresa["Loja"].astype(str).str.strip().str.upper()
-        df_empresa["Grupo"] = df_empresa["Grupo"].astype(str).str.strip()
-        
-        # 👉 Usa APENAS lojas ativas como base de referência
-        df_emp_ativas = df_empresa[df_empresa["__Ativa__"]].copy()
-        
-        # --- Base com zeros (grelha Loja x Data) DEVE usar só as ativas ---
-        df_lojas_grupos = df_emp_ativas[["Loja", "Grupo"]].drop_duplicates()
-        
-        # (daqui em diante continue sua lógica da grelha MultiIndex + pivot + acumulado...)
-        # ...
-       
-
         
         # Filtros
         data_min = df_vendas["Data"].min()
@@ -1186,56 +1142,21 @@ with st.spinner("⏳ Processando..."):
     
         
         data_inicio_dt = pd.to_datetime(data_inicio)
-        data_fim_dt    = pd.to_datetime(data_fim)
+        data_fim_dt = pd.to_datetime(data_fim)
         primeiro_dia_mes = data_fim_dt.replace(day=1)
-        datas_periodo  = pd.date_range(start=data_inicio_dt, end=data_fim_dt)
+        datas_periodo = pd.date_range(start=data_inicio_dt, end=data_fim_dt)
         
-        # === 1) Grelha Loja (apenas ativas) x Data do intervalo ===
-        df_lojas_grupos = df_emp_ativas[["Loja", "Grupo"]].drop_duplicates()
-        
+        # Base combinada com 0s
+        df_lojas_grupos = df_empresa[["Loja", "Grupo"]].drop_duplicates()
         df_base_completa = pd.MultiIndex.from_product(
             [df_lojas_grupos["Loja"], datas_periodo], names=["Loja", "Data"]
         ).to_frame(index=False)
         df_base_completa = df_base_completa.merge(df_lojas_grupos, on="Loja", how="left")
-        
-        # === 2) Vendas no intervalo e agregação diária ===
         df_filtro_dias = df_vendas[(df_vendas["Data"] >= data_inicio_dt) & (df_vendas["Data"] <= data_fim_dt)]
         df_agrupado_dias = df_filtro_dias.groupby(["Data", "Loja", "Grupo"], as_index=False)["Fat.Total"].sum()
-        
-        # === 3) Junta grelha com vendas e preenche 0 onde não tem ===
         df_completo = df_base_completa.merge(df_agrupado_dias, on=["Data", "Loja", "Grupo"], how="left")
         df_completo["Fat.Total"] = df_completo["Fat.Total"].fillna(0)
         
-        # === 4) Pivot diário (colunas por dia) ===
-        df_pivot = df_completo.pivot_table(
-            index=["Grupo", "Loja"], columns="Data", values="Fat.Total",
-            aggfunc="sum", fill_value=0
-        ).reset_index()
-        df_pivot.columns = [
-            col if isinstance(col, str) else f"Fat Total {col.strftime('%d/%m/%Y')}"
-            for col in df_pivot.columns
-        ]
-        
-        # === 5) Acumulado no mês (01 até data_fim_dt), mantendo TODAS as lojas ativas ===
-        df_mes = df_vendas[(df_vendas["Data"] >= primeiro_dia_mes) & (df_vendas["Data"] <= data_fim_dt)]
-        df_acumulado = df_mes.groupby(["Loja", "Grupo"], as_index=False)["Fat.Total"].sum()
-        df_acumulado = df_lojas_grupos.merge(df_acumulado, on=["Loja", "Grupo"], how="left")
-        df_acumulado["Fat.Total"] = df_acumulado["Fat.Total"].fillna(0)
-        col_acumulado = f"Acumulado Mês (01/{data_fim_dt.strftime('%m')} até {data_fim_dt.strftime('%d/%m')})"
-        df_acumulado = df_acumulado.rename(columns={"Fat.Total": col_acumulado})
-        
-        # === 6) Base principal (NÃO filtre zeros aqui!) ===
-        df_base = df_pivot.merge(df_acumulado, on=["Grupo", "Loja"], how="left")
-        
-        # === 7) Anexar Tipo/PDV (somente das ativas) ===
-        cols_tipo_pdv = [c for c in ["Loja", "Tipo", "PDV"] if c in df_emp_ativas.columns]
-        df_base = df_base.merge(
-            df_emp_ativas[cols_tipo_pdv].drop_duplicates(),
-            on="Loja", how="left", validate="many_to_one"
-        )
-
-
-
         # Pivot com datas
         df_pivot = df_completo.pivot_table(
             index=["Grupo", "Loja"], columns="Data", values="Fat.Total", aggfunc="sum", fill_value=0
@@ -1253,7 +1174,7 @@ with st.spinner("⏳ Processando..."):
         col_acumulado = f"Acumulado Mês (01/{data_fim_dt.strftime('%m')} até {data_fim_dt.strftime('%d/%m')})"
         df_acumulado = df_acumulado.rename(columns={"Fat.Total": col_acumulado})
         df_base = df_pivot.merge(df_acumulado, on=["Grupo", "Loja"], how="left")
-  
+        df_base = df_base[df_base[col_acumulado] != 0]
         
         # Adiciona coluna de Meta
         df_metas = pd.DataFrame(planilha_empresa.worksheet("Metas").get_all_records())
@@ -1279,52 +1200,18 @@ with st.spinner("⏳ Processando..."):
         ano_filtro = data_fim_dt.strftime("%Y")
         df_metas_filtrado = df_metas[(df_metas["Mês"] == mes_filtro) & (df_metas["Ano"] == ano_filtro)].copy()
         df_base["Loja"] = df_base["Loja"].astype(str).str.strip().str.upper()
-
-        # 🧩 Incluir lojas que têm Meta mas não estão no df_base (metas "órfãs")
-        lojas_meta  = set(df_metas_filtrado["Loja"].astype(str).str.strip().str.upper())
-        lojas_base  = set(df_base["Loja"].astype(str).str.strip().str.upper())
-        faltantes   = sorted(lojas_meta - lojas_base)
-        
-        if faltantes:
-            # Tenta puxar Grupo/Tipo/PDV da Tabela Empresa (mesmo que inativa)
-            extras = (
-                df_empresa[df_empresa["Loja"].astype(str).str.upper().isin(faltantes)]
-                [["Grupo","Loja","Tipo","PDV"]]
-                .drop_duplicates()
-                .copy()
-            )
-            # Se alguma faltante não existir na Tabela Empresa, cria placeholders
-            lojas_sem_cadastro = set(faltantes) - set(extras["Loja"].astype(str).str.upper())
-            if lojas_sem_cadastro:
-                extras = pd.concat([
-                    extras,
-                    pd.DataFrame({
-                        "Grupo": ["—"] * len(lojas_sem_cadastro),
-                        "Loja":  list(lojas_sem_cadastro),
-                        "Tipo":  ["—"] * len(lojas_sem_cadastro),
-                        "PDV":   [0] * len(lojas_sem_cadastro),
-                    })
-                ], ignore_index=True)
-        
-            # Cria colunas de diárias e acumulado zeradas
-            for c in [c for c in df_base.columns if str(c).startswith("Fat Total ")]:
-                extras[c] = 0.0
-            extras[col_acumulado] = 0.0
-        
-            # Ordena colunas para bater com df_base e concatena
-            colunas_minimas = ["Grupo","Loja","Tipo","PDV"] + \
-                              [c for c in df_base.columns if str(c).startswith("Fat Total ")] + \
-                              [col_acumulado]
-            extras = extras[colunas_minimas]
-            df_base = pd.concat([df_base, extras], ignore_index=True)
-        
-        # 👉 Só depois faz o merge da Meta
+        # Adiciona coluna Meta
         df_base = df_base.merge(df_metas_filtrado[["Loja", "Meta"]], on="Loja", how="left")
-
         
         # Adiciona coluna Tipo (vindo de Tabela Empresa)
+        # Merge da coluna Tipo
+        df_base = df_base.merge(
+            df_empresa[["Loja", "Tipo","PDV"]].drop_duplicates(), 
+            on="Loja", 
+            how="left", 
+            validate="many_to_one"
+        )
         
-                
         
         df_base["Meta"] = df_base["Meta"].fillna(0)
         

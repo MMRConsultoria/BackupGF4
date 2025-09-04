@@ -1166,16 +1166,14 @@ with st.spinner("⏳ Processando..."):
         primeiro_dia_mes = data_fim_dt.replace(day=1)
         datas_periodo = pd.date_range(start=data_inicio_dt, end=data_fim_dt)
         # Lojas com movimento dentro do intervalo selecionado
-        # Lojas com movimento NO MÊS (garante presença mesmo se não houve venda nos dias exatos selecionados)
         df_lojas_mov = (
             df_vendas.loc[
-                (df_vendas["Data"] >= primeiro_dia_mes) & (df_vendas["Data"] <= data_fim_dt),
+                (df_vendas["Data"] >= data_inicio_dt) & (df_vendas["Data"] <= data_fim_dt),
                 ["Loja", "Grupo"]
             ]
             .dropna()
             .copy()
         )
-
         
         # Normaliza (garante consistência)
         df_lojas_mov["Loja"] = df_lojas_mov["Loja"].astype(str).str.strip().str.upper()
@@ -1198,58 +1196,30 @@ with st.spinner("⏳ Processando..."):
             (df_metas_lojas["Mês"] == mes_filtro) & (df_metas_lojas["Ano"] == ano_filtro)
         ].copy()
         
-        # =========================
-        # Lojas com META no mês
-        # =========================
-        # (parte de cima do seu código já filtrou df_metas_lojas por mês/ano)
+        # Lista de lojas com meta e seu Grupo (puxado da Tabela Empresa)
         df_lojas_meta = (
             df_metas_lojas[["Loja"]].drop_duplicates()
-            .merge(
-                df_empresa[["Loja", "Grupo"]].drop_duplicates(),
-                on="Loja",
-                how="left"
-            )
+            .merge(df_empresa[["Loja", "Grupo"]].drop_duplicates(), on="Loja", how="left")
         )
-        
-        # 🔁 Fallback de GRUPO a partir das vendas (para lojas que não estão na Tabela Empresa)
-        df_grupo_fallback = (
-            df_vendas.loc[:, ["Loja", "Grupo"]]
-            .dropna()
-            .assign(
-                Loja=lambda d: d["Loja"].astype(str).str.strip().str.upper(),
-                Grupo=lambda d: d["Grupo"].astype(str).str.strip()
-            )
-            .drop_duplicates(subset=["Loja"])
-            .rename(columns={"Grupo": "Grupo_vendas"})
-        )
-        df_lojas_meta = df_lojas_meta.merge(df_grupo_fallback, on="Loja", how="left")
-        df_lojas_meta["Grupo"] = df_lojas_meta["Grupo"].fillna(df_lojas_meta["Grupo_vendas"])
-        df_lojas_meta.drop(columns=["Grupo_vendas"], inplace=True)
-        
-        GRUPO_PADRAO = "(Sem Grupo)"
-        df_lojas_grupos = df_lojas_grupos_uniao.copy()
-        df_lojas_grupos["Grupo"] = (
-            df_lojas_grupos["Grupo"].astype(str).str.strip()
-            .replace("", np.nan).fillna(GRUPO_PADRAO)
-        )
-                
-        # =========================
-        # União da grade de lojas
-        # =========================
-        # Prioridade: Empresa (ativas) > movimento > meta
+
+        # Base combinada com 0s
+        # União: TODAS as ativas + (inativas que tiveram movimento no período)
+        # União: ATIVAS + (INATIVAS COM MOVIMENTO) + (LOJAS COM META MESMO SEM MOVIMENTO)
         df_lojas_grupos_uniao = pd.concat(
             [
-                df_empresa_ativas[["Loja", "Grupo"]].drop_duplicates(),     # 1) Empresa (ativas)
-                df_lojas_mov.drop_duplicates(subset=["Loja", "Grupo"]),     # 2) Movimento no mês
-                df_lojas_meta.drop_duplicates(subset=["Loja", "Grupo"])     # 3) Tem meta (mesmo sem movimento)
+                df_empresa_ativas[["Loja", "Grupo"]].drop_duplicates(),           # prioridade 1: Empresa (ativas)
+                df_lojas_mov.drop_duplicates(subset=["Loja", "Grupo"]),           # prioridade 2: movimento
+                df_lojas_meta.drop_duplicates(subset=["Loja", "Grupo"])           # prioridade 3: meta no mês
             ],
             ignore_index=True
-        ).drop_duplicates(subset=["Loja"], keep="first")
+        ).drop_duplicates(subset=["Loja"], keep="first")  # mantém a 1ª ocorrência (Empresa > movimento > meta)
         
         df_lojas_grupos = df_lojas_grupos_uniao.copy()
-        df_lojas_grupos["Grupo"] = (
-            df_lojas_grupos["Grupo"].replace("", np.nan).fillna(GRUPO_PADRAO)
-        )
+
+
+        
+        # Use esta base de lojas para montar a grade
+        df_lojas_grupos = df_lojas_grupos_uniao.copy()
 
         df_base_completa = pd.MultiIndex.from_product(
             [df_lojas_grupos["Loja"], datas_periodo], names=["Loja", "Data"]
@@ -1319,19 +1289,7 @@ with st.spinner("⏳ Processando..."):
             validate="many_to_one"
         )
         
-        # Fallback de Tipo a partir das vendas (se existir a coluna)
-        if "Tipo" in df_vendas.columns:
-            df_tipo_fallback = (
-                df_vendas.loc[:, ["Loja", "Tipo"]]
-                .dropna()
-                .assign(Loja=lambda d: d["Loja"].astype(str).str.strip().str.upper())
-                .drop_duplicates(subset=["Loja"])
-                .rename(columns={"Tipo": "Tipo_vendas"})
-            )
-            df_base = df_base.merge(df_tipo_fallback, on="Loja", how="left")
-            df_base["Tipo"] = df_base["Tipo"].fillna(df_base["Tipo_vendas"])
-            df_base.drop(columns=["Tipo_vendas"], inplace=True)
-
+        
         df_base["Meta"] = df_base["Meta"].fillna(0)
         
         

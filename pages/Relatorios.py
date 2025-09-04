@@ -1166,14 +1166,16 @@ with st.spinner("⏳ Processando..."):
         primeiro_dia_mes = data_fim_dt.replace(day=1)
         datas_periodo = pd.date_range(start=data_inicio_dt, end=data_fim_dt)
         # Lojas com movimento dentro do intervalo selecionado
+        # Lojas com movimento NO MÊS (garante presença mesmo se não houve venda nos dias exatos selecionados)
         df_lojas_mov = (
             df_vendas.loc[
-                (df_vendas["Data"] >= data_inicio_dt) & (df_vendas["Data"] <= data_fim_dt),
+                (df_vendas["Data"] >= primeiro_dia_mes) & (df_vendas["Data"] <= data_fim_dt),
                 ["Loja", "Grupo"]
             ]
             .dropna()
             .copy()
         )
+
         
         # Normaliza (garante consistência)
         df_lojas_mov["Loja"] = df_lojas_mov["Loja"].astype(str).str.strip().str.upper()
@@ -1289,7 +1291,19 @@ with st.spinner("⏳ Processando..."):
             validate="many_to_one"
         )
         
-        
+        # Fallback de Tipo a partir das vendas (se existir a coluna)
+        if "Tipo" in df_vendas.columns:
+            df_tipo_fallback = (
+                df_vendas.loc[:, ["Loja", "Tipo"]]
+                .dropna()
+                .assign(Loja=lambda d: d["Loja"].astype(str).str.strip().str.upper())
+                .drop_duplicates(subset=["Loja"])
+                .rename(columns={"Tipo": "Tipo_vendas"})
+            )
+            df_base = df_base.merge(df_tipo_fallback, on="Loja", how="left")
+            df_base["Tipo"] = df_base["Tipo"].fillna(df_base["Tipo_vendas"])
+            df_base.drop(columns=["Tipo_vendas"], inplace=True)
+
         df_base["Meta"] = df_base["Meta"].fillna(0)
         
         

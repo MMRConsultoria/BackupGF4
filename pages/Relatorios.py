@@ -1084,8 +1084,12 @@ with st.spinner("⏳ Processando..."):
         df_vendas["Fat.Total"] = pd.to_numeric(df_vendas["Fat.Total"], errors="coerce")
         
         # === Status de loja ativa ===
+        # === Status de loja ativa ===
         possiveis_nomes_ativa = {"ATIVA","ATIVO","LOJA ATIVA","ATIVA S/N","ATIVA S N","STATUS","STATUS LOJA"}
-        mapa_upper = {str(c).strip().str.upper(): c for c in df_empresa.columns}
+        
+        # mapeia NOME-EM-CAIXA-ALTA -> nome original da coluna
+        mapa_upper = {str(c).strip().upper(): c for c in df_empresa.columns}
+        
         col_ativa = next((mapa_upper[n] for n in possiveis_nomes_ativa if n in mapa_upper), None)
         if col_ativa is None and len(df_empresa.columns) >= 6:
             col_ativa = df_empresa.columns[5]  # fallback: coluna F
@@ -1094,7 +1098,8 @@ with st.spinner("⏳ Processando..."):
             status_norm = df_empresa[col_ativa].astype(str).str.strip().str.upper()
             df_emp_ativas = df_empresa[status_norm.isin(["S","SIM","ATIVA","ATIVO","1","TRUE"])].copy()
         else:
-            df_emp_ativas = df_empresa.copy()  # se não houver coluna de status, não filtra
+            df_emp_ativas = df_empresa.copy()  # se não achar coluna de status, não filtra
+
 
         
         # Filtros

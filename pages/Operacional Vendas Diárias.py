@@ -256,13 +256,7 @@ with st.spinner("⏳ Processando..."):
                     "Ticket", "Mês", "Ano"
                 ]
                 df_final = df_final[colunas_finais]
-                # ▶ Sistema (Colibri x CISS) conforme Grupo
-                df_final["Sistema"] = np.where(
-                    df_final["Grupo"].astype(str).str.strip().str.lower().eq("kopp"),
-                    "CISS",
-                    "Colibri"
-                )
-
+                
                 st.session_state.df_final = df_final
                 st.session_state.atualizou_google = False
     

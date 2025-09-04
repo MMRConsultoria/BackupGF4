@@ -1218,7 +1218,7 @@ with st.spinner("⏳ Processando..."):
         # GARANTE presença: ativas + inativas com movimento
         df_acumulado = df_lojas_grupos.merge(df_acumulado_raw, on=["Loja", "Grupo"], how="left")
         df_acumulado["Fat.Total"] = df_acumulado["Fat.Total"].fillna(0)
-                df_acumulado["Fat.Total"] = df_acumulado["Fat.Total"].fillna(0)
+       
         col_acumulado = f"Acumulado Mês (01/{data_fim_dt.strftime('%m')} até {data_fim_dt.strftime('%d/%m')})"
         df_acumulado = df_acumulado.rename(columns={"Fat.Total": col_acumulado})
         df_base = df_pivot.merge(df_acumulado, on=["Grupo", "Loja"], how="left")

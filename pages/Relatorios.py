@@ -1087,6 +1087,10 @@ with st.spinner("⏳ Processando..."):
         # Detecta/normaliza coluna "Ativa" (coluna F da Tabela Empresa)
         # Aceita valores: S, SIM, ATIVA, ATIVO, 1, TRUE
         # ------------------------------
+        # ------------------------------
+        # Detecta/normaliza coluna "Ativa" (coluna F da Tabela Empresa)
+        # Aceita valores: S, SIM, ATIVA, ATIVO, 1, TRUE, ATIVO/INATIVO
+        # ------------------------------
         possiveis_nomes_ativa = {
             "ATIVA", "ATIVO", "LOJA ATIVA", "ATIVA S/N", "ATIVA S N", "STATUS", "STATUS LOJA"
         }
@@ -1104,18 +1108,31 @@ with st.spinner("⏳ Processando..."):
         # Cria flag booleana __Ativa__ com critérios comuns
         df_empresa["__Ativa__"] = False
         if col_ativa_nome is not None:
-            df_empresa["__Ativa__"] = (
+            status_norm = (
                 df_empresa[col_ativa_nome]
                 .astype(str).str.strip().str.upper()
-                .isin(["S", "SIM", "ATIVA", "ATIVO", "1", "TRUE"])
             )
+            df_empresa["__Ativa__"] = status_norm.isin(["S", "SIM", "ATIVA", "ATIVO", "1", "TRUE"])
         
         # Padroniza chaves
         df_empresa["Loja"]  = df_empresa["Loja"].astype(str).str.strip().str.upper()
         df_empresa["Grupo"] = df_empresa["Grupo"].astype(str).str.strip()
         
-        # Mantém só lojas ativas para nossa “tabela de referência”
+        # 👉 Usa APENAS lojas ativas como base de referência
         df_emp_ativas = df_empresa[df_empresa["__Ativa__"]].copy()
+        
+        # --- Base com zeros (grelha Loja x Data) DEVE usar só as ativas ---
+        df_lojas_grupos = df_emp_ativas[["Loja", "Grupo"]].drop_duplicates()
+        
+        # (daqui em diante continue sua lógica da grelha MultiIndex + pivot + acumulado...)
+        # ...
+        # Quando for anexar Tipo/PDV, use SOMENTE as ativas:
+        df_base = df_base.merge(
+            df_emp_ativas[["Loja", "Tipo", "PDV"]].drop_duplicates(),
+            on="Loja", how="left", validate="many_to_one"
+        )
+
+
         
         # Filtros
         data_min = df_vendas["Data"].min()
@@ -1244,7 +1261,7 @@ with st.spinner("⏳ Processando..."):
         col_acumulado = f"Acumulado Mês (01/{data_fim_dt.strftime('%m')} até {data_fim_dt.strftime('%d/%m')})"
         df_acumulado = df_acumulado.rename(columns={"Fat.Total": col_acumulado})
         df_base = df_pivot.merge(df_acumulado, on=["Grupo", "Loja"], how="left")
-       # df_base = df_base[df_base[col_acumulado] != 0]
+  
         
         # Adiciona coluna de Meta
         df_metas = pd.DataFrame(planilha_empresa.worksheet("Metas").get_all_records())

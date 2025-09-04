@@ -1165,9 +1165,33 @@ with st.spinner("⏳ Processando..."):
         data_fim_dt = pd.to_datetime(data_fim)
         primeiro_dia_mes = data_fim_dt.replace(day=1)
         datas_periodo = pd.date_range(start=data_inicio_dt, end=data_fim_dt)
+        # Lojas com movimento dentro do intervalo selecionado
+        df_lojas_mov = (
+            df_vendas.loc[
+                (df_vendas["Data"] >= data_inicio_dt) & (df_vendas["Data"] <= data_fim_dt),
+                ["Loja", "Grupo"]
+            ]
+            .dropna()
+            .copy()
+        )
         
+        # Normaliza (garante consistência)
+        df_lojas_mov["Loja"] = df_lojas_mov["Loja"].astype(str).str.strip().str.upper()
+        df_lojas_mov["Grupo"] = df_lojas_mov["Grupo"].astype(str).str.strip()
+
         # Base combinada com 0s
-        df_lojas_grupos = df_empresa_ativas[["Loja", "Grupo"]].drop_duplicates()
+        # União: TODAS as ativas + (inativas que tiveram movimento no período)
+        df_lojas_grupos_uniao = pd.concat(
+            [
+                df_empresa_ativas[["Loja", "Grupo"]].drop_duplicates(),  # preferimos o Grupo da Tabela Empresa
+                df_lojas_mov.drop_duplicates(subset=["Loja", "Grupo"])   # complementa com inativas com venda
+            ],
+            ignore_index=True
+        ).drop_duplicates(subset=["Loja"], keep="first")  # se a mesma loja aparecer duas vezes, mantém a 1ª (Empresa)
+        
+        # Use esta base de lojas para montar a grade
+        df_lojas_grupos = df_lojas_grupos_uniao.copy()
+
         df_base_completa = pd.MultiIndex.from_product(
             [df_lojas_grupos["Loja"], datas_periodo], names=["Loja", "Data"]
         ).to_frame(index=False)
@@ -1189,8 +1213,12 @@ with st.spinner("⏳ Processando..."):
         # Acumulado do mês
         df_mes = df_vendas[(df_vendas["Data"] >= primeiro_dia_mes) & (df_vendas["Data"] <= data_fim_dt)]
         df_acumulado = df_mes.groupby(["Loja", "Grupo"], as_index=False)["Fat.Total"].sum()
-        df_acumulado = df_lojas_grupos.merge(df_acumulado, on=["Loja", "Grupo"], how="left")
+        df_acumulado_raw = df_mes.groupby(["Loja", "Grupo"], as_index=False)["Fat.Total"].sum()
+
+        # GARANTE presença: ativas + inativas com movimento
+        df_acumulado = df_lojas_grupos.merge(df_acumulado_raw, on=["Loja", "Grupo"], how="left")
         df_acumulado["Fat.Total"] = df_acumulado["Fat.Total"].fillna(0)
+                df_acumulado["Fat.Total"] = df_acumulado["Fat.Total"].fillna(0)
         col_acumulado = f"Acumulado Mês (01/{data_fim_dt.strftime('%m')} até {data_fim_dt.strftime('%d/%m')})"
         df_acumulado = df_acumulado.rename(columns={"Fat.Total": col_acumulado})
         df_base = df_pivot.merge(df_acumulado, on=["Grupo", "Loja"], how="left")

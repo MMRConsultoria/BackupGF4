@@ -1352,7 +1352,7 @@ with st.spinner("⏳ Processando..."):
             st.session_state.manual_df = template_manuais(1)
         
         if st.session_state.get("show_manual_editor", False):
-            st.subheader("Lançamentos manuais (1 linha por vez)")
+            #st.subheader("Lançamentos manuais (1 linha por vez)")
         
             # Catálogo de lojas para preencher códigos automaticamente
             gc_ = get_gc()

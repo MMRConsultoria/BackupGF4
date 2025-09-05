@@ -1140,10 +1140,10 @@ with st.spinner("⏳ Processando..."):
               <div style="font-weight:700;color:#b71c1c;font-size:16px; margin-bottom:6px;">
                 Conciliação do sistema PDV
               </div>
-              #<div style="color:#444;">Informe o <b>total</b> que está no sistema (sem copiar do Google Sheets).<br>
-              #A plataforma vai conferir sem exibir o valor da planilha.</div>
-            #</div>
+              <div style="color:#444;">Informe o total que está no sistema PDV</div>
+            </div>
             """, unsafe_allow_html=True)
+
         
             params = st.session_state.get("conf_params", {}) or {}
             sis_default  = params.get("sistema", "Colibri")

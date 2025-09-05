@@ -458,8 +458,8 @@ with st.spinner("⏳ Processando..."):
                 df["Código Grupo Everest"] = lojakey.map(look["Código Grupo Everest"])
             return df
     
-        def template_manuais(n: int = 1) -> pd.DataFrame:
-            # sempre iniciar com 1 linha e Data em branco (NaT)
+        def template_manuais(n: int = 5) -> pd.DataFrame:
+            # inicia com 5 linhas e Data em branco (NaT)
             df = pd.DataFrame({
                 "Data":      pd.Series([pd.NaT]*n, dtype="datetime64[ns]"),
                 "Loja":      pd.Series([""]*n, dtype="object"),
@@ -469,6 +469,7 @@ with st.spinner("⏳ Processando..."):
                 "Ticket":    pd.Series([0.0]*n, dtype="float"),
             })
             return df[["Data","Loja","Fat.Total","Serv/Tx","Fat.Real","Ticket"]]
+
 
 
     
@@ -1348,8 +1349,8 @@ with st.spinner("⏳ Processando..."):
         # ------------------------ EDITOR MANUAL (1 linha por vez) ------------------------
         if "show_manual_editor" not in st.session_state:
             st.session_state.show_manual_editor = False
-        if "manual_df" not in st.session_state or st.session_state.manual_df.shape[0] != 1:
-            st.session_state.manual_df = template_manuais(1)
+        if "manual_df" not in st.session_state or st.session_state.manual_df.shape[0] != 5:
+            st.session_state.manual_df = template_manuais(5)
         
         if st.session_state.get("show_manual_editor", False):
             #st.subheader("Lançamentos manuais (1 linha por vez)")
@@ -1375,47 +1376,56 @@ with st.spinner("⏳ Processando..."):
             with st.form("form_lancamento_unico"):
                 edited_df = st.data_editor(
                     df_disp,
-                    num_rows="fixed",  # trava em 1 linha
+                    num_rows="fixed",   # mantém 5 linhas fixas
                     use_container_width=True,
                     column_config={
-                        "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),  # calendário, sem valor sugerido (NaT)
+                        "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
                         "Loja": st.column_config.SelectboxColumn(
                             options=lojas_options_ui,
                             default=PLACEHOLDER_LOJA,
                             help="Escolha a loja (digite para filtrar)"
                         ),
-                        "Fat.Total": st.column_config.NumberColumn(step=0.01),
-                        "Serv/Tx":   st.column_config.NumberColumn(step=0.01),
-                        "Fat.Real":  st.column_config.NumberColumn(step=0.01),
-                        "Ticket":    st.column_config.NumberColumn(step=0.01),
+                        "Fat.Total": st.column_config.NumberColumn(step=0.01, format="%.2f"),
+                        "Serv/Tx":   st.column_config.NumberColumn(step=0.01, format="%.2f"),
+                        "Fat.Real":  st.column_config.NumberColumn(step=0.01, format="%.2f"),
+                        "Ticket":    st.column_config.NumberColumn(step=0.01, format="%.2f"),
                     },
-                    key="editor_manual_unico",
+                    key="editor_manual_mult",
                 )
+
                 c_esq, c_dir = st.columns([1,1])
                 salvar = c_esq.form_submit_button("💾 Salvar linha", use_container_width=True)
                 limpar = c_dir.form_submit_button("🧹 Limpar", use_container_width=True)
         
+
             if salvar:
                 edited_df = edited_df.copy()
-                # validação: obrigar Data e Loja
                 edited_df["Loja"] = edited_df["Loja"].replace({PLACEHOLDER_LOJA: ""}).astype(str).str.strip()
-                if edited_df["Data"].isna().iloc[0] or edited_df["Loja"].iloc[0] == "":
-                    st.error("⚠️ Preencha **Data** (calendário) e **Loja** antes de salvar.")
+            
+                # normaliza números pt-BR → float
+                for c in ["Fat.Total","Serv/Tx","Fat.Real","Ticket"]:
+                    if c in edited_df.columns:
+                        edited_df[c] = edited_df[c].apply(to_float_ptbr)
+            
+                # mantém apenas linhas completas (com Data e Loja)
+                df_validos = edited_df[edited_df["Data"].notna() & (edited_df["Loja"] != "")]
+                if df_validos.empty:
+                    st.error("⚠️ Preencha pelo menos uma linha com **Data** e **Loja**.")
                     st.stop()
-        
-                # mantém linha única na sessão
+            
+                # atualiza sessão
                 st.session_state.manual_df = edited_df.copy()
-        
-                # prepara e envia (usa dayfirst=True dentro da função)
-                df_pronto = preparar_manuais_para_envio(edited_df, catalogo)
+            
+                # prepara e envia
+                df_pronto = preparar_manuais_para_envio(df_validos, catalogo)
                 if df_pronto.empty:
-                    st.warning("Nada para enviar.")
+                    st.warning("Nenhuma linha válida para enviar.")
                 else:
                     ok = enviar_para_sheets(df_pronto, titulo_origem="manuais")
                     if ok:
-                        # reset para próxima linha
-                        st.session_state.manual_df = template_manuais(1)
+                        st.session_state.manual_df = template_manuais(5)  # reseta 5 linhas
                         st.rerun()
+
         
             if limpar:
                 st.session_state.manual_df = template_manuais(1)

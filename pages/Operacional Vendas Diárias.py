@@ -421,7 +421,7 @@ with st.spinner("⏳ Processando..."):
             try:
                 return float(s)
             except:
-        return float("nan")
+                return float("nan")
         
         def obter_total_sheet_por_sistema_mes(gc, sistema: str, ano: int, mes_num: int) -> float:
             sh = gc.open("Vendas diarias")
@@ -762,10 +762,9 @@ with st.spinner("⏳ Processando..."):
                 df_final["M"] = (df_final["Data_Formatada"].fillna("") +
                                  df_final[fat_col].astype(str) +
                                  df_final["Loja"].astype(str)).str.strip()
-                if "Codigo Everest" in df_final.columns:
-                    df_final["Codigo Everest"] = pd.to_numeric(df_final["Codigo Everest"], errors="coerce").fillna(0).astype(int).astype(str)
-                elif "Código Everest" in df_final.columns:
-                    df_final["Código Everest"] = pd.to_numeric(df_final["Código Everest"], errors="coerce").fillna(0).astype(int).astype(str)
+                cod_col = "Codigo Everest" if "Codigo Everest" in df_final.columns else "Código Everest"
+                df_final[cod_col] = df_final[cod_col].map(to_intstr)
+
                 cod_col = "Codigo Everest" if "Codigo Everest" in df_final.columns else "Código Everest"
                 df_final["N"] = (df_final["Data_Formatada"].fillna("") + df_final[cod_col].astype(str)).str.strip()
                 df_final = df_final.drop(columns=["Data_Formatada"], errors="ignore")

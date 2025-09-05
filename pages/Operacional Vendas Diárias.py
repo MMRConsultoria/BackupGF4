@@ -346,7 +346,11 @@ with st.spinner("⏳ Processando..."):
             st.session_state.conflitos_spreadsheet_id = None
         if "conflitos_sheet_id" not in st.session_state:
             st.session_state.conflitos_sheet_id = None
-    
+        # --- estado da CONFERÊNCIA do sistema ---
+        st.session_state.setdefault("conf_pendente", False)
+        st.session_state.setdefault("conf_ok", False)
+        st.session_state.setdefault("conf_params", {})   # {sistema, mes_num, ano}
+        st.session_state.setdefault("show_conf_panel", False)
         # ======= AUTH =======
         def get_gc():
             scope = [
@@ -388,7 +392,28 @@ with st.spinner("⏳ Processando..."):
         if "css_buttons_applied" not in st.session_state:
             _inject_button_css()
             st.session_state["css_buttons_applied"] = True
-    
+
+
+        def _inject_conf_css():
+            st.markdown("""
+            <style>
+              #conf-btn-area div.stButton > button {
+                background-color: #d32f2f !important;
+                color: #fff !important;
+                border: 1px solid #b71c1c !important;
+                border-radius: 6px !important;
+                font-weight: 700 !important;
+              }
+              #conf-panel {
+                padding:12px;border:1px solid #c62828;background:#ffebee;border-radius:8px;margin-top:8px;
+              }
+            </style>
+            """, unsafe_allow_html=True)
+        
+        if "css_conf_applied" not in st.session_state:
+            _inject_conf_css()
+            st.session_state["css_conf_applied"] = True
+
         # ------------------------ RETRY helper ------------------------
         def fetch_with_retry(url, connect_timeout=10, read_timeout=180, retries=3, backoff=1.5):
             s = requests.Session()
@@ -470,6 +495,101 @@ with st.spinner("⏳ Processando..."):
             })
             return df[["Data","Loja","Fat.Total","Serv/Tx","Fat.Real","Ticket"]]
 
+        # ======== Conferência: helpers ========
+        MESES_PT = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]
+        
+        def _parse_money(txt: str) -> float:
+            import re
+            s = str(txt or "").strip()
+            s = s.replace("R$", "").replace("\u00A0","")
+            s = re.sub(r"[^\d,.\-]", "", s)
+            if s.count(",") == 1 and s.count(".") >= 1:
+                s = s.replace(".", "").replace(",", ".")
+            elif s.count(",") == 1 and s.count(".") == 0:
+                s = s.replace(",", ".")
+            try:
+                return float(s)
+            except:
+                return float("nan")
+        
+        def _coerce_float(x):
+            import re
+            s = str(x or "").strip().replace("\u00A0", "")
+            s = re.sub(r"[^\d,.\-]", "", s)
+            if s == "":
+                return float("nan")
+            if s.count(",") == 1 and s.count(".") >= 1:
+                s = s.replace(".", "").replace(",", ".")
+            elif s.count(",") == 1 and s.count(".") == 0:
+                s = s.replace(",", ".")
+            try:
+                return float(s)
+            except:
+                return float("nan")
+        
+        def _ns_header(s: str) -> str:
+            import unicodedata, re
+            s = str(s or "").strip().lower()
+            s = unicodedata.normalize("NFD", s)
+            s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+            return re.sub(r"[^a-z0-9]+", " ", s).strip()
+        
+        def inferir_sistema_mes_ano(df: pd.DataFrame):
+            # Sistema
+            if "Sistema" in df.columns and df["Sistema"].astype(str).str.strip().ne("").any():
+                sistema = df["Sistema"].astype(str).str.strip().mode().iloc[0]
+            else:
+                grp = df.get("Grupo", pd.Series([], dtype="object")).astype(str).str.lower()
+                sistema = "CISS" if grp.str.contains(r"\bkopp\b", regex=True).any() else "Colibri"
+        
+            # Mês/Ano
+            dt = pd.to_datetime(df.get("Data", pd.Series([], dtype="object")).astype(str), dayfirst=True, errors="coerce")
+            if dt.notna().any():
+                mes_num = int(dt.dt.month.mode().iloc[0])
+                ano     = int(dt.dt.year.mode().iloc[0])
+            else:
+                mes_num, ano = datetime.now().month, datetime.now().year
+            return sistema, mes_num, ano
+        
+        def obter_total_sheet_por_sistema_mes(gc, sistema: str, ano: int, mes_num: int) -> float:
+            """Soma Fat.Total na aba 'Fat Sistema Externo' filtrando por Sistema + Mês + Ano (não exibe o valor)."""
+            sh = gc.open("Vendas diarias")
+            ws = sh.worksheet("Fat Sistema Externo")
+            df = get_as_dataframe(ws, evaluate_formulas=True, dtype=str).fillna("")
+            if df.empty:
+                return 0.0
+        
+            df.columns = df.columns.str.strip()
+            col_data = next((c for c in df.columns if _ns_header(c) == "data"), None)
+            col_sis  = next((c for c in df.columns if _ns_header(c) == "sistema"), None)
+            col_fat  = next((c for c in df.columns if _ns_header(c) in ("fat total","fat total")), None)
+            col_mes  = next((c for c in df.columns if _ns_header(c) in ("mes","mês")), None)
+            col_ano  = next((c for c in df.columns if _ns_header(c) == "ano"), None)
+        
+            # Deriva mês/ano
+            if col_data:
+                ser = pd.to_numeric(df[col_data], errors="coerce")
+                dt  = pd.to_datetime(ser, origin="1899-12-30", unit="D", errors="coerce")
+                if not dt.notna().any():
+                    dt = pd.to_datetime(df[col_data], dayfirst=True, errors="coerce")
+                df["_mes_num"] = dt.dt.month
+                df["_ano_num"] = dt.dt.year
+            else:
+                mapa_mes = {"jan":1,"fev":2,"mar":3,"abr":4,"mai":5,"jun":6,"jul":7,"ago":8,"set":9,"out":10,"nov":11,"dez":12,
+                            "janeiro":1,"fevereiro":2,"marco":3,"março":3,"abril":4,"maio":5,"junho":6,"julho":7,"agosto":8,"setembro":9,"outubro":10,"novembro":11,"dezembro":12}
+                df["_mes_num"] = df[col_mes].astype(str).str.lower().map(mapa_mes) if col_mes else pd.NA
+                df["_ano_num"] = pd.to_numeric(df[col_ano], errors="coerce") if col_ano else pd.NA
+        
+            if not col_sis or not col_fat:
+                return 0.0
+        
+            sis_norm = df[col_sis].astype(str).str.strip().str.lower()
+            alvo = str(sistema or "").strip().lower()
+        
+            mask = (sis_norm == alvo) & (df["_mes_num"] == int(mes_num)) & (df["_ano_num"] == int(ano))
+            sub = df.loc[mask, col_fat].apply(_coerce_float)
+            total = float(np.nansum(sub.values))
+            return round(total, 2)
 
     
         _DIA_PT = {0:"segunda-feira",1:"terça-feira",2:"quarta-feira",3:"quinta-feira",4:"sexta-feira",5:"sábado",6:"domingo"}
@@ -870,14 +990,32 @@ with st.spinner("⏳ Processando..."):
                 if "manual_df" not in st.session_state:
                     st.session_state["manual_df"] = template_manuais(5)
                 # === SEM SUSPEITOS: limpar estado e concluir ===
+                # === SEM SUSPEITOS: limpar estado e concluir ===
                 st.session_state.modo_conflitos = False
                 st.session_state.conflitos_df_conf = None
                 st.session_state.conflitos_spreadsheet_id = None
                 st.session_state.conflitos_sheet_id = None
                 
-                # também guarda e mostra o resumo quando não há conflitos
+                # resumo
                 st.session_state._resumo_envio = {"enviados": q_novos, "dup_m": q_dup_m, "sus_n": q_sus_n}
+                
+                # >>> Agendar conferência do sistema (não mostrar o valor do Sheets)
+                try:
+                    # use df_final (já normalizado) para inferir
+                    sis_hint, mes_hint, ano_hint = inferir_sistema_mes_ano(df_final)
+                except Exception:
+                    sis_hint, mes_hint, ano_hint = "Colibri", datetime.now().month, datetime.now().year
+                
+                st.session_state.update({
+                    "conf_pendente": True,
+                    "conf_ok": False,
+                    "conf_params": {"sistema": str(sis_hint), "mes_num": int(mes_hint), "ano": int(ano_hint)},
+                    "show_conf_panel": False,  # começa mostrando só o botão vermelho
+                })
+                # <<< fim agendamento
+                
                 return True
+
 
 
                    
@@ -981,8 +1119,79 @@ with st.spinner("⏳ Processando..."):
             st.success(
                 f"🟢 Enviados: **{r['enviados']}**  |  ❌ Duplicados: **{r['dup_m']}**  |  🔴 Suspeitos: **{r['sus_n']}**"
             )
-            # (opcional) não delete aqui; deixe o resumo visível até o próximo envio
-            # del st.session_state._resumo_envio
+           
+        # badge de pendência (só visual)
+        if st.session_state.get("conf_pendente", False) and not st.session_state.get("conf_ok", False):
+            st.caption(":red[Conferência pendente do sistema]")
+        
+        # botão vermelho "Conferir sistema" que apenas abre o painel
+        st.markdown('<div id="conf-btn-area">', unsafe_allow_html=True)
+        abrir_conf = st.button("🔴 Conferir sistema", use_container_width=True, key="btn_conf_sistema")
+        st.markdown('</div>', unsafe_allow_html=True)
+        if abrir_conf:
+            st.session_state["show_conf_panel"] = True
+        
+        # painel (abre quando solicitado OU quando ainda pendente)
+        if (st.session_state.get("conf_pendente", False) and not st.session_state.get("conf_ok", False)) \
+           or st.session_state.get("show_conf_panel", False):
+        
+            st.markdown("""
+            <div id="conf-panel">
+              <div style="font-weight:700;color:#b71c1c;font-size:16px; margin-bottom:6px;">
+                Conferência do sistema
+              </div>
+              <div style="color:#444;">Informe o <b>total</b> que está no sistema (sem copiar do Google Sheets).<br>
+              A plataforma vai conferir sem exibir o valor da planilha.</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+            params = st.session_state.get("conf_params", {}) or {}
+            sis_default  = params.get("sistema", "Colibri")
+            mes_default  = int(params.get("mes_num", datetime.now().month))
+            ano_default  = int(params.get("ano", datetime.now().year))
+        
+            colA, colB, colC = st.columns([1,1,2])
+            with colA:
+                sistema_escolhido = st.selectbox("Sistema", ["Colibri","CISS","Lançamento manual"],
+                    index=["Colibri","CISS","Lançamento manual"].index(sis_default) if sis_default in ["Colibri","CISS","Lançamento manual"] else 0)
+            with colB:
+                mes_num = st.selectbox("Mês", list(range(1,13)), index=max(0, mes_default-1),
+                    format_func=lambda m: f"{m:02d} - {MESES_PT[m-1].title()}")
+            with colC:
+                ano_sel = st.number_input("Ano", min_value=2020, max_value=2100, value=ano_default, step=1)
+        
+            with st.form("form_conf_sistema", clear_on_submit=False):
+                valor_usuario = st.text_input(
+                    "Digite o TOTAL do sistema (use vírgula para centavos)",
+                    key="conf_total_usuario",
+                    placeholder="ex.: 123.456,78 ou 123456,78"
+                )
+                col_ok, col_skip = st.columns([1,1])
+                confirmar = col_ok.form_submit_button("Confirmar conferência")
+                fechar   = col_skip.form_submit_button("Fechar painel")
+        
+            if confirmar:
+                if not str(valor_usuario or "").strip():
+                    st.error("Informe o total para conferência.")
+                else:
+                    try:
+                        total_user = _parse_money(valor_usuario)
+                        gc_tmp = get_gc()
+                        total_sheet = obter_total_sheet_por_sistema_mes(gc_tmp, sistema_escolhido, int(ano_sel), int(mes_num))
+                        # Não mostramos o total do Sheets; apenas conferimos
+                        if np.isfinite(total_user) and abs(total_user - total_sheet) <= 0.01:
+                            st.session_state.update({"conf_ok": True, "conf_pendente": False, "show_conf_panel": False})
+                            st.success("✅ Conferência concluída.")
+                            st.experimental_rerun()
+                        else:
+                            st.error("🚫 Não confere com o registrado na planilha. Verifique o total no sistema e tente novamente.")
+                    except Exception as e:
+                        st.error(f"Erro ao conferir: {e}")
+        
+            if fechar:
+                st.session_state["show_conf_panel"] = False
+                st.experimental_rerun()
+
     
         with c2:
             aberto = st.session_state.get("show_manual_editor", False)
@@ -1333,11 +1542,33 @@ with st.spinner("⏳ Processando..."):
                         #)
     
                     # limpa estado e encerra
+                    # >>> Agendar conferência do sistema após aplicar conflitos
+                    try:
+                        if 'novos_marcados' in locals() and isinstance(novos_marcados, pd.DataFrame) and not novos_marcados.empty:
+                            sis_hint, mes_hint, ano_hint = inferir_sistema_mes_ano(novos_marcados)
+                        else:
+                            p = st.session_state.get("conf_params", {}) or {}
+                            sis_hint = p.get("sistema", "Colibri")
+                            mes_hint = int(p.get("mes_num", datetime.now().month))
+                            ano_hint = int(p.get("ano", datetime.now().year))
+                    except Exception:
+                        sis_hint, mes_hint, ano_hint = "Colibri", datetime.now().month, datetime.now().year
+                    
+                    st.session_state.update({
+                        "conf_pendente": True,
+                        "conf_ok": False,
+                        "conf_params": {"sistema": str(sis_hint), "mes_num": int(mes_hint), "ano": int(ano_hint)},
+                        "show_conf_panel": False,  # começa com botão; painel abre ao clicar
+                    })
+                    # <<< fim agendamento
+                    
+                    # limpa estado e encerra
                     st.session_state.modo_conflitos = False
                     st.session_state.conflitos_df_conf = None
                     st.session_state.conflitos_spreadsheet_id = None
                     st.session_state.conflitos_sheet_id = None
                     st.stop()
+
     
                 except Exception as e:
                     st.error(f"❌ Erro ao aplicar exclusões/inclusões: {e}")

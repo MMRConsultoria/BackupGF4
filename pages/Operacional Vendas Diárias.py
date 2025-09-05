@@ -458,15 +458,6 @@ with st.spinner("⏳ Processando..."):
                 df["Código Grupo Everest"] = lojakey.map(look["Código Grupo Everest"])
             return df
         # ------------------------ Helpers p/ catálogo/manuais (iguais aos seus) ------------------------
-        def _norm(s: str) -> str:
-            ...
-        
-        def carregar_catalogo_codigos(gc, nome_planilha="Vendas diarias", aba_catalogo="Tabela Empresa"):
-            ...
-        
-        def preencher_codigos_por_loja(df_manuais: pd.DataFrame, catalogo: pd.DataFrame) -> pd.DataFrame:
-            ...
-        
         # --- Conversor pt-BR -> float (8.364,30 -> 8364.30) ---
         def to_float_ptbr(x):
             """
@@ -476,7 +467,7 @@ with st.spinner("⏳ Processando..."):
             """
             import math
             from decimal import Decimal
-            ...
+        
             if x is None:
                 return 0.0
             if isinstance(x, (int, float)):
@@ -488,19 +479,15 @@ with st.spinner("⏳ Processando..."):
             if s == "":
                 return 0.0
         
-            # remove símbolos e espaços
             s = s.replace("R$", "").replace("\u00A0", " ").replace(" ", "")
         
-            # se tiver vírgula e ponto, assume vírgula decimal e ponto de milhar
             if "," in s and "." in s:
                 s = s.replace(".", "")
                 s = s.replace(",", ".")
             elif "," in s:
-                # só vírgula -> decimal
-                s = s.replace(".", "")   # remove milhares
-                s = s.replace(",", ".")  # decimal
+                s = s.replace(".", "")
+                s = s.replace(",", ".")
             else:
-                # só ponto -> decimal (limpa vírgulas perdidas)
                 s = s.replace(",", "")
         
             try:
@@ -508,6 +495,7 @@ with st.spinner("⏳ Processando..."):
                 return 0.0 if (math.isnan(v) or math.isinf(v)) else v
             except:
                 return 0.0
+
 
         def template_manuais(n: int = 5) -> pd.DataFrame:
             # inicia com 5 linhas e Data em branco (NaT)
@@ -1409,8 +1397,11 @@ with st.spinner("⏳ Processando..."):
             # Catálogo de lojas para preencher códigos automaticamente
             gc_ = get_gc()
             catalogo = carregar_catalogo_codigos(gc_, nome_planilha="Vendas diarias", aba_catalogo="Tabela Empresa")
+            if not isinstance(catalogo, pd.DataFrame):
+                catalogo = pd.DataFrame(columns=["Loja","Loja_norm","Grupo","Código Everest","Código Grupo Everest"])
+            
             lojas_options = sorted(
-                catalogo["Loja"].dropna().astype(str).str.strip().unique().tolist()
+                (catalogo.get("Loja") or pd.Series([], dtype="object")).dropna().astype(str).str.strip().unique().tolist()
             ) if not catalogo.empty else []
         
             PLACEHOLDER_LOJA = "— selecione a loja —"
@@ -1443,12 +1434,11 @@ with st.spinner("⏳ Processando..."):
                     },
                     key="editor_manual_mult",
                 )
-
+            
                 c_esq, c_dir = st.columns([1,1])
-                salvar = c_esq.form_submit_button("💾 Salvar linha", use_container_width=True)
+                salvar = c_esq.form_submit_button("💾 Salvar", use_container_width=True)
                 limpar = c_dir.form_submit_button("🧹 Limpar", use_container_width=True)
-        
-
+            
             if salvar:
                 edited_df = edited_df.copy()
             
@@ -1458,29 +1448,16 @@ with st.spinner("⏳ Processando..."):
                     if c in edited_df.columns:
                         edited_df[c] = edited_df[c].apply(to_float_ptbr)
             
-                # Validação: exigir Data e Loja preenchidos
-                linhas_validas = edited_df["Data"].notna() & (edited_df["Loja"] != "")
-                df_validos = edited_df.loc[linhas_validas].copy()
-                if df_validos.empty:
-                    st.error("⚠️ Preencha pelo menos uma linha com **Data** e **Loja**.")
-                    st.stop()
-
-            
-                # normaliza números pt-BR → float
-                for c in ["Fat.Total","Serv/Tx","Fat.Real","Ticket"]:
-                    if c in edited_df.columns:
-                        edited_df[c] = edited_df[c].apply(to_float_ptbr)
-            
-                # mantém apenas linhas completas (com Data e Loja)
+                # Mantém apenas linhas completas (Data + Loja)
                 df_validos = edited_df[edited_df["Data"].notna() & (edited_df["Loja"] != "")]
                 if df_validos.empty:
                     st.error("⚠️ Preencha pelo menos uma linha com **Data** e **Loja**.")
                     st.stop()
             
-                # atualiza sessão
+                # Atualiza sessão (opcional)
                 st.session_state.manual_df = edited_df.copy()
             
-                # prepara e envia
+                # Prepara e envia
                 df_pronto = preparar_manuais_para_envio(df_validos, catalogo)
                 if df_pronto.empty:
                     st.warning("Nenhuma linha válida para enviar.")
@@ -1489,11 +1466,11 @@ with st.spinner("⏳ Processando..."):
                     if ok:
                         st.session_state.manual_df = template_manuais(5)  # reseta 5 linhas
                         st.rerun()
-
-        
+            
             if limpar:
-                st.session_state.manual_df = template_manuais(1)
+                st.session_state.manual_df = template_manuais(5)  # mantém 5
                 st.rerun()
+
 
 
         # ---------- ENVIO AUTOMÁTICO (botão principal) ----------

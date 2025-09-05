@@ -1180,11 +1180,17 @@ with st.spinner("⏳ Processando..."):
                         total_sheet = obter_total_sheet_por_sistema_mes(gc_tmp, sistema_escolhido, int(ano_sel), int(mes_num))
                         # Não mostramos o total do Sheets; apenas conferimos
                         if np.isfinite(total_user) and abs(total_user - total_sheet) <= 0.01:
-                            st.session_state.update({"conf_ok": True, "conf_pendente": False, "show_conf_panel": False})
-                            st.success("✅ Conferência concluída.")
-                            st.rerun()
+                            # mantém o painel ABERTO para o usuário fechar manualmente
+                            st.session_state.update({
+                                "conf_ok": True,
+                                "conf_pendente": False,
+                                "show_conf_panel": True   # <- fica aberto
+                            })
+                            st.success("✅ Conferência concluída. Você pode fechar o painel quando quiser.")
+                            # NÃO chamamos st.rerun() aqui para não fechar/ocultar o painel
                         else:
                             st.error("🚫 Não confere com o registrado na planilha. Verifique o total no sistema e tente novamente.")
+
                     except Exception as e:
                         st.error(f"Erro ao conferir: {e}")
         

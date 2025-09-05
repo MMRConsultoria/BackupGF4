@@ -868,7 +868,7 @@ with st.spinner("⏳ Processando..."):
                 st.session_state.setdefault("show_manual_editor", False)
                 
                 if "manual_df" not in st.session_state:
-                    st.session_state["manual_df"] = template_manuais(10)
+                    st.session_state["manual_df"] = template_manuais(5)
                 # === SEM SUSPEITOS: limpar estado e concluir ===
                 st.session_state.modo_conflitos = False
                 st.session_state.conflitos_df_conf = None
@@ -990,7 +990,7 @@ with st.spinner("⏳ Processando..."):
             if st.button(label_toggle, key="btn_toggle_manual", use_container_width=True):
                 novo_estado = not aberto
                 st.session_state["show_manual_editor"] = novo_estado
-                st.session_state.manual_df = template_manuais(10)
+                st.session_state.manual_df = template_manuais(5)
                 st.rerun()
     
         with c3:
@@ -1348,8 +1348,8 @@ with st.spinner("⏳ Processando..."):
         # ------------------------ EDITOR MANUAL (1 linha por vez) ------------------------
         if "show_manual_editor" not in st.session_state:
             st.session_state.show_manual_editor = False
-        if "manual_df" not in st.session_state or st.session_state.manual_df.shape[0] != 1:
-            st.session_state.manual_df = template_manuais(1)
+        if "manual_df" not in st.session_state or st.session_state.manual_df.shape[0] != 5:
+            st.session_state.manual_df = template_manuais(5)
         
         if st.session_state.get("show_manual_editor", False):
             #st.subheader("Lançamentos manuais (1 linha por vez)")
@@ -1372,11 +1372,12 @@ with st.spinner("⏳ Processando..."):
         
             df_disp = df_disp[["Data","Loja","Fat.Total","Serv/Tx","Fat.Real","Ticket"]]
         
-            with st.form("form_lancamento_unico"):
+            with st.form("form_lancamentos_manuais_5"):
                 edited_df = st.data_editor(
                     df_disp,
                     num_rows="fixed",  # trava em 1 linha
                     use_container_width=True,
+                    hide_index=True,
                     column_config={
                         "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),  # calendário, sem valor sugerido (NaT)
                         "Loja": st.column_config.SelectboxColumn(
@@ -1389,38 +1390,42 @@ with st.spinner("⏳ Processando..."):
                         "Fat.Real":  st.column_config.NumberColumn(step=0.01),
                         "Ticket":    st.column_config.NumberColumn(step=0.01),
                     },
-                    key="editor_manual_unico",
+                    key="editor_manual_5",
                 )
                 c_esq, c_dir = st.columns([1,1])
                 salvar = c_esq.form_submit_button("💾 Salvar linha", use_container_width=True)
                 limpar = c_dir.form_submit_button("🧹 Limpar", use_container_width=True)
         
+
             if salvar:
                 edited_df = edited_df.copy()
-                # validação: obrigar Data e Loja
+        
+                # Normaliza placeholder de loja
                 edited_df["Loja"] = edited_df["Loja"].replace({PLACEHOLDER_LOJA: ""}).astype(str).str.strip()
-                if edited_df["Data"].isna().iloc[0] or edited_df["Loja"].iloc[0] == "":
-                    st.error("⚠️ Preencha **Data** (calendário) e **Loja** antes de salvar.")
+        
+                # Mantém apenas linhas com Data e Loja preenchidos
+                mask_validas = (~edited_df["Data"].isna()) & (edited_df["Loja"] != "")
+                df_validas = edited_df.loc[mask_validas].copy()
+        
+                if df_validas.empty:
+                    st.error("⚠️ Preencha **Data** e **Loja** em pelo menos uma linha.")
                     st.stop()
         
-                # mantém linha única na sessão
-                st.session_state.manual_df = edited_df.copy()
+                # Prepara (parse de data, numéricos, derivados) e completa códigos
+                df_pronto = preparar_manuais_para_envio(df_validas, catalogo)
         
-                # prepara e envia (usa dayfirst=True dentro da função)
-                df_pronto = preparar_manuais_para_envio(edited_df, catalogo)
                 if df_pronto.empty:
                     st.warning("Nada para enviar.")
                 else:
                     ok = enviar_para_sheets(df_pronto, titulo_origem="manuais")
                     if ok:
-                        # reset para próxima linha
-                        st.session_state.manual_df = template_manuais(1)
+                        # reset para próxima edição com 5 linhas
+                        st.session_state.manual_df = template_manuais(5)
                         st.rerun()
         
             if limpar:
-                st.session_state.manual_df = template_manuais(1)
+                st.session_state.manual_df = template_manuais(5)
                 st.rerun()
-
 
         # ---------- ENVIO AUTOMÁTICO (botão principal) ----------
         #if st.button("Atualizar SheetsS (usar df do Upload)", use_container_width=True, disabled=('df_final' not in st.session_state or st.session_state.df_final.empty), key="btn_enviar_auto_footer"):

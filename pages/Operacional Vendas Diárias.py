@@ -1182,7 +1182,7 @@ with st.spinner("⏳ Processando..."):
                         if np.isfinite(total_user) and abs(total_user - total_sheet) <= 0.01:
                             st.session_state.update({"conf_ok": True, "conf_pendente": False, "show_conf_panel": False})
                             st.success("✅ Conferência concluída.")
-                            st.experimental_rerun()
+                            st.rerun()
                         else:
                             st.error("🚫 Não confere com o registrado na planilha. Verifique o total no sistema e tente novamente.")
                     except Exception as e:
@@ -1190,7 +1190,7 @@ with st.spinner("⏳ Processando..."):
         
             if fechar:
                 st.session_state["show_conf_panel"] = False
-                st.experimental_rerun()
+                st.rerun()
 
     
         with c2:

@@ -402,8 +402,108 @@ with st.spinner("⏳ Processando..."):
             try:
                 return s.get(url, timeout=(connect_timeout, read_timeout), headers={"Accept": "text/plain"})
             finally:
-                s.close()
-    
+                s.close()  # ✅ Fica aqui e APENAS aqui
+
+        # ======= HELPERS DE CONFERÊNCIA (sem exibir valor real) =======
+        MESES_PT = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]
+        
+        def _parse_money(txt: str) -> float:
+            s = str(txt or "").strip()
+            s = s.replace("R$", "").replace(".", "").replace(",", ".")
+            try:
+                return float(s)
+            except:
+                return float("nan")
+        
+        def _coerce_float(s):
+            s = str(s or "").strip()
+            s = s.replace(".", "").replace(",", ".")
+            try:
+                return float(s)
+            except:
+        return float("nan")
+        
+        def obter_total_sheet_por_sistema_mes(gc, sistema: str, ano: int, mes_num: int) -> float:
+            sh = gc.open("Vendas diarias")
+            ws = sh.worksheet("Fat Sistema Externo")
+            df = get_as_dataframe(ws, evaluate_formulas=True, dtype=str).fillna("")
+            if df.empty:
+                return 0.0
+            df.columns = df.columns.str.strip()
+            col_data = next((c for c in df.columns if c.strip().lower() == "data"), None)
+            col_sis  = next((c for c in df.columns if c.strip().lower() == "sistema"), None)
+            col_fat  = next((c for c in df.columns if c.replace(".", " ").strip().lower() in ["fat total","fat total"]), None)
+            col_mes  = next((c for c in df.columns if c.strip().lower() in ["mês","mes"]), None)
+            col_ano  = next((c for c in df.columns if c.strip().lower() == "ano"), None)
+        
+            if col_data:
+                ser = pd.to_numeric(df[col_data], errors="coerce")
+                dt  = pd.to_datetime(ser, origin="1899-12-30", unit="D", errors="coerce")
+                if dt.notna().any():
+                    df["_mes_num"] = dt.dt.month
+                    df["_ano_num"] = dt.dt.year
+                else:
+                    dt = pd.to_datetime(df[col_data], dayfirst=True, errors="coerce")
+                    df["_mes_num"] = dt.dt.month
+                    df["_ano_num"] = dt.dt.year
+            else:
+                df["_mes_num"] = df[col_mes].str.lower().map({m:i+1 for i,m in enumerate(MESES_PT)}) if col_mes else pd.NA
+                df["_ano_num"] = pd.to_numeric(df[col_ano], errors="coerce") if col_ano else pd.NA
+        
+            if not col_sis or not col_fat:
+                return 0.0
+        
+            alvo = str(sistema or "").strip().lower()
+            mask = (
+                (df[col_sis].astype(str).str.strip().str.lower() == alvo) &
+                (df["_mes_num"] == int(mes_num)) &
+                (df["_ano_num"] == int(ano))
+            )
+            sub = df.loc[mask, col_fat].copy().apply(_coerce_float)
+            total = float(np.nansum(sub.values))
+            return round(total, 2)
+        
+        def detectar_sistema_mes_ano_do_envio(df_envio: pd.DataFrame):
+            grp_norm = df_envio.get("Grupo", "").astype(str).str.strip().str.lower()
+            sis_col  = np.where(grp_norm.str.contains(r"\bkopp\b", regex=True), "CISS", "Colibri")
+            sistemas = pd.Series(sis_col).dropna().unique().tolist()
+            sistema = sistemas[0] if len(sistemas)==1 else "Colibri"
+        
+            dt = pd.to_datetime(df_envio["Data"].astype(str), dayfirst=True, errors="coerce")
+            if dt.notna().any():
+                mes_num = int(dt.dt.month.mode().iloc[0])
+                ano     = int(dt.dt.year.mode().iloc[0])
+            else:
+                mes_num, ano = datetime.now().month, datetime.now().year
+            return sistema, mes_num, ano
+        
+        # CSS do botão vermelho e estados
+        def _inject_conf_css():
+            st.markdown("""
+            <style>
+              #conf-btn-area div.stButton > button {
+                background-color: #d32f2f !important;
+                color: #fff !important;
+                border: 1px solid #b71c1c !important;
+                border-radius: 6px !important;
+                font-weight: 700 !important;
+              }
+              #conf-panel {
+                padding:12px;border:1px solid #c62828;background:#ffebee;border-radius:8px;margin-top:8px;
+              }
+            </style>
+            """, unsafe_allow_html=True)
+        
+        if "css_conf_applied" not in st.session_state:
+            _inject_conf_css()
+            st.session_state["css_conf_applied"] = True
+        
+        st.session_state.setdefault("conf_pendente", False)
+        st.session_state.setdefault("conf_ok", False)
+        st.session_state.setdefault("conf_params", {})
+        st.session_state.setdefault("show_conf_panel", False)
+        
+            
         # ------------------------ Helpers p/ catálogo/manuais (iguais aos seus) ------------------------
         def _norm(s: str) -> str:
             s = str(s or "").strip()
@@ -879,16 +979,6 @@ with st.spinner("⏳ Processando..."):
                 st.session_state._resumo_envio = {"enviados": q_novos, "dup_m": q_dup_m, "sus_n": q_sus_n}
                 return True
 
-
-                   
-              
-                # Envia NOVOS (se existirem) e informa contagens de NOVOS e DUPLICADOS por M
-                # Funciona tanto com df_novos/df_dup_M (DataFrames) quanto com novos_dados/duplicados (listas)
-                
-
-                # === ENVIO DE NOVOS + RESUMO (Enviados / Duplicados M / Possíveis duplicados N) ===
-                # Suporta tanto DataFrames (df_novos/df_dup_M/df_suspeitos) quanto listas (novos_dados/duplicados/suspeitos_n)
-                
                 # --- 1) Preparar dados e contagens de forma resiliente ---
                 # Novos
                 if 'df_novos' in locals() and isinstance(df_novos, pd.DataFrame):
@@ -967,23 +1057,97 @@ with st.spinner("⏳ Processando..."):
                 key="btn_enviar_auto_header",
             )
         
+       
         if enviar_auto:
             if not has_df:
                 st.error("Não há dados para enviar.")
             else:
                 ok = enviar_para_sheets(st.session_state.df_final.copy(), titulo_origem="upload")
-                # Se houver suspeitos por N, a função faz st.rerun() e abrirá o painel.
-                # Se não houver, cai aqui e mostramos o resumo.
+                # Se houver suspeitos por N, a função já deu st.rerun() e abriu o painel de conflitos.
         
+                if ok and not st.session_state.get("modo_conflitos", False):
+                    try:
+                        df_ref = st.session_state.df_final.copy()
+                        sis_hint, mes_hint, ano_hint = detectar_sistema_mes_ano_do_envio(df_ref)
+                        st.session_state["conf_pendente"] = True
+                        st.session_state["conf_ok"] = False
+                        st.session_state["conf_params"] = {"sistema": sis_hint, "mes_num": mes_hint, "ano": ano_hint}
+                        st.session_state["show_conf_panel"] = True  # abre painel após envio
+                        st.rerun()
+                    except Exception:
+                        st.session_state["conf_pendente"] = True
+                        st.session_state["conf_ok"] = False
+                        st.session_state["conf_params"] = {"sistema": "Colibri", "mes_num": datetime.now().month, "ano": datetime.now().year}
+                        st.session_state["show_conf_panel"] = True
+                        st.rerun()
+
         # ✅ Mostra o resumo sempre que existir (fora do if enviar_auto)
         r = st.session_state.get("_resumo_envio")
         if r:
             st.success(
                 f"🟢 Enviados: **{r['enviados']}**  |  ❌ Duplicados: **{r['dup_m']}**  |  🔴 Suspeitos: **{r['sus_n']}**"
             )
-            # (opcional) não delete aqui; deixe o resumo visível até o próximo envio
-            # del st.session_state._resumo_envio
-    
+           
+        # ===== CONFERÊNCIA DO SISTEMA (ALERTA, NÃO BLOQUEIA) =====
+        if (st.session_state.get("conf_pendente", False) and not st.session_state.get("conf_ok", False)) \
+           or st.session_state.get("show_conf_panel", False):
+        
+            st.markdown("""
+            <div id="conf-panel">
+              <div style="font-weight:700;color:#b71c1c;font-size:16px; margin-bottom:6px;">
+                Conferência do sistema
+              </div>
+              <div style="color:#444;">Informe o <b>total</b> que está no sistema (sem copiar do Google Sheets).<br>
+              A plataforma vai conferir sem exibir o valor da planilha.</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+            params = st.session_state.get("conf_params", {}) or {}
+            sis_default  = params.get("sistema", "Colibri")
+            mes_default  = int(params.get("mes_num", datetime.now().month))
+            ano_default  = int(params.get("ano", datetime.now().year))
+        
+            colA, colB, colC = st.columns([1,1,2])
+            with colA:
+                sistema_escolhido = st.selectbox("Sistema", ["Colibri","CISS","Lançamento manual"],
+                    index=["Colibri","CISS","Lançamento manual"].index(sis_default) if sis_default in ["Colibri","CISS","Lançamento manual"] else 0)
+            with colB:
+                mes_num = st.selectbox("Mês", list(range(1,13)), index=max(0, mes_default-1),
+                    format_func=lambda m: f"{m:02d} - {MESES_PT[m-1].title()}")
+            with colC:
+                ano_sel = st.number_input("Ano", min_value=2020, max_value=2100, value=ano_default, step=1)
+        
+            with st.form("form_conf_sistema", clear_on_submit=False):
+                valor_usuario = st.text_input(
+                    "Digite o TOTAL do sistema (use vírgula para centavos)",
+                    key="conf_total_usuario",
+                    placeholder="ex.: 123.456,78 ou 123456,78"
+                )
+                col_ok, col_skip = st.columns([1,1])
+                confirmar = col_ok.form_submit_button("Confirmar conferência")
+                fechar   = col_skip.form_submit_button("Fechar painel")
+        
+            if confirmar:
+                if not valor_usuario.strip():
+                    st.error("Informe o total para conferência.")
+                else:
+                    try:
+                        total_user = _parse_money(valor_usuario)
+                        gc_tmp = get_gc()
+                        total_sheet = obter_total_sheet_por_sistema_mes(gc_tmp, sistema_escolhido, int(ano_sel), int(mes_num))
+                        if np.isfinite(total_user) and abs(total_user - total_sheet) <= 0.01:
+                            st.session_state.update({"conf_ok": True, "conf_pendente": False, "show_conf_panel": False})
+                            st.success("✅ Conferência concluída.")
+                            st.rerun()
+                        else:
+                            st.error("🚫 Não confere com o registrado na planilha. Verifique o total no sistema e tente novamente.")
+                    except Exception as e:
+                        st.error(f"Erro ao conferir: {e}")
+        
+            if fechar:
+                st.session_state["show_conf_panel"] = False
+                st.rerun()
+
         with c2:
             aberto = st.session_state.get("show_manual_editor", False)
             label_toggle = "❌ Fechar lançamentos" if aberto else "Lançamentos manuais"
@@ -1035,6 +1199,16 @@ with st.spinner("⏳ Processando..."):
                 st.error("❌ Tempo limite de conexão atingido. Verifique sua rede e tente novamente.")
             except Exception as e:
                 st.error(f"❌ Falha ao conectar: {e}")
+        # badge de pendência (só visual)
+        if st.session_state.get("conf_pendente", False) and not st.session_state.get("conf_ok", False):
+            st.caption(":red[Conferência pendente do sistema]")
+        
+        # botão vermelho "Conferir sistema" que apenas abre o painel
+        st.markdown('<div id="conf-btn-area">', unsafe_allow_html=True)
+        abrir_conf = st.button("🔴 Conferir sistema", use_container_width=True, key="btn_conf_sistema")
+        st.markdown('</div>', unsafe_allow_html=True)
+        if abrir_conf:
+            st.session_state["show_conf_panel"] = True
 
         # === Handler do botão superior "Atualizar SheetsS" ===
         if enviar_auto:

@@ -457,7 +457,58 @@ with st.spinner("⏳ Processando..."):
             if "Código Grupo Everest" in look.columns:
                 df["Código Grupo Everest"] = lojakey.map(look["Código Grupo Everest"])
             return df
-    
+        # ------------------------ Helpers p/ catálogo/manuais (iguais aos seus) ------------------------
+        def _norm(s: str) -> str:
+            ...
+        
+        def carregar_catalogo_codigos(gc, nome_planilha="Vendas diarias", aba_catalogo="Tabela Empresa"):
+            ...
+        
+        def preencher_codigos_por_loja(df_manuais: pd.DataFrame, catalogo: pd.DataFrame) -> pd.DataFrame:
+            ...
+        
+        # --- Conversor pt-BR -> float (8.364,30 -> 8364.30) ---
+        def to_float_ptbr(x):
+            """
+            Converte strings pt-BR como '8.364,30', '8364,30', '8 364,30', 'R$ 8.364,30'
+            e também aceita números já em float/int.
+            Valores inválidos viram 0.0.
+            """
+            import math
+            from decimal import Decimal
+            ...
+            if x is None:
+                return 0.0
+            if isinstance(x, (int, float)):
+                return 0.0 if (isinstance(x, float) and (math.isnan(x) or math.isinf(x))) else float(x)
+            if isinstance(x, Decimal):
+                return float(x)
+        
+            s = str(x).strip()
+            if s == "":
+                return 0.0
+        
+            # remove símbolos e espaços
+            s = s.replace("R$", "").replace("\u00A0", " ").replace(" ", "")
+        
+            # se tiver vírgula e ponto, assume vírgula decimal e ponto de milhar
+            if "," in s and "." in s:
+                s = s.replace(".", "")
+                s = s.replace(",", ".")
+            elif "," in s:
+                # só vírgula -> decimal
+                s = s.replace(".", "")   # remove milhares
+                s = s.replace(",", ".")  # decimal
+            else:
+                # só ponto -> decimal (limpa vírgulas perdidas)
+                s = s.replace(",", "")
+        
+            try:
+                v = float(s)
+                return 0.0 if (math.isnan(v) or math.isinf(v)) else v
+            except:
+                return 0.0
+
         def template_manuais(n: int = 5) -> pd.DataFrame:
             # inicia com 5 linhas e Data em branco (NaT)
             df = pd.DataFrame({
@@ -1400,7 +1451,20 @@ with st.spinner("⏳ Processando..."):
 
             if salvar:
                 edited_df = edited_df.copy()
+            
+                # Normaliza Loja e números (pt-BR → float)
                 edited_df["Loja"] = edited_df["Loja"].replace({PLACEHOLDER_LOJA: ""}).astype(str).str.strip()
+                for c in ["Fat.Total","Serv/Tx","Fat.Real","Ticket"]:
+                    if c in edited_df.columns:
+                        edited_df[c] = edited_df[c].apply(to_float_ptbr)
+            
+                # Validação: exigir Data e Loja preenchidos
+                linhas_validas = edited_df["Data"].notna() & (edited_df["Loja"] != "")
+                df_validos = edited_df.loc[linhas_validas].copy()
+                if df_validos.empty:
+                    st.error("⚠️ Preencha pelo menos uma linha com **Data** e **Loja**.")
+                    st.stop()
+
             
                 # normaliza números pt-BR → float
                 for c in ["Fat.Total","Serv/Tx","Fat.Real","Ticket"]:

@@ -459,9 +459,9 @@ with st.spinner("⏳ Processando..."):
             return df
     
         def template_manuais(n: int = 10) -> pd.DataFrame:
-            d0 = pd.Timestamp(date.today() - timedelta(days=1))
+            # Data começa em branco (NaT) para forçar o usuário a escolher no calendário
             df = pd.DataFrame({
-                "Data":      pd.Series([d0]*n, dtype="datetime64[ns]"),
+                "Data":      pd.Series([pd.NaT]*n, dtype="datetime64[ns]"),
                 "Loja":      pd.Series([""]*n, dtype="object"),
                 "Fat.Total": pd.Series([0.0]*n, dtype="float"),
                 "Serv/Tx":   pd.Series([0.0]*n, dtype="float"),
@@ -469,6 +469,7 @@ with st.spinner("⏳ Processando..."):
                 "Ticket":    pd.Series([0.0]*n, dtype="float"),
             })
             return df[["Data","Loja","Fat.Total","Serv/Tx","Fat.Real","Ticket"]]
+
 
     
         _DIA_PT = {0:"segunda-feira",1:"terça-feira",2:"quarta-feira",3:"quinta-feira",4:"sexta-feira",5:"sábado",6:"domingo"}
@@ -480,25 +481,39 @@ with st.spinner("⏳ Processando..."):
             if edited_df is None or edited_df.empty:
                 return pd.DataFrame()
             df = edited_df.copy()
+        
+            # Limpeza básica
             df["Loja"] = df["Loja"].fillna("").astype(str).str.strip()
             df = df[df["Loja"] != ""]
-            if df.empty: return df
-            df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+            if df.empty:
+                return df
+        
+            # PARSE de data com dayfirst=True para não inverter mês/dia
+            # (se já vier datetime do DateColumn, mantemos)
+            if not np.issubdtype(df["Data"].dtype, np.datetime64):
+                df["Data"] = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
+        
             for c in ["Fat.Total","Serv/Tx","Fat.Real","Ticket"]:
                 if c in df.columns:
                     df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+        
+            # Derivados de data
+            _DIA_PT = {0:"segunda-feira",1:"terça-feira",2:"quarta-feira",3:"quinta-feira",4:"sexta-feira",5:"sábado",6:"domingo"}
+            nomes_mes = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]
             df["Dia da Semana"] = df["Data"].dt.dayofweek.map(_DIA_PT).str.title()
-            df["Mês"] = _mes_label_pt(df["Data"])
+            df["Mês"] = df["Data"].dt.month.map(lambda m: nomes_mes[m-1] if pd.notnull(m) else "")
             df["Ano"] = df["Data"].dt.year
+        
+            # Completar códigos a partir do catálogo
             df = preencher_codigos_por_loja(df, catalogo)
-    
+        
             cols_preferidas = [
                 "Data","Dia da Semana","Loja","Código Everest","Grupo","Código Grupo Everest",
                 "Fat.Total","Serv/Tx","Fat.Real","Ticket","Mês","Ano"
             ]
             cols = [c for c in cols_preferidas if c in df.columns] + [c for c in df.columns if c not in cols_preferidas]
             return df[cols]
-    
+
 
         def enviar_para_sheets(df_input: pd.DataFrame, titulo_origem: str = "dados") -> bool:
             if df_input.empty:
@@ -506,7 +521,9 @@ with st.spinner("⏳ Processando..."):
                 return True
         
             with st.spinner(f""):
+        
                 df_final = df_input.copy()
+            
                 # >>> SISTEMA (preencher sempre que ausente OU vazio)
                 if ("Sistema" not in df_final.columns) or df_final["Sistema"].astype(str).str.strip().eq("").all():
                     if str(titulo_origem).lower() == "manuais":
@@ -515,45 +532,69 @@ with st.spinner("⏳ Processando..."):
                         grp_norm = df_final.get("Grupo", "").astype(str).str.strip().str.lower()
                         df_final["Sistema"] = np.where(grp_norm.str.contains(r"\bkopp\b", regex=True), "CISS", "Colibri")
                 # <<< fim SISTEMA
-
-
+            
                 # ===== 1) Preparos =====
-                # M provisório (funciona se Data vier dd/mm/yyyy; senão cai no serial)
-                try:
-                    df_final['M'] = pd.to_datetime(df_final['Data'], format='%d/%m/%Y').dt.strftime('%Y-%m-%d') \
-                                    + df_final['Fat.Total'].astype(str) + df_final['Loja'].astype(str)
-                except Exception:
-                    _dt = pd.to_datetime(df_final['Data'], origin="1899-12-30", unit='D', errors="coerce")
-                    df_final['M'] = _dt.dt.strftime('%Y-%m-%d') + df_final['Fat.Total'].astype(str) + df_final['Loja'].astype(str)
-                df_final['M'] = df_final['M'].astype(str).str.strip()
-        
-                # numéricos
-                for coln in ['Fat.Total','Serv/Tx','Fat.Real','Ticket']:
+                # Numéricos
+                for coln in ["Fat.Total","Serv/Tx","Fat.Real","Ticket"]:
                     if coln in df_final.columns:
                         df_final[coln] = pd.to_numeric(df_final[coln], errors="coerce").fillna(0.0)
-        
-                # Data -> serial
-                dt_parsed = pd.to_datetime(
-                    df_final['Data'].astype(str).replace("'", "", regex=True).str.strip(),
-                    dayfirst=True, errors="coerce"
-                )
-                if dt_parsed.notna().any():
-                    df_final['Data'] = (dt_parsed - pd.Timestamp("1899-12-30")).dt.days
-        
-                def to_int_safe(x):
+            
+                # ==== DATA: interpretar como dd/mm/YYYY (se vier string) e converter para serial (1899-12-30)
+                if not np.issubdtype(df_final["Data"].dtype, np.datetime64):
+                    dt_parsed = pd.to_datetime(
+                        df_final["Data"].astype(str).str.replace("'", "").str.strip(),
+                        dayfirst=True, errors="coerce"
+                    )
+                else:
+                    dt_parsed = df_final["Data"]
+            
+                # Guarda formato YYYY-MM-DD para M/N
+                df_final["_Data_ymd"] = dt_parsed.dt.strftime("%Y-%m-%d")
+            
+                # Converte Data para serial do Google Sheets
+                df_final["Data"] = (dt_parsed - pd.Timestamp("1899-12-30")).dt.days
+            
+                # ==== Normalização de códigos para string inteira (sem .0)
+                if "Codigo Everest" in df_final.columns:
+                    cod_col = "Codigo Everest"
+                elif "Código Everest" in df_final.columns:
+                    cod_col = "Código Everest"
+                else:
+                    df_final["Código Everest"] = ""
+                    cod_col = "Código Everest"
+            
+                def to_intstr(x):
                     try:
-                        x_clean = str(x).replace("'", "").strip()
-                        return int(float(x_clean)) if x_clean not in ("", "nan", "None") else ""
+                        s = str(x).strip()
+                        if s in ("", "nan", "None"):
+                            return ""
+                        return str(int(float(s)))
                     except:
                         return ""
-        
-                if 'Código Everest' in df_final.columns:
-                    df_final['Código Everest'] = df_final['Código Everest'].apply(to_int_safe)
-                if 'Código Grupo Everest' in df_final.columns:
-                    df_final['Código Grupo Everest'] = df_final['Código Grupo Everest'].apply(to_int_safe)
-                if 'Ano' in df_final.columns:
-                    df_final['Ano'] = df_final['Ano'].apply(to_int_safe)
-         
+            
+                df_final[cod_col] = df_final[cod_col].apply(to_intstr)
+                if "Código Grupo Everest" in df_final.columns:
+                    df_final["Código Grupo Everest"] = df_final["Código Grupo Everest"].apply(to_intstr)
+                if "Ano" in df_final.columns:
+                    df_final["Ano"] = df_final["Ano"].apply(to_intstr)
+            
+                # ==== M e N com a data correta (YYYY-MM-DD)
+                fat_col = "Fat.Total" if "Fat.Total" in df_final.columns else "Fat Total"
+                df_final[fat_col] = pd.to_numeric(df_final[fat_col], errors="coerce").fillna(0)
+                loja_str = df_final["Loja"].astype(str)
+            
+                # M = yyyy-mm-dd + Fat.Total + Loja
+                df_final["M"] = (df_final["_Data_ymd"].fillna("") +
+                                 df_final[fat_col].astype(str) +
+                                 loja_str).str.strip()
+            
+                # N = yyyy-mm-dd + Codigo
+                df_final["N"] = (df_final["_Data_ymd"].fillna("") +
+                                 df_final[cod_col].astype(str)).str.strip()
+            
+                # Limpa coluna auxiliar
+                df_final.drop(columns=["_Data_ymd"], errors="ignore", inplace=True)
+
                 # ===== 2) Conecta planilha =====
                 gc = get_gc()
                 planilha_destino = gc.open("Vendas diarias")
@@ -1323,28 +1364,39 @@ with st.spinner("⏳ Processando..."):
             lojas_options_ui = [PLACEHOLDER_LOJA] + lojas_options
         
             # Base exibida (não processa nada aqui)
+            # Base exibida (não processa nada aqui)
             df_disp = st.session_state.manual_df.copy()
+            
+            # Normalizações leves antes de exibir
             df_disp["Loja"] = df_disp["Loja"].fillna("").astype(str).str.strip()
-            df_disp.loc[df_disp["Loja"] == "", "Loja"] = PLACEHOLDER_LOJA
-            df_disp["Data"] = pd.to_datetime(df_disp["Data"], errors="coerce")
+            
+            # Placeholders de loja
+            PLACEHOLDER_LOJA = "— selecione a loja —"
+            # (recarrega catálogo se já tiver, senão lista vazia)
+            lojas_options = sorted(
+                catalogo["Loja"].dropna().astype(str).str.strip().unique().tolist()
+            ) if not catalogo.empty else []
+            lojas_options_ui = [PLACEHOLDER_LOJA] + lojas_options
+            
+            # Importante: NÃO converter Data aqui — deixe NaT como está para não "sugerir" valor
             for c in ["Fat.Total","Serv/Tx","Fat.Real","Ticket"]:
                 df_disp[c] = pd.to_numeric(df_disp[c], errors="coerce")
-        
+            
             df_disp = df_disp[["Data","Loja","Fat.Total","Serv/Tx","Fat.Real","Ticket"]]
-        
-            # 🔒 Dentro do formulário: nenhuma edição dispara rerun
+            
             with st.form("form_lancamentos_manuais"):
                 edited_df = st.data_editor(
                     df_disp,
                     num_rows="dynamic",
                     use_container_width=True,
                     column_config={
-                        "Data":      st.column_config.DateColumn(format="DD/MM/YYYY"),
-                        "Loja":      st.column_config.SelectboxColumn(
-                                        options=lojas_options_ui,
-                                        default=PLACEHOLDER_LOJA,
-                                        help="Clique e escolha a loja (digite para filtrar)"
-                                    ),
+                        # Mostra widget de calendário (DateColumn); formato pt-BR
+                        "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                        "Loja": st.column_config.SelectboxColumn(
+                            options=lojas_options_ui,
+                            default=PLACEHOLDER_LOJA,
+                            help="Clique e escolha a loja (digite para filtrar)"
+                        ),
                         "Fat.Total": st.column_config.NumberColumn(step=0.01),
                         "Serv/Tx":   st.column_config.NumberColumn(step=0.01),
                         "Fat.Real":  st.column_config.NumberColumn(step=0.01),
@@ -1352,31 +1404,35 @@ with st.spinner("⏳ Processando..."):
                     },
                     key="editor_manual",
                 )
-        
+            
                 col_esq, col_dir = st.columns([2, 8])
                 salvar = col_esq.form_submit_button("Salvar Lançamentos", use_container_width=True)
                 limpar = col_dir.form_submit_button("Limpar linhas")
-        
+            
             # ✅ Só aqui processa de verdade (apenas após clicar em Salvar)
             if salvar:
                 edited_df = edited_df.copy()
                 edited_df["Loja"] = edited_df["Loja"].replace({PLACEHOLDER_LOJA: ""}).astype(str).str.strip()
-        
-                # Atualiza o que fica salvo na sessão (útil se quiser reabrir e continuar)
+            
+                # Validação: exigir Data escolhida (sem NaT) e Loja preenchida
+                linhas_invalidas = edited_df["Data"].isna() | (edited_df["Loja"] == "")
+                if linhas_invalidas.any():
+                    st.error("⚠️ Preencha **Data** (via calendário) e **Loja** em todas as linhas antes de salvar.")
+                    st.stop()
+            
+                # Atualiza o que fica salvo
                 st.session_state.manual_df = edited_df.copy()
-        
+            
+                # Prepara e envia
                 df_pronto = preparar_manuais_para_envio(edited_df, catalogo)
-        
                 if df_pronto.empty:
-                    st.warning("Nenhuma linha válida para enviar (preencha 'Loja' e 'Data').")
+                    st.warning("Nenhuma linha válida para enviar.")
                 else:
                     ok = enviar_para_sheets(df_pronto, titulo_origem="manuais")
                     if ok:
-                        # Se quiser limpar a grade depois do envio bem-sucedido:
-                        st.session_state.manual_df = template_manuais(10)
+                        st.session_state.manual_df = template_manuais(10)  # limpa depois do envio
                         st.rerun()
-        
-            # Botão opcional para limpar sem enviar
+            
             if limpar:
                 st.session_state.manual_df = template_manuais(10)
                 st.rerun()

@@ -1126,7 +1126,7 @@ with st.spinner("⏳ Processando..."):
         
         # botão vermelho "Conferir sistema" que apenas abre o painel
         st.markdown('<div id="conf-btn-area">', unsafe_allow_html=True)
-        abrir_conf = st.button("🔴 Conferir sistema", use_container_width=True, key="btn_conf_sistema")
+        abrir_conf = st.button("🔴 Conciliar Sistema PDV X GoogleSheets", use_container_width=True, key="btn_conf_sistema")
         st.markdown('</div>', unsafe_allow_html=True)
         if abrir_conf:
             st.session_state["show_conf_panel"] = True
@@ -1138,7 +1138,7 @@ with st.spinner("⏳ Processando..."):
             st.markdown("""
             <div id="conf-panel">
               <div style="font-weight:700;color:#b71c1c;font-size:16px; margin-bottom:6px;">
-                Conferência do sistema
+                Conciliação do sistema PDV
               </div>
               <div style="color:#444;">Informe o <b>total</b> que está no sistema (sem copiar do Google Sheets).<br>
               A plataforma vai conferir sem exibir o valor da planilha.</div>
@@ -1167,7 +1167,7 @@ with st.spinner("⏳ Processando..."):
                     placeholder="ex.: 123.456,78 ou 123456,78"
                 )
                 col_ok, col_skip = st.columns([1,1])
-                confirmar = col_ok.form_submit_button("Confirmar conferência")
+                confirmar = col_ok.form_submit_button("Conciliar Sistema PDV X GoogleSheets")
                 fechar   = col_skip.form_submit_button("Fechar painel")
         
             if confirmar:
@@ -1186,7 +1186,7 @@ with st.spinner("⏳ Processando..."):
                                 "conf_pendente": False,
                                 "show_conf_panel": True   # <- fica aberto
                             })
-                            st.success("✅ Conferência concluída. Você pode fechar o painel quando quiser.")
+                            st.success("✅ Conciliação PDV X Google Sheets concluída. Você pode fechar o painel quando quiser.")
                             # NÃO chamamos st.rerun() aqui para não fechar/ocultar o painel
                         else:
                             st.error("🚫 Não confere com o registrado na planilha. Verifique o total no sistema e tente novamente.")

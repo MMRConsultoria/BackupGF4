@@ -458,8 +458,8 @@ with st.spinner("⏳ Processando..."):
                 df["Código Grupo Everest"] = lojakey.map(look["Código Grupo Everest"])
             return df
     
-        def template_manuais(n: int = 10) -> pd.DataFrame:
-            # Data começa em branco (NaT) para forçar o usuário a escolher no calendário
+        def template_manuais(n: int = 1) -> pd.DataFrame:
+            # sempre iniciar com 1 linha e Data em branco (NaT)
             df = pd.DataFrame({
                 "Data":      pd.Series([pd.NaT]*n, dtype="datetime64[ns]"),
                 "Loja":      pd.Series([""]*n, dtype="object"),
@@ -1345,15 +1345,16 @@ with st.spinner("⏳ Processando..."):
 
         
         # ------------------------ EDITOR MANUAL (somente processa no final) ------------------------
+        # ------------------------ EDITOR MANUAL (1 linha por vez) ------------------------
         if "show_manual_editor" not in st.session_state:
             st.session_state.show_manual_editor = False
-        if "manual_df" not in st.session_state:
-            st.session_state.manual_df = template_manuais(10)
+        if "manual_df" not in st.session_state or st.session_state.manual_df.shape[0] != 1:
+            st.session_state.manual_df = template_manuais(1)
         
         if st.session_state.get("show_manual_editor", False):
-            st.subheader("Lançamentos manuais")
+            st.subheader("Lançamentos manuais (1 linha por vez)")
         
-            # Catálogo p/ preencher códigos (pode ficar fora do submit; é leve)
+            # Catálogo de lojas para preencher códigos automaticamente
             gc_ = get_gc()
             catalogo = carregar_catalogo_codigos(gc_, nome_planilha="Vendas diarias", aba_catalogo="Tabela Empresa")
             lojas_options = sorted(
@@ -1363,79 +1364,63 @@ with st.spinner("⏳ Processando..."):
             PLACEHOLDER_LOJA = "— selecione a loja —"
             lojas_options_ui = [PLACEHOLDER_LOJA] + lojas_options
         
-            # Base exibida (não processa nada aqui)
-            # Base exibida (não processa nada aqui)
+            # Base exibida
             df_disp = st.session_state.manual_df.copy()
-            
-            # Normalizações leves antes de exibir
             df_disp["Loja"] = df_disp["Loja"].fillna("").astype(str).str.strip()
-            
-            # Placeholders de loja
-            PLACEHOLDER_LOJA = "— selecione a loja —"
-            # (recarrega catálogo se já tiver, senão lista vazia)
-            lojas_options = sorted(
-                catalogo["Loja"].dropna().astype(str).str.strip().unique().tolist()
-            ) if not catalogo.empty else []
-            lojas_options_ui = [PLACEHOLDER_LOJA] + lojas_options
-            
-            # Importante: NÃO converter Data aqui — deixe NaT como está para não "sugerir" valor
             for c in ["Fat.Total","Serv/Tx","Fat.Real","Ticket"]:
                 df_disp[c] = pd.to_numeric(df_disp[c], errors="coerce")
-            
+        
             df_disp = df_disp[["Data","Loja","Fat.Total","Serv/Tx","Fat.Real","Ticket"]]
-            
-            with st.form("form_lancamentos_manuais"):
+        
+            with st.form("form_lancamento_unico"):
                 edited_df = st.data_editor(
                     df_disp,
-                    num_rows="dynamic",
+                    num_rows="fixed",  # trava em 1 linha
                     use_container_width=True,
                     column_config={
-                        # Mostra widget de calendário (DateColumn); formato pt-BR
-                        "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                        "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),  # calendário, sem valor sugerido (NaT)
                         "Loja": st.column_config.SelectboxColumn(
                             options=lojas_options_ui,
                             default=PLACEHOLDER_LOJA,
-                            help="Clique e escolha a loja (digite para filtrar)"
+                            help="Escolha a loja (digite para filtrar)"
                         ),
                         "Fat.Total": st.column_config.NumberColumn(step=0.01),
                         "Serv/Tx":   st.column_config.NumberColumn(step=0.01),
                         "Fat.Real":  st.column_config.NumberColumn(step=0.01),
                         "Ticket":    st.column_config.NumberColumn(step=0.01),
                     },
-                    key="editor_manual",
+                    key="editor_manual_unico",
                 )
-            
-                col_esq, col_dir = st.columns([2, 8])
-                salvar = col_esq.form_submit_button("Salvar Lançamentos", use_container_width=True)
-                limpar = col_dir.form_submit_button("Limpar linhas")
-            
-            # ✅ Só aqui processa de verdade (apenas após clicar em Salvar)
+                c_esq, c_dir = st.columns([1,1])
+                salvar = c_esq.form_submit_button("💾 Salvar linha", use_container_width=True)
+                limpar = c_dir.form_submit_button("🧹 Limpar", use_container_width=True)
+        
             if salvar:
                 edited_df = edited_df.copy()
+                # validação: obrigar Data e Loja
                 edited_df["Loja"] = edited_df["Loja"].replace({PLACEHOLDER_LOJA: ""}).astype(str).str.strip()
-            
-                # Validação: exigir Data escolhida (sem NaT) e Loja preenchida
-                linhas_invalidas = edited_df["Data"].isna() | (edited_df["Loja"] == "")
-                if linhas_invalidas.any():
-                    st.error("⚠️ Preencha **Data** (via calendário) e **Loja** em todas as linhas antes de salvar.")
+                if edited_df["Data"].isna().iloc[0] or edited_df["Loja"].iloc[0] == "":
+                    st.error("⚠️ Preencha **Data** (calendário) e **Loja** antes de salvar.")
                     st.stop()
-            
-                # Atualiza o que fica salvo
+        
+                # mantém linha única na sessão
                 st.session_state.manual_df = edited_df.copy()
-            
-                # Prepara e envia
+        
+                # prepara e envia (usa dayfirst=True dentro da função)
                 df_pronto = preparar_manuais_para_envio(edited_df, catalogo)
                 if df_pronto.empty:
-                    st.warning("Nenhuma linha válida para enviar.")
+                    st.warning("Nada para enviar.")
                 else:
                     ok = enviar_para_sheets(df_pronto, titulo_origem="manuais")
                     if ok:
-                        st.session_state.manual_df = template_manuais(10)  # limpa depois do envio
+                        # reset para próxima linha
+                        st.session_state.manual_df = template_manuais(1)
                         st.rerun()
-            
+        
             if limpar:
-                st.session_state.manual_df = template_manuais(10)
+                st.session_state.manual_df = template_manuais(1)
                 st.rerun()
+
 
         # ---------- ENVIO AUTOMÁTICO (botão principal) ----------
         #if st.button("Atualizar SheetsS (usar df do Upload)", use_container_width=True, disabled=('df_final' not in st.session_state or st.session_state.df_final.empty), key="btn_enviar_auto_footer"):

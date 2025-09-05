@@ -388,7 +388,7 @@ with st.spinner("⏳ Processando..."):
         if "css_buttons_applied" not in st.session_state:
             _inject_button_css()
             st.session_state["css_buttons_applied"] = True
-    
+        
         # ------------------------ RETRY helper ------------------------
         def fetch_with_retry(url, connect_timeout=10, read_timeout=180, retries=3, backoff=1.5):
             s = requests.Session()
@@ -403,6 +403,13 @@ with st.spinner("⏳ Processando..."):
                 return s.get(url, timeout=(connect_timeout, read_timeout), headers={"Accept": "text/plain"})
             finally:
                 s.close()  # ✅ Fica aqui e APENAS aqui
+        import unicodedata, re
+            def _ns(s: str) -> str:
+                s = str(s or "").strip().lower()
+                s = unicodedata.normalize("NFD", s)
+                s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")  # tira acentos
+                s = re.sub(r"[^a-z0-9]+", " ", s).strip()                        # colapsa pontos, espaços, etc.
+                return s
 
         # ======= HELPERS DE CONFERÊNCIA (sem exibir valor real) =======
         MESES_PT = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"]
@@ -415,13 +422,24 @@ with st.spinner("⏳ Processando..."):
             except:
                 return float("nan")
         
-        def _coerce_float(s):
-            s = str(s or "").strip()
-            s = s.replace(".", "").replace(",", ".")
+        def _coerce_float(x):
+            s = str(x or "").strip().replace("\u00A0", "")
+            s = re.sub(r"[^\d,.\-]", "", s)   # só dígitos, ponto, vírgula e sinal
+            if s == "":
+                return float("nan")
+            # Se tem vírgula e ponto → assume BR (ponto milhar, vírgula decimal)
+            if s.count(",") == 1 and s.count(".") >= 1:
+                s = s.replace(".", "").replace(",", ".")
+            # Se só tem vírgula → decimal BR
+            elif s.count(",") == 1 and s.count(".") == 0:
+                s = s.replace(",", ".")
+            # Se só tem ponto → decimal US
+            # senão já está ok
             try:
                 return float(s)
-            except:
+            except Exception:
                 return float("nan")
+
         
         def obter_total_sheet_por_sistema_mes(gc, sistema: str, ano: int, mes_num: int) -> float:
             sh = gc.open("Vendas diarias")
@@ -432,7 +450,7 @@ with st.spinner("⏳ Processando..."):
             df.columns = df.columns.str.strip()
             col_data = next((c for c in df.columns if c.strip().lower() == "data"), None)
             col_sis  = next((c for c in df.columns if c.strip().lower() == "sistema"), None)
-            col_fat  = next((c for c in df.columns if c.replace(".", " ").strip().lower() in ["fat total","fat total"]), None)
+            col_fat  = next((c for c in df.columns if _ns(c) == "fat total"), None)
             col_mes  = next((c for c in df.columns if c.strip().lower() in ["mês","mes"]), None)
             col_ano  = next((c for c in df.columns if c.strip().lower() == "ano"), None)
         

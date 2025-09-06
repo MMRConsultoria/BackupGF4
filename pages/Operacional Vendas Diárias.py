@@ -533,7 +533,16 @@ with st.spinner("⏳ Processando..."):
             s = unicodedata.normalize("NFD", s)
             s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
             return re.sub(r"[^a-z0-9]+", " ", s).strip()
-        
+        def _fmt_brl(v: float) -> str:
+            try:
+                v = float(v)
+            except:
+                return "R$ 0,00"
+            s = f"{v:,.2f}"
+            # vira padrão brasileiro: milhar com ponto e decimal com vírgula
+            s = s.replace(",", "_").replace(".", ",").replace("_", ".")
+            return f"R$ {s}"
+
         def inferir_sistema_mes_ano(df: pd.DataFrame):
             # Sistema
             if "Sistema" in df.columns and df["Sistema"].astype(str).str.strip().ne("").any():
@@ -1179,17 +1188,21 @@ with st.spinner("⏳ Processando..."):
                         gc_tmp = get_gc()
                         total_sheet = obter_total_sheet_por_sistema_mes(gc_tmp, sistema_escolhido, int(ano_sel), int(mes_num))
                         # Não mostramos o total do Sheets; apenas conferimos
-                        if np.isfinite(total_user) and abs(total_user - total_sheet) <= 0.01:
-                            # mantém o painel ABERTO para o usuário fechar manualmente
-                            st.session_state.update({
-                                "conf_ok": True,
-                                "conf_pendente": False,
-                                "show_conf_panel": True   # <- fica aberto
-                            })
-                            st.success("✅ Conciliação PDV X Google Sheets concluída. Você pode fechar o painel quando quiser.")
-                            # NÃO chamamos st.rerun() aqui para não fechar/ocultar o painel
+                        # exige igualdade exata a 2 casas (0,01 já reprova)
+                        if np.isfinite(total_user) and round(total_user, 2) == round(total_sheet, 2):
+                            st.session_state.update({"conf_ok": True, "conf_pendente": False, "show_conf_panel": True})
+                            st.success("✅ Conferência concluída.")
                         else:
-                            st.error("🚫 Não confere com o registrado na planilha. Verifique o total no sistema e tente novamente.")
+                            # mostra a diferença sem revelar o total do Sheets
+                            if np.isfinite(total_user) and np.isfinite(total_sheet):
+                                diff = round(abs(total_user - total_sheet), 2)
+                                st.error(
+                                    f"🚫 Não confere com o registrado na planilha. "
+                                    f"Verifique o total no sistema e tente novamente. Diferença apurada: {_fmt_brl(diff)}."
+                                )
+                            else:
+                                st.error("🚫 Valor digitado inválido. Revise o total informado e tente novamente.")
+
 
                     except Exception as e:
                         st.error(f"Erro ao conferir: {e}")

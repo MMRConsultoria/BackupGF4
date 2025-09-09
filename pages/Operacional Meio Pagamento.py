@@ -215,7 +215,7 @@ with st.spinner("⏳ Processando..."):
     with tab1:
         uploaded_file = st.file_uploader(
             label="📁 Clique para selecionar ou arraste aqui o arquivo Excel",
-            type=["xlsx", "xlsm"]
+            type=["xlsx", "xlsm", "xls"]  # <-- adiciona "xls" aqui
         )
 
         if uploaded_file:

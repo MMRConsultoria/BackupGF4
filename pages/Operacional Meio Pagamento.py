@@ -105,10 +105,11 @@ def processar_formato2(
     # Meio de Pagamento
     ban = df["bandeira"].fillna("").astype(str).str.strip()
     tip = df["tipo_cartao"].fillna("").astype(str).str.strip()
-    meio_from_de = (ban + " " + tip).str.strip()
+    meio_from_de = (ban + " " + tip).str.strip().map(_strip_accents_keep_case)
 
     meio_from_c = df["forma_pgto"].astype(str).str.strip()
-    meio_from_c = meio_from_c.str.replace(r"^\d+\s*-\s*", "", regex=True)
+    meio_from_c = meio_from_c.str.replace(r"^\d+\s*-\s*", "", regex=True).map(_strip_accents_keep_case)
+
 
     df["Meio de Pagamento"] = np.where(
         (ban != "") | (tip != ""), meio_from_de, meio_from_c
@@ -162,7 +163,9 @@ def processar_formato2(
         pass
 
     return df_final
-
+def _strip_accents_keep_case(s: str) -> str:
+    """Remove acentos sem mexer em maiúsculas/minúsculas."""
+    return unicodedata.normalize("NFKD", str(s or "")).encode("ASCII", "ignore").decode("ASCII")
 
 # ======================
 # Spinner + cargas do Google

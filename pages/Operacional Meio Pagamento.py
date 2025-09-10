@@ -155,22 +155,50 @@ def processar_formato2(
     return df_final
 
 # ---------- Escolha de engine p/ Excel ----------
-def _pick_engine(uploaded_file) -> Optional[str]:
-    """Escolhe o engine correto para ler Excel."""
-    name = (uploaded_file.name or "").lower()
-    return "xlrd" if name.endswith(".xls") else None  # .xls => xlrd; .xlsx/.xlsm => openpyxl por padrão
+# --- DETECÇÃO ROBUSTA DO ENGINE (pela assinatura do arquivo) ---
+def _sniff_engine(uploaded_file) -> str:
+    """Retorna 'openpyxl' p/ xlsx/xlsm (ZIP/PK) e 'xlrd' p/ xls (BIFF)."""
+    pos = uploaded_file.tell()
+    try:
+        uploaded_file.seek(0)
+        magic = uploaded_file.read(4)
+    finally:
+        uploaded_file.seek(pos)
+    # XLSX/XLSM são ZIP: começam com 'PK\x03\x04'
+    if isinstance(magic, bytes) and magic[:2] == b"PK":
+        return "openpyxl"
+    return "xlrd"
 
-def _read_excel_head(uploaded_file) -> pd.DataFrame:
-    """Lê a primeira aba com header para detectar o formato."""
-    engine = _pick_engine(uploaded_file)
-    uploaded_file.seek(0)
-    return pd.read_excel(uploaded_file, sheet_name=0, engine=engine)
+def _read_excel_auto(uploaded_file, **kwargs):
+    """Lê usando engine detectado; se falhar, tenta o outro engine."""
+    # 1ª tentativa: engine conforme assinatura
+    eng1 = _sniff_engine(uploaded_file)
+    eng2 = "xlrd" if eng1 == "openpyxl" else "openpyxl"
 
-def _open_excel(uploaded_file) -> pd.ExcelFile:
-    """Abre como ExcelFile respeitando o engine adequado."""
-    engine = _pick_engine(uploaded_file)
+    for eng in (eng1, eng2):
+        try:
+            uploaded_file.seek(0)
+            return pd.read_excel(uploaded_file, engine=eng, **kwargs)
+        except Exception:
+            pass
     uploaded_file.seek(0)
-    return pd.ExcelFile(uploaded_file, engine=engine)
+    # Se chegou aqui, levanta o último erro com mais contexto
+    return pd.read_excel(uploaded_file, engine=eng1, **kwargs)
+
+def _open_excel_auto(uploaded_file) -> pd.ExcelFile:
+    """Abre ExcelFile com engine detectado; se falhar, tenta o outro."""
+    eng1 = _sniff_engine(uploaded_file)
+    eng2 = "xlrd" if eng1 == "openpyxl" else "openpyxl"
+
+    for eng in (eng1, eng2):
+        try:
+            uploaded_file.seek(0)
+            return pd.ExcelFile(uploaded_file, engine=eng)
+        except Exception:
+            pass
+    uploaded_file.seek(0)
+    return pd.ExcelFile(uploaded_file, engine=eng1)
+
 
 # ---------- Conexão com Google e UI ----------
 with st.spinner("⏳ Carregando tabelas do Google..."):
@@ -221,7 +249,7 @@ with st.spinner("⏳ Carregando tabelas do Google..."):
         if uploaded_file:
             try:
                 # 1) Tenta detectar Formato 2 (plano)
-                df_head = _read_excel_head(uploaded_file)  # usa xlrd para .xls
+                df_head = _read_excel_auto(uploaded_file, sheet_name=0)  # usa xlrd para .xls
                 if _is_formato2(df_head):
                     # ➜ Processa Formato 2
                     df_meio_pagamento = processar_formato2(
@@ -229,7 +257,7 @@ with st.spinner("⏳ Carregando tabelas do Google..."):
                     )
                 else:
                     # ➜ Não é Formato 2: fluxo “antigo” (Formato 1)
-                    xls = _open_excel(uploaded_file)  # respeita engine
+                    df_raw = _read_excel_auto(uploaded_file, sheet_name=aba_escolhida, header=None)  # respeita engine
                     abas_disponiveis = xls.sheet_names
                     aba_escolhida = abas_disponiveis[0] if len(abas_disponiveis) == 1 else st.selectbox(
                         "Escolha a aba para processar", abas_disponiveis

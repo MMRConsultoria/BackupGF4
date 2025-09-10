@@ -6,6 +6,7 @@ import json
 import unicodedata
 from io import BytesIO
 import gspread
+import os
 from oauth2client.service_account import ServiceAccountCredentials
 
 st.set_page_config(page_title="Meio de Pagamento", layout="wide")
@@ -77,6 +78,27 @@ def _rename_cols_formato2(df: pd.DataFrame) -> pd.DataFrame:
         elif n == "total" or "valor" in n:
             new_names[c] = "total"
     return df.rename(columns=new_names)
+def _pick_engine(filename: str) -> str:
+    ext = os.path.splitext(filename.lower())[1]
+    if ext == ".xls":
+        # xlrd (2.x) lê .xls; NÃO suporta .xlsx — por isso usamos openpyxl nos demais
+        return "xlrd"
+    # .xlsx e .xlsm
+    return "openpyxl"
+
+def read_excel_smart(file_or_xls, sheet_name=0, header=0):
+    """Aceita BytesIO/UploadedFile OU um pd.ExcelFile já aberto."""
+    if isinstance(file_or_xls, pd.ExcelFile):
+        return pd.read_excel(file_or_xls, sheet_name=sheet_name, header=header)
+    # UploadedFile/BytesIO
+    eng = _pick_engine(getattr(file_or_xls, "name", "arquivo.xlsx"))
+    return pd.read_excel(file_or_xls, sheet_name=sheet_name, header=header, engine=eng)
+
+def excel_file_smart(uploaded_file):
+    """Abre um ExcelFile com o engine correto pelo sufixo do nome."""
+    eng = _pick_engine(uploaded_file.name)
+    return pd.ExcelFile(uploaded_file, engine=eng)
+    
 
 # ======================
 # Processamento Formato 2 (plano) — com De→para CiSS
@@ -217,14 +239,14 @@ with st.spinner("⏳ Processando..."):
     # ======================
     with tab1:
         uploaded_file = st.file_uploader(
-            label="📁 Clique para selecionar ou arraste aqui o arquivo Excel",
-            type=["xlsx", "xlsm"]  # mantenho sem .xls; se quiser aceitar .xls, adicione "xls"
-        )
+            "📁 Clique para selecionar ou arraste aqui o arquivo Excel",
+            type=["xlsx", "xlsm", "xls"]   # <— inclui xls
+        )            
 
         if uploaded_file:
             try:
                 # Detecta Formato 2 pelo header real
-                df_head = pd.read_excel(uploaded_file, sheet_name=0)  # header=0
+                df_head = read_excel_smart(uploaded_file, sheet_name=0, header=0)  # header=0
                 if _is_formato2(df_head):
                     # ➜ Formato 2 (plano) USA De→para CiSS
                     df_meio_pagamento = processar_formato2(
@@ -234,12 +256,13 @@ with st.spinner("⏳ Processando..."):
                 else:
                     # ➜ Formato 1 (layout antigo) — NÃO aplica De→para CiSS
                     uploaded_file.seek(0)
-                    xls = pd.ExcelFile(uploaded_file)
+                    xls = excel_file_smart(uploaded_file)
                     abas_disponiveis = xls.sheet_names
+                    
                     aba_escolhida = abas_disponiveis[0] if len(abas_disponiveis) == 1 else st.selectbox(
                         "Escolha a aba para processar", abas_disponiveis)
-
-                    df_raw = pd.read_excel(xls, sheet_name=aba_escolhida, header=None)
+                    
+                    df_raw = read_excel_smart(xls, sheet_name=aba_escolhida, header=None)
                     df_raw = df_raw[~df_raw.iloc[:, 1].astype(str).str.lower().str.contains("total|subtotal", na=False)]
 
                     if str(df_raw.iloc[0, 1]).strip().lower() != "faturamento diário por meio de pagamento":

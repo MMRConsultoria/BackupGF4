@@ -11,7 +11,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 st.set_page_config(page_title="Meio de Pagamento", layout="wide")
 
-# 🔥 CSS para estilizar as abas
+# 🔥 CSS
 st.markdown("""
     <style>
     .stApp { background-color: #f9f9f9; }
@@ -30,13 +30,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 🔒 Bloqueia o acesso caso o usuário não esteja logado
+# 🔒 Bloqueio de acesso
 if not st.session_state.get("acesso_liberado"):
     st.stop()
 
-# ======================
-# CSS para esconder só a barra superior
-# ======================
+# Esconde toolbar do Streamlit
 st.markdown("""
     <style>
         [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
@@ -48,20 +46,24 @@ st.markdown("""
 # Helpers de normalização
 # ======================
 def _strip_accents_keep_case(s: str) -> str:
+    """Remove acentos mantendo maiúsculas/minúsculas."""
     return unicodedata.normalize("NFKD", str(s or "")).encode("ASCII", "ignore").decode("ASCII")
 
 def _norm(s: str) -> str:
+    """Normalização para chaves: sem acento, minúsculas, espaços simples."""
     s = _strip_accents_keep_case(s)
     s = re.sub(r"\s+", " ", s).strip().lower()
     return s
 
 def _is_formato2(df_headed: pd.DataFrame) -> bool:
+    """Detecta arquivo 'plano' (A:F): Cod Empresa, Data, Forma, Bandeira, Tipo, Total."""
     cols = {_norm(c) for c in df_headed.columns}
     return ("data" in cols and "total" in cols
             and any("cod" in c and "empresa" in c for c in cols)
             and any("forma" in c and "pag" in c for c in cols))
 
 def _rename_cols_formato2(df: pd.DataFrame) -> pd.DataFrame:
+    """Renomeia as colunas para canônicas no Formato 2."""
     new_names = {}
     for c in df.columns:
         n = _norm(c)
@@ -78,27 +80,40 @@ def _rename_cols_formato2(df: pd.DataFrame) -> pd.DataFrame:
         elif n == "total" or "valor" in n:
             new_names[c] = "total"
     return df.rename(columns=new_names)
+
+# ======================
+# Leitura robusta de Excel (.xls, .xlsx, .xlsm)
+# ======================
 def _pick_engine(filename: str) -> str:
     ext = os.path.splitext(filename.lower())[1]
     if ext == ".xls":
-        # xlrd (2.x) lê .xls; NÃO suporta .xlsx — por isso usamos openpyxl nos demais
-        return "xlrd"
-    # .xlsx e .xlsm
-    return "openpyxl"
+        return "xlrd"       # xlrd>=2 só lê .xls
+    return "openpyxl"       # .xlsx / .xlsm
 
 def read_excel_smart(file_or_xls, sheet_name=0, header=0):
-    """Aceita BytesIO/UploadedFile OU um pd.ExcelFile já aberto."""
+    """
+    Lê planilha usando engine correto.
+    Aceita UploadedFile/BytesIO OU um pd.ExcelFile já aberto.
+    """
     if isinstance(file_or_xls, pd.ExcelFile):
         return pd.read_excel(file_or_xls, sheet_name=sheet_name, header=header)
+
     # UploadedFile/BytesIO
     eng = _pick_engine(getattr(file_or_xls, "name", "arquivo.xlsx"))
+    try:
+        file_or_xls.seek(0)
+    except Exception:
+        pass
     return pd.read_excel(file_or_xls, sheet_name=sheet_name, header=header, engine=eng)
 
 def excel_file_smart(uploaded_file):
     """Abre um ExcelFile com o engine correto pelo sufixo do nome."""
     eng = _pick_engine(uploaded_file.name)
+    try:
+        uploaded_file.seek(0)
+    except Exception:
+        pass
     return pd.ExcelFile(uploaded_file, engine=eng)
-    
 
 # ======================
 # Processamento Formato 2 (plano) — com De→para CiSS
@@ -107,7 +122,7 @@ def processar_formato2(
     df_src: pd.DataFrame,
     df_empresa: pd.DataFrame,
     df_meio_pgto_google: pd.DataFrame,
-    depara_ciss_map: dict | None = None,  # <- só Formato 2 usa
+    depara_ciss_map=None,  # <- só Formato 2 usa
 ) -> pd.DataFrame:
     df = _rename_cols_formato2(df_src.copy())
 
@@ -120,20 +135,25 @@ def processar_formato2(
     df["data"] = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
     df["total"] = pd.to_numeric(df["total"], errors="coerce").fillna(0.0)
 
-    # Meio de Pagamento (Bandeira + Tipo sem acento; senão usa Forma_pgto sem prefixo numérico)
+    # Meio de Pagamento:
+    # - Se houver Bandeira/Tipo -> "Bandeira Tipo" SEM acentos
+    # - Senão usa Forma_pgto removendo o prefixo "99 - "
     ban = df["bandeira"].fillna("").astype(str).str.strip()
     tip = df["tipo_cartao"].fillna("").astype(str).str.strip()
     meio_from_de = (ban + " " + tip).str.strip().map(_strip_accents_keep_case)
-    meio_from_c = df["forma_pgto"].astype(str).str.strip().str.replace(r"^\d+\s*-\s*", "", regex=True)
+
+    meio_from_c = df["forma_pgto"].astype(str).str.strip()
+    meio_from_c = meio_from_c.str.replace(r"^\d+\s*-\s*", "", regex=True)
+
     df["Meio de Pagamento"] = np.where((ban != "") | (tip != ""), meio_from_de, meio_from_c)
 
-    # 📌 APLICA De→para CiSS (apenas Formato 2) lido da Tabela Meio Pagamento
+    # 📌 APLICA De→para CiSS (apenas Formato 2)
     if depara_ciss_map:
-        key = df["Meio de Pagamento"].astype(str).map(_norm)
+        key = df["Meio de Pagamento"].astype(str).map(_norm)  # chave normalizada
         mapped = key.map(depara_ciss_map)
         df["Meio de Pagamento"] = mapped.fillna(df["Meio de Pagamento"])
 
-    # Mapas Tipo de Pagamento / Tipo DRE (baseados no nome final padronizado)
+    # Mapas Tipo de Pagamento / Tipo DRE (base Tabela Meio Pagamento)
     df_meio = df_meio_pgto_google.copy()
     df_meio["__meio_norm__"] = df_meio["Meio de Pagamento"].astype(str).str.strip().str.lower()
     tipo_pgto_map = dict(zip(df_meio["__meio_norm__"], df_meio["Tipo de Pagamento"].astype(str)))
@@ -205,21 +225,21 @@ with st.spinner("⏳ Processando..."):
     # Procuramos uma coluna cujo nome normalizado contenha "ciss"
     depara_col = None
     for c in df_meio_pgto_google.columns:
-        n = _norm(c)
-        if "ciss" in n:  # ex.: "de para ciss", "ciss", "padrao ciss"
+        if "ciss" in _norm(c):  # ex.: "De para CiSS", "Padrão CiSS"
             depara_col = c
             break
-    # Mapa: chave = __meio_norm__ da tabela; valor = coluna CiSS (ou o próprio "Meio de Pagamento" se vazio)
+
+    # Mapa: chave = _norm("Meio de Pagamento" da tabela), valor = coluna CiSS (ou o próprio "Meio de Pagamento" se vazio)
     depara_ciss_map = {}
     if depara_col:
         tmp = df_meio_pgto_google.copy()
-        # valor padrão é o próprio "Meio de Pagamento" quando CiSS estiver vazio
-        padrao = np.where(
+        key_norm = tmp["Meio de Pagamento"].astype(str).map(_norm)   # <<< usa _norm (sem acento)
+        val = np.where(
             tmp[depara_col].astype(str).str.strip() != "",
             tmp[depara_col].astype(str).str.strip(),
             tmp["Meio de Pagamento"].astype(str).str.strip()
         )
-        depara_ciss_map = dict(zip(tmp["__meio_norm__"], padrao))
+        depara_ciss_map = dict(zip(key_norm, val))
 
     # 🔥 Título
     st.markdown("""
@@ -240,15 +260,18 @@ with st.spinner("⏳ Processando..."):
     with tab1:
         uploaded_file = st.file_uploader(
             "📁 Clique para selecionar ou arraste aqui o arquivo Excel",
-            type=["xlsx", "xlsm", "xls"]   # <— inclui xls
-        )            
+            type=["xlsx", "xlsm", "xls"]   # <— inclui .xls
+        )
 
         if uploaded_file:
             try:
+                # Mostra detecção de extensão (opcional)
+                st.caption(f"Arquivo: {uploaded_file.name}")
+
                 # Detecta Formato 2 pelo header real
                 df_head = read_excel_smart(uploaded_file, sheet_name=0, header=0)  # header=0
                 if _is_formato2(df_head):
-                    # ➜ Formato 2 (plano) USA De→para CiSS
+                    # ➜ Formato 2 (plano) — aplica De→para CiSS
                     df_meio_pagamento = processar_formato2(
                         df_head, df_empresa, df_meio_pgto_google,
                         depara_ciss_map=depara_ciss_map
@@ -258,10 +281,9 @@ with st.spinner("⏳ Processando..."):
                     uploaded_file.seek(0)
                     xls = excel_file_smart(uploaded_file)
                     abas_disponiveis = xls.sheet_names
-                    
                     aba_escolhida = abas_disponiveis[0] if len(abas_disponiveis) == 1 else st.selectbox(
                         "Escolha a aba para processar", abas_disponiveis)
-                    
+
                     df_raw = read_excel_smart(xls, sheet_name=aba_escolhida, header=None)
                     df_raw = df_raw[~df_raw.iloc[:, 1].astype(str).str.lower().str.contains("total|subtotal", na=False)]
 
@@ -278,12 +300,14 @@ with st.spinner("⏳ Processando..."):
 
                         meio_pgto = str(df_raw.iloc[4, col]).strip()
                         if not loja_atual or not meio_pgto or meio_pgto.lower() in ["nan", ""]:
-                            col += 1; continue
+                            col += 1
+                            continue
 
                         linha3 = str(df_raw.iloc[2, col]).strip().lower()
                         linha5 = meio_pgto.lower()
                         if any(p in t for t in [linha3, valor_linha4.lower(), linha5] for p in ["total", "serv/tx", "total real"]):
-                            col += 1; continue
+                            col += 1
+                            continue
 
                         try:
                             df_temp = df_raw.iloc[linha_inicio_dados:, [2, col]].copy()
@@ -392,10 +416,6 @@ with st.spinner("⏳ Processando..."):
 
             except Exception as e:
                 st.error(f"❌ Erro ao processar: {e}")
-
-
-
-
 
     # ======================
     # 🔄 Aba 2

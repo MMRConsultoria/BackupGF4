@@ -13,5 +13,5 @@ unidecode
 reportlab
 pytz
 streamlit-autorefresh
-xlrd
+xlrd>=2.0.1
 

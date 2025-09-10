@@ -436,7 +436,49 @@ with st.spinner("⏳ Processando..."):
                         for c in col_order:
                             if c not in df_meio_pagamento.columns:
                                 df_meio_pagamento[c] = ""
-                        df_meio_pagamento = df_meio_pagamento[col_order].copy()
+                # 🔁 Consolida duplicatas por Data + Loja + Meio de Pagamento
+                # 🔁 Consolida duplicatas por Data + Loja + Meio de Pagamento
+                if 'df_meio_pagamento' in locals() and not df_meio_pagamento.empty:
+                    tmp = df_meio_pagamento.copy()
+                
+                    # garante valor numérico para somar
+                    if "Valor (R$)" in tmp.columns:
+                        tmp["Valor (R$)"] = pd.to_numeric(tmp["Valor (R$)"], errors="coerce").fillna(0)
+                
+                    # chaves normalizadas (não alteram o que é exibido)
+                    tmp["_k_data"] = pd.to_datetime(tmp["Data"], dayfirst=True, errors="coerce").dt.date
+                    tmp["_k_loja"] = tmp["Loja"].astype(str).str.strip().str.lower()
+                    tmp["_k_meio"] = tmp["Meio de Pagamento"].astype(str).str.strip().str.lower()
+                
+                    agg_dict = {
+                        "Data": "first",
+                        "Dia da Semana": "first",
+                        "Meio de Pagamento": "first",
+                        "Tipo de Pagamento": "first",
+                        "Tipo DRE": "first",
+                        "Loja": "first",
+                        "Código Everest": "first",
+                        "Grupo": "first",
+                        "Código Grupo Everest": "first",
+                        "Sistema": "first",
+                        "Mês": "first",
+                        "Ano": "first",
+                        "Valor (R$)": "sum",
+                    }
+                
+                    df_meio_pagamento = (
+                        tmp.groupby(["_k_data", "_k_loja", "_k_meio"], as_index=False)
+                           .agg(agg_dict)
+                           .drop(columns=["_k_data", "_k_loja", "_k_meio"])
+                    )
+                
+                    # mantém a ordem original das colunas do tmp
+                    df_meio_pagamento = df_meio_pagamento.reindex(columns=[c for c in tmp.columns if c in df_meio_pagamento.columns])
+                
+                    # se viemos do Formato 1 e você definiu col_order ali em cima, aplica a ordem desejada
+                    if 'col_order' in locals():
+                        df_meio_pagamento = df_meio_pagamento.reindex(columns=[c for c in col_order if c in df_meio_pagamento.columns])
+
 
                 # Resultado pronto
                 st.session_state.df_meio_pagamento = df_meio_pagamento
@@ -659,51 +701,6 @@ with st.spinner("⏳ Processando..."):
                     dados_existentes.add(chave_m)
                 else:
                     duplicados.append(linha)
-            # =======================
-            # 🔎 Depuração de duplicados
-            # =======================
-            with st.expander(f"🔎 Ver duplicados ({len(duplicados)})"):
-                if duplicados:
-                    # DF dos duplicados, alinhado ao cabeçalho da planilha
-                    df_dup = pd.DataFrame(duplicados, columns=header)
-            
-                    # Mostra colunas-chave para inspeção rápida
-                    cols_show = [c for c in ["Data","Loja","Meio de Pagamento","Valor (R$)","Sistema","M"] if c in df_dup.columns]
-                    st.write("Abaixo estão os primeiros registros duplicados (máx. 1000 linhas):")
-                    st.dataframe(df_dup[cols_show].head(1000), use_container_width=True)
-            
-                    # Frequência por chave M (útil para ver chaves que se repetem muito)
-                    if "M" in df_dup.columns:
-                        freq = df_dup["M"].value_counts().reset_index()
-                        freq.columns = ["M", "Qtd"]
-                        st.write("🔢 Quantidade por chave M (top 50):")
-                        st.dataframe(freq.head(50), use_container_width=True)
-            
-                    # Comparar com o que já existe na planilha (para ver diferenças)
-                    df_exist = pd.DataFrame(valores_existentes[1:], columns=header) if len(valores_existentes) > 1 else pd.DataFrame(columns=header)
-                    if "M" in df_exist.columns:
-                        cmp_cols = [c for c in ["Data","Loja","Meio de Pagamento","Valor (R$)","Sistema"] if c in header]
-                        df_cmp = df_dup.merge(df_exist[["M"] + cmp_cols], on="M", how="left", suffixes=("_novo","_existente"))
-                        # Mostra apenas onde há alguma diferença entre novo x existente
-                        diffs = []
-                        for c in cmp_cols:
-                            c_new, c_old = f"{c}_novo", f"{c}_existente"
-                            if c_new in df_cmp.columns and c_old in df_cmp.columns:
-                                diffs.append((c_new, c_old))
-                        if diffs:
-                            mask_diff = False
-                            for c_new, c_old in diffs:
-                                mask_diff = mask_diff | (df_cmp[c_new].astype(str) != df_cmp[c_old].astype(str))
-                            df_diff = df_cmp.loc[mask_diff, ["M"] + sum(([a,b] for a,b in diffs), [])]
-                            if not df_diff.empty:
-                                st.write("🧮 Diferenças entre o que você está enviando e o que já existe (amostra):")
-                                st.dataframe(df_diff.head(200), use_container_width=True)
-            
-                    # Download completo dos duplicados para análise externa
-                    csv_dup = df_dup.to_csv(index=False).encode("utf-8-sig")
-                    st.download_button("⬇️ Baixar duplicados (CSV)", data=csv_dup, file_name="duplicados.csv", mime="text/csv")
-                else:
-                    st.info("Sem duplicados.")
 
             # envio
             lojas_nao_cadastradas = df_final[df_final["Código Everest"].astype(str).isin(["", "nan"])]['Loja'].unique() \

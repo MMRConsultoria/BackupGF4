@@ -4,13 +4,14 @@ import numpy as np
 import re
 import json
 import unicodedata
+from typing import Optional
 from io import BytesIO
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 st.set_page_config(page_title="Meio de Pagamento", layout="wide")
 
-# 🔥 CSS para estilizar as abas
+# ---------- Estilo ----------
 st.markdown("""
     <style>
     .stApp { background-color: #f9f9f9; }
@@ -26,39 +27,27 @@ st.markdown("""
     }
     button[data-baseweb="tab"]:hover { background-color: #dce0ea; color: black; }
     button[data-baseweb="tab"][aria-selected="true"] { background-color: #0366d6; color: white; }
+    [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
+    .stSpinner { visibility: visible !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# 🔒 Bloqueia o acesso caso o usuário não esteja logado
+# ---------- Gate simples ----------
 if not st.session_state.get("acesso_liberado"):
     st.stop()
 
-# ======================
-# CSS para esconder só a barra superior
-# ======================
-st.markdown("""
-    <style>
-        [data-testid="stToolbar"] {
-            visibility: hidden;
-            height: 0%;
-            position: fixed;
-        }
-        .stSpinner {
-            visibility: visible !important;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
-
-# ======================
-# Helpers
-# ======================
+# ---------- Helpers de normalização ----------
 def _norm(s: str) -> str:
-    """Normaliza texto (sem acento, espacos extras, caixa baixa)."""
+    """Normaliza texto (sem acento, espaços extras, caixa baixa) para chaves."""
     s = unicodedata.normalize("NFKD", str(s or "")).encode("ASCII", "ignore").decode("ASCII")
     s = re.sub(r"\s+", " ", s).strip().lower()
     return s
 
+def _strip_accents_keep_case(s: str) -> str:
+    """Remove acentos preservando maiúsculas/minúsculas (para exibição final)."""
+    return unicodedata.normalize("NFKD", str(s or "")).encode("ASCII", "ignore").decode("ASCII")
+
+# ---------- Detecta / padroniza Formato 2 (plano) ----------
 def _is_formato2(df_headed: pd.DataFrame) -> bool:
     """Detecta arquivo 'plano' (A:F): Cod Empresa, Data, Forma, Bandeira, Tipo, Total."""
     cols = {_norm(c) for c in df_headed.columns}
@@ -90,7 +79,7 @@ def processar_formato2(
     df_empresa: pd.DataFrame,
     df_meio_pgto_google: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Processa o Formato 2 e entrega no layout final."""
+    """Processa o Formato 2 e entrega no layout final para importação."""
     df = _rename_cols_formato2(df_src.copy())
 
     req = {"cod_empresa", "data", "forma_pgto", "bandeira", "tipo_cartao", "total"}
@@ -102,10 +91,13 @@ def processar_formato2(
     df["data"] = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
     df["total"] = pd.to_numeric(df["total"], errors="coerce").fillna(0.0)
 
-    # Meio de Pagamento
+    # Meio de Pagamento:
+    # - se houver Bandeira/Tipo -> "Bandeira Tipo" (sem acentos)
+    # - senão usa Forma de Pagamento, removendo o prefixo "99 - " (número e hífen)
     ban = df["bandeira"].fillna("").astype(str).str.strip()
     tip = df["tipo_cartao"].fillna("").astype(str).str.strip()
     meio_from_de = (ban + " " + tip).str.strip().map(_strip_accents_keep_case)
+
     meio_from_c = df["forma_pgto"].astype(str).str.strip()
     meio_from_c = meio_from_c.str.replace(r"^\d+\s*-\s*", "", regex=True)
 
@@ -113,7 +105,7 @@ def processar_formato2(
         (ban != "") | (tip != ""), meio_from_de, meio_from_c
     )
 
-    # Mapeios Tabela Meio Pagamento
+    # Mapeios (Tipo de Pagamento / Tipo DRE) pela Tabela Meio Pagamento
     df_meio = df_meio_pgto_google.copy()
     df_meio["__meio_norm__"] = df_meio["Meio de Pagamento"].astype(str).str.strip().str.lower()
     tipo_pgto_map = dict(zip(df_meio["__meio_norm__"], df_meio["Tipo de Pagamento"].astype(str)))
@@ -124,7 +116,7 @@ def processar_formato2(
     df["Tipo DRE"]          = df["__meio_norm__"].map(tipo_dre_map).fillna("")
     df.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
 
-    # Join com Tabela Empresa (Código Everest)
+    # Join com Tabela Empresa usando Código Everest (coluna A do arquivo)
     emp = df_empresa.copy()
     emp["Código Everest"] = emp["Código Everest"].astype(str).str.strip()
     df["Código Everest"]  = df["cod_empresa"].astype(str).str.strip()
@@ -161,13 +153,12 @@ def processar_formato2(
         pass
 
     return df_final
-def _strip_accents_keep_case(s: str) -> str:
-    """Remove acentos sem mexer em maiúsculas/minúsculas."""
-    return unicodedata.normalize("NFKD", str(s or "")).encode("ASCII", "ignore").decode("ASCII")
-def _pick_engine(uploaded_file) -> str | None:
+
+# ---------- Escolha de engine p/ Excel ----------
+def _pick_engine(uploaded_file) -> Optional[str]:
     """Escolhe o engine correto para ler Excel."""
     name = (uploaded_file.name or "").lower()
-    return "xlrd" if name.endswith(".xls") else None  # .xls => xlrd, senão deixa None (openpyxl)
+    return "xlrd" if name.endswith(".xls") else None  # .xls => xlrd; .xlsx/.xlsm => openpyxl por padrão
 
 def _read_excel_head(uploaded_file) -> pd.DataFrame:
     """Lê a primeira aba com header para detectar o formato."""
@@ -176,15 +167,13 @@ def _read_excel_head(uploaded_file) -> pd.DataFrame:
     return pd.read_excel(uploaded_file, sheet_name=0, engine=engine)
 
 def _open_excel(uploaded_file) -> pd.ExcelFile:
-    """Abre o arquivo como ExcelFile respeitando o engine correto."""
+    """Abre como ExcelFile respeitando o engine adequado."""
     engine = _pick_engine(uploaded_file)
     uploaded_file.seek(0)
     return pd.ExcelFile(uploaded_file, engine=engine)
 
-# ======================
-# Spinner + cargas do Google
-# ======================
-with st.spinner("⏳ Processando..."):
+# ---------- Conexão com Google e UI ----------
+with st.spinner("⏳ Carregando tabelas do Google..."):
     # 🔌 Conexão com Google Sheets
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
@@ -204,45 +193,42 @@ with st.spinner("⏳ Processando..."):
     df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].str.lower()
     df_meio_pgto_google = df_meio_pgto_google.drop_duplicates(subset=["__meio_norm__"], keep="first")
 
+    # mapas (também usados nas validações)
     tipo_pgto_map = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"]))
     tipo_dre_map  = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"]))
 
-    # 🔥 Título
-    st.markdown("""
-        <div style='display: flex; align-items: center; gap: 10px;'>
-            <img src='https://img.icons8.com/color/48/graph.png' width='40'/>
-            <h1 style='display: inline; margin: 0; font-size: 2.4rem;'>Meio de Pagamento</h1>
-        </div>
-    """, unsafe_allow_html=True)
+# Título
+st.markdown("""
+    <div style='display: flex; align-items: center; gap: 10px;'>
+        <img src='https://img.icons8.com/color/48/graph.png' width='40'/>
+        <h1 style='display: inline; margin: 0; font-size: 2.4rem;'>Meio de Pagamento</h1>
+    </div>
+""", unsafe_allow_html=True)
 
-    # ========================
-    # 🗂️ Abas
-    # ========================
+    # ---------- Abas ----------
     tab1, tab2 = st.tabs([
         "📥 Upload e Processamento",
         "🔄 Atualizar Google Sheets"
     ])
-
-    # ======================
-    # 📥 Aba 1
-    # ======================
+    
+    # ---------- Aba 1: Upload ----------
     with tab1:
         uploaded_file = st.file_uploader(
             label="📁 Clique para selecionar ou arraste aqui o arquivo Excel",
-            type=["xlsx", "xlsm", "xls"]  # << agora aceita .xls
+            type=["xlsx", "xlsm", "xls"]  # aceita .xls agora
         )
     
         if uploaded_file:
             try:
-                # 1ª leitura rápida só para detectar se é Formato 2
-                df_head = _read_excel_head(uploaded_file)  # usa xlrd p/ .xls e openpyxl p/ .xlsx/.xlsm
+                # 1) Tenta detectar Formato 2 (plano)
+                df_head = _read_excel_head(uploaded_file)  # usa xlrd para .xls
                 if _is_formato2(df_head):
-                    # ➜ Processa Formato 2 (plano)
+                    # ➜ Processa Formato 2
                     df_meio_pagamento = processar_formato2(
                         df_head, df_empresa, df_meio_pgto_google
                     )
                 else:
-                    # ➜ Não é Formato 2: segue o fluxo “antigo” (Formato 1)
+                    # ➜ Não é Formato 2: fluxo “antigo” (Formato 1)
                     xls = _open_excel(uploaded_file)  # respeita engine
                     abas_disponiveis = xls.sheet_names
                     aba_escolhida = abas_disponiveis[0] if len(abas_disponiveis) == 1 else st.selectbox(
@@ -253,7 +239,7 @@ with st.spinner("⏳ Processando..."):
                     df_raw = df_raw[~df_raw.iloc[:, 1].astype(str).str.lower().str.contains("total|subtotal", na=False)]
     
                     if str(df_raw.iloc[0, 1]).strip().lower() != "faturamento diário por meio de pagamento":
-                        st.error("❌ A célula B1 deve conter 'Faturamento diário por meio de pagamento'.")
+                        st.error("❌ A célula B1 deve conter 'faturamento diário por meio de pagamento'.")
                         st.stop()
     
                     linha_inicio_dados, blocos, col, loja_atual = 5, [], 3, None
@@ -333,36 +319,37 @@ with st.spinner("⏳ Processando..."):
     
                 # === Fim: df_meio_pagamento pronto ===
                 st.session_state.df_meio_pagamento = df_meio_pagamento
-
+    
                 # KPIs de período e total
                 dts = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True, errors="coerce")
                 periodo_min = dts.min().strftime("%d/%m/%Y") if not dts.empty else ""
                 periodo_max = dts.max().strftime("%d/%m/%Y") if not dts.empty else ""
-
+    
                 col1, col2 = st.columns(2)
                 col1.markdown(f"<div style='font-size:1.2rem;'>📅 Período processado<br>{periodo_min} até {periodo_max}</div>", unsafe_allow_html=True)
                 valor_total = f"R$ {df_meio_pagamento['Valor (R$)'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                 col2.markdown(f"<div style='font-size:1.2rem;'>💰 Valor total<br><span style='color:green;'>{valor_total}</span></div>", unsafe_allow_html=True)
-
-                # Validação: empresas não localizadas (mostra códigos sem match)
-                empresas_nao_localizadas = df_meio_pagamento[
-                    df_meio_pagamento["Loja"].astype(str).str.strip().isin(["", "nan"])
-                ]["Código Everest"].astype(str).unique()
-
-                # Validação: meios não localizados na tabela
+    
+                # Validação:
+                # - Formato 2: loja vem do merge por Código Everest; valida as que ficaram vazias
+                # - Formato 1 (antigo): loja já vem no arquivo e pode casar pelo nome
+                lojas_vazias = df_meio_pagamento["Loja"].isna() | (df_meio_pagamento["Loja"].astype(str).str.strip().isin(["", "nan"]))
+                empresas_nao_localizadas = df_meio_pagamento.loc[lojas_vazias, "Código Everest"].astype(str).unique()
+    
+                # Meios de pagamento não localizados
                 meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
                 meios_nao_localizados = df_meio_pagamento[
                     ~df_meio_pagamento["Meio de Pagamento"].astype(str).str.strip().str.lower().isin(meios_norm_tabela)
                 ]["Meio de Pagamento"].astype(str).unique()
-
+    
                 if len(empresas_nao_localizadas) == 0 and len(meios_nao_localizados) == 0:
                     st.success("✅ Todas as empresas e todos os meios de pagamento foram localizados!")
-
+    
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df_meio_pagamento.to_excel(writer, index=False, sheet_name="FaturamentoPorMeio")
                     output.seek(0)
-
+    
                     st.download_button(
                         "📥 Baixar relatório Excel",
                         data=output,
@@ -373,7 +360,7 @@ with st.spinner("⏳ Processando..."):
                     if len(empresas_nao_localizadas) > 0:
                         empresas_nao_localizadas_str = "<br>".join(empresas_nao_localizadas)
                         st.markdown(f"""
-                        ⚠️ {len(empresas_nao_localizadas)} Código(s) Everest sem correspondência:<br>{empresas_nao_localizadas_str}
+                        ⚠️ {len(empresas_nao_localizadas)} Código(s) Everest sem correspondência → Loja vazia:<br>{empresas_nao_localizadas_str}
                         <br>✏️ Atualize a tabela clicando 
                         <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
                         """, unsafe_allow_html=True)
@@ -384,10 +371,9 @@ with st.spinner("⏳ Processando..."):
                         <br>✏️ Atualize a tabela clicando 
                         <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
                         """, unsafe_allow_html=True)
-
+    
             except Exception as e:
                 st.error(f"❌ Erro ao processar: {e}")
-
 
 
     # ======================

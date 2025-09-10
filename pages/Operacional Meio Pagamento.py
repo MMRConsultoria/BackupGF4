@@ -164,6 +164,22 @@ def processar_formato2(
 def _strip_accents_keep_case(s: str) -> str:
     """Remove acentos sem mexer em maiúsculas/minúsculas."""
     return unicodedata.normalize("NFKD", str(s or "")).encode("ASCII", "ignore").decode("ASCII")
+def _pick_engine(uploaded_file) -> str | None:
+    """Escolhe o engine correto para ler Excel."""
+    name = (uploaded_file.name or "").lower()
+    return "xlrd" if name.endswith(".xls") else None  # .xls => xlrd, senão deixa None (openpyxl)
+
+def _read_excel_head(uploaded_file) -> pd.DataFrame:
+    """Lê a primeira aba com header para detectar o formato."""
+    engine = _pick_engine(uploaded_file)
+    uploaded_file.seek(0)
+    return pd.read_excel(uploaded_file, sheet_name=0, engine=engine)
+
+def _open_excel(uploaded_file) -> pd.ExcelFile:
+    """Abre o arquivo como ExcelFile respeitando o engine correto."""
+    engine = _pick_engine(uploaded_file)
+    uploaded_file.seek(0)
+    return pd.ExcelFile(uploaded_file, engine=engine)
 
 # ======================
 # Spinner + cargas do Google
@@ -213,52 +229,52 @@ with st.spinner("⏳ Processando..."):
     with tab1:
         uploaded_file = st.file_uploader(
             label="📁 Clique para selecionar ou arraste aqui o arquivo Excel",
-            type=["xlsx", "xlsm"]
+            type=["xlsx", "xlsm", "xls"]  # << agora aceita .xls
         )
-
+    
         if uploaded_file:
             try:
-                # Tenta detectar Formato 2
-                df_head = pd.read_excel(uploaded_file, sheet_name=0)  # header=0
+                # 1ª leitura rápida só para detectar se é Formato 2
+                df_head = _read_excel_head(uploaded_file)  # usa xlrd p/ .xls e openpyxl p/ .xlsx/.xlsm
                 if _is_formato2(df_head):
                     # ➜ Processa Formato 2 (plano)
                     df_meio_pagamento = processar_formato2(
                         df_head, df_empresa, df_meio_pgto_google
                     )
                 else:
-                    # ➜ Não é Formato 2: volta ao fluxo antigo (Formato 1)
-                    uploaded_file.seek(0)
-                    xls = pd.ExcelFile(uploaded_file)
+                    # ➜ Não é Formato 2: segue o fluxo “antigo” (Formato 1)
+                    xls = _open_excel(uploaded_file)  # respeita engine
                     abas_disponiveis = xls.sheet_names
                     aba_escolhida = abas_disponiveis[0] if len(abas_disponiveis) == 1 else st.selectbox(
-                        "Escolha a aba para processar", abas_disponiveis)
-
+                        "Escolha a aba para processar", abas_disponiveis
+                    )
+    
                     df_raw = pd.read_excel(xls, sheet_name=aba_escolhida, header=None)
                     df_raw = df_raw[~df_raw.iloc[:, 1].astype(str).str.lower().str.contains("total|subtotal", na=False)]
-
+    
                     if str(df_raw.iloc[0, 1]).strip().lower() != "faturamento diário por meio de pagamento":
                         st.error("❌ A célula B1 deve conter 'Faturamento diário por meio de pagamento'.")
                         st.stop()
-
+    
                     linha_inicio_dados, blocos, col, loja_atual = 5, [], 3, None
-
+    
                     while col < df_raw.shape[1]:
                         valor_linha4 = str(df_raw.iloc[3, col]).strip()
                         match = re.match(r"^\d+\s*-\s*(.+)$", valor_linha4)
                         if match:
                             loja_atual = match.group(1).strip().lower()
-
+    
                         meio_pgto = str(df_raw.iloc[4, col]).strip()
                         if not loja_atual or not meio_pgto or meio_pgto.lower() in ["nan", ""]:
                             col += 1
                             continue
-
+    
                         linha3 = str(df_raw.iloc[2, col]).strip().lower()
                         linha5 = meio_pgto.lower()
                         if any(p in t for t in [linha3, valor_linha4.lower(), linha5] for p in ["total", "serv/tx", "total real"]):
                             col += 1
                             continue
-
+    
                         try:
                             df_temp = df_raw.iloc[linha_inicio_dados:, [2, col]].copy()
                             df_temp.columns = ["Data", "Valor (R$)"]
@@ -269,28 +285,28 @@ with st.spinner("⏳ Processando..."):
                         except Exception as e:
                             st.warning(f"⚠️ Erro ao processar coluna {col}: {e}")
                         col += 1
-
+    
                     if not blocos:
                         st.error("❌ Nenhum dado válido encontrado.")
                         st.stop()
-
+    
                     df_meio_pagamento = pd.concat(blocos, ignore_index=True).dropna()
                     df_meio_pagamento = df_meio_pagamento[~df_meio_pagamento["Data"].astype(str).str.lower().str.contains("total|subtotal")]
                     df_meio_pagamento["Data"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True, errors="coerce")
                     df_meio_pagamento = df_meio_pagamento[df_meio_pagamento["Data"].notna()]
-
+    
                     # Derivados
                     dias_semana = {'Monday':'segunda-feira','Tuesday':'terça-feira','Wednesday':'quarta-feira',
                                    'Thursday':'quinta-feira','Friday':'sexta-feira','Saturday':'sábado','Sunday':'domingo'}
                     df_meio_pagamento["Dia da Semana"] = df_meio_pagamento["Data"].dt.day_name().map(dias_semana)
                     df_meio_pagamento = df_meio_pagamento.sort_values(by=["Data", "Loja"])
                     df_meio_pagamento["Data"] = df_meio_pagamento["Data"].dt.strftime("%d/%m/%Y")
-
+    
                     # Join com Tabela Empresa por Loja (fluxo antigo)
                     df_meio_pagamento["Loja"] = df_meio_pagamento["Loja"].str.strip().str.replace(r"^\d+\s*-\s*", "", regex=True).str.lower()
                     df_empresa["Loja"] = df_empresa["Loja"].str.strip().str.lower()
                     df_meio_pagamento = pd.merge(df_meio_pagamento, df_empresa, on="Loja", how="left")
-
+    
                     # Mapeia Tipo de Pagamento / Tipo DRE
                     if "Meio de Pagamento" not in df_meio_pagamento.columns:
                         df_meio_pagamento["Meio de Pagamento"] = ""
@@ -309,13 +325,13 @@ with st.spinner("⏳ Processando..."):
                         value=df_meio_pagamento["__meio_norm__"].map(tipo_dre_map).fillna("")
                     )
                     df_meio_pagamento.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
-
+    
                     # Mês/Ano
                     df_meio_pagamento["Mês"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.month.map({
                         1:'jan',2:'fev',3:'mar',4:'abr',5:'mai',6:'jun',7:'jul',8:'ago',9:'set',10:'out',11:'nov',12:'dez'})
                     df_meio_pagamento["Ano"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.year
-
-                # Fim dos dois caminhos -> df_meio_pagamento está pronto
+    
+                # === Fim: df_meio_pagamento pronto ===
                 st.session_state.df_meio_pagamento = df_meio_pagamento
 
                 # KPIs de período e total

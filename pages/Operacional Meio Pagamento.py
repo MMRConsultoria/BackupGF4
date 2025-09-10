@@ -588,23 +588,14 @@ with st.spinner("⏳ Processando..."):
             # =======================================================
             # 3) Ordenar colunas (deixa Tipo imediatamente após Meio)
             # =======================================================
-            cols_preferidas = [
-                "Data", "Dia da Semana",
-                "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",   # <-- acrescentado aqui
-                "Loja", "Código Everest", "Grupo", "Código Grupo Everest",
-                "Valor (R$)", "Mês", "Ano"
-            ]
-            # preserva ordem preferida + quaisquer extras que porventura existam
-            cols_ordenadas = [c for c in cols_preferidas if c in df_final.columns] + \
-                             [c for c in df_final.columns if c not in cols_preferidas and c != "M"]
-            df_final = df_final[cols_ordenadas]
-        
             # =======================================================
-            # 4) Chave M + conversões (igual antes)
+            # 3) Construir chave de duplicidade "M" (não mover de lugar)
             # =======================================================
-            df_final['M'] = pd.to_datetime(df_final['Data'], format='%d/%m/%Y').dt.strftime('%Y-%m-%d') + \
-                            df_final['Meio de Pagamento'] + df_final['Loja']
-        
+            df_final['M'] = (
+                pd.to_datetime(df_final['Data'], format='%d/%m/%Y').dt.strftime('%Y-%m-%d')
+                + df_final['Meio de Pagamento'] + df_final['Loja']
+            )
+            
             # valor para float
             df_final['Valor (R$)'] = df_final['Valor (R$)'].apply(lambda x: float(str(x).replace(',', '.')))
             # data para serial do Sheets
@@ -613,54 +604,67 @@ with st.spinner("⏳ Processando..."):
             for col in ["Código Everest", "Código Grupo Everest", "Ano"]:
                 if col in df_final.columns:
                     df_final[col] = df_final[col].apply(lambda x: int(x) if pd.notnull(x) and str(x).strip() != "" else "")
-        
-            # garante M no final
-            if "M" in df_final.columns:
-                df_final = df_final[[c for c in df_final.columns if c != "M"] + ["M"]]
-        
+            
             # =======================================================
-            # 5) Planilha destino + duplicidade usando índice dinâmico de 'M'
+            # 4) Planilha destino + ordenar DF na MESMA ordem do cabeçalho
             # =======================================================
             aba_destino = gc.open("Vendas diarias").worksheet("Faturamento Meio Pagamento")
             valores_existentes = aba_destino.get_all_values()
-        
-            m_idx = -1
+            
             if valores_existentes:
                 header = [h.strip() for h in valores_existentes[0]]
-                header_lower = [h.lower() for h in header]
-                if "m" in header_lower:
-                    m_idx = header_lower.index("m")
-        
-            # coleção de chaves M existentes
+            else:
+                # se a aba estiver vazia, defina um cabeçalho padrão (ajuste se precisar)
+                header = [
+                    "Data","Dia da Semana","Meio de Pagamento","Tipo de Pagamento","Tipo DRE",
+                    "Loja","Código Everest","Grupo","Código Grupo Everest",
+                    "Valor (R$)","Mês","Ano","M","Sistema"  # M em M, Sistema em N
+                ]
+            
+            # garante todas as colunas do header no df_final
+            for c in header:
+                if c not in df_final.columns:
+                    df_final[c] = ""
+            
+            # reordena EXATAMENTE como o cabeçalho da planilha (assim 'M' fica em M e 'Sistema' em N)
+            df_final = df_final.reindex(columns=header, fill_value="")
+            
+            # =======================================================
+            # 5) Descobrir índice da coluna M pelo cabeçalho e montar conjunto de chaves existentes
+            # =======================================================
+            header_lower = [h.lower() for h in header]
+            m_idx = header_lower.index("m") if "m" in header_lower else -1
+            
             if len(valores_existentes) > 1:
                 if m_idx >= 0:
                     dados_existentes = set(
                         linha[m_idx] for linha in valores_existentes[1:] if len(linha) > m_idx
                     )
                 else:
-                    # fallback: considera última coluna como M
+                    # fallback: última coluna
                     dados_existentes = set(
                         linha[-1] for linha in valores_existentes[1:] if len(linha) > 0
                     )
             else:
                 dados_existentes = set()
-        
+            
+            # =======================================================
+            # 6) Filtrar novos x duplicados usando m_idx (NÃO assumir que M é a última)
+            # =======================================================
             novos_dados, duplicados = [], []
             for linha in df_final.fillna("").values.tolist():
-                chave_m = linha[-1]  # M é a última coluna do df_final
+                chave_m = linha[m_idx] if m_idx >= 0 else linha[-1]
                 if chave_m not in dados_existentes:
                     novos_dados.append(linha)
                     dados_existentes.add(chave_m)
                 else:
                     duplicados.append(linha)
-        
-            # =======================================================
-            # 6) Envio
-            # =======================================================
+            
+            # envio
             lojas_nao_cadastradas = df_final[df_final["Código Everest"].astype(str).isin(["", "nan"])]['Loja'].unique() \
                 if "Código Everest" in df_final.columns else []
             todas_lojas_ok = len(lojas_nao_cadastradas) == 0
-        
+            
             if todas_lojas_ok and st.button("📥 Enviar dados para o Google Sheets"):
                 with st.spinner("🔄 Atualizando..."):
                     if novos_dados:

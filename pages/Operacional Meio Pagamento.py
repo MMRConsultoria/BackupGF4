@@ -202,6 +202,9 @@ def processar_formato2(
         on="Código Everest", how="left"
     )
 
+    # Sistema (Formato 2)
+    df["Sistema"] = "CISS"
+
     # Datas derivadas
     dias_semana = {
         'Monday': 'segunda-feira','Tuesday': 'terça-feira','Wednesday': 'quarta-feira',
@@ -214,12 +217,21 @@ def processar_formato2(
 
     # Valor e colunas finais
     df.rename(columns={"total": "Valor (R$)"}, inplace=True)
-    df_final = df[[
+
+    # 💡 Ordem padrão de saída (inclui Sistema)
+    col_order = [
         "Data", "Dia da Semana",
         "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",
         "Loja", "Código Everest", "Grupo", "Código Grupo Everest",
+        "Sistema",
         "Valor (R$)", "Mês", "Ano"
-    ]].copy()
+    ]
+    # garante colunas ausentes
+    for c in col_order:
+        if c not in df.columns:
+            df[c] = ""
+    df_final = df[col_order].copy()
+
     try:
         df_final.sort_values(by=["Data", "Loja"], inplace=True)
     except Exception:
@@ -251,7 +263,6 @@ with st.spinner("⏳ Processando..."):
     # ----------------------------
     # 🔑 LOOKUP De→para CiSS (usa TODAS as linhas, inclusive duplicadas)
     # ----------------------------
-    # Descobre a coluna de "De para CISS"
     depara_col = None
     for c in df_meio_pgto_raw.columns:
         if "ciss" in _norm(c):  # ex: "De para CiSS", "CISS", "Padrao CISS"
@@ -265,15 +276,10 @@ with st.spinner("⏳ Processando..."):
         tmp = tmp[tmp["_depara_ciss_val_"] != ""]
 
         if not tmp.empty:
-            # normaliza chaves (o que vem do arquivo) e prepara canônicos (o que queremos aplicar)
             tmp["_depara_key_"] = tmp["_depara_ciss_val_"].map(_norm)
             tmp["_canon_norm_"] = tmp["Meio de Pagamento"].astype(str).str.strip().map(_norm)
 
-            # Se um mesmo "_depara_key_" tiver canônicos diferentes, avisamos e pegamos o primeiro
-            conflitos = (
-                tmp.groupby("_depara_key_")["_canon_norm_"]
-                   .nunique()
-            )
+            conflitos = tmp.groupby("_depara_key_")["_canon_norm_"].nunique()
             conflitos = conflitos[conflitos > 1]
             if not conflitos.empty:
                 st.warning(
@@ -281,9 +287,7 @@ with st.spinner("⏳ Processando..."):
                     "Usando o primeiro encontrado para cada chave conflitante."
                 )
 
-            # Monta lookup pegando o primeiro canônico encontrado para cada chave
             tmp_sorted = tmp.drop_duplicates(subset=["_depara_key_"], keep="first")
-            # Usamos o "Meio de Pagamento" textual da linha (não-normalizado) para manter capitalização
             map_key = tmp_sorted["_depara_key_"].tolist()
             map_val = tmp_sorted["Meio de Pagamento"].astype(str).str.strip().tolist()
             depara_ciss_lookup = dict(zip(map_key, map_val))
@@ -293,7 +297,6 @@ with st.spinner("⏳ Processando..."):
     # ----------------------------
     df_meio_pgto_google = df_meio_pgto_raw.copy()
     df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].map(_norm)
-    # mantém a primeira ocorrência por canônico
     df_meio_pgto_google = df_meio_pgto_google.drop_duplicates(subset=["__meio_norm__"], keep="first")
 
     # 🔥 Título
@@ -331,7 +334,7 @@ with st.spinner("⏳ Processando..."):
                         depara_ciss_lookup=depara_ciss_lookup
                     )
                 else:
-                    # ➜ Formato 1 (layout antigo) — sem override CiSS (mantém sua lógica)
+                    # ➜ Formato 1 (layout antigo)
                     uploaded_file.seek(0)
                     xls = excel_file_smart(uploaded_file)
                     abas_disponiveis = xls.sheet_names
@@ -418,6 +421,25 @@ with st.spinner("⏳ Processando..."):
                         1:'jan',2:'fev',3:'mar',4:'abr',5:'mai',6:'jun',7:'jul',8:'ago',9:'set',10:'out',11:'nov',12:'dez'})
                     df_meio_pagamento["Ano"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.year
 
+                    # ➕ Sistema (Formato 1)
+                    df_meio_pagamento["Sistema"] = "Colibri"
+
+                    # 💡 Ordem padrão de saída (igual ao Formato 2)
+                    col_order = [
+                        "Data", "Dia da Semana",
+                        "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",
+                        "Loja", "Código Everest", "Grupo", "Código Grupo Everest",
+                        "Sistema",
+                        "Valor (R$)", "Mês", "Ano"
+                    ]
+                    for c in ["Código Everest", "Grupo", "Código Grupo Everest"]:
+                        if c not in df_meio_pagamento.columns:
+                            df_meio_pagamento[c] = ""
+                    for c in col_order:
+                        if c not in df_meio_pagamento.columns:
+                            df_meio_pagamento[c] = ""
+                    df_meio_pagamento = df_meio_pagamento[col_order].copy()
+
                 # Resultado pronto
                 st.session_state.df_meio_pagamento = df_meio_pagamento
 
@@ -469,6 +491,7 @@ with st.spinner("⏳ Processando..."):
 
             except Exception as e:
                 st.error(f"❌ Erro ao processar: {e}")
+
 
 
     # ======================

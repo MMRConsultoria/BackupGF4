@@ -8,6 +8,7 @@ from io import BytesIO
 import gspread
 import os
 from oauth2client.service_account import ServiceAccountCredentials
+from openpyxl.utils import get_column_letter, column_index_from_string  # 👈 novo
 
 st.set_page_config(page_title="Meio de Pagamento", layout="wide")
 
@@ -202,7 +203,7 @@ def processar_formato2(
         on="Código Everest", how="left"
     )
 
-    # Sistema (Formato 2)
+    # ➕ Sistema (Formato 2)
     df["Sistema"] = "CISS"
 
     # Datas derivadas
@@ -226,7 +227,6 @@ def processar_formato2(
         "Sistema",
         "Valor (R$)", "Mês", "Ano"
     ]
-    # garante colunas ausentes
     for c in col_order:
         if c not in df.columns:
             df[c] = ""
@@ -274,7 +274,6 @@ with st.spinner("⏳ Processando..."):
         tmp = df_meio_pgto_raw.copy()
         tmp["_depara_ciss_val_"] = tmp[depara_col].astype(str).str.strip()
         tmp = tmp[tmp["_depara_ciss_val_"] != ""]
-
         if not tmp.empty:
             tmp["_depara_key_"] = tmp["_depara_ciss_val_"].map(_norm)
             tmp["_canon_norm_"] = tmp["Meio de Pagamento"].astype(str).str.strip().map(_norm)
@@ -326,7 +325,7 @@ with st.spinner("⏳ Processando..."):
                 # Detecta Formato 2 pelo header real
                 df_head = read_excel_smart(uploaded_file, sheet_name=0, header=0)  # header=0
                 if _is_formato2(df_head):
-                    # ➜ Formato 2 (plano) usa override De→para CiSS com a tabela RAW (com duplicatas)
+                    # ➜ Formato 2 (plano)
                     df_meio_pagamento = processar_formato2(
                         df_head,
                         df_empresa,
@@ -378,67 +377,66 @@ with st.spinner("⏳ Processando..."):
 
                     if not blocos:
                         st.error("❌ Nenhum dado válido encontrado.")
-                        st.stop()
+                    else:
+                        df_meio_pagamento = pd.concat(blocos, ignore_index=True).dropna()
+                        df_meio_pagamento = df_meio_pagamento[~df_meio_pagamento["Data"].astype(str).str.lower().str.contains("total|subtotal")]
+                        df_meio_pagamento["Data"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True, errors="coerce")
+                        df_meio_pagamento = df_meio_pagamento[df_meio_pagamento["Data"].notna()]
 
-                    df_meio_pagamento = pd.concat(blocos, ignore_index=True).dropna()
-                    df_meio_pagamento = df_meio_pagamento[~df_meio_pagamento["Data"].astype(str).str.lower().str.contains("total|subtotal")]
-                    df_meio_pagamento["Data"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True, errors="coerce")
-                    df_meio_pagamento = df_meio_pagamento[df_meio_pagamento["Data"].notna()]
+                        # Derivados + join por Loja
+                        dias_semana = {'Monday':'segunda-feira','Tuesday':'terça-feira','Wednesday':'quarta-feira',
+                                       'Thursday':'quinta-feira','Friday':'sexta-feira','Saturday':'sábado','Sunday':'domingo'}
+                        df_meio_pagamento["Dia da Semana"] = df_meio_pagamento["Data"].dt.day_name().map(dias_semana)
+                        df_meio_pagamento = df_meio_pagamento.sort_values(by=["Data", "Loja"])
+                        df_meio_pagamento["Data"] = df_meio_pagamento["Data"].dt.strftime("%d/%m/%Y")
 
-                    # Derivados + join por Loja
-                    dias_semana = {'Monday':'segunda-feira','Tuesday':'terça-feira','Wednesday':'quarta-feira',
-                                   'Thursday':'quinta-feira','Friday':'sexta-feira','Saturday':'sábado','Sunday':'domingo'}
-                    df_meio_pagamento["Dia da Semana"] = df_meio_pagamento["Data"].dt.day_name().map(dias_semana)
-                    df_meio_pagamento = df_meio_pagamento.sort_values(by=["Data", "Loja"])
-                    df_meio_pagamento["Data"] = df_meio_pagamento["Data"].dt.strftime("%d/%m/%Y")
+                        df_meio_pagamento["Loja"] = df_meio_pagamento["Loja"].str.strip().str.replace(r"^\d+\s*-\s*", "", regex=True).str.lower()
+                        df_empresa["Loja"] = df_empresa["Loja"].str.strip().str.lower()
+                        df_meio_pagamento = pd.merge(df_meio_pagamento, df_empresa, on="Loja", how="left")
 
-                    df_meio_pagamento["Loja"] = df_meio_pagamento["Loja"].str.strip().str.replace(r"^\d+\s*-\s*", "", regex=True).str.lower()
-                    df_empresa["Loja"] = df_empresa["Loja"].str.strip().str.lower()
-                    df_meio_pagamento = pd.merge(df_meio_pagamento, df_empresa, on="Loja", how="left")
+                        # Mapeia Tipo de Pagamento / Tipo DRE
+                        if "Meio de Pagamento" not in df_meio_pagamento.columns:
+                            df_meio_pagamento["Meio de Pagamento"] = ""
+                        df_meio_pagamento["__meio_norm__"] = df_meio_pagamento["Meio de Pagamento"].map(_norm)
+                        col_meio_idx = df_meio_pagamento.columns.get_loc("Meio de Pagamento")
+                        df_meio_pagamento.insert(
+                            loc=col_meio_idx + 1,
+                            column="Tipo de Pagamento",
+                            value=df_meio_pagamento["__meio_norm__"].map(
+                                dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"]))
+                            ).fillna("")
+                        )
+                        df_meio_pagamento.insert(
+                            loc=col_meio_idx + 2,
+                            column="Tipo DRE",
+                            value=df_meio_pagamento["__meio_norm__"].map(
+                                dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"]))
+                            ).fillna("")
+                        )
+                        df_meio_pagamento.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
 
-                    # Mapeia Tipo de Pagamento / Tipo DRE — usando a MESMA normalização (com df_meio_pgto_google)
-                    if "Meio de Pagamento" not in df_meio_pagamento.columns:
-                        df_meio_pagamento["Meio de Pagamento"] = ""
-                    df_meio_pagamento["__meio_norm__"] = df_meio_pagamento["Meio de Pagamento"].map(_norm)
-                    col_meio_idx = df_meio_pagamento.columns.get_loc("Meio de Pagamento")
-                    df_meio_pagamento.insert(
-                        loc=col_meio_idx + 1,
-                        column="Tipo de Pagamento",
-                        value=df_meio_pagamento["__meio_norm__"].map(
-                            dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"]))
-                        ).fillna("")
-                    )
-                    df_meio_pagamento.insert(
-                        loc=col_meio_idx + 2,
-                        column="Tipo DRE",
-                        value=df_meio_pagamento["__meio_norm__"].map(
-                            dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"]))
-                        ).fillna("")
-                    )
-                    df_meio_pagamento.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
+                        df_meio_pagamento["Mês"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.month.map({
+                            1:'jan',2:'fev',3:'mar',4:'abr',5:'mai',6:'jun',7:'jul',8:'ago',9:'set',10:'out',11:'nov',12:'dez'})
+                        df_meio_pagamento["Ano"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.year
 
-                    df_meio_pagamento["Mês"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.month.map({
-                        1:'jan',2:'fev',3:'mar',4:'abr',5:'mai',6:'jun',7:'jul',8:'ago',9:'set',10:'out',11:'nov',12:'dez'})
-                    df_meio_pagamento["Ano"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.year
+                        # ➕ Sistema (Formato 1)
+                        df_meio_pagamento["Sistema"] = "Colibri"
 
-                    # ➕ Sistema (Formato 1)
-                    df_meio_pagamento["Sistema"] = "Colibri"
-
-                    # 💡 Ordem padrão de saída (igual ao Formato 2)
-                    col_order = [
-                        "Data", "Dia da Semana",
-                        "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",
-                        "Loja", "Código Everest", "Grupo", "Código Grupo Everest",
-                        "Sistema",
-                        "Valor (R$)", "Mês", "Ano"
-                    ]
-                    for c in ["Código Everest", "Grupo", "Código Grupo Everest"]:
-                        if c not in df_meio_pagamento.columns:
-                            df_meio_pagamento[c] = ""
-                    for c in col_order:
-                        if c not in df_meio_pagamento.columns:
-                            df_meio_pagamento[c] = ""
-                    df_meio_pagamento = df_meio_pagamento[col_order].copy()
+                        # 💡 Ordem padrão de saída (igual ao Formato 2)
+                        col_order = [
+                            "Data", "Dia da Semana",
+                            "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",
+                            "Loja", "Código Everest", "Grupo", "Código Grupo Everest",
+                            "Sistema",
+                            "Valor (R$)", "Mês", "Ano"
+                        ]
+                        for c in ["Código Everest", "Grupo", "Código Grupo Everest"]:
+                            if c not in df_meio_pagamento.columns:
+                                df_meio_pagamento[c] = ""
+                        for c in col_order:
+                            if c not in df_meio_pagamento.columns:
+                                df_meio_pagamento[c] = ""
+                        df_meio_pagamento = df_meio_pagamento[col_order].copy()
 
                 # Resultado pronto
                 st.session_state.df_meio_pagamento = df_meio_pagamento
@@ -461,18 +459,48 @@ with st.spinner("⏳ Processando..."):
                     ~df_meio_pagamento["Meio de Pagamento"].astype(str).str.strip().map(_norm).isin(meios_norm_tabela)
                 ]["Meio de Pagamento"].astype(str).unique()
 
+                # ======================
+                #  📤 Exportar Excel — Sistema em COLUNA O
+                # ======================
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df_meio_pagamento.to_excel(writer, index=False, sheet_name="FaturamentoPorMeio")
+                    wb = writer.book
+                    ws = wb["FaturamentoPorMeio"]
+
+                    # mover a coluna "Sistema" para a coluna O (15)
+                    headers = [cell.value for cell in ws[1]]
+                    if "Sistema" in headers:
+                        sys_idx = headers.index("Sistema") + 1        # posição atual (1-based)
+                        target_idx = column_index_from_string("O")     # 15
+
+                        # valores da coluna "Sistema" (c/ cabeçalho)
+                        col_vals = [ws.cell(row=r, column=sys_idx).value for r in range(1, ws.max_row + 1)]
+
+                        # remove a coluna original para não duplicar
+                        ws.delete_cols(sys_idx)
+
+                        # se apagamos uma coluna antes de O, O "anda" uma casa para a esquerda
+                        if sys_idx < target_idx:
+                            target_idx -= 1
+
+                        # escreve "Sistema" em O
+                        for r, val in enumerate(col_vals, start=1):
+                            ws.cell(row=r, column=target_idx, value=val)
+
+                output.seek(0)
+
+                # botão de download (mesmo se houver alertas)
+                st.download_button(
+                    "📥 Baixar relatório Excel",
+                    data=output,
+                    file_name="FaturamentoPorMeio.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+                # Mensagens pós-validação
                 if len(empresas_nao_localizadas) == 0 and len(meios_nao_localizados) == 0:
                     st.success("✅ Todas as empresas e todos os meios de pagamento foram localizados!")
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df_meio_pagamento.to_excel(writer, index=False, sheet_name="FaturamentoPorMeio")
-                    output.seek(0)
-                    st.download_button(
-                        "📥 Baixar relatório Excel",
-                        data=output,
-                        file_name="FaturamentoPorMeio.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
                 else:
                     if len(empresas_nao_localizadas) > 0:
                         empresas_nao_localizadas_str = "<br>".join(empresas_nao_localizadas)
@@ -491,8 +519,6 @@ with st.spinner("⏳ Processando..."):
 
             except Exception as e:
                 st.error(f"❌ Erro ao processar: {e}")
-
-
 
     # ======================
     # 🔄 Aba 2

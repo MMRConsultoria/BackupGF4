@@ -148,13 +148,13 @@ def excel_file_smart(uploaded_file):
             raise RuntimeError(f"Falha abrindo ExcelFile (kind={kind}). Tentativas: {e1} | {e2}")
 
 # ======================
-# Processamento Formato 2 (plano) — com De→para CiSS
+# Processamento Formato 2 (plano) — com De→para CiSS (override para canônico da tabela)
 # ======================
 def processar_formato2(
     df_src: pd.DataFrame,
     df_empresa: pd.DataFrame,
     df_meio_pgto_google: pd.DataFrame,
-    depara_ciss_map: dict = None,  # <- só Formato 2 usa
+    depara_ciss_lookup: dict = None,  # <- mapeia _norm("De para CiSS") -> "Meio de Pagamento" (canônico)
 ) -> pd.DataFrame:
     df = _rename_cols_formato2(df_src.copy())
 
@@ -175,21 +175,16 @@ def processar_formato2(
 
     df["Meio de Pagamento"] = np.where((ban != "") | (tip != ""), meio_from_de, meio_from_c)
 
-    # 📌 APLICA De→para CiSS (apenas Formato 2)
-    if depara_ciss_map:
-        original = df["Meio de Pagamento"].astype(str)
-        key = original.map(_norm)
-        mapped = key.map(depara_ciss_map)
-        df["Meio de Pagamento"] = mapped.fillna(original)
-        # contador informativo
-        try:
-            aplicadas = (df["Meio de Pagamento"] != original).sum()
-            if aplicadas > 0:
-                st.caption(f"🔁 Padronizações CiSS aplicadas (Formato 2): {aplicadas}")
-        except Exception:
-            pass
+    # ✅ APLICA **override De→para CiSS** (se houver) usando o **canônico da Tabela**
+    if depara_ciss_lookup:
+        key_norm = df["Meio de Pagamento"].astype(str).map(_norm)
+        overridden = key_norm.map(depara_ciss_lookup)  # retorna canônico da Tabela quando "De para CiSS" estiver preenchido
+        aplicadas = overridden.notna().sum()
+        df["Meio de Pagamento"] = overridden.fillna(df["Meio de Pagamento"])
+        if aplicadas > 0:
+            st.caption(f"🔁 Padronizações CiSS aplicadas (Formato 2): {aplicadas}")
 
-    # Mapas Tipo de Pagamento / Tipo DRE (com mesma normalização)
+    # ==== Classificação após padronizar ====
     df_meio = df_meio_pgto_google.copy()
     df_meio["__meio_norm__"] = df_meio["Meio de Pagamento"].map(_norm)
     tipo_pgto_map = dict(zip(df_meio["__meio_norm__"], df_meio["Tipo de Pagamento"].astype(str)))
@@ -255,29 +250,27 @@ with st.spinner("⏳ Processando..."):
             df_meio_pgto_google[col] = ""
         df_meio_pgto_google[col] = df_meio_pgto_google[col].astype(str).str.strip()
 
-    # ⚠️ use a MESMA normalização (_norm) para chaves
+    # ⚠️ mesma normalização para chave canônica
     df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].map(_norm)
     df_meio_pgto_google = df_meio_pgto_google.drop_duplicates(subset=["__meio_norm__"], keep="first")
 
-    # 🔑 Constrói o mapa De→para CiSS **a partir da Tabela Meio Pagamento**
-    # Procuramos uma coluna cujo nome normalizado contenha "ciss"
+    # 🔑 Monta o **lookup De→para CiSS**:
+    #    mapeia _norm("De para CiSS")  ->  "Meio de Pagamento" (canônico da própria linha)
+    depara_ciss_lookup = {}
     depara_col = None
     for c in df_meio_pgto_google.columns:
         if "ciss" in _norm(c):  # ex.: "De para CiSS", "CISS", "Padrão CISS" etc.
             depara_col = c
             break
 
-    depara_ciss_map = {}
     if depara_col:
         tmp = df_meio_pgto_google.copy()
-        # se CiSS estiver vazio, usa o próprio "Meio de Pagamento"
-        padrao = np.where(
-            tmp[depara_col].astype(str).str.strip() != "",
-            tmp[depara_col].astype(str).str.strip(),
-            tmp["Meio de Pagamento"].astype(str).str.strip()
-        )
-        # CHAVE normalizada com _norm para bater com o processamento do arquivo
-        depara_ciss_map = dict(zip(tmp["__meio_norm__"], padrao))
+        tmp["_depara_ciss_val_"] = tmp[depara_col].astype(str).str.strip()
+        tmp = tmp[tmp["_depara_ciss_val_"] != ""]
+        if not tmp.empty:
+            depara_keys = tmp["_depara_ciss_val_"].map(_norm)
+            canonicos  = tmp["Meio de Pagamento"].astype(str).str.strip()
+            depara_ciss_lookup = dict(zip(depara_keys, canonicos))
 
     # 🔥 Título
     st.markdown("""
@@ -306,13 +299,13 @@ with st.spinner("⏳ Processando..."):
                 # Detecta Formato 2 pelo header real
                 df_head = read_excel_smart(uploaded_file, sheet_name=0, header=0)  # header=0
                 if _is_formato2(df_head):
-                    # ➜ Formato 2 (plano) USA De→para CiSS
+                    # ➜ Formato 2 (plano) APLICA override De→para CiSS (quando houver)
                     df_meio_pagamento = processar_formato2(
                         df_head, df_empresa, df_meio_pgto_google,
-                        depara_ciss_map=depara_ciss_map
+                        depara_ciss_lookup=depara_ciss_lookup
                     )
                 else:
-                    # ➜ Formato 1 (layout antigo) — NÃO aplica De→para CiSS
+                    # ➜ Formato 1 (layout antigo) — sem override CiSS
                     uploaded_file.seek(0)
                     xls = excel_file_smart(uploaded_file)
                     abas_disponiveis = xls.sheet_names
@@ -408,7 +401,7 @@ with st.spinner("⏳ Processando..."):
                 periodo_max = dts.max().strftime("%d/%m/%Y") if not dts.empty else ""
                 col1, col2 = st.columns(2)
                 col1.markdown(f"<div style='font-size:1.2rem;'>📅 Período processado<br>{periodo_min} até {periodo_max}</div>", unsafe_allow_html=True)
-                valor_total = f"R$ {df_meio_pagamento['Valor (R$)'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                valor_total = f"R$ {df_meio_pagamento['Valor (R$)'].sum():,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
                 col2.markdown(f"<div style='font-size:1.2rem;'>💰 Valor total<br><span style='color:green;'>{valor_total}</span></div>", unsafe_allow_html=True)
 
                 # Validações

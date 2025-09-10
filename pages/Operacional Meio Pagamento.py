@@ -659,7 +659,52 @@ with st.spinner("⏳ Processando..."):
                     dados_existentes.add(chave_m)
                 else:
                     duplicados.append(linha)
+            # =======================
+            # 🔎 Depuração de duplicados
+            # =======================
+            with st.expander(f"🔎 Ver duplicados ({len(duplicados)})"):
+                if duplicados:
+                    # DF dos duplicados, alinhado ao cabeçalho da planilha
+                    df_dup = pd.DataFrame(duplicados, columns=header)
             
+                    # Mostra colunas-chave para inspeção rápida
+                    cols_show = [c for c in ["Data","Loja","Meio de Pagamento","Valor (R$)","Sistema","M"] if c in df_dup.columns]
+                    st.write("Abaixo estão os primeiros registros duplicados (máx. 1000 linhas):")
+                    st.dataframe(df_dup[cols_show].head(1000), use_container_width=True)
+            
+                    # Frequência por chave M (útil para ver chaves que se repetem muito)
+                    if "M" in df_dup.columns:
+                        freq = df_dup["M"].value_counts().reset_index()
+                        freq.columns = ["M", "Qtd"]
+                        st.write("🔢 Quantidade por chave M (top 50):")
+                        st.dataframe(freq.head(50), use_container_width=True)
+            
+                    # Comparar com o que já existe na planilha (para ver diferenças)
+                    df_exist = pd.DataFrame(valores_existentes[1:], columns=header) if len(valores_existentes) > 1 else pd.DataFrame(columns=header)
+                    if "M" in df_exist.columns:
+                        cmp_cols = [c for c in ["Data","Loja","Meio de Pagamento","Valor (R$)","Sistema"] if c in header]
+                        df_cmp = df_dup.merge(df_exist[["M"] + cmp_cols], on="M", how="left", suffixes=("_novo","_existente"))
+                        # Mostra apenas onde há alguma diferença entre novo x existente
+                        diffs = []
+                        for c in cmp_cols:
+                            c_new, c_old = f"{c}_novo", f"{c}_existente"
+                            if c_new in df_cmp.columns and c_old in df_cmp.columns:
+                                diffs.append((c_new, c_old))
+                        if diffs:
+                            mask_diff = False
+                            for c_new, c_old in diffs:
+                                mask_diff = mask_diff | (df_cmp[c_new].astype(str) != df_cmp[c_old].astype(str))
+                            df_diff = df_cmp.loc[mask_diff, ["M"] + sum(([a,b] for a,b in diffs), [])]
+                            if not df_diff.empty:
+                                st.write("🧮 Diferenças entre o que você está enviando e o que já existe (amostra):")
+                                st.dataframe(df_diff.head(200), use_container_width=True)
+            
+                    # Download completo dos duplicados para análise externa
+                    csv_dup = df_dup.to_csv(index=False).encode("utf-8-sig")
+                    st.download_button("⬇️ Baixar duplicados (CSV)", data=csv_dup, file_name="duplicados.csv", mime="text/csv")
+                else:
+                    st.info("Sem duplicados.")
+
             # envio
             lojas_nao_cadastradas = df_final[df_final["Código Everest"].astype(str).isin(["", "nan"])]['Loja'].unique() \
                 if "Código Everest" in df_final.columns else []

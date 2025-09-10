@@ -84,36 +84,106 @@ def _rename_cols_formato2(df: pd.DataFrame) -> pd.DataFrame:
 # ======================
 # Leitura robusta de Excel (.xls, .xlsx, .xlsm)
 # ======================
-def _pick_engine(filename: str) -> str:
-    ext = os.path.splitext(filename.lower())[1]
-    if ext == ".xls":
-        return "xlrd"       # xlrd>=2 só lê .xls
-    return "openpyxl"       # .xlsx / .xlsm
+# ======================
+# Leitura robusta de Excel (.xls, .xlsx, .xlsm) por ASSINATURA
+# ======================
+import io
+import os
+
+def _sniff_excel_kind(uploaded_file) -> str:
+    """
+    Retorna 'xlsx' se for ZIP (xlsx/xlsm), 'xls' se for OLE2 (xls antigo),
+    ou 'unknown' se não der para identificar.
+    """
+    try:
+        pos = uploaded_file.tell()
+    except Exception:
+        pos = None
+    try:
+        uploaded_file.seek(0)
+        head = uploaded_file.read(8)
+    finally:
+        try:
+            uploaded_file.seek(pos or 0)
+        except Exception:
+            pass
+
+    if not isinstance(head, (bytes, bytearray)):
+        return "unknown"
+
+    # ZIP signatures (xlsx/xlsm)
+    if head.startswith(b"PK\x03\x04") or head.startswith(b"PK\x05\x06") or head.startswith(b"PK\x07\x08"):
+        return "xlsx"
+    # OLE2/CFB (xls antigo)
+    if head.startswith(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"):
+        return "xls"
+    return "unknown"
 
 def read_excel_smart(file_or_xls, sheet_name=0, header=0):
     """
-    Lê planilha usando engine correto.
+    Lê planilha usando engine correto por ASSINATURA.
     Aceita UploadedFile/BytesIO OU um pd.ExcelFile já aberto.
+    Tem fallback automático caso o primeiro engine falhe.
     """
     if isinstance(file_or_xls, pd.ExcelFile):
+        # já está aberto com engine apropriado
         return pd.read_excel(file_or_xls, sheet_name=sheet_name, header=header)
 
     # UploadedFile/BytesIO
-    eng = _pick_engine(getattr(file_or_xls, "name", "arquivo.xlsx"))
+    kind = _sniff_excel_kind(file_or_xls)
     try:
         file_or_xls.seek(0)
     except Exception:
         pass
-    return pd.read_excel(file_or_xls, sheet_name=sheet_name, header=header, engine=eng)
+
+    # 1ª tentativa: engine conforme assinatura
+    try:
+        if kind == "xls":
+            return pd.read_excel(file_or_xls, sheet_name=sheet_name, header=header, engine="xlrd")
+        # xlsx/xlsm/unknown -> tenta openpyxl primeiro
+        return pd.read_excel(file_or_xls, sheet_name=sheet_name, header=header, engine="openpyxl")
+    except Exception as e1:
+        # 2ª tentativa: engine alternativo
+        try:
+            file_or_xls.seek(0)
+        except Exception:
+            pass
+        alt = "openpyxl" if kind == "xls" else "xlrd"
+        try:
+            return pd.read_excel(file_or_xls, sheet_name=sheet_name, header=header, engine=alt)
+        except Exception as e2:
+            # Erro final, mostra as duas mensagens para facilitar debug
+            raise RuntimeError(f"Falha lendo Excel (kind={kind}). "
+                               f"Tentativas: {e1} | {e2}")
 
 def excel_file_smart(uploaded_file):
-    """Abre um ExcelFile com o engine correto pelo sufixo do nome."""
-    eng = _pick_engine(uploaded_file.name)
+    """
+    Abre pd.ExcelFile com engine apropriado por ASSINATURA.
+    """
+    kind = _sniff_excel_kind(uploaded_file)
     try:
         uploaded_file.seek(0)
     except Exception:
         pass
-    return pd.ExcelFile(uploaded_file, engine=eng)
+    eng = "xlrd" if kind == "xls" else "openpyxl"
+    try:
+        return pd.ExcelFile(uploaded_file, engine=eng)
+    except Exception as e1:
+        # fallback no engine alternativo
+        try:
+            uploaded_file.seek(0)
+        except Exception:
+            pass
+        alt = "openpyxl" if eng == "xlrd" else "xlrd"
+        try:
+            return pd.ExcelFile(uploaded_file, engine=alt)
+        except Exception as e2:
+            raise RuntimeError(f"Falha abrindo ExcelFile (kind={kind}). "
+                               f"Tentativas: {e1} | {e2}")
+
+
+
+
 
 # ======================
 # Processamento Formato 2 (plano) — com De→para CiSS

@@ -4,14 +4,13 @@ import numpy as np
 import re
 import json
 import unicodedata
-from typing import Optional
 from io import BytesIO
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 st.set_page_config(page_title="Meio de Pagamento", layout="wide")
 
-# ---------- Estilo ----------
+# 🔥 CSS para estilizar as abas
 st.markdown("""
     <style>
     .stApp { background-color: #f9f9f9; }
@@ -27,36 +26,41 @@ st.markdown("""
     }
     button[data-baseweb="tab"]:hover { background-color: #dce0ea; color: black; }
     button[data-baseweb="tab"][aria-selected="true"] { background-color: #0366d6; color: white; }
-    [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
-    .stSpinner { visibility: visible !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# ---------- Gate simples ----------
+# 🔒 Bloqueia o acesso caso o usuário não esteja logado
 if not st.session_state.get("acesso_liberado"):
     st.stop()
 
-# ---------- Helpers de normalização ----------
+# ======================
+# CSS para esconder só a barra superior
+# ======================
+st.markdown("""
+    <style>
+        [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
+        .stSpinner { visibility: visible !important; }
+    </style>
+""", unsafe_allow_html=True)
+
+# ======================
+# Helpers de normalização
+# ======================
+def _strip_accents_keep_case(s: str) -> str:
+    return unicodedata.normalize("NFKD", str(s or "")).encode("ASCII", "ignore").decode("ASCII")
+
 def _norm(s: str) -> str:
-    """Normaliza texto (sem acento, espaços extras, caixa baixa) para chaves."""
-    s = unicodedata.normalize("NFKD", str(s or "")).encode("ASCII", "ignore").decode("ASCII")
+    s = _strip_accents_keep_case(s)
     s = re.sub(r"\s+", " ", s).strip().lower()
     return s
 
-def _strip_accents_keep_case(s: str) -> str:
-    """Remove acentos preservando maiúsculas/minúsculas (para exibição final)."""
-    return unicodedata.normalize("NFKD", str(s or "")).encode("ASCII", "ignore").decode("ASCII")
-
-# ---------- Detecta / padroniza Formato 2 (plano) ----------
 def _is_formato2(df_headed: pd.DataFrame) -> bool:
-    """Detecta arquivo 'plano' (A:F): Cod Empresa, Data, Forma, Bandeira, Tipo, Total."""
     cols = {_norm(c) for c in df_headed.columns}
     return ("data" in cols and "total" in cols
             and any("cod" in c and "empresa" in c for c in cols)
             and any("forma" in c and "pag" in c for c in cols))
 
 def _rename_cols_formato2(df: pd.DataFrame) -> pd.DataFrame:
-    """Renomeia as colunas para canônicas."""
     new_names = {}
     for c in df.columns:
         n = _norm(c)
@@ -74,12 +78,15 @@ def _rename_cols_formato2(df: pd.DataFrame) -> pd.DataFrame:
             new_names[c] = "total"
     return df.rename(columns=new_names)
 
+# ======================
+# Processamento Formato 2 (plano) — com De→para CiSS
+# ======================
 def processar_formato2(
     df_src: pd.DataFrame,
     df_empresa: pd.DataFrame,
     df_meio_pgto_google: pd.DataFrame,
+    depara_ciss_map: dict | None = None,  # <- só Formato 2 usa
 ) -> pd.DataFrame:
-    """Processa o Formato 2 e entrega no layout final para importação."""
     df = _rename_cols_formato2(df_src.copy())
 
     req = {"cod_empresa", "data", "forma_pgto", "bandeira", "tipo_cartao", "total"}
@@ -91,21 +98,20 @@ def processar_formato2(
     df["data"] = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
     df["total"] = pd.to_numeric(df["total"], errors="coerce").fillna(0.0)
 
-    # Meio de Pagamento:
-    # - se houver Bandeira/Tipo -> "Bandeira Tipo" (sem acentos)
-    # - senão usa Forma de Pagamento, removendo o prefixo "99 - " (número e hífen)
+    # Meio de Pagamento (Bandeira + Tipo sem acento; senão usa Forma_pgto sem prefixo numérico)
     ban = df["bandeira"].fillna("").astype(str).str.strip()
     tip = df["tipo_cartao"].fillna("").astype(str).str.strip()
     meio_from_de = (ban + " " + tip).str.strip().map(_strip_accents_keep_case)
+    meio_from_c = df["forma_pgto"].astype(str).str.strip().str.replace(r"^\d+\s*-\s*", "", regex=True)
+    df["Meio de Pagamento"] = np.where((ban != "") | (tip != ""), meio_from_de, meio_from_c)
 
-    meio_from_c = df["forma_pgto"].astype(str).str.strip()
-    meio_from_c = meio_from_c.str.replace(r"^\d+\s*-\s*", "", regex=True)
+    # 📌 APLICA De→para CiSS (apenas Formato 2) lido da Tabela Meio Pagamento
+    if depara_ciss_map:
+        key = df["Meio de Pagamento"].astype(str).map(_norm)
+        mapped = key.map(depara_ciss_map)
+        df["Meio de Pagamento"] = mapped.fillna(df["Meio de Pagamento"])
 
-    df["Meio de Pagamento"] = np.where(
-        (ban != "") | (tip != ""), meio_from_de, meio_from_c
-    )
-
-    # Mapeios (Tipo de Pagamento / Tipo DRE) pela Tabela Meio Pagamento
+    # Mapas Tipo de Pagamento / Tipo DRE (baseados no nome final padronizado)
     df_meio = df_meio_pgto_google.copy()
     df_meio["__meio_norm__"] = df_meio["Meio de Pagamento"].astype(str).str.strip().str.lower()
     tipo_pgto_map = dict(zip(df_meio["__meio_norm__"], df_meio["Tipo de Pagamento"].astype(str)))
@@ -116,11 +122,10 @@ def processar_formato2(
     df["Tipo DRE"]          = df["__meio_norm__"].map(tipo_dre_map).fillna("")
     df.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
 
-    # Join com Tabela Empresa usando Código Everest (coluna A do arquivo)
+    # Join com Tabela Empresa (Código Everest)
     emp = df_empresa.copy()
     emp["Código Everest"] = emp["Código Everest"].astype(str).str.strip()
     df["Código Everest"]  = df["cod_empresa"].astype(str).str.strip()
-
     df = df.merge(
         emp[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]],
         on="Código Everest", how="left"
@@ -138,70 +143,22 @@ def processar_formato2(
 
     # Valor e colunas finais
     df.rename(columns={"total": "Valor (R$)"}, inplace=True)
-
     df_final = df[[
         "Data", "Dia da Semana",
         "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",
-        "Loja", "Código Everest",
-        "Grupo", "Código Grupo Everest",
+        "Loja", "Código Everest", "Grupo", "Código Grupo Everest",
         "Valor (R$)", "Mês", "Ano"
     ]].copy()
-
     try:
         df_final.sort_values(by=["Data", "Loja"], inplace=True)
     except Exception:
         pass
-
     return df_final
 
-# ---------- Escolha de engine p/ Excel ----------
-# --- DETECÇÃO ROBUSTA DO ENGINE (pela assinatura do arquivo) ---
-def _sniff_engine(uploaded_file) -> str:
-    """Retorna 'openpyxl' p/ xlsx/xlsm (ZIP/PK) e 'xlrd' p/ xls (BIFF)."""
-    pos = uploaded_file.tell()
-    try:
-        uploaded_file.seek(0)
-        magic = uploaded_file.read(4)
-    finally:
-        uploaded_file.seek(pos)
-    # XLSX/XLSM são ZIP: começam com 'PK\x03\x04'
-    if isinstance(magic, bytes) and magic[:2] == b"PK":
-        return "openpyxl"
-    return "xlrd"
-
-def _read_excel_auto(uploaded_file, **kwargs):
-    """Lê usando engine detectado; se falhar, tenta o outro engine."""
-    # 1ª tentativa: engine conforme assinatura
-    eng1 = _sniff_engine(uploaded_file)
-    eng2 = "xlrd" if eng1 == "openpyxl" else "openpyxl"
-
-    for eng in (eng1, eng2):
-        try:
-            uploaded_file.seek(0)
-            return pd.read_excel(uploaded_file, engine=eng, **kwargs)
-        except Exception:
-            pass
-    uploaded_file.seek(0)
-    # Se chegou aqui, levanta o último erro com mais contexto
-    return pd.read_excel(uploaded_file, engine=eng1, **kwargs)
-
-def _open_excel_auto(uploaded_file) -> pd.ExcelFile:
-    """Abre ExcelFile com engine detectado; se falhar, tenta o outro."""
-    eng1 = _sniff_engine(uploaded_file)
-    eng2 = "xlrd" if eng1 == "openpyxl" else "openpyxl"
-
-    for eng in (eng1, eng2):
-        try:
-            uploaded_file.seek(0)
-            return pd.ExcelFile(uploaded_file, engine=eng)
-        except Exception:
-            pass
-    uploaded_file.seek(0)
-    return pd.ExcelFile(uploaded_file, engine=eng1)
-
-
-# ---------- Conexão com Google e UI ----------
-with st.spinner("⏳ Carregando tabelas do Google..."):
+# ======================
+# Spinner + cargas do Google
+# ======================
+with st.spinner("⏳ Processando..."):
     # 🔌 Conexão com Google Sheets
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
@@ -209,6 +166,7 @@ with st.spinner("⏳ Carregando tabelas do Google..."):
     gc = gspread.authorize(credentials)
     planilha = gc.open("Vendas diarias")
 
+    # Tabela Empresa
     df_empresa = pd.DataFrame(planilha.worksheet("Tabela Empresa").get_all_records())
 
     # === Tabela Meio Pagamento ===
@@ -221,74 +179,89 @@ with st.spinner("⏳ Carregando tabelas do Google..."):
     df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].str.lower()
     df_meio_pgto_google = df_meio_pgto_google.drop_duplicates(subset=["__meio_norm__"], keep="first")
 
-    # mapas (também usados nas validações)
-    tipo_pgto_map = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"]))
-    tipo_dre_map  = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"]))
+    # 🔑 Constrói o mapa De→para CiSS **a partir da Tabela Meio Pagamento**
+    # Procuramos uma coluna cujo nome normalizado contenha "ciss"
+    depara_col = None
+    for c in df_meio_pgto_google.columns:
+        n = _norm(c)
+        if "ciss" in n:  # ex.: "de para ciss", "ciss", "padrao ciss"
+            depara_col = c
+            break
+    # Mapa: chave = __meio_norm__ da tabela; valor = coluna CiSS (ou o próprio "Meio de Pagamento" se vazio)
+    depara_ciss_map = {}
+    if depara_col:
+        tmp = df_meio_pgto_google.copy()
+        # valor padrão é o próprio "Meio de Pagamento" quando CiSS estiver vazio
+        padrao = np.where(
+            tmp[depara_col].astype(str).str.strip() != "",
+            tmp[depara_col].astype(str).str.strip(),
+            tmp["Meio de Pagamento"].astype(str).str.strip()
+        )
+        depara_ciss_map = dict(zip(tmp["__meio_norm__"], padrao))
 
-    # Título
+    # 🔥 Título
     st.markdown("""
         <div style='display: flex; align-items: center; gap: 10px;'>
             <img src='https://img.icons8.com/color/48/graph.png' width='40'/>
             <h1 style='display: inline; margin: 0; font-size: 2.4rem;'>Meio de Pagamento</h1>
         </div>
     """, unsafe_allow_html=True)
-    
-    # ---------- Abas ----------
-    tab1, tab2 = st.tabs([
-        "📥 Upload e Processamento",
-        "🔄 Atualizar Google Sheets"
-    ])
-    
-    # ---------- Aba 1: Upload ----------
+
+    # ========================
+    # 🗂️ Abas
+    # ========================
+    tab1, tab2 = st.tabs(["📥 Upload e Processamento", "🔄 Atualizar Google Sheets"])
+
+    # ======================
+    # 📥 Aba 1
+    # ======================
     with tab1:
         uploaded_file = st.file_uploader(
             label="📁 Clique para selecionar ou arraste aqui o arquivo Excel",
-            type=["xlsx", "xlsm", "xls"]  # aceita .xls agora
+            type=["xlsx", "xlsm"]  # mantenho sem .xls; se quiser aceitar .xls, adicione "xls"
         )
-    
+
         if uploaded_file:
             try:
-                # 1) Tenta detectar Formato 2 (plano)
-                df_head = _read_excel_auto(uploaded_file, sheet_name=0)  # usa xlrd para .xls
+                # Detecta Formato 2 pelo header real
+                df_head = pd.read_excel(uploaded_file, sheet_name=0)  # header=0
                 if _is_formato2(df_head):
-                    # ➜ Processa Formato 2
+                    # ➜ Formato 2 (plano) USA De→para CiSS
                     df_meio_pagamento = processar_formato2(
-                        df_head, df_empresa, df_meio_pgto_google
+                        df_head, df_empresa, df_meio_pgto_google,
+                        depara_ciss_map=depara_ciss_map
                     )
                 else:
-                    # ➜ Não é Formato 2: fluxo “antigo” (Formato 1)
-                    df_raw = _read_excel_auto(uploaded_file, sheet_name=aba_escolhida, header=None)  # respeita engine
+                    # ➜ Formato 1 (layout antigo) — NÃO aplica De→para CiSS
+                    uploaded_file.seek(0)
+                    xls = pd.ExcelFile(uploaded_file)
                     abas_disponiveis = xls.sheet_names
                     aba_escolhida = abas_disponiveis[0] if len(abas_disponiveis) == 1 else st.selectbox(
-                        "Escolha a aba para processar", abas_disponiveis
-                    )
-    
+                        "Escolha a aba para processar", abas_disponiveis)
+
                     df_raw = pd.read_excel(xls, sheet_name=aba_escolhida, header=None)
                     df_raw = df_raw[~df_raw.iloc[:, 1].astype(str).str.lower().str.contains("total|subtotal", na=False)]
-    
+
                     if str(df_raw.iloc[0, 1]).strip().lower() != "faturamento diário por meio de pagamento":
-                        st.error("❌ A célula B1 deve conter 'faturamento diário por meio de pagamento'.")
+                        st.error("❌ A célula B1 deve conter 'Faturamento diário por meio de pagamento'.")
                         st.stop()
-    
+
                     linha_inicio_dados, blocos, col, loja_atual = 5, [], 3, None
-    
                     while col < df_raw.shape[1]:
                         valor_linha4 = str(df_raw.iloc[3, col]).strip()
                         match = re.match(r"^\d+\s*-\s*(.+)$", valor_linha4)
                         if match:
                             loja_atual = match.group(1).strip().lower()
-    
+
                         meio_pgto = str(df_raw.iloc[4, col]).strip()
                         if not loja_atual or not meio_pgto or meio_pgto.lower() in ["nan", ""]:
-                            col += 1
-                            continue
-    
+                            col += 1; continue
+
                         linha3 = str(df_raw.iloc[2, col]).strip().lower()
                         linha5 = meio_pgto.lower()
                         if any(p in t for t in [linha3, valor_linha4.lower(), linha5] for p in ["total", "serv/tx", "total real"]):
-                            col += 1
-                            continue
-    
+                            col += 1; continue
+
                         try:
                             df_temp = df_raw.iloc[linha_inicio_dados:, [2, col]].copy()
                             df_temp.columns = ["Data", "Valor (R$)"]
@@ -299,85 +272,79 @@ with st.spinner("⏳ Carregando tabelas do Google..."):
                         except Exception as e:
                             st.warning(f"⚠️ Erro ao processar coluna {col}: {e}")
                         col += 1
-    
+
                     if not blocos:
                         st.error("❌ Nenhum dado válido encontrado.")
                         st.stop()
-    
+
                     df_meio_pagamento = pd.concat(blocos, ignore_index=True).dropna()
                     df_meio_pagamento = df_meio_pagamento[~df_meio_pagamento["Data"].astype(str).str.lower().str.contains("total|subtotal")]
                     df_meio_pagamento["Data"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True, errors="coerce")
                     df_meio_pagamento = df_meio_pagamento[df_meio_pagamento["Data"].notna()]
-    
-                    # Derivados
+
+                    # Derivados + join por Loja
                     dias_semana = {'Monday':'segunda-feira','Tuesday':'terça-feira','Wednesday':'quarta-feira',
                                    'Thursday':'quinta-feira','Friday':'sexta-feira','Saturday':'sábado','Sunday':'domingo'}
                     df_meio_pagamento["Dia da Semana"] = df_meio_pagamento["Data"].dt.day_name().map(dias_semana)
                     df_meio_pagamento = df_meio_pagamento.sort_values(by=["Data", "Loja"])
                     df_meio_pagamento["Data"] = df_meio_pagamento["Data"].dt.strftime("%d/%m/%Y")
-    
-                    # Join com Tabela Empresa por Loja (fluxo antigo)
+
                     df_meio_pagamento["Loja"] = df_meio_pagamento["Loja"].str.strip().str.replace(r"^\d+\s*-\s*", "", regex=True).str.lower()
                     df_empresa["Loja"] = df_empresa["Loja"].str.strip().str.lower()
                     df_meio_pagamento = pd.merge(df_meio_pagamento, df_empresa, on="Loja", how="left")
-    
-                    # Mapeia Tipo de Pagamento / Tipo DRE
+
+                    # Mapeia Tipo de Pagamento / Tipo DRE (sem padronização CiSS no Formato 1)
                     if "Meio de Pagamento" not in df_meio_pagamento.columns:
                         df_meio_pagamento["Meio de Pagamento"] = ""
-                    df_meio_pagamento["__meio_norm__"] = (
-                        df_meio_pagamento["Meio de Pagamento"].astype(str).str.strip().str.lower()
-                    )
+                    df_meio_pagamento["__meio_norm__"] = df_meio_pagamento["Meio de Pagamento"].astype(str).str.strip().str.lower()
                     col_meio_idx = df_meio_pagamento.columns.get_loc("Meio de Pagamento")
                     df_meio_pagamento.insert(
                         loc=col_meio_idx + 1,
                         column="Tipo de Pagamento",
-                        value=df_meio_pagamento["__meio_norm__"].map(tipo_pgto_map).fillna("")
+                        value=df_meio_pagamento["__meio_norm__"].map(
+                            dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"]))
+                        ).fillna("")
                     )
                     df_meio_pagamento.insert(
                         loc=col_meio_idx + 2,
                         column="Tipo DRE",
-                        value=df_meio_pagamento["__meio_norm__"].map(tipo_dre_map).fillna("")
+                        value=df_meio_pagamento["__meio_norm__"].map(
+                            dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"]))
+                        ).fillna("")
                     )
                     df_meio_pagamento.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
-    
-                    # Mês/Ano
+
                     df_meio_pagamento["Mês"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.month.map({
                         1:'jan',2:'fev',3:'mar',4:'abr',5:'mai',6:'jun',7:'jul',8:'ago',9:'set',10:'out',11:'nov',12:'dez'})
                     df_meio_pagamento["Ano"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.year
-    
-                # === Fim: df_meio_pagamento pronto ===
+
+                # Resultado pronto
                 st.session_state.df_meio_pagamento = df_meio_pagamento
-    
-                # KPIs de período e total
+
+                # KPIs topo
                 dts = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True, errors="coerce")
                 periodo_min = dts.min().strftime("%d/%m/%Y") if not dts.empty else ""
                 periodo_max = dts.max().strftime("%d/%m/%Y") if not dts.empty else ""
-    
                 col1, col2 = st.columns(2)
                 col1.markdown(f"<div style='font-size:1.2rem;'>📅 Período processado<br>{periodo_min} até {periodo_max}</div>", unsafe_allow_html=True)
                 valor_total = f"R$ {df_meio_pagamento['Valor (R$)'].sum():,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                 col2.markdown(f"<div style='font-size:1.2rem;'>💰 Valor total<br><span style='color:green;'>{valor_total}</span></div>", unsafe_allow_html=True)
-    
-                # Validação:
-                # - Formato 2: loja vem do merge por Código Everest; valida as que ficaram vazias
-                # - Formato 1 (antigo): loja já vem no arquivo e pode casar pelo nome
-                lojas_vazias = df_meio_pagamento["Loja"].isna() | (df_meio_pagamento["Loja"].astype(str).str.strip().isin(["", "nan"]))
-                empresas_nao_localizadas = df_meio_pagamento.loc[lojas_vazias, "Código Everest"].astype(str).unique()
-    
-                # Meios de pagamento não localizados
+
+                # Validações
+                empresas_nao_localizadas = df_meio_pagamento[
+                    df_meio_pagamento["Loja"].astype(str).str.strip().isin(["", "nan"])
+                ]["Código Everest"].astype(str).unique()
                 meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
                 meios_nao_localizados = df_meio_pagamento[
                     ~df_meio_pagamento["Meio de Pagamento"].astype(str).str.strip().str.lower().isin(meios_norm_tabela)
                 ]["Meio de Pagamento"].astype(str).unique()
-    
+
                 if len(empresas_nao_localizadas) == 0 and len(meios_nao_localizados) == 0:
                     st.success("✅ Todas as empresas e todos os meios de pagamento foram localizados!")
-    
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df_meio_pagamento.to_excel(writer, index=False, sheet_name="FaturamentoPorMeio")
                     output.seek(0)
-    
                     st.download_button(
                         "📥 Baixar relatório Excel",
                         data=output,
@@ -388,7 +355,7 @@ with st.spinner("⏳ Carregando tabelas do Google..."):
                     if len(empresas_nao_localizadas) > 0:
                         empresas_nao_localizadas_str = "<br>".join(empresas_nao_localizadas)
                         st.markdown(f"""
-                        ⚠️ {len(empresas_nao_localizadas)} Código(s) Everest sem correspondência → Loja vazia:<br>{empresas_nao_localizadas_str}
+                        ⚠️ {len(empresas_nao_localizadas)} Código(s) Everest sem correspondência:<br>{empresas_nao_localizadas_str}
                         <br>✏️ Atualize a tabela clicando 
                         <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
                         """, unsafe_allow_html=True)
@@ -399,10 +366,9 @@ with st.spinner("⏳ Carregando tabelas do Google..."):
                         <br>✏️ Atualize a tabela clicando 
                         <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
                         """, unsafe_allow_html=True)
-    
+
             except Exception as e:
                 st.error(f"❌ Erro ao processar: {e}")
-
 
 
 

@@ -197,14 +197,14 @@ with st.spinner("⏳ Carregando tabelas do Google..."):
     tipo_pgto_map = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"]))
     tipo_dre_map  = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"]))
 
-# Título
-st.markdown("""
-    <div style='display: flex; align-items: center; gap: 10px;'>
-        <img src='https://img.icons8.com/color/48/graph.png' width='40'/>
-        <h1 style='display: inline; margin: 0; font-size: 2.4rem;'>Meio de Pagamento</h1>
-    </div>
-""", unsafe_allow_html=True)
-
+    # Título
+    st.markdown("""
+        <div style='display: flex; align-items: center; gap: 10px;'>
+            <img src='https://img.icons8.com/color/48/graph.png' width='40'/>
+            <h1 style='display: inline; margin: 0; font-size: 2.4rem;'>Meio de Pagamento</h1>
+        </div>
+    """, unsafe_allow_html=True)
+    
     # ---------- Abas ----------
     tab1, tab2 = st.tabs([
         "📥 Upload e Processamento",
@@ -374,6 +374,10 @@ st.markdown("""
     
             except Exception as e:
                 st.error(f"❌ Erro ao processar: {e}")
+
+
+
+
 
 
     # ======================

@@ -1843,10 +1843,10 @@ with st.spinner("⏳ Processando..."):
             file_name="vendas_formatado.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+   
     # ======================
-    # 📝 Relatórios Financeiros
+    # 📝 Relatórios Financeiros (ABA 5) - VERSÃO ROBUSTA
     # ======================
-    
     with aba5:
         try:
             st.markdown("""
@@ -1854,51 +1854,110 @@ with st.spinner("⏳ Processando..."):
             🚧 <strong>Este relatório está em desenvolvimento.</strong> Resultados e funcionalidades podem mudar a qualquer momento.
             </div>
             """, unsafe_allow_html=True)
-            
-            # Carrega a planilha (caso ainda não tenha feito antes)
+
+            # -----------------------------
+            # Helpers de limpeza/conversão
+            # -----------------------------
+            import unicodedata
+            def _strip_invisiveis(s: str) -> str:
+                s = unicodedata.normalize("NFKC", str(s))
+                # remove zero-width e NBSP comuns
+                for ch in ["\u200b", "\ufeff", "\u00a0"]:
+                    s = s.replace(ch, " ")
+                return " ".join(s.split())
+
+            def limpar_cols(df: pd.DataFrame) -> pd.DataFrame:
+                df.columns = [_strip_invisiveis(c).strip() for c in df.columns]
+                return df
+
+            def moeda_to_float(s):
+                s = str(s or "").strip()
+                s = (s.replace("R$", "")
+                       .replace(" ", "")
+                       .replace(".", "")
+                       .replace(",", ".")
+                       .replace("(", "-")
+                       .replace(")", ""))
+                try:
+                    return float(s)
+                except:
+                    return 0.0
+
+            def pct_to_float(s):
+                s = str(s or "").strip().replace("%", "").replace(",", ".")
+                try:
+                    return float(s)/100.0
+                except:
+                    return 0.0
+
+            # -----------------------------
+            # Carrega planilha e abas
+            # -----------------------------
             planilha = gc.open("Vendas diarias")
-    
-            # Aba com dados analíticos
-            aba_relatorio = planilha.worksheet("Faturamento Meio Pagamento")
-            df_relatorio = pd.DataFrame(aba_relatorio.get_all_records())
-            df_relatorio.columns = df_relatorio.columns.str.strip()
-    
-            # Aba com o tipo de pagamento
-            aba_meio_pagamento = planilha.worksheet("Tabela Meio Pagamento")
-            df_meio_pagamento = pd.DataFrame(aba_meio_pagamento.get_all_records())
-            df_meio_pagamento.columns = df_meio_pagamento.columns.str.strip()
-    
-            # Normaliza colunas usadas no merge
-            df_relatorio["Meio de Pagamento"] = df_relatorio["Meio de Pagamento"].astype(str).str.strip().str.upper()
-            df_meio_pagamento["Meio de Pagamento"] = df_meio_pagamento["Meio de Pagamento"].astype(str).str.strip().str.upper()
-            df_meio_pagamento["Tipo de Pagamento"] = df_meio_pagamento["Tipo de Pagamento"].astype(str).str.strip().str.upper()
-    
-            # Merge para adicionar "Tipo de Pagamento"
+
+            # Dados analíticos
+            df_relatorio = pd.DataFrame(planilha.worksheet("Faturamento Meio Pagamento").get_all_records())
+            df_relatorio = limpar_cols(df_relatorio).copy()
+
+            # Tabela de meios de pagamento (prazo/antecipação/taxas/tipo)
+            df_meio = pd.DataFrame(planilha.worksheet("Tabela Meio Pagamento").get_all_records())
+            df_meio = limpar_cols(df_meio).copy()
+
+            # Normaliza chaves de merge
+            for df_ in (df_relatorio, df_meio):
+                if "Meio de Pagamento" in df_.columns:
+                    df_["Meio de Pagamento"] = df_["Meio de Pagamento"].astype(str).str.strip().str.upper()
+
+            # Garante existência das colunas esperadas em df_meio (evita KeyError)
+            for col_necessaria, default in [
+                ("Tipo de Pagamento", ""),
+                ("Prazo", 0),
+                ("Antecipa S/N", "NÃO"),
+                ("Taxa Bandeira", 0.0),
+                ("Taxa Antecipação", 0.0),
+            ]:
+                if col_necessaria not in df_meio.columns:
+                    df_meio[col_necessaria] = default
+
+            # Normaliza tipos (prazo int; taxas/pcts float; antecipa texto normalizado)
+            df_meio["Prazo"] = pd.to_numeric(df_meio["Prazo"], errors="coerce").fillna(0).astype(int)
+            df_meio["Antecipa S/N"] = df_meio["Antecipa S/N"].astype(str).str.upper().str.strip()
+            # taxas podem ter '%' e vírgula
+            df_meio["Taxa Bandeira"] = df_meio["Taxa Bandeira"].apply(pct_to_float)
+            df_meio["Taxa Antecipação"] = df_meio["Taxa Antecipação"].apply(pct_to_float)
+            df_meio["Tipo de Pagamento"] = df_meio["Tipo de Pagamento"].astype(str).str.upper().str.strip()
+
+            # Merge: adiciona "Tipo de Pagamento" logo de cara
             df_relatorio = df_relatorio.merge(
-                df_meio_pagamento[["Meio de Pagamento", "Tipo de Pagamento"]],
+                df_meio[["Meio de Pagamento", "Tipo de Pagamento"]],
                 on="Meio de Pagamento",
-                how="left"
+                how="left",
+                validate="many_to_one"
             )
-    
-            # Corrige valores e datas
-            df_relatorio["Valor (R$)"] = (
-                df_relatorio["Valor (R$)"].astype(str)
-                .str.replace("R$", "", regex=False)
-                .str.replace("(", "-")
-                .str.replace(")", "")
-                .str.replace(" ", "")
-                .str.replace(".", "")
-                .str.replace(",", ".")
-                .astype(float)
-            )
+
+            # Valor e Data
+            if "Valor (R$)" in df_relatorio.columns:
+                df_relatorio["Valor (R$)"] = df_relatorio["Valor (R$)"].apply(moeda_to_float)
+            else:
+                st.error("A aba 'Faturamento Meio Pagamento' precisa ter a coluna 'Valor (R$)'.")
+                st.stop()
+
+            if "Data" not in df_relatorio.columns:
+                st.error("A aba 'Faturamento Meio Pagamento' precisa ter a coluna 'Data'.")
+                st.stop()
+
             df_relatorio["Data"] = pd.to_datetime(df_relatorio["Data"], dayfirst=True, errors="coerce")
-    
-            # Datas mínimas e máximas
+            df_relatorio = df_relatorio.dropna(subset=["Data"])
+
+            # Datas mín. e máx. seguras
+            if df_relatorio.empty:
+                st.info("🔍 Não há dados válidos em 'Faturamento Meio Pagamento'.")
+                st.stop()
+
             data_min = df_relatorio["Data"].min().date()
             data_max = df_relatorio["Data"].max().date()
-    
+
             # ===== FILTROS GERAIS =====
-            # 📅 Seleção de data
             datas_selecionadas = st.date_input(
                 "📅 Intervalo de datas:",
                 value=(data_max, data_max),
@@ -1908,31 +1967,25 @@ with st.spinner("⏳ Processando..."):
             if isinstance(datas_selecionadas, (tuple, list)) and len(datas_selecionadas) == 2:
                 data_inicio, data_fim = datas_selecionadas
             else:
-                st.warning("⚠️ Por favor, selecione um intervalo com **duas datas** (início e fim).")
+                st.warning("⚠️ Selecione um intervalo com duas datas (início e fim).")
                 st.stop()
-            
-            # 💳 Filtro abaixo da data (não mais ao lado)
-            tipos_disponiveis = df_relatorio["Tipo de Pagamento"].dropna().unique().tolist()
-            tipos_disponiveis.sort()
-            filtro_tipo_pagamento = st.multiselect(
-                "💳 Tipo de Pagamento:",
-                options=tipos_disponiveis,
-                default=tipos_disponiveis
-            )
-            
-            # 🔎 Aplica filtro global
-            df_filtrado = df_relatorio[
-                (df_relatorio["Data"].dt.date >= data_inicio) &
-                (df_relatorio["Data"].dt.date <= data_fim) &
-                (df_relatorio["Tipo de Pagamento"].isin(filtro_tipo_pagamento))
-            ]
-            
+
+            # multiselect tipo de pagamento (com “Todos” implícito)
+            tipos_disp = sorted([t for t in df_relatorio["Tipo de Pagamento"].dropna().unique().tolist() if t != ""])
+            filtro_tipos = st.multiselect("💳 Tipo de Pagamento:", options=tipos_disp, default=tipos_disp)
+
+            # Aplica filtro global
+            mask_dt = (df_relatorio["Data"].dt.date >= data_inicio) & (df_relatorio["Data"].dt.date <= data_fim)
+            mask_tipo = df_relatorio["Tipo de Pagamento"].isin(filtro_tipos) if filtro_tipos else True
+            df_filtrado = df_relatorio[mask_dt & mask_tipo].copy()
+
             if df_filtrado.empty:
                 st.info("🔍 Não há dados para o período e filtros selecionados.")
                 st.stop()
-    
-    
-            # ====== TABS ======
+
+            # ========================
+            # TABS INTERNAS
+            # ========================
             aba_vendas, aba_taxas, aba_financeiro, aba_previsao_fc, aba_conciliacao = st.tabs([
                 "💰 Vendas meio pagamento",
                 "🔗 Vendas + Prazo e Taxas",
@@ -1940,509 +1993,341 @@ with st.spinner("⏳ Processando..."):
                 "💰 Previsão FC",
                 "🔄 Conciliação Adquirente"
             ])
-    
-            # === ABA VENDAS ===
-            
+
+            # === 1) VENDAS ===
             with aba_vendas:
-                        
                 agrupamento = st.radio(
                     "Escolha como deseja agrupar os dados:",
                     options=["Grupo", "Loja", "Meio de Pagamento", "Tipo de Pagamento"],
                     horizontal=True
                 )
-            
+
                 if agrupamento == "Grupo":
                     index_cols = ["Grupo", "Meio de Pagamento"]
                 elif agrupamento == "Loja":
-                    index_cols = ["Grupo", "Loja", "Meio de Pagamento"]  # Grupo sempre antes de Loja
+                    index_cols = ["Grupo", "Loja", "Meio de Pagamento"]  # Grupo antes de Loja
                 elif agrupamento == "Meio de Pagamento":
                     index_cols = ["Meio de Pagamento"]
-                elif agrupamento == "Tipo de Pagamento":
+                else:  # Tipo de Pagamento
                     index_cols = ["Tipo de Pagamento", "Meio de Pagamento"]
-            
-                # Cria a tabela dinâmica
+
                 df_pivot = pd.pivot_table(
                     df_filtrado,
-                    index=index_cols,
+                    index=[c for c in index_cols if c in df_filtrado.columns],
                     columns=df_filtrado["Data"].dt.strftime("%d/%m/%Y"),
                     values="Valor (R$)",
                     aggfunc="sum",
                     fill_value=0
                 ).reset_index()
-            
-                # Renomeia colunas de data
-                novo_nome_datas = {col: f"Vendas - {col}" for col in df_pivot.columns if "/" in str(col)}
-                df_pivot.rename(columns=novo_nome_datas, inplace=True)
-            
-                # Calcula total por linha
-                df_pivot["Total Vendas"] = df_pivot[[c for c in df_pivot.columns if "Vendas -" in c]].sum(axis=1)
-            
-                # Adiciona linha de TOTAL GERAL
-                linha_total = {col: df_pivot[col].sum() if np.issubdtype(df_pivot[col].dtype, np.number) else "TOTAL GERAL" for col in df_pivot.columns}
+
+                # prefixa datas
+                ren = {col: f"Vendas - {col}" for col in df_pivot.columns if "/" in str(col)}
+                df_pivot.rename(columns=ren, inplace=True)
+
+                cols_vendas = [c for c in df_pivot.columns if c.startswith("Vendas - ")]
+                df_pivot["Total Vendas"] = df_pivot[cols_vendas].sum(axis=1)
+
+                # Linha total geral
+                linha_total = {col: (df_pivot[col].sum() if np.issubdtype(df_pivot[col].dtype, np.number) else "TOTAL GERAL")
+                               for col in df_pivot.columns}
                 df_pivot_total = pd.concat([pd.DataFrame([linha_total]), df_pivot], ignore_index=True)
-            
-                # Formata números
-                for col in df_pivot_total.select_dtypes(include=[np.number]).columns:
-                    df_pivot_total[col] = df_pivot_total[col].map(
-                        lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                    )
-            
-                st.dataframe(df_pivot_total, use_container_width=True)
-    
-            import xlsxwriter
-            from io import BytesIO
-            
-            # === Prepara dados para exportar
-            df_export = df_pivot_total.copy()
-            
-            # === Remove o símbolo R$ e converte para número para aplicar formato corretamente no Excel
-            colunas_valores = [col for col in df_export.columns if "Vendas" in col or "Total Vendas" in col]
-            for col in colunas_valores:
-                df_export[col] = (
-                    df_export[col].astype(str)
-                    .str.replace("R$", "", regex=False)
-                    .str.replace(" ", "", regex=False)
-                    .str.replace(".", "", regex=False)
-                    .str.replace(",", ".", regex=False)
-                )
-                df_export[col] = pd.to_numeric(df_export[col], errors="coerce").fillna(0.0)
-            
-            # === Gera arquivo Excel com formatação
-            output = BytesIO()
-            workbook = xlsxwriter.Workbook(output, {'in_memory': True})
-            worksheet = workbook.add_worksheet("Vendas")
-            
-            # === Formatos
-            formato_header = workbook.add_format({'bold': True, 'bg_color': '#CCCCCC'})
-            formato_reais = workbook.add_format({'num_format': 'R$ #,##0.00'})
-            
-            # === Escreve cabeçalhos
-            for col_idx, col_name in enumerate(df_export.columns):
-                worksheet.write(0, col_idx, col_name, formato_header)
-            
-            # === Escreve dados com formatação de reais
-            for row_idx, row in enumerate(df_export.itertuples(index=False), start=1):
-                for col_idx, value in enumerate(row):
-                    col_name = df_export.columns[col_idx]
-                    if col_name in colunas_valores:
-                        worksheet.write_number(row_idx, col_idx, value, formato_reais)
-                    else:
-                        worksheet.write(row_idx, col_idx, value)
-            
-            # === Ajusta larguras das colunas
-            for i, col in enumerate(df_export.columns):
-                max_width = max(df_export[col].astype(str).map(len).max(), len(col)) + 2
-                worksheet.set_column(i, i, max_width)
-            
-            workbook.close()
-            output.seek(0)
-            
-            # === Botão de download
-            st.download_button(
-                label="⬇️ Baixar Excel",
-                data=output,
-                file_name="Vendas_Meio_Pagamento.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-    
-            # === ABA PRAZO E TAXAS ===
+
+                # Exibição formatada
+                df_exibe = df_pivot_total.copy()
+                for col in df_exibe.select_dtypes(include=[np.number]).columns:
+                    df_exibe[col] = df_exibe[col].map(lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+                st.dataframe(df_exibe, use_container_width=True)
+
+                # Exportar Excel
+                import xlsxwriter
+                from io import BytesIO
+                df_export = df_pivot_total.copy()
+                # garante números puros para formatar
+                for col in cols_vendas + ["Total Vendas"]:
+                    df_export[col] = pd.to_numeric(df_export[col], errors="coerce").fillna(0.0)
+
+                output = BytesIO()
+                wb = xlsxwriter.Workbook(output, {"in_memory": True})
+                ws = wb.add_worksheet("Vendas")
+
+                fmt_header = wb.add_format({"bold": True, "bg_color": "#CCCCCC"})
+                fmt_reais = wb.add_format({"num_format": "R$ #,##0.00"})
+
+                for j, name in enumerate(df_export.columns):
+                    ws.write(0, j, name, fmt_header)
+                for i, row in enumerate(df_export.itertuples(index=False), start=1):
+                    for j, val in enumerate(row):
+                        if df_export.columns[j] in (cols_vendas + ["Total Vendas"]):
+                            ws.write_number(i, j, float(val), fmt_reais)
+                        else:
+                            ws.write(i, j, val)
+                for j, col in enumerate(df_export.columns):
+                    ws.set_column(j, j, max(len(col), 10) + 2)
+                wb.close()
+                output.seek(0)
+                st.download_button("⬇️ Baixar Excel", output, "Vendas_Meio_Pagamento.xlsx",
+                                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+            # === 2) VENDAS + PRAZO E TAXAS ===
             with aba_taxas:
-                df_completo = df_filtrado.merge(
-                    df_meio_pagamento[["Meio de Pagamento", "Prazo", "Antecipa S/N", "Taxa Bandeira", "Taxa Antecipação"]],
+                # junta infos de prazo/antecipação/taxas
+                df_tx = df_filtrado.merge(
+                    df_meio[["Meio de Pagamento", "Prazo", "Antecipa S/N", "Taxa Bandeira", "Taxa Antecipação"]],
                     on="Meio de Pagamento",
-                    how="left"
+                    how="left",
+                    validate="many_to_one"
                 )
-    
+
                 df_pivot = pd.pivot_table(
-                    df_completo,
+                    df_tx,
                     index=["Meio de Pagamento", "Prazo", "Antecipa S/N", "Taxa Bandeira", "Taxa Antecipação"],
-                    columns=df_completo["Data"].dt.strftime("%d/%m/%Y"),
+                    columns=df_tx["Data"].dt.strftime("%d/%m/%Y"),
                     values="Valor (R$)",
                     aggfunc="sum",
                     fill_value=0
                 ).reset_index()
-    
-                colunas_datas = [col for col in df_pivot.columns if "/" in col]
-                novo_nome_datas = {col: f"Vendas - {col}" for col in colunas_datas}
-                df_pivot.rename(columns=novo_nome_datas, inplace=True)
-                df_pivot.rename(columns={"Vendas - Antecipa S/N": "Antecipa S/N"}, inplace=True)
-    
-                colunas_vendas = [col for col in df_pivot.columns if "Vendas" in col]
-                cols_fixas = ["Meio de Pagamento", "Prazo", "Antecipa S/N", "Taxa Bandeira", "Taxa Antecipação"]
+
+                datas_cols = [c for c in df_pivot.columns if "/" in str(c)]
+                df_pivot.rename(columns={c: f"Vendas - {c}" for c in datas_cols}, inplace=True)
+
+                cols_vendas = [c for c in df_pivot.columns if c.startswith("Vendas - ")]
+                # Calcula valores de taxas por dia
                 novas_cols = []
-    
-                for col_vendas in colunas_vendas:
-                    data_col = col_vendas.split(" - ")[1]
-                    col_taxa_bandeira = f"Vlr Taxa Bandeira - {data_col}"
-                    taxa_bandeira = (
-                        pd.to_numeric(df_pivot["Taxa Bandeira"].astype(str)
-                                      .str.replace("%","")
-                                      .str.replace(",","."),
-                                      errors="coerce").fillna(0) / 100
-                    )
-                    df_pivot[col_taxa_bandeira] = df_pivot[col_vendas] * taxa_bandeira
-    
-                    col_taxa_antecipacao = f"Vlr Taxa Antecipação - {data_col}"
-                    taxa_antecipacao = (
-                        pd.to_numeric(df_pivot["Taxa Antecipação"].astype(str)
-                                      .str.replace("%","")
-                                      .str.replace(",","."),
-                                      errors="coerce").fillna(0) / 100
-                    )
-                    df_pivot[col_taxa_antecipacao] = df_pivot[col_vendas] * taxa_antecipacao
-    
-                    novas_cols.extend([col_vendas, col_taxa_bandeira, col_taxa_antecipacao])
-    
-                df_pivot = df_pivot[cols_fixas + novas_cols]
-    
-                df_pivot["Total Vendas"] = df_pivot[colunas_vendas].sum(axis=1)
-                df_pivot["Total Tx Bandeira"] = df_pivot[[col for col in df_pivot.columns if "Vlr Taxa Bandeira" in col]].sum(axis=1)
-                df_pivot["Total Tx Antecipação"] = df_pivot[[col for col in df_pivot.columns if "Vlr Taxa Antecipação" in col]].sum(axis=1)
+                for cv in cols_vendas:
+                    d = cv.split(" - ")[1]
+                    col_tx_band = f"Vlr Taxa Bandeira - {d}"
+                    col_tx_ant  = f"Vlr Taxa Antecipação - {d}"
+                    df_pivot[col_tx_band] = df_pivot[cv] * df_pivot["Taxa Bandeira"]
+                    df_pivot[col_tx_ant]  = df_pivot[cv] * df_pivot["Taxa Antecipação"]
+                    novas_cols += [cv, col_tx_band, col_tx_ant]
+
+                base = ["Meio de Pagamento", "Prazo", "Antecipa S/N", "Taxa Bandeira", "Taxa Antecipação"]
+                df_pivot = df_pivot[base + novas_cols]
+                df_pivot["Total Vendas"] = df_pivot[cols_vendas].sum(axis=1)
+                df_pivot["Total Tx Bandeira"] = df_pivot[[c for c in df_pivot.columns if "Vlr Taxa Bandeira" in c]].sum(axis=1)
+                df_pivot["Total Tx Antecipação"] = df_pivot[[c for c in df_pivot.columns if "Vlr Taxa Antecipação" in c]].sum(axis=1)
                 df_pivot["Total a Receber"] = df_pivot["Total Vendas"] - df_pivot["Total Tx Bandeira"] - df_pivot["Total Tx Antecipação"]
-    
-                linha_total_dict = {col: "" for col in df_pivot.columns}
-                linha_total_dict["Meio de Pagamento"] = "TOTAL GERAL"
-                for col in df_pivot.columns:
-                    if "Vendas" in col or "Vlr Taxa Bandeira" in col or "Vlr Taxa Antecipação" in col \
-                        or "Total Tx" in col or col in ["Total Vendas", "Total a Receber"]:
-                        linha_total_dict[col] = df_pivot[col].sum()
-    
-                linha_total = pd.DataFrame([linha_total_dict])
-                df_pivot_total = pd.concat([linha_total, df_pivot], ignore_index=True)
-    
-                df_pivot_exibe = df_pivot_total.copy()
-                for col in [c for c in df_pivot_exibe.columns if "Vendas" in c or "Vlr Taxa Bandeira" in c 
-                            or "Vlr Taxa Antecipação" in c or "Total Tx" in c or c in ["Total Vendas", "Total a Receber"]]:
-                    df_pivot_exibe[col] = df_pivot_exibe[col].map(
-                        lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                    )
-    
-                st.dataframe(df_pivot_exibe, use_container_width=True)
-    
-    
+
+                # total geral
+                linha_tot = {c: "" for c in df_pivot.columns}
+                linha_tot["Meio de Pagamento"] = "TOTAL GERAL"
+                for c in df_pivot.columns:
+                    if any(p in c for p in ["Vendas", "Vlr Taxa Bandeira", "Vlr Taxa Antecipação", "Total "]):
+                        linha_tot[c] = pd.to_numeric(df_pivot[c], errors="coerce").sum()
+                df_pivot_total = pd.concat([pd.DataFrame([linha_tot]), df_pivot], ignore_index=True)
+
+                # exibição formatada
+                df_fmt = df_pivot_total.copy()
+                for c in df_fmt.columns:
+                    if any(p in c for p in ["Vendas", "Vlr Taxa Bandeira", "Vlr Taxa Antecipação", "Total "]):
+                        df_fmt[c] = pd.to_numeric(df_fmt[c], errors="coerce").fillna(0.0).map(
+                            lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                        )
+                st.dataframe(df_fmt, use_container_width=True)
+
+                # exportar
                 import xlsxwriter
                 from io import BytesIO
-                
-                # Cópia do DataFrame
-                df_export = df_pivot_total.copy()
-                
-                # Conversões de dados
-                df_export["Prazo"] = pd.to_numeric(df_export["Prazo"], errors="coerce").fillna(0).astype(int)
-                df_export["Taxa Bandeira"] = (
-                    df_export["Taxa Bandeira"].astype(str)
-                    .str.replace("%", "").str.replace(",", ".")
-                )
-                df_export["Taxa Antecipação"] = (
-                    df_export["Taxa Antecipação"].astype(str)
-                    .str.replace("%", "").str.replace(",", ".")
-                )
-                
-                df_export["Taxa Bandeira"] = pd.to_numeric(df_export["Taxa Bandeira"], errors="coerce").fillna(0.0) / 100
-                df_export["Taxa Antecipação"] = pd.to_numeric(df_export["Taxa Antecipação"], errors="coerce").fillna(0.0) / 100
-                
-                # Colunas de valores reais
-                # Colunas que devem receber formato de reais
-                colunas_valores = [col for col in df_export.columns if any(p in col for p in [
-                    "Vendas", "Vlr Taxa Bandeira", "Vlr Taxa Antecipação", "Total"
-                ])]
-                
-                # Geração do Excel
-                output = BytesIO()
-                workbook = xlsxwriter.Workbook(output, {'in_memory': True})
-                worksheet = workbook.add_worksheet("Prazo e Taxas")
-                
-                # Formatos
-                formato_header = workbook.add_format({'bold': True, 'bg_color': '#CCCCCC'})
-                formato_reais = workbook.add_format({'num_format': 'R$ #,##0.00'})
-                formato_percentual = workbook.add_format({'num_format': '0.00%'})
-                formato_inteiro = workbook.add_format({'num_format': '0'})
-                formato_texto = workbook.add_format()
-                
-                # Cabeçalhos
-                for col_idx, col_name in enumerate(df_export.columns):
-                    worksheet.write(0, col_idx, col_name, formato_header)
-                
-                # Conteúdo
-                for row_idx, row in enumerate(df_export.itertuples(index=False), start=1):
-                    for col_idx, value in enumerate(row):
-                        col_name = df_export.columns[col_idx]
-                
-                        if col_name == "Prazo":
-                            worksheet.write_number(row_idx, col_idx, value, formato_inteiro)
-                        elif col_name in ["Taxa Bandeira", "Taxa Antecipação"]:
-                            worksheet.write_number(row_idx, col_idx, value, formato_percentual)
-                        elif col_name in colunas_valores:
-                            worksheet.write_number(row_idx, col_idx, value, formato_reais)
+                df_exp = df_pivot_total.copy()
+                # normaliza tipos
+                df_exp["Prazo"] = pd.to_numeric(df_exp["Prazo"], errors="coerce").fillna(0).astype(int)
+                for c in ["Taxa Bandeira", "Taxa Antecipação"]:
+                    df_exp[c] = pd.to_numeric(df_exp[c], errors="coerce").fillna(0.0)
+
+                cols_reais = [c for c in df_exp.columns if any(p in c for p in ["Vendas", "Vlr Taxa Bandeira", "Vlr Taxa Antecipação", "Total "])]
+                for c in cols_reais:
+                    df_exp[c] = pd.to_numeric(df_exp[c], errors="coerce").fillna(0.0)
+
+                out = BytesIO()
+                wb = xlsxwriter.Workbook(out, {"in_memory": True})
+                ws = wb.add_worksheet("Prazo e Taxas")
+                fmt_head = wb.add_format({"bold": True, "bg_color": "#CCCCCC"})
+                fmt_reais = wb.add_format({"num_format": "R$ #,##0.00"})
+                fmt_pct = wb.add_format({"num_format": "0.00%"})
+                fmt_int = wb.add_format({"num_format": "0"})
+
+                for j, name in enumerate(df_exp.columns):
+                    ws.write(0, j, name, fmt_head)
+
+                for i, row in enumerate(df_exp.itertuples(index=False), start=1):
+                    for j, val in enumerate(row):
+                        col = df_exp.columns[j]
+                        if col == "Prazo":
+                            ws.write_number(i, j, int(val), fmt_int)
+                        elif col in ["Taxa Bandeira", "Taxa Antecipação"]:
+                            ws.write_number(i, j, float(val), fmt_pct)
+                        elif col in cols_reais:
+                            ws.write_number(i, j, float(val), fmt_reais)
                         else:
-                            worksheet.write(row_idx, col_idx, str(value), formato_texto)
-                
-                # Ajusta largura
-                for i, col in enumerate(df_export.columns):
-                    max_width = max(df_export[col].astype(str).map(len).max(), len(col)) + 2
-                    worksheet.set_column(i, i, max_width)
-                
-                workbook.close()
-                output.seek(0)
-                
-                # Botão de download
-                st.download_button(
-                    label="⬇️ Baixar Excel",
-                    data=output,
-                    file_name="Prazo_Taxas.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-    
-    
-            # === ABA FINANCEIRO ===
+                            ws.write(i, j, val)
+                for j, col in enumerate(df_exp.columns):
+                    ws.set_column(j, j, max(len(col), 10) + 2)
+                wb.close()
+                out.seek(0)
+                st.download_button("⬇️ Baixar Excel", out, "Prazo_Taxas.xlsx",
+                                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+            # === 3) FINANCEIRO (RECEBIMENTOS) ===
             with aba_financeiro:
-                df_completo = df_filtrado.merge(
-                    df_meio_pagamento[["Meio de Pagamento", "Prazo", "Antecipa S/N"]],
+                df_comp = df_filtrado.merge(
+                    df_meio[["Meio de Pagamento", "Prazo", "Antecipa S/N"]],
                     on="Meio de Pagamento",
-                    how="left"
+                    how="left",
+                    validate="many_to_one"
                 )
-                df_completo["Prazo"] = pd.to_numeric(df_completo["Prazo"], errors="coerce").fillna(0).astype(int)
-                df_completo["Antecipa S/N"] = df_completo["Antecipa S/N"].astype(str).str.upper().str.strip()
-    
+                df_comp["Prazo"] = pd.to_numeric(df_comp["Prazo"], errors="coerce").fillna(0).astype(int)
+                df_comp["Antecipa S/N"] = df_comp["Antecipa S/N"].astype(str).str.upper().str.strip()
+
                 from pandas.tseries.offsets import BDay
-                df_completo["Data Recebimento"] = df_completo.apply(
-                    lambda row: row["Data"] + BDay(1) if row["Antecipa S/N"] == "SIM" else row["Data"] + BDay(row["Prazo"]),
-                    axis=1
-                )
-    
-                df_financeiro = df_completo.groupby(df_completo["Data Recebimento"].dt.date)["Valor (R$)"].sum().reset_index()
-                df_financeiro = df_financeiro.rename(columns={"Data Recebimento": "Data"})
-    
-                total_geral = df_financeiro["Valor (R$)"].sum()
-                linha_total = pd.DataFrame([["TOTAL GERAL", total_geral]], columns=df_financeiro.columns)
-                df_financeiro_total = pd.concat([linha_total, df_financeiro], ignore_index=True)
-    
-                df_financeiro_total["Valor (R$)"] = df_financeiro_total["Valor (R$)"].map(
-                    lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                )
-    
-                st.dataframe(df_financeiro_total, use_container_width=True)
-    
-    
-        
-                import xlsxwriter
-                from io import BytesIO
-                
-                # === Corrige valores para float e converte a coluna Data para datetime
-                df_export = df_financeiro_total.copy()
-                
-                # Trata "Valor (R$)"
-                df_export["Valor (R$)"] = (
-                    df_export["Valor (R$)"]
-                    .astype(str)
-                    .str.replace("R$", "", regex=False)
-                    .str.replace(" ", "", regex=False)
-                    .str.replace(".", "", regex=False)
-                    .str.replace(",", ".", regex=False)
-                )
-                df_export["Valor (R$)"] = pd.to_numeric(df_export["Valor (R$)"], errors="coerce").fillna(0.0)
-                
-                # Converte coluna "Data" para datetime (exceto TOTAL GERAL)
-                df_export["Data"] = pd.to_datetime(df_export["Data"], errors="coerce")
-                
-                # Gera arquivo Excel com formatação
-                output = BytesIO()
-                workbook = xlsxwriter.Workbook(output, {'in_memory': True})
-                worksheet = workbook.add_worksheet("Financeiro")
-                
-                # Formatos
-                formato_header = workbook.add_format({'bold': True, 'bg_color': '#CCCCCC'})
-                formato_reais = workbook.add_format({'num_format': 'R$ #,##0.00'})
-                formato_data = workbook.add_format({'num_format': 'dd/mm/yyyy'})
-                
-                # Escreve cabeçalhos
-                for col_idx, col_name in enumerate(df_export.columns):
-                    worksheet.write(0, col_idx, col_name, formato_header)
-                
-                # Escreve dados
-                for row_idx, row in enumerate(df_export.itertuples(index=False), start=1):
-                    for col_idx, value in enumerate(row):
-                        col_name = df_export.columns[col_idx]
-                        if col_name == "Valor (R$)":
-                            worksheet.write_number(row_idx, col_idx, value, formato_reais)
-                        elif col_name == "Data":
-                            if pd.notnull(value):
-                                worksheet.write_datetime(row_idx, col_idx, value, formato_data)
-                            else:
-                                worksheet.write(row_idx, col_idx, "TOTAL GERAL")
-                        else:
-                            worksheet.write(row_idx, col_idx, value)
-                
-                # Ajusta largura das colunas
-                for i, col in enumerate(df_export.columns):
-                    max_width = max(df_export[col].astype(str).map(len).max(), len(col)) + 2
-                    worksheet.set_column(i, i, max_width)
-                
-                workbook.close()
-                output.seek(0)
-                
-                # Botão de download
-                st.download_button(
-                    label="⬇️ Baixar Excel",
-                    data=output,
-                    file_name="Financeiro Recebimento.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-    
-            # ========================
-            # ========================
-            # 📊 Aba Previsão FC
-            # ========================
-            with aba_previsao_fc:
-                
-                # Carrega planilha e abas
-                planilha = gc.open("Vendas diarias")
-                aba_fat = planilha.worksheet("Faturamento Meio Pagamento")
-                aba_empresa = planilha.worksheet("Tabela Empresa")
-            
-                # --- Dados principais ---
-                df_fat = pd.DataFrame(aba_fat.get_all_records())
-                df_empresa = pd.DataFrame(aba_empresa.get_all_records())
-            
-                # --- Normalizações ---
-                df_fat.columns = df_fat.columns.str.strip()
-                df_empresa.columns = df_empresa.columns.str.strip()
-            
-                df_fat["Loja"] = df_fat["Loja"].astype(str).str.strip().str.upper()
-                df_empresa["Loja"] = df_empresa["Loja"].astype(str).str.strip().str.upper()
-                df_empresa["Grupo"] = df_empresa["Grupo"].astype(str).str.strip().str.upper()
-            
-                # Converte data
-                df_fat["Data"] = pd.to_datetime(df_fat["Data"], dayfirst=True, errors="coerce")
-                df_fat = df_fat.dropna(subset=["Data"])
-            
-                # Últimos 30 dias com base na aba correta
-                data_final = df_fat["Data"].max()
-                data_inicial = data_final - pd.Timedelta(days=30)
-                df_30dias = df_fat[(df_fat["Data"] >= data_inicial) & (df_fat["Data"] <= data_final)].copy()
-            
-                # Traduz dia da semana
-                dias_semana = {
-                    "Monday": "Segunda-feira",
-                    "Tuesday": "Terça-feira",
-                    "Wednesday": "Quarta-feira",
-                    "Thursday": "Quinta-feira",
-                    "Friday": "Sexta-feira",
-                    "Saturday": "Sábado",
-                    "Sunday": "Domingo"
-                }
-                df_30dias["Dia da Semana"] = df_30dias["Data"].dt.day_name().map(dias_semana)
-            
-                # Limpa e converte valores
-                df_30dias["Valor (R$)"] = (
-                    df_30dias["Valor (R$)"]
-                    .astype(str)
-                    .str.replace("R$", "", regex=False)
-                    .str.replace(" ", "", regex=False)
-                    .str.replace(".", "", regex=False)
-                    .str.replace(",", ".", regex=False)
-                )
-                df_30dias = df_30dias[df_30dias["Valor (R$)"].str.strip() != ""]
-                df_30dias["Valor (R$)"] = pd.to_numeric(df_30dias["Valor (R$)"], errors="coerce")
-                df_30dias = df_30dias.dropna(subset=["Valor (R$)"])
-            
-                # Seleciona colunas
-                df_fc = df_30dias[[
-                    "Loja", "Data", "Dia da Semana", "Valor (R$)", 
-                    "Código Everest", "Código Grupo Everest"
-                ]].copy()
-            
-                # Junta com Tipo e Grupo
-                df_fc = df_fc.merge(df_empresa[["Loja", "Grupo", "Tipo"]], on="Loja", how="left")
-            
-                # Define ID FC
-                def definir_id_fc(row):
-                    if row["Tipo"] == "Airports":
-                        return row["Código Grupo Everest"]
-                    elif row["Tipo"] in ["Koop - Airports", "On-Premise"]:
-                        return row["Código Everest"]
+                def calc_receb(row):
+                    if row["Antecipa S/N"] == "SIM":
+                        return row["Data"] + BDay(1)
                     else:
-                        return None
-            
-                df_fc["ID FC"] = df_fc.apply(definir_id_fc, axis=1)
-            
-                # Agrupa e calcula média
-                df_resultado = (
-                    df_fc.groupby(["Grupo", "Loja", "ID FC", "Dia da Semana"])["Valor (R$)"]
-                    .mean()
-                    .reset_index()
-                    .rename(columns={"Valor (R$)": "Faturamento Médio"})
-                )
-            
-                # Formata visual
-                df_resultado["Faturamento Médio"] = df_resultado["Faturamento Médio"].apply(
+                        return row["Data"] + BDay(row["Prazo"])
+                df_comp["Data Recebimento"] = df_comp.apply(calc_receb, axis=1)
+
+                df_fin = df_comp.groupby(df_comp["Data Recebimento"].dt.date, as_index=False)["Valor (R$)"].sum()
+                df_fin.columns = ["Data", "Valor (R$)"]
+
+                total_geral = df_fin["Valor (R$)"].sum()
+                df_fin_total = pd.concat([pd.DataFrame([{"Data": "TOTAL GERAL", "Valor (R$)": total_geral}]), df_fin], ignore_index=True)
+
+                df_exibe = df_fin_total.copy()
+                df_exibe["Valor (R$)"] = df_exibe["Valor (R$)"].map(
                     lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                )    
-                ordem_dias = ["Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado", "Domingo"]
-                df_resultado["Dia da Semana"] = pd.Categorical(df_resultado["Dia da Semana"], categories=ordem_dias, ordered=True)
-                df_resultado = df_resultado.sort_values(["Grupo", "Loja", "Dia da Semana"])
-            
-                # Exibe
-                st.dataframe(df_resultado, use_container_width=True)
+                )
+                st.dataframe(df_exibe, use_container_width=True)
+
+                # Exportar
                 import xlsxwriter
                 from io import BytesIO
-                
-                # === Corrige valores para float antes de exportar
-                df_export = df_resultado.copy()
-                df_export["Faturamento Médio"] = (
-                    df_export["Faturamento Médio"]
-                    .astype(str)
-                    .str.replace("R$", "", regex=False)
-                    .str.replace(" ", "", regex=False)
-                    .str.replace(".", "", regex=False)
-                    .str.replace(",", ".", regex=False)
+                df_exp = df_fin_total.copy()
+                df_exp["Valor (R$)"] = pd.to_numeric(
+                    df_exp["Valor (R$)"].astype(str).str.replace("R$", "").str.replace(" ", "").str.replace(".", "").str.replace(",", "."),
+                    errors="coerce"
+                ).fillna(0.0)
+                # Data para datetime (TOTAL GERAL vira NaT)
+                df_exp["Data_dt"] = pd.to_datetime(df_exp["Data"], errors="coerce")
+
+                out = BytesIO()
+                wb = xlsxwriter.Workbook(out, {"in_memory": True})
+                ws = wb.add_worksheet("Financeiro")
+                fmt_head = wb.add_format({"bold": True, "bg_color": "#CCCCCC"})
+                fmt_reais = wb.add_format({"num_format": "R$ #,##0.00"})
+                fmt_data = wb.add_format({"num_format": "dd/mm/yyyy"})
+
+                ws.write(0, 0, "Data", fmt_head)
+                ws.write(0, 1, "Valor (R$)", fmt_head)
+
+                for i, row in enumerate(df_exp.itertuples(index=False), start=1):
+                    if pd.notnull(row.Data_dt):
+                        ws.write_datetime(i, 0, row.Data_dt, fmt_data)
+                    else:
+                        ws.write(i, 0, "TOTAL GERAL")
+                    ws.write_number(i, 1, float(row._2), fmt_reais)
+
+                ws.set_column(0, 0, 16)
+                ws.set_column(1, 1, 18)
+                wb.close()
+                out.seek(0)
+                st.download_button("⬇️ Baixar Excel", out, "Financeiro_Recebimento.xlsx",
+                                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+            # === 4) PREVISÃO FC (média 30 dias por Loja x Dia da Semana) ===
+            with aba_previsao_fc:
+                # Recalcula últimos 30 dias com base em df_relatorio (mesma origem)
+                data_final = df_relatorio["Data"].max()
+                data_inicial = data_final - pd.Timedelta(days=30)
+                df_30 = df_relatorio[(df_relatorio["Data"] >= data_inicial) & (df_relatorio["Data"] <= data_final)].copy()
+
+                # Dia da semana PT-BR
+                mapa_dia = {
+                    "Monday": "Segunda-feira","Tuesday": "Terça-feira","Wednesday": "Quarta-feira",
+                    "Thursday": "Quinta-feira","Friday": "Sexta-feira","Saturday": "Sábado","Sunday": "Domingo"
+                }
+                df_30["Dia da Semana"] = df_30["Data"].dt.day_name().map(mapa_dia)
+
+                # Junta Tipo/Grupo da Tabela Empresa
+                df_emp = pd.DataFrame(planilha.worksheet("Tabela Empresa").get_all_records())
+                df_emp = limpar_cols(df_emp)
+                for c in ("Loja","Grupo"):
+                    if c in df_emp.columns:
+                        df_emp[c] = df_emp[c].astype(str).str.strip().str.upper()
+                df_30["Loja"] = df_30["Loja"].astype(str).str.strip().str.upper()
+
+                df_fc = df_30.merge(df_emp[["Loja","Grupo","Tipo"]].drop_duplicates(), on="Loja", how="left")
+
+                # Tenta usar códigos se existirem; senão, segue sem travar
+                col_code_loja  = next((c for c in df_30.columns if _strip_invisiveis(c).lower() in ["código everest","codigo everest"]), None)
+                col_code_grupo = next((c for c in df_30.columns if _strip_invisiveis(c).lower() in ["código grupo everest","cod grupo empresas","codigo grupo everest"]), None)
+
+                if col_code_loja and col_code_loja in df_30.columns:
+                    df_fc["Código Everest"] = df_30[col_code_loja]
+                else:
+                    df_fc["Código Everest"] = np.nan
+
+                if col_code_grupo and col_code_grupo in df_30.columns:
+                    df_fc["Código Grupo Everest"] = df_30[col_code_grupo]
+                else:
+                    df_fc["Código Grupo Everest"] = np.nan
+
+                # Regras de ID FC (fallback sem travar)
+                def definir_id_fc(row):
+                    t = str(row.get("Tipo", "")).strip()
+                    if t == "Airports":
+                        return row.get("Código Grupo Everest") if pd.notnull(row.get("Código Grupo Everest")) else row.get("Grupo")
+                    elif t in ["Kopp", "Koop - Airports", "On-Premise"]:
+                        return row.get("Código Everest") if pd.notnull(row.get("Código Everest")) else row.get("Loja")
+                    else:
+                        # fallback: usa Loja
+                        return row.get("Loja")
+                df_fc["ID FC"] = df_fc.apply(definir_id_fc, axis=1)
+
+                # Média por Grupo/Loja/ID FC/Dia
+                df_res = (df_fc.groupby(["Grupo","Loja","ID FC","Dia da Semana"])["Valor (R$)"]
+                              .mean().reset_index().rename(columns={"Valor (R$)":"Faturamento Médio"}))
+
+                # Ordena dias
+                ordem = ["Segunda-feira","Terça-feira","Quarta-feira","Quinta-feira","Sexta-feira","Sábado","Domingo"]
+                df_res["Dia da Semana"] = pd.Categorical(df_res["Dia da Semana"], categories=ordem, ordered=True)
+                df_res = df_res.sort_values(["Grupo","Loja","Dia da Semana"])
+
+                # Exibição formatada
+                df_show = df_res.copy()
+                df_show["Faturamento Médio"] = df_show["Faturamento Médio"].map(
+                    lambda x: f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                 )
-                
-                df_export["Faturamento Médio"] = pd.to_numeric(df_export["Faturamento Médio"], errors="coerce").fillna(0.0)
-                            
-                # Gera arquivo Excel com formatação
-                output = BytesIO()
-                workbook = xlsxwriter.Workbook(output, {'in_memory': True})
-                worksheet = workbook.add_worksheet("Previsão FC")
-                
-                # Formatos
-                formato_header = workbook.add_format({'bold': True, 'bg_color': '#CCCCCC'})
-                formato_reais = workbook.add_format({'num_format': 'R$ #,##0.00'})
-                
-                # Escreve cabeçalhos
-                for col_idx, col_name in enumerate(df_export.columns):
-                    worksheet.write(0, col_idx, col_name, formato_header)
-                
-                # Escreve dados com formatação de reais
-                for row_idx, row in enumerate(df_export.itertuples(index=False), start=1):
-                    for col_idx, value in enumerate(row):
-                        if df_export.columns[col_idx] == "Faturamento Médio":
-                            worksheet.write_number(row_idx, col_idx, value, formato_reais)
-                        else:
-                            worksheet.write(row_idx, col_idx, value)
-                
-                # Ajusta largura
-                for i, col in enumerate(df_export.columns):
-                    max_width = max(df_export[col].astype(str).map(len).max(), len(col)) + 2
-                    worksheet.set_column(i, i, max_width)
-                
-                workbook.close()
-                output.seek(0)
-                
-                # Botão de download
-                st.download_button(
-                    label="⬇️ Baixar Excel",
-                    data=output,
-                    file_name="Previsao_FC.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-    
-    
-    
-    
-            # === Conciliação Adquirente ===
-            with aba_conciliacao:    
-                st.warning("📌 em desenvolvimento")
+                st.dataframe(df_show, use_container_width=True)
+
+                # Exportar
+                import xlsxwriter
+                from io import BytesIO
+                df_exp = df_res.copy()
+                out = BytesIO()
+                wb = xlsxwriter.Workbook(out, {"in_memory": True})
+                ws = wb.add_worksheet("Previsão FC")
+                fmt_head = wb.add_format({"bold": True, "bg_color": "#CCCCCC"})
+                fmt_reais = wb.add_format({"num_format": "R$ #,##0.00"})
+
+                for j, name in enumerate(df_exp.columns):
+                    ws.write(0, j, name, fmt_head)
+                for i, row in enumerate(df_exp.itertuples(index=False), start=1):
+                    ws.write(i, 0, row.Grupo)
+                    ws.write(i, 1, row.Loja)
+                    ws.write(i, 2, str(row._3))  # ID FC
+                    ws.write(i, 3, row._4)       # Dia da Semana
+                    ws.write_number(i, 4, float(row._5), fmt_reais)
+                for j, col in enumerate(df_exp.columns):
+                    ws.set_column(j, j, max(len(col), 12) + 2)
+                wb.close()
+                out.seek(0)
+                st.download_button("⬇️ Baixar Excel", out, "Previsao_FC.xlsx",
+                                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+            # === 5) Conciliação (placeholder)
+            with aba_conciliacao:
+                st.warning("📌 Em desenvolvimento")
+
         except Exception as e:
-            st.error(f"❌ Erro ao acessar dados: {e}")
-    
-    
+            st.error(f"❌ Erro ao acessar dados na aba Financeiros: {e}")

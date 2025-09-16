@@ -1908,7 +1908,7 @@ with st.spinner("⏳ Processando..."):
             # 4) Remove a coluna auxiliar
             df_relatorio = df_tmp.drop(columns=["Tipo de Pagamento_tab"])
 
-            st.write(list(df_relatorio.columns))
+            #st.write(list(df_relatorio.columns))
 
             
             

@@ -1872,14 +1872,46 @@ with st.spinner("⏳ Processando..."):
             df_relatorio["Meio de Pagamento"] = df_relatorio["Meio de Pagamento"].astype(str).str.strip().str.upper()
             df_meio_pagamento["Meio de Pagamento"] = df_meio_pagamento["Meio de Pagamento"].astype(str).str.strip().str.upper()
             df_meio_pagamento["Tipo de Pagamento"] = df_meio_pagamento["Tipo de Pagamento"].astype(str).str.strip().str.upper()
-    
-            # Merge para adicionar "Tipo de Pagamento"
-            df_relatorio = df_relatorio.merge(
-                df_meio_pagamento[["Meio de Pagamento", "Tipo de Pagamento"]],
+
+            # --- Antes deste bloco você já fez:
+            # df_relatorio["Meio de Pagamento"] = ...
+            # df_meio_pagamento["Meio de Pagamento"] = ...
+            # df_meio_pagamento["Tipo de Pagamento"] = ...
+            
+            # ⬇️ USE ESTE BLOCO NO LUGAR DO MERGE ANTIGO
+            # 1) Saber se o relatório já tem "Tipo de Pagamento"
+            tem_tipo_no_rel = "Tipo de Pagamento" in df_relatorio.columns
+            
+            # Se já existir no relatório, normaliza
+            if tem_tipo_no_rel:
+                df_relatorio["Tipo de Pagamento"] = (
+                    df_relatorio["Tipo de Pagamento"].astype(str).str.strip().str.upper()
+                )
+            
+            # 2) Faz o merge trazendo o tipo da Tabela como outra coluna (sem colidir nome)
+            df_tmp = df_relatorio.merge(
+                df_meio_pagamento[["Meio de Pagamento", "Tipo de Pagamento"]]
+                  .rename(columns={"Tipo de Pagamento": "Tipo de Pagamento_tab"}),
                 on="Meio de Pagamento",
-                how="left"
+                how="left",
             )
-    
+            
+            # 3) Cola (coalesce) o que já veio do relatório com o da tabela
+            import numpy as np
+            if tem_tipo_no_rel:
+                # trata vazios como NaN para o fillna funcionar
+                df_tmp["Tipo de Pagamento"] = df_tmp["Tipo de Pagamento"].replace(["", "NAN", "NONE"], np.nan)
+                df_tmp["Tipo de Pagamento"] = df_tmp["Tipo de Pagamento"].fillna(df_tmp["Tipo de Pagamento_tab"])
+            else:
+                df_tmp["Tipo de Pagamento"] = df_tmp["Tipo de Pagamento_tab"]
+            
+            # 4) Remove a coluna auxiliar
+            df_relatorio = df_tmp.drop(columns=["Tipo de Pagamento_tab"])
+
+            st.write(list(df_relatorio.columns))
+
+            
+            
             # Corrige valores e datas
             df_relatorio["Valor (R$)"] = (
                 df_relatorio["Valor (R$)"].astype(str)

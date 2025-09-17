@@ -47,6 +47,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+NOME_SISTEMA = "Sangria"
+
 # ======================
 # Spinner durante todo o processamento
 # ======================
@@ -166,6 +168,11 @@ with st.spinner("⏳ Processando..."):
 
                 df["Descrição Agrupada"] = df["Descrição"].apply(mapear_descricao)
 
+                # ➕ Novas colunas: Sistema e Duplicidade (Data + Código Everest)
+                df["Sistema"] = NOME_SISTEMA
+                data_key = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
+                df["Duplicidade"] = data_key.fillna("") + "|" + df["Código Everest"].fillna("").astype(str)
+
                 # Reorganizar colunas conforme a ordem desejada
                 colunas_ordenadas = [
                     "Data",
@@ -181,7 +188,9 @@ with st.spinner("⏳ Processando..."):
                     "Meio de recebimento",
                     "Valor(R$)",
                     "Mês",
-                    "Ano"
+                    "Ano",
+                    "Sistema",
+                    "Duplicidade"
                 ]
                 df = df[colunas_ordenadas]
 

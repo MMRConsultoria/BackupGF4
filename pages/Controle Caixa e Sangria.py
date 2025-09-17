@@ -47,7 +47,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-NOME_SISTEMA = "Sangria"
+NOME_SISTEMA = "Colibri"
 
 # ======================
 # Spinner durante todo o processamento

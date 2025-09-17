@@ -176,7 +176,7 @@ with st.spinner("⏳ Processando..."):
                 if "Meio de recebimento" not in df.columns:
                     df["Meio de recebimento"] = ""
 
-                # Ordenação conforme cabeçalho da aba "sangria"
+                # Ordenação conforme cabeçalho da aba "Sangria"
                 colunas_ordenadas = [
                     "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
                     "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
@@ -211,7 +211,7 @@ with st.spinner("⏳ Processando..."):
                 # Download
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                    df.to_excel(writer, index=False, sheet_name="Sangria")
+                    df.to_excel(writer, index=False, sheet_name="sangria")
                 output.seek(0)
                 st.download_button("📥 Baixar relatório de sangria",
                                    data=output, file_name="Sangria_estruturada.xlsx")
@@ -262,7 +262,7 @@ with st.spinner("⏳ Processando..."):
                 df_final[col] = df_final[col].apply(lambda x: int(x) if pd.notnull(x) and str(x).strip() != "" else "")
 
             # Acessa a aba de destino
-            aba_destino = planilha.worksheet("sangria")
+            aba_destino = planilha.worksheet("Sangria")
             valores_existentes = aba_destino.get_all_values()
             if not valores_existentes:
                 st.error("❌ A aba 'sangria' está vazia ou sem cabeçalho. Crie o cabeçalho antes de enviar.")

@@ -27,34 +27,22 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 🔒 Bloqueia o acesso caso o usuário não esteja logado
+# 🔒 Bloqueio
 if not st.session_state.get("acesso_liberado"):
     st.stop()
 
-# ======================
-# CSS para esconder só a barra superior
-# ======================
+# 🔕 Oculta toolbar
 st.markdown("""
     <style>
-        [data-testid="stToolbar"] {
-            visibility: hidden;
-            height: 0%;
-            position: fixed;
-        }
-        .stSpinner {
-            visibility: visible !important;
-        }
+        [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
+        .stSpinner { visibility: visible !important; }
     </style>
 """, unsafe_allow_html=True)
 
-NOME_SISTEMA = "Colibri"
+NOME_SISTEMA = "Sangria"
 
-# ======================
-# Spinner durante todo o processamento
-# ======================
 with st.spinner("⏳ Processando..."):
-
-    # 🔌 Conexão com Google Sheets
+    # 🔌 Conexão Google Sheets
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
     credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
@@ -75,17 +63,12 @@ with st.spinner("⏳ Processando..."):
         </div>
     """, unsafe_allow_html=True)
 
-    # ========================
     # 🗂️ Abas
-    # ========================
-    tab1, tab2 = st.tabs([
-        "📥 Upload e Processamento",
-        "🔄 Atualizar Google Sheets"
-    ])
+    tab1, tab2 = st.tabs(["📥 Upload e Processamento", "🔄 Atualizar Google Sheets"])
 
-    # ======================
+    # ================
     # 📥 Aba 1
-    # ======================
+    # ================
     with tab1:
         uploaded_file = st.file_uploader(
             label="📁 Clique para selecionar ou arraste aqui o arquivo Excel com os dados de sangria",
@@ -101,6 +84,8 @@ with st.spinner("⏳ Processando..."):
                 st.error(f"❌ Não foi possível ler o arquivo enviado. Detalhes: {e}")
             else:
                 df = df_dados.copy()
+
+                # Campos que serão preenchidos durante o parsing
                 df["Loja"] = np.nan
                 df["Data"] = np.nan
                 df["Funcionário"] = np.nan
@@ -120,10 +105,9 @@ with st.spinner("⏳ Processando..."):
                     elif valor.startswith("Data:"):
                         try:
                             data_atual = pd.to_datetime(
-                                valor.split("Data:")[1].split("(Total")[0].strip(),
-                                dayfirst=True
+                                valor.split("Data:")[1].split("(Total")[0].strip(), dayfirst=True
                             )
-                        except:
+                        except Exception:
                             data_atual = pd.NaT
                     elif valor.startswith("Funcionário:"):
                         funcionario_atual = valor.split("Funcionário:")[1].split("(Total")[0].strip()
@@ -137,14 +121,13 @@ with st.spinner("⏳ Processando..."):
                 df = df.loc[linhas_validas].copy()
                 df.ffill(inplace=True)
 
+                # Limpeza e conversões
                 df["Descrição"] = df["Descrição"].astype(str).str.strip().str.lower()
                 df["Funcionário"] = df["Funcionário"].astype(str).str.strip()
                 df["Valor(R$)"] = pd.to_numeric(df["Valor(R$)"], errors="coerce")
 
-                dias_semana = {
-                    0: 'segunda-feira', 1: 'terça-feira', 2: 'quarta-feira',
-                    3: 'quinta-feira', 4: 'sexta-feira', 5: 'sábado', 6: 'domingo'
-                }
+                dias_semana = {0: 'segunda-feira', 1: 'terça-feira', 2: 'quarta-feira',
+                               3: 'quinta-feira', 4: 'sexta-feira', 5: 'sábado', 6: 'domingo'}
                 df["Dia da Semana"] = df["Data"].dt.dayofweek.map(dias_semana)
 
                 df["Mês"] = df["Data"].dt.month.map({
@@ -154,75 +137,160 @@ with st.spinner("⏳ Processando..."):
                 df["Ano"] = df["Data"].dt.year
                 df["Data"] = df["Data"].dt.strftime("%d/%m/%Y")
 
+                # Merge com cadastro de lojas
                 df["Loja"] = df["Loja"].astype(str).str.strip().str.lower()
                 df_empresa["Loja"] = df_empresa["Loja"].astype(str).str.strip().str.lower()
-
                 df = pd.merge(df, df_empresa, on="Loja", how="left")
 
+                # Agrupamento de descrição
                 def mapear_descricao(desc):
                     desc_lower = str(desc).lower()
-                    for _, row in df_descricoes.iterrows():
-                        if str(row["Palavra-chave"]).lower() in desc_lower:
-                            return row["Descrição Agrupada"]
+                    for _, r in df_descricoes.iterrows():
+                        if str(r["Palavra-chave"]).lower() in desc_lower:
+                            return r["Descrição Agrupada"]
                     return "Outros"
 
                 df["Descrição Agrupada"] = df["Descrição"].apply(mapear_descricao)
 
-                # ➕ Novas colunas: Sistema e Duplicidade (Data + Código Everest)
+                # Colunas adicionais
                 df["Sistema"] = NOME_SISTEMA
                 data_key = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
                 df["Duplicidade"] = data_key.fillna("") + "|" + df["Código Everest"].fillna("").astype(str)
 
-                # Reorganizar colunas conforme a ordem desejada
-                colunas_ordenadas = [
-                    "Data",
-                    "Dia da Semana",
-                    "Loja",
-                    "Código Everest",
-                    "Grupo",
-                    "Código Grupo Everest",
-                    "Funcionário",
-                    "Hora",
-                    "Descrição",
-                    "Descrição Agrupada",
-                    "Meio de recebimento",
-                    "Valor(R$)",
-                    "Mês",
-                    "Ano",
-                    "Sistema",
-                    "Duplicidade"
-                ]
-                df = df[colunas_ordenadas]
+                # Garante coluna opcional
+                if "Meio de recebimento" not in df.columns:
+                    df["Meio de recebimento"] = ""
 
-                df = df.sort_values(by=["Data", "Loja"])
+                # Ordenação conforme cabeçalho da aba "sangria"
+                colunas_ordenadas = [
+                    "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
+                    "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
+                    "Descrição Agrupada", "Meio de recebimento", "Valor(R$)",
+                    "Mês", "Ano", "Duplicidade", "Sistema"
+                ]
+                df = df[colunas_ordenadas].sort_values(by=["Data", "Loja"])
+
+                # Métricas
                 periodo_min = pd.to_datetime(df["Data"], dayfirst=True).min().strftime("%d/%m/%Y")
                 periodo_max = pd.to_datetime(df["Data"], dayfirst=True).max().strftime("%d/%m/%Y")
                 valor_total = df["Valor(R$)"].sum()
 
                 col1, col2 = st.columns(2)
                 col1.metric("📅 Período processado", f"{periodo_min} até {periodo_max}")
-                col2.metric(
-                    "💰 Valor total de sangria",
-                    f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                )
+                col2.metric("💰 Valor total de sangria",
+                            f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
                 st.success("✅ Relatório gerado com sucesso!")
 
-                # Lojas sem código Everest
+                # Aviso de lojas sem código
                 lojas_sem_codigo = df[df["Código Everest"].isna()]["Loja"].unique()
                 if len(lojas_sem_codigo) > 0:
                     st.warning(
                         f"⚠️ Lojas sem código Everest cadastrado: {', '.join(lojas_sem_codigo)}\n\n"
-                        "🔗 Atualize os dados na [planilha de empresas](https://docs.google.com/spreadsheets/d/13BvAIzgp7w7wrfkwM_MOnHqHYol-dpWiEZBjyODvI4Q/edit?usp=sharing)"
+                        "🔗 Atualize na planilha de empresas."
                     )
 
+                # Guarda para Aba 2
+                st.session_state.df_sangria = df.copy()
+
+                # Download
                 output = BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                with pd.ExcelWriter(output, engine="openpyxl") as writer:
                     df.to_excel(writer, index=False, sheet_name="Sangria")
                 output.seek(0)
+                st.download_button("📥 Baixar relatório de sangria",
+                                   data=output, file_name="Sangria_estruturada.xlsx")
 
-                st.download_button(
-                    "📥 Baixar relatório de sangria",
-                    data=output,
-                    file_name="Sangria_estruturada.xlsx"
-                )
+    # ================
+    # 🔄 Aba 2 — Atualizar Google Sheets (aba: sangria)
+    # ================
+    with tab2:
+        st.markdown("🔗 [Abrir planilha Vendas diarias](https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU)")
+
+        if "df_sangria" not in st.session_state:
+            st.warning("⚠️ Primeiro faça o upload e o processamento na Aba 1.")
+        else:
+            df_final = st.session_state.df_sangria.copy()
+
+            # Valida colunas necessárias (conforme cabeçalho da aba 'sangria')
+            required_cols = [
+                "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
+                "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
+                "Descrição Agrupada", "Meio de recebimento", "Valor(R$)",
+                "Mês", "Ano", "Duplicidade", "Sistema"
+            ]
+            faltantes = [c for c in required_cols if c not in df_final.columns]
+            if faltantes:
+                st.error(f"❌ Colunas ausentes para envio: {faltantes}")
+                st.stop()
+
+            # Recalcula Duplicidade por garantia (Data + Código Everest)
+            data_key = pd.to_datetime(df_final["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
+            df_final["Duplicidade"] = data_key.fillna("") + "|" + df_final["Código Everest"].fillna("").astype(str)
+
+            # Conversões para envio
+            # Valor
+            df_final["Valor(R$)"] = pd.to_numeric(df_final["Valor(R$)"], errors="coerce").fillna(0.0)
+            # Data -> serial Excel (para facilitar formatação no Sheets)
+            df_final["Data"] = (pd.to_datetime(df_final["Data"], dayfirst=True) - pd.Timestamp("1899-12-30")).dt.days
+
+            # Inteiros opcionais
+            for col in ["Código Everest", "Código Grupo Everest", "Ano"]:
+                df_final[col] = df_final[col].apply(lambda x: int(x) if pd.notnull(x) and str(x).strip() != "" else "")
+
+            # Verifica lojas sem código
+            lojas_nao_cadastradas = df_final[df_final["Código Everest"].isin(["", np.nan])]["Loja"].unique()
+            todas_lojas_ok = len(lojas_nao_cadastradas) == 0
+            if not todas_lojas_ok:
+                st.warning(f"⚠️ Existem lojas sem Código Everest: {', '.join(lojas_nao_cadastradas)}")
+
+            # Acessa a aba de destino
+            aba_destino = planilha.worksheet("sangria")  # nome exato informado
+            valores_existentes = aba_destino.get_all_values()
+
+            if not valores_existentes:
+                st.error("❌ A aba 'sangria' está vazia ou sem cabeçalho. Crie o cabeçalho antes de enviar.")
+                st.stop()
+
+            header = valores_existentes[0]
+            # Garante que o cabeçalho do destino tem as mesmas colunas na mesma ordem
+            destino_cols = [
+                "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
+                "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
+                "Descrição Agrupada", "Meio de recebimento", "Valor(R$)",
+                "Mês", "Ano", "Duplicidade", "Sistema"
+            ]
+            if header[:len(destino_cols)] != destino_cols:
+                st.error("❌ O cabeçalho da aba 'sangria' não corresponde ao esperado. Ajuste o cabeçalho antes do envio.")
+                st.stop()
+
+            # Índice da coluna 'Duplicidade' no destino (dinâmico)
+            try:
+                dup_idx = header.index("Duplicidade")
+            except ValueError:
+                st.error("❌ Cabeçalho da aba 'sangria' não contém a coluna 'Duplicidade'.")
+                st.stop()
+
+            # Chaves já existentes
+            dados_existentes = set([linha[dup_idx] for linha in valores_existentes[1:] if len(linha) > dup_idx and linha[dup_idx] != ""])
+
+            # Prepara linhas na ordem do destino
+            df_final = df_final[destino_cols].fillna("")
+            novos_dados, duplicados = [], []
+            for linha in df_final.values.tolist():
+                chave = linha[dup_idx]
+                if chave not in dados_existentes:
+                    novos_dados.append(linha)
+                    dados_existentes.add(chave)
+                else:
+                    duplicados.append(linha)
+
+            st.write(f"🧮 Prontos para envio: {len(novos_dados)} | Duplicados detectados: {len(duplicados)}")
+
+            if todas_lojas_ok and st.button("📥 Enviar dados para a aba 'sangria'"):
+                with st.spinner("🔄 Enviando..."):
+                    if novos_dados:
+                        aba_destino.append_rows(novos_dados)
+                        st.success(f"✅ {len(novos_dados)} registros enviados!")
+                    if duplicados:
+                        st.warning(f"⚠️ {len(duplicados)} registros duplicados não foram enviados (chave: Data+Código Everest).")

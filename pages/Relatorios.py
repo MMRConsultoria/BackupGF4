@@ -2494,16 +2494,85 @@ with st.spinner("⏳ Processando..."):
             if "Data" in df_sangria.columns:
                 df_sangria["Data"] = pd.to_datetime(df_sangria["Data"], dayfirst=True, errors="coerce")
             if "Valor(R$)" in df_sangria.columns:
-                def _to_float(v):
+                def to_number_br(v):
+                    """Converte valores monetários vindos do Sheets para float com segurança.
+                       Aceita: '1.234,56' | '1234,56' | '1,234.56' | '139.56' | '139,56' | 139.56 | (139,56) etc."""
+                    import re
+                    if v is None:
+                        return 0.0
                     if isinstance(v, (int, float)):
                         return float(v)
+                
                     s = str(v).strip()
                     if s == "":
                         return 0.0
-                    return float(
-                        s.replace("R$", "").replace(" ", "").replace(".", "").replace(",", ".")
+                
+                    # remove símbolo/moedas/espaços
+                    s = (
+                        s.replace("R$", "")
+                         .replace(" ", "")
+                         .replace("\u00A0", "")  # nbsp
+                         .replace(" ", "")       # outro espaço fino
                     )
-                df_sangria["Valor(R$)"] = pd.to_numeric(df_sangria["Valor(R$)"].apply(_to_float), errors="coerce").fillna(0.0)
+                
+                    # negativos entre parênteses
+                    neg = False
+                    if s.startswith("(") and s.endswith(")"):
+                        neg = True
+                        s = s[1:-1]
+                
+                    # CASO 1: tem ponto e vírgula -> assume milhar '.' e decimal ','
+                    if "." in s and "," in s:
+                        s = s.replace(".", "").replace(",", ".")
+                        try:
+                            val = float(s)
+                            return -val if neg else val
+                        except:
+                            pass
+                
+                    # CASO 2: só vírgula -> decimal é vírgula
+                    if "," in s and "." not in s:
+                        s = s.replace(".", "")      # se vier algum ponto perdido
+                        s = s.replace(",", ".")
+                        try:
+                            val = float(s)
+                            return -val if neg else val
+                        except:
+                            pass
+                
+                    # CASO 3: só ponto -> pode ser decimal (139.56) OU milhar (1.234)
+                    if "." in s and "," not in s:
+                        parts = s.split(".")
+                        # Ex.: '1.234' (todos grupos de 3 dígitos -> milhar)
+                        if all(p.isdigit() and len(p) == 3 for p in parts[1:]) and parts[0].isdigit():
+                            s = "".join(parts)  # remove milhar
+                            try:
+                                val = float(s)
+                                return -val if neg else val
+                            except:
+                                pass
+                        # Ex.: '139.56' (ponto é decimal)
+                        try:
+                            val = float(s)
+                            return -val if neg else val
+                        except:
+                            pass
+                
+                    # fallback: tira qualquer separador e tenta
+                    s_num = re.sub(r"[^\d\.-]", "", s)
+                    if s_num.count(".") > 1 and "," not in s_num:
+                        # muitos pontos => trata como milhar
+                        s_num = s_num.replace(".", "")
+                    try:
+                        val = float(s_num)
+                        return -val if neg else val
+                    except:
+                        return 0.0
+                
+                # ---- use aqui na carga da aba 'sangria' ----
+                if "Valor(R$)" in df_sangria.columns:
+                    df_sangria["Valor(R$)"] = df_sangria["Valor(R$)"].apply(to_number_br).astype(float)
+
         except Exception as e:
             st.warning(f"⚠️ Não foi possível carregar a aba 'sangria': {e}")
     

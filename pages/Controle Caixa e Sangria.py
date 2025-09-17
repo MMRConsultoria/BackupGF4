@@ -5,6 +5,7 @@ import json
 from io import BytesIO
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+from gspread_formatting import format_cell_range, CellFormat, NumberFormat
 
 st.set_page_config(page_title="Relatório de Sangria", layout="wide")
 
@@ -39,7 +40,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-NOME_SISTEMA = "Colibri"
+NOME_SISTEMA = "Sangria"
 
 with st.spinner("⏳ Processando..."):
     # 🔌 Conexão Google Sheets
@@ -126,10 +127,10 @@ with st.spinner("⏳ Processando..."):
                 df["Funcionário"] = df["Funcionário"].astype(str).str.strip()
                 df["Valor(R$)"] = pd.to_numeric(df["Valor(R$)"], errors="coerce")
 
+                # Dia semana / mês / ano
                 dias_semana = {0: 'segunda-feira', 1: 'terça-feira', 2: 'quarta-feira',
                                3: 'quinta-feira', 4: 'sexta-feira', 5: 'sábado', 6: 'domingo'}
                 df["Dia da Semana"] = df["Data"].dt.dayofweek.map(dias_semana)
-
                 df["Mês"] = df["Data"].dt.month.map({
                     1: 'jan', 2: 'fev', 3: 'mar', 4: 'abr', 5: 'mai', 6: 'jun',
                     7: 'jul', 8: 'ago', 9: 'set', 10: 'out', 11: 'nov', 12: 'dez'
@@ -152,10 +153,11 @@ with st.spinner("⏳ Processando..."):
 
                 df["Descrição Agrupada"] = df["Descrição"].apply(mapear_descricao)
 
-                # Colunas adicionais
+                # ➕ Colunas adicionais
                 df["Sistema"] = NOME_SISTEMA
                 data_key = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
-                df["Duplicidade"] = data_key.fillna("") + "|" + df["Código Everest"].fillna("").astype(str)
+                hora_key = pd.to_datetime(df["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
+                df["Duplicidade"] = data_key.fillna("") + "|" + hora_key.fillna("") + "|" + df["Código Everest"].fillna("").astype(str)
 
                 # Garante coluna opcional
                 if "Meio de recebimento" not in df.columns:
@@ -224,15 +226,16 @@ with st.spinner("⏳ Processando..."):
                 st.error(f"❌ Colunas ausentes para envio: {faltantes}")
                 st.stop()
 
-            # Recalcula Duplicidade por garantia (Data + Código Everest)
+            # Recalcula Duplicidade por garantia (Data + Hora + Código Everest)
             data_key = pd.to_datetime(df_final["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
-            df_final["Duplicidade"] = data_key.fillna("") + "|" + df_final["Código Everest"].fillna("").astype(str)
+            hora_key = pd.to_datetime(df_final["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
+            df_final["Duplicidade"] = data_key.fillna("") + "|" + hora_key.fillna("") + "|" + df_final["Código Everest"].fillna("").astype(str)
 
-            # Conversões para envio
-            # Valor
+            # Conversões para envio:
+            # - Valor deve ser NUMÉRICO (Sheets formatará para 1.000,00 via NumberFormat)
             df_final["Valor(R$)"] = pd.to_numeric(df_final["Valor(R$)"], errors="coerce").fillna(0.0)
-            # Data -> serial Excel (para facilitar formatação no Sheets)
-            df_final["Data"] = (pd.to_datetime(df_final["Data"], dayfirst=True) - pd.Timestamp("1899-12-30")).dt.days
+            # - Data: manter como string dd/mm/yyyy e usar USER_ENTERED para Sheets reconhecer como data
+            # (não converter para serial aqui)
 
             # Inteiros opcionais
             for col in ["Código Everest", "Código Grupo Everest", "Ano"]:
@@ -245,7 +248,7 @@ with st.spinner("⏳ Processando..."):
                 st.warning(f"⚠️ Existem lojas sem Código Everest: {', '.join(lojas_nao_cadastradas)}")
 
             # Acessa a aba de destino
-            aba_destino = planilha.worksheet("Sangria")  # nome exato informado
+            aba_destino = planilha.worksheet("sangria")  # nome exato informado
             valores_existentes = aba_destino.get_all_values()
 
             if not valores_existentes:
@@ -253,7 +256,6 @@ with st.spinner("⏳ Processando..."):
                 st.stop()
 
             header = valores_existentes[0]
-            # Garante que o cabeçalho do destino tem as mesmas colunas na mesma ordem
             destino_cols = [
                 "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
                 "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
@@ -272,10 +274,12 @@ with st.spinner("⏳ Processando..."):
                 st.stop()
 
             # Chaves já existentes
-            dados_existentes = set([linha[dup_idx] for linha in valores_existentes[1:] if len(linha) > dup_idx and linha[dup_idx] != ""])
+            dados_existentes = set([linha[dup_idx] for linha in valores_existentes[1:]
+                                    if len(linha) > dup_idx and linha[dup_idx] != ""])
 
             # Prepara linhas na ordem do destino
             df_final = df_final[destino_cols].fillna("")
+
             novos_dados, duplicados = [], []
             for linha in df_final.values.tolist():
                 chave = linha[dup_idx]
@@ -287,10 +291,29 @@ with st.spinner("⏳ Processando..."):
 
             st.write(f"🧮 Prontos para envio: {len(novos_dados)} | Duplicados detectados: {len(duplicados)}")
 
-            if todas_lojas_ok and st.button("📥 Enviar dados para a aba 'Sangria'"):
+            if todas_lojas_ok and st.button("📥 Enviar dados para a aba 'sangria'"):
                 with st.spinner("🔄 Enviando..."):
                     if novos_dados:
-                        aba_destino.append_rows(novos_dados)
+                        # USER_ENTERED => Sheets interpreta Data (dd/mm/yyyy) como data
+                        aba_destino.append_rows(novos_dados, value_input_option="USER_ENTERED")
+
+                        # Formatação das novas linhas (Data e Valor) para exibir corretamente
+                        inicio = len(valores_existentes) + 1  # próxima linha após o cabeçalho existente
+                        fim = inicio + len(novos_dados) - 1
+
+                        # Coluna A (Data) -> Date dd/mm/yyyy
+                        format_cell_range(
+                            aba_destino,
+                            f"A{inicio}:A{fim}",
+                            CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
+                        )
+                        # Coluna L (Valor(R$)) -> número com separadores (Sheets/locale exibirá 1.000,00)
+                        format_cell_range(
+                            aba_destino,
+                            f"L{inicio}:L{fim}",
+                            CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#,##0.00"))
+                        )
+
                         st.success(f"✅ {len(novos_dados)} registros enviados!")
                     if duplicados:
-                        st.warning(f"⚠️ {len(duplicados)} registros duplicados não foram enviados (chave: Data+Código Everest).")
+                        st.warning("⚠️ Alguns registros duplicados não foram enviados (chave: Data+Hora+Código Everest).")

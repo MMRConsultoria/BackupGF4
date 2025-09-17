@@ -2547,11 +2547,11 @@ with st.spinner("⏳ Processando..."):
                     df_fil = df_fil[df_fil["Descrição Agrupada"].astype(str).isin(descrs_sel)]
     
                 # métricas
-                total = float(df_fil.get("Valor(R$)", pd.Series([0])).sum())
-                colm1, colm2, colm3 = st.columns(3)
-                colm1.metric("Qtd. Registros", f"{len(df_fil):,}".replace(",", "."))
-                colm2.metric("Período", f"{pd.to_datetime(dt_inicio).strftime('%d/%m/%Y')} — {pd.to_datetime(dt_fim).strftime('%d/%m/%Y')}")
-                colm3.metric("Total Sangria", f"R$ {total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                #total = float(df_fil.get("Valor(R$)", pd.Series([0])).sum())
+                #colm1, colm2, colm3 = st.columns(3)
+                #colm1.metric("Qtd. Registros", f"{len(df_fil):,}".replace(",", "."))
+                #colm2.metric("Período", f"{pd.to_datetime(dt_inicio).strftime('%d/%m/%Y')} — {pd.to_datetime(dt_fim).strftime('%d/%m/%Y')}")
+                #colm3.metric("Total Sangria", f"R$ {total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
     
                 # tabela formatada
                 df_exibe = df_fil.copy()

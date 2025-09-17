@@ -2487,7 +2487,7 @@ with st.spinner("⏳ Processando..."):
         # tenta carregar a aba 'sangria' da planilha
         df_sangria = None
         try:
-            ws_sangria = planilha_empresa.worksheet("sangria")
+            ws_sangria = planilha_empresa.worksheet("Sangria")
             df_sangria = pd.DataFrame(ws_sangria.get_all_records())
             # normalizações básicas
             df_sangria.columns = [c.strip() for c in df_sangria.columns]

@@ -2482,89 +2482,85 @@ with st.spinner("⏳ Processando..."):
     # Nova ABA: Relatórios Caixa e Sangria (com sub-abas)
     # ================================
     with aba5:
-        #st.markdown("### 🧾 Relatórios Caixa e Sangria")
-    
-        # tenta carregar a aba 'sangria' da planilha
+        # tenta carregar a aba 'Sangria' da planilha
         df_sangria = None
         try:
             ws_sangria = planilha_empresa.worksheet("Sangria")
             df_sangria = pd.DataFrame(ws_sangria.get_all_records())
-            # normalizações básicas
+    
+            # ----------------------
+            # Normalizações básicas
+            # ----------------------
             df_sangria.columns = [c.strip() for c in df_sangria.columns]
+    
             if "Data" in df_sangria.columns:
                 df_sangria["Data"] = pd.to_datetime(df_sangria["Data"], dayfirst=True, errors="coerce")
-            if "Valor(R$)" in df_sangria.columns:
-                def to_number_br(v):
-                    import re
-                    if v is None or (isinstance(v, float) and pd.isna(v)):
-                        return 0.0
-                    if isinstance(v, (int, float)):
-                        return float(v)
-                
-                    s = str(v).strip()
-                    if s == "":
-                        return 0.0
-                
-                    # remove símbolos/espacos
-                    s = (s.replace("R$", "")
-                           .replace("\u00A0", "")
-                           .replace(" ", ""))
-                
-                    # negativo entre parênteses
-                    neg = s.startswith("(") and s.endswith(")")
-                    if neg:
-                        s = s[1:-1]
-                
-                    has_comma = "," in s
-                    has_dot   = "." in s
-                
-                    if has_comma and has_dot:
-                        # milhar com ponto + decimal com vírgula
-                        s_norm = s.replace(".", "").replace(",", ".")
-                    elif has_comma:
-                        # decimal com vírgula
-                        s_norm = s.replace(".", "").replace(",", ".")
-                    elif has_dot:
-                        # pode ser decimal com ponto ou milhar com ponto
-                        parts = s.split(".")
-                        if len(parts[-1]) == 3 and all(p.isdigit() for p in parts):
-                            # padrão de milhar (ex.: 13.956)
-                            s_norm = "".join(parts)
-                        else:
-                            s_norm = s
+    
+            # Função robusta para valores BR
+            def to_number_br(v):
+                import re
+                if v is None or (isinstance(v, float) and pd.isna(v)):
+                    return 0.0
+                if isinstance(v, (int, float)):
+                    return float(v)
+    
+                s = str(v).strip()
+                if s == "":
+                    return 0.0
+    
+                # remove símbolos/espacos
+                s = (s.replace("R$", "")
+                       .replace("\u00A0", "")
+                       .replace(" ", ""))
+    
+                # negativo entre parênteses
+                neg = s.startswith("(") and s.endswith(")")
+                if neg:
+                    s = s[1:-1]
+    
+                has_comma = "," in s
+                has_dot   = "." in s
+    
+                if has_comma and has_dot:
+                    # milhar ponto + decimal vírgula
+                    s_norm = s.replace(".", "").replace(",", ".")
+                elif has_comma:
+                    s_norm = s.replace(".", "").replace(",", ".")
+                elif has_dot:
+                    parts = s.split(".")
+                    # padrão de milhar (ex.: 13.956)
+                    if len(parts[-1]) == 3 and all(p.isdigit() for p in parts):
+                        s_norm = "".join(parts)
                     else:
-                        # só dígitos → muitas vezes vem em CENTAVOS (ex.: 13956 → 139,56)
-                        if s.isdigit():
-                            val = float(s)
-                            if val >= 1000:  # assumimos centavos
-                                val = val / 100.0
-                            return -val if neg else val
-                        s_norm = re.sub(r"[^\d\.-]", "", s)
-                
-                    try:
-                        val = float(s_norm)
-                    except:
-                        val = 0.0
-                    return -val if neg else val
-
-                
-                    # fallback: tira qualquer separador e tenta
-                    s_num = re.sub(r"[^\d\.-]", "", s)
-                    if s_num.count(".") > 1 and "," not in s_num:
-                        # muitos pontos => trata como milhar
-                        s_num = s_num.replace(".", "")
-                    try:
-                        val = float(s_num)
+                        s_norm = s
+                else:
+                    # só dígitos → pode vir em centavos (ex.: 13956 -> 139,56)
+                    if s.isdigit():
+                        val = float(s)
+                        if val >= 1000:
+                            val = val / 100.0
                         return -val if neg else val
-                    except:
-                        return 0.0
-                
-                # ---- use aqui na carga da aba 'sangria' ----
-                if "Valor(R$)" in df_sangria.columns:
-                    df_sangria["Valor(R$)"] = df_sangria["Valor(R$)"].apply(to_number_br).astype(float)
-
+                    s_norm = re.sub(r"[^\d\.-]", "", s)
+    
+                try:
+                    val = float(s_norm)
+                except:
+                    val = 0.0
+    
+                # heurística extra: se ficou muito grande e a parte “decimal” original era '00',
+                # ajusta para centavos
+                if val >= 1000 and (has_comma or has_dot):
+                    dec = s.split(",")[-1] if has_comma else ""
+                    if dec == "00":
+                        val = val / 100.0
+    
+                return -val if neg else val
+    
+            if "Valor(R$)" in df_sangria.columns:
+                df_sangria["Valor(R$)"] = df_sangria["Valor(R$)"].apply(to_number_br).astype(float)
+    
         except Exception as e:
-            st.warning(f"⚠️ Não foi possível carregar a aba 'sangria': {e}")
+            st.warning(f"⚠️ Não foi possível carregar a aba 'Sangria': {e}")
     
         sub_sangria, sub_caixa, sub_evx = st.tabs(["💸 Sangria", "🧰 Controle de Caixa", "🗂️ Everest x Sangria"])
     
@@ -2605,43 +2601,30 @@ with st.spinner("⏳ Processando..."):
                 if descrs_sel:
                     df_fil = df_fil[df_fil["Descrição Agrupada"].astype(str).isin(descrs_sel)]
     
-                # métricas
-                #total = float(df_fil.get("Valor(R$)", pd.Series([0])).sum())
-                #colm1, colm2, colm3 = st.columns(3)
-                #colm1.metric("Qtd. Registros", f"{len(df_fil):,}".replace(",", "."))
-                #colm2.metric("Período", f"{pd.to_datetime(dt_inicio).strftime('%d/%m/%Y')} — {pd.to_datetime(dt_fim).strftime('%d/%m/%Y')}")
-                #colm3.metric("Total Sangria", f"R$ {total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-    
-                # tabela formatada
+                # formatação para exibição
                 df_exibe = df_fil.copy()
-                if "Data" in df_exibe.columns:
-                    df_exibe["Data"] = df_exibe["Data"].dt.strftime("%d/%m/%Y")
-                if "Valor(R$)" in df_exibe.columns:
-                    df_exibe["Valor(R$)"] = df_exibe["Valor(R$)"].apply(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-                # formata Data/Valor para exibição
                 if "Data" in df_exibe.columns:
                     df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
                 if "Valor(R$)" in df_exibe.columns:
                     df_exibe["Valor(R$)"] = df_exibe["Valor(R$)"].apply(
                         lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                     )
-                
-                # 👇 oculta colunas
+    
+                # 👇 oculta colunas na tela
                 colunas_ocultar = [
                     "Código Everest", "Código Grupo Everest",
                     "Duplicidade", "duplicidade",
                     "Sistema", "sistema"
                 ]
                 df_exibe = df_exibe.drop(columns=colunas_ocultar, errors="ignore")
-                
-                st.dataframe(df_exibe, use_container_width=True, height=480)
-
-             
     
-                # download excel
+                st.dataframe(df_exibe, use_container_width=True, height=480)
+    
+                # 📥 download excel (também sem as colunas ocultas)
                 buf = BytesIO()
+                df_export = df_fil.drop(columns=colunas_ocultar, errors="ignore").copy()
                 with pd.ExcelWriter(buf, engine="openpyxl") as w:
-                    df_fil.to_excel(w, index=False, sheet_name="Sangria")
+                    df_export.to_excel(w, index=False, sheet_name="Sangria")
                 buf.seek(0)
                 st.download_button("⬇️ Baixar Excel (Sangria Filtrada)", buf, "sangria_filtrada.xlsx")
     
@@ -2649,7 +2632,6 @@ with st.spinner("⏳ Processando..."):
         # Sub-aba: CONTROLE DE CAIXA
         # -------------------------------
         with sub_caixa:
-            # se você já tiver uma aba específica de "Controle de Caixa" no Sheets, descomente e ajuste o nome:
             try:
                 ws_cc = planilha_empresa.worksheet("Controle Caixa")
                 df_cc = pd.DataFrame(ws_cc.get_all_records())
@@ -2665,11 +2647,8 @@ with st.spinner("⏳ Processando..."):
             if df_sangria is None or df_sangria.empty:
                 st.info("Sem dados para comparação.")
             else:
-                # visão rápida por Código Everest / Loja
-                cols = [c for c in ["Código Everest", "Loja", "Grupo", "Descrição Agrupada", "Valor(R$)"] if c in df_sangria.columns]
-                if not {"Código Everest", "Valor(R$)"}.issubset(df_sangria.columns):
-                    st.info("Para esta comparação, a planilha 'sangria' precisa ter as colunas **Código Everest** e **Valor(R$)**.")
-                else:
+                # visão rápida por Código Everest / Loja (se as colunas existirem)
+                if {"Código Everest", "Valor(R$)"}.issubset(df_sangria.columns):
                     df_top = (
                         df_sangria.groupby(["Código Everest", "Loja"], dropna=False)["Valor(R$)"]
                         .sum()
@@ -2677,7 +2656,9 @@ with st.spinner("⏳ Processando..."):
                         .sort_values("Valor(R$)", ascending=False)
                         .head(50)
                     )
-                    df_top["Valor(R$)"] = df_top["Valor(R$)"].apply(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    df_top["Valor(R$)"] = df_top["Valor(R$)"].apply(
+                        lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    )
                     st.markdown("#### Top 50 — Sangria por Código Everest / Loja")
                     st.dataframe(df_top, use_container_width=True, height=480)
     
@@ -2687,9 +2668,5 @@ with st.spinner("⏳ Processando..."):
                         df_top.to_excel(w, index=False, sheet_name="Everest_x_Sangria")
                     buf2.seek(0)
                     st.download_button("⬇️ Baixar Excel (Everest x Sangria)", buf2, "everest_x_sangria.xlsx")
-    
-        
-        
-
-    
-    
+                else:
+                    st.info("Para esta comparação, a planilha 'Sangria' precisa ter as colunas **Código Everest** e **Valor(R$)**.")

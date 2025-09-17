@@ -119,7 +119,7 @@ def registrar_acesso(nome_usuario):
 
 # ✅ Redireciona se já estiver logado
 if st.session_state.get("acesso_liberado"):
-    st.rerun()
+    st.switch_page("Home.py")   # <-- em vez de st.rerun()
 
 # ✅ Exibe o IP do usuário discretamente
 #st.markdown(f"<p style='font-size:12px; color:#aaa;'>🛠️ Seu IP: <code>{ip_usuario}</code></p>", unsafe_allow_html=True)
@@ -140,8 +140,10 @@ if st.button("Entrar"):
     )
 
     if usuario_encontrado:
-    st.session_state["acesso_liberado"] = True
-    st.session_state["empresa"] = codigo
-    st.session_state["usuario_logado"] = email
-    registrar_acesso(email)
-    st.rerun()
+        st.session_state["acesso_liberado"] = True
+        st.session_state["empresa"] = codigo
+        st.session_state["usuario_logado"] = email
+        registrar_acesso(email)
+        st.switch_page("Home.py")   # <-- navega para a Home
+    else:
+        st.error("❌ Código, e-mail ou senha incorretos.")

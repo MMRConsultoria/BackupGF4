@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 import streamlit as st
 
-#st.set_page_config(page_title="Login | MMR Consultoria")
+st.set_page_config(page_title="Login | MMR Consultoria")
 
 # =====================================
 # CSS para esconder barra de botões do canto superior direito
@@ -119,7 +119,7 @@ def registrar_acesso(nome_usuario):
 
 # ✅ Redireciona se já estiver logado
 if st.session_state.get("acesso_liberado"):
-    st.switch_page("Home.py")   # <-- em vez de st.rerun()
+    st.switch_page("Home.py")
 
 # ✅ Exibe o IP do usuário discretamente
 #st.markdown(f"<p style='font-size:12px; color:#aaa;'>🛠️ Seu IP: <code>{ip_usuario}</code></p>", unsafe_allow_html=True)
@@ -144,6 +144,7 @@ if st.button("Entrar"):
         st.session_state["empresa"] = codigo
         st.session_state["usuario_logado"] = email
         registrar_acesso(email)
-        st.switch_page("Home.py")   # <-- navega para a Home
+        st.switch_page("Home.py")
+
     else:
         st.error("❌ Código, e-mail ou senha incorretos.")

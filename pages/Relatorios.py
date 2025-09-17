@@ -2614,7 +2614,9 @@ with st.spinner("⏳ Processando..."):
                 colunas_ocultar = [
                     "Código Everest", "Código Grupo Everest",
                     "Duplicidade", "duplicidade",
-                    "Sistema", "sistema"
+                    "Sistema", "sistema",
+                    "Mês", "Mes", "MES",   # <- novos
+                    "Ano", "ANO"           # <- novos
                 ]
                 df_exibe = df_exibe.drop(columns=colunas_ocultar, errors="ignore")
     

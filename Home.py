@@ -18,7 +18,7 @@ import time, hashlib, glob, os
 import streamlit as st
 
 # ⚙️ Config da página (sempre no topo)
-#st.set_page_config(page_title="Portal de Relatórios | MMR Consultoria")
+st.set_page_config(page_title="Portal de Relatórios | MMR Consultoria")
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -50,7 +50,7 @@ if nocache == "1":
 
 # ✅ Gate de login
 if not st.session_state.get("acesso_liberado"):
-    st.info("Faça login na página **Acesso**.")
+    st.switch_page("pages/Login.py")
     st.stop()
 
 # ✅ Código da empresa logada

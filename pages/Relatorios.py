@@ -2495,10 +2495,8 @@ with st.spinner("⏳ Processando..."):
                 df_sangria["Data"] = pd.to_datetime(df_sangria["Data"], dayfirst=True, errors="coerce")
             if "Valor(R$)" in df_sangria.columns:
                 def to_number_br(v):
-                    """Converte valores monetários vindos do Sheets para float com segurança.
-                       Aceita: '1.234,56' | '1234,56' | '1,234.56' | '139.56' | '139,56' | 139.56 | (139,56) etc."""
                     import re
-                    if v is None:
+                    if v is None or (isinstance(v, float) and pd.isna(v)):
                         return 0.0
                     if isinstance(v, (int, float)):
                         return float(v)
@@ -2507,56 +2505,48 @@ with st.spinner("⏳ Processando..."):
                     if s == "":
                         return 0.0
                 
-                    # remove símbolo/moedas/espaços
-                    s = (
-                        s.replace("R$", "")
-                         .replace(" ", "")
-                         .replace("\u00A0", "")  # nbsp
-                         .replace(" ", "")       # outro espaço fino
-                    )
+                    # remove símbolos/espacos
+                    s = (s.replace("R$", "")
+                           .replace("\u00A0", "")
+                           .replace(" ", ""))
                 
-                    # negativos entre parênteses
-                    neg = False
-                    if s.startswith("(") and s.endswith(")"):
-                        neg = True
+                    # negativo entre parênteses
+                    neg = s.startswith("(") and s.endswith(")")
+                    if neg:
                         s = s[1:-1]
                 
-                    # CASO 1: tem ponto e vírgula -> assume milhar '.' e decimal ','
-                    if "." in s and "," in s:
-                        s = s.replace(".", "").replace(",", ".")
-                        try:
-                            val = float(s)
-                            return -val if neg else val
-                        except:
-                            pass
+                    has_comma = "," in s
+                    has_dot   = "." in s
                 
-                    # CASO 2: só vírgula -> decimal é vírgula
-                    if "," in s and "." not in s:
-                        s = s.replace(".", "")      # se vier algum ponto perdido
-                        s = s.replace(",", ".")
-                        try:
-                            val = float(s)
-                            return -val if neg else val
-                        except:
-                            pass
-                
-                    # CASO 3: só ponto -> pode ser decimal (139.56) OU milhar (1.234)
-                    if "." in s and "," not in s:
+                    if has_comma and has_dot:
+                        # milhar com ponto + decimal com vírgula
+                        s_norm = s.replace(".", "").replace(",", ".")
+                    elif has_comma:
+                        # decimal com vírgula
+                        s_norm = s.replace(".", "").replace(",", ".")
+                    elif has_dot:
+                        # pode ser decimal com ponto ou milhar com ponto
                         parts = s.split(".")
-                        # Ex.: '1.234' (todos grupos de 3 dígitos -> milhar)
-                        if all(p.isdigit() and len(p) == 3 for p in parts[1:]) and parts[0].isdigit():
-                            s = "".join(parts)  # remove milhar
-                            try:
-                                val = float(s)
-                                return -val if neg else val
-                            except:
-                                pass
-                        # Ex.: '139.56' (ponto é decimal)
-                        try:
+                        if len(parts[-1]) == 3 and all(p.isdigit() for p in parts):
+                            # padrão de milhar (ex.: 13.956)
+                            s_norm = "".join(parts)
+                        else:
+                            s_norm = s
+                    else:
+                        # só dígitos → muitas vezes vem em CENTAVOS (ex.: 13956 → 139,56)
+                        if s.isdigit():
                             val = float(s)
+                            if val >= 1000:  # assumimos centavos
+                                val = val / 100.0
                             return -val if neg else val
-                        except:
-                            pass
+                        s_norm = re.sub(r"[^\d\.-]", "", s)
+                
+                    try:
+                        val = float(s_norm)
+                    except:
+                        val = 0.0
+                    return -val if neg else val
+
                 
                     # fallback: tira qualquer separador e tenta
                     s_num = re.sub(r"[^\d\.-]", "", s)
@@ -2628,8 +2618,25 @@ with st.spinner("⏳ Processando..."):
                     df_exibe["Data"] = df_exibe["Data"].dt.strftime("%d/%m/%Y")
                 if "Valor(R$)" in df_exibe.columns:
                     df_exibe["Valor(R$)"] = df_exibe["Valor(R$)"].apply(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-    
+                # formata Data/Valor para exibição
+                if "Data" in df_exibe.columns:
+                    df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
+                if "Valor(R$)" in df_exibe.columns:
+                    df_exibe["Valor(R$)"] = df_exibe["Valor(R$)"].apply(
+                        lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    )
+                
+                # 👇 oculta colunas
+                colunas_ocultar = [
+                    "Código Everest", "Código Grupo Everest",
+                    "Duplicidade", "duplicidade",
+                    "Sistema", "sistema"
+                ]
+                df_exibe = df_exibe.drop(columns=colunas_ocultar, errors="ignore")
+                
                 st.dataframe(df_exibe, use_container_width=True, height=480)
+
+             
     
                 # download excel
                 buf = BytesIO()

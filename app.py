@@ -2,23 +2,23 @@ import streamlit as st
 
 st.set_page_config(page_title="Relatórios", layout="wide", initial_sidebar_state="expanded")
 
-# Definição das páginas (apontando para arquivos dentro de pages/)
-acesso  = st.Page("pages/Login.py",             title="Acesso")
-sangria = st.Page("pages/Operacional Meio Pagamento.py",           title="Meio Pagamento")
-caixa   = st.Page("pages/Operacional Vendas Diárias.py",    title="Vendas Diarias")
-caixa1   = st.Page("pages/Controle Caixa e Sangria.py",    title="Caixa e Sangria")
-evx     = st.Page("pages/Painel Metas.py", title="Metas")
-evx1    = st.Page("pages/Rateio.py", title="Rateio")
-painel  = st.Page("pages/Relatório.py",  title="Relatórios")
+# a pasta é "páginas", não "pages"
+acesso  = st.Page("pages/Login.py",                         title="Acesso")
+meio    = st.Page("pages/Operacional Meio Pagamento.py",    title="Meio Pagamento")
+vendas  = st.Page("pages/Operacional Vendas Diárias.py",    title="Vendas Diárias")
+caixa   = st.Page("pages/Controle Caixa e Sangria.py",      title="Caixa e Sangria")
+metas   = st.Page("pages/Painel Metas.py",                  title="Metas")
+rateio  = st.Page("pages/Rateio.py",                        title="Rateio")
+relats  = st.Page("pages/Relatorios.py",                    title="Relatórios")  # <- sem acento e plural
 
-# Gate de acesso: antes do login, mostra só a página "Acesso"
+# Antes do login: só "Acesso"
 if not st.session_state.get("acesso_liberado"):
     nav = st.navigation({"": [acesso]})
 else:
+    # Depois do login: não inclui "Acesso" (se quiser esconder)
     nav = st.navigation({
-        "Relatórios Caixa e Sangria": [acesso, sangria, caixa, caixa1, evx, evx1],
-        "Outros": [painel],
+        "Relatórios Caixa e Sangria": [vendas, meio, caixa],
+        "Outros": [metas, rateio, relats],
     })
 
-nav.run()  # executa apenas a página selecionada
-
+nav.run()

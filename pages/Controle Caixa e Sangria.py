@@ -40,7 +40,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-NOME_SISTEMA = "Sangria"
+NOME_SISTEMA = "Colibri"
 
 with st.spinner("⏳ Processando..."):
     # 🔌 Conexão Google Sheets
@@ -176,7 +176,7 @@ with st.spinner("⏳ Processando..."):
                 if "Meio de recebimento" not in df.columns:
                     df["Meio de recebimento"] = ""
 
-                # Ordenação conforme cabeçalho da aba "sangria"
+                # Ordenação conforme cabeçalho da aba "Sangria"
                 colunas_ordenadas = [
                     "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
                     "Código Grupo Everest", "Funcionário", "Hora", "Descrição",

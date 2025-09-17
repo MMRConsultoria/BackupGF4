@@ -40,7 +40,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-NOME_SISTEMA = "Colibri"
+NOME_SISTEMA = "Sangria"
 
 with st.spinner("⏳ Processando..."):
     # 🔌 Conexão Google Sheets
@@ -125,7 +125,7 @@ with st.spinner("⏳ Processando..."):
                 # Limpeza e conversões
                 df["Descrição"] = df["Descrição"].astype(str).str.strip().str.lower()
                 df["Funcionário"] = df["Funcionário"].astype(str).str.strip()
-                df["Valor(R$)"] = pd.to_numeric(df["Valor(R$)"], errors="coerce")
+                df["Valor(R$)"] = pd.to_numeric(df["Valor(R$)"], errors="coerce").fillna(0.0)
 
                 # Dia semana / mês / ano
                 dias_semana = {0: 'segunda-feira', 1: 'terça-feira', 2: 'quarta-feira',
@@ -155,9 +155,17 @@ with st.spinner("⏳ Processando..."):
 
                 # ➕ Colunas adicionais
                 df["Sistema"] = NOME_SISTEMA
+
+                # 🔑 DUPLICIDADE = Data(YYYY-MM-DD) + Hora(HH:MM:SS) + Código Everest + Valor em centavos (inteiro)
                 data_key = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
                 hora_key = pd.to_datetime(df["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
-                df["Duplicidade"] = data_key.fillna("") + "|" + hora_key.fillna("") + "|" + df["Código Everest"].fillna("").astype(str)
+                valor_centavos = (df["Valor(R$)"].astype(float).round(2) * 100).astype(int).astype(str)
+                df["Duplicidade"] = (
+                    data_key.fillna("") + "|" +
+                    hora_key.fillna("") + "|" +
+                    df["Código Everest"].fillna("").astype(str) + "|" +
+                    valor_centavos
+                )
 
                 # Garante coluna opcional
                 if "Meio de recebimento" not in df.columns:
@@ -188,7 +196,7 @@ with st.spinner("⏳ Processando..."):
                 lojas_sem_codigo = df[df["Código Everest"].isna()]["Loja"].unique()
                 if len(lojas_sem_codigo) > 0:
                     st.warning(
-                        f"⚠️ Lojas sem código Everest cadastrado: {', '.join(lojas_sem_codigo)}\n\n"
+                        f"⚠️ Lojas sem Código Everest cadastrado: {', '.join(lojas_sem_codigo)}\n\n"
                         "🔗 Atualize na planilha de empresas."
                     )
 
@@ -215,29 +223,30 @@ with st.spinner("⏳ Processando..."):
             df_final = st.session_state.df_sangria.copy()
 
             # Valida colunas necessárias (conforme cabeçalho da aba 'sangria')
-            required_cols = [
+            destino_cols = [
                 "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
                 "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
                 "Descrição Agrupada", "Meio de recebimento", "Valor(R$)",
                 "Mês", "Ano", "Duplicidade", "Sistema"
             ]
-            faltantes = [c for c in required_cols if c not in df_final.columns]
+            faltantes = [c for c in destino_cols if c not in df_final.columns]
             if faltantes:
                 st.error(f"❌ Colunas ausentes para envio: {faltantes}")
                 st.stop()
 
-            # Recalcula Duplicidade por garantia (Data + Hora + Código Everest)
+            # Recalcula Duplicidade por garantia (Data + Hora + Código + Valor em centavos)
             data_key = pd.to_datetime(df_final["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
             hora_key = pd.to_datetime(df_final["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
-            df_final["Duplicidade"] = data_key.fillna("") + "|" + hora_key.fillna("") + "|" + df_final["Código Everest"].fillna("").astype(str)
-
-            # Conversões para envio:
-            # - Valor deve ser NUMÉRICO (Sheets formatará para 1.000,00 via NumberFormat)
             df_final["Valor(R$)"] = pd.to_numeric(df_final["Valor(R$)"], errors="coerce").fillna(0.0)
-            # - Data: manter como string dd/mm/yyyy e usar USER_ENTERED para Sheets reconhecer como data
-            # (não converter para serial aqui)
+            valor_centavos = (df_final["Valor(R$)"].astype(float).round(2) * 100).astype(int).astype(str)
+            df_final["Duplicidade"] = (
+                data_key.fillna("") + "|" +
+                hora_key.fillna("") + "|" +
+                df_final["Código Everest"].fillna("").astype(str) + "|" +
+                valor_centavos
+            )
 
-            # Inteiros opcionais
+            # Inteiros opcionais (mantém strings vazias quando não há número)
             for col in ["Código Everest", "Código Grupo Everest", "Ano"]:
                 df_final[col] = df_final[col].apply(lambda x: int(x) if pd.notnull(x) and str(x).strip() != "" else "")
 
@@ -248,25 +257,18 @@ with st.spinner("⏳ Processando..."):
                 st.warning(f"⚠️ Existem lojas sem Código Everest: {', '.join(lojas_nao_cadastradas)}")
 
             # Acessa a aba de destino
-            aba_destino = planilha.worksheet("Sangria")  # nome exato informado
+            aba_destino = planilha.worksheet("sangria")
             valores_existentes = aba_destino.get_all_values()
-
             if not valores_existentes:
                 st.error("❌ A aba 'sangria' está vazia ou sem cabeçalho. Crie o cabeçalho antes de enviar.")
                 st.stop()
 
             header = valores_existentes[0]
-            destino_cols = [
-                "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
-                "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
-                "Descrição Agrupada", "Meio de recebimento", "Valor(R$)",
-                "Mês", "Ano", "Duplicidade", "Sistema"
-            ]
             if header[:len(destino_cols)] != destino_cols:
-                st.error("❌ O cabeçalho da aba 'sangria' não corresponde ao esperado. Ajuste o cabeçalho antes do envio.")
+                st.error("❌ O cabeçalho da aba 'sangria' não corresponde ao esperado.")
                 st.stop()
 
-            # Índice da coluna 'Duplicidade' no destino (dinâmico)
+            # Índice da coluna 'Duplicidade' no destino
             try:
                 dup_idx = header.index("Duplicidade")
             except ValueError:
@@ -297,23 +299,21 @@ with st.spinner("⏳ Processando..."):
                         # USER_ENTERED => Sheets interpreta Data (dd/mm/yyyy) como data
                         aba_destino.append_rows(novos_dados, value_input_option="USER_ENTERED")
 
-                        # Formatação das novas linhas (Data e Valor) para exibir corretamente
-                        inicio = len(valores_existentes) + 1  # próxima linha após o cabeçalho existente
+                        # Formatação das novas linhas (Data e Valor) para exibir como 1.000,00
+                        inicio = len(valores_existentes) + 1  # primeira linha dos novos dados
                         fim = inicio + len(novos_dados) - 1
 
-                        # Coluna A (Data) -> Date dd/mm/yyyy
+                        # Data dd/mm/yyyy
                         format_cell_range(
-                            aba_destino,
-                            f"A{inicio}:A{fim}",
+                            aba_destino, f"A{inicio}:A{fim}",
                             CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
                         )
-                        # Coluna L (Valor(R$)) -> número com separadores (Sheets/locale exibirá 1.000,00)
+                        # Valor(R$) com separador BR
                         format_cell_range(
-                            aba_destino,
-                            f"L{inicio}:L{fim}",
-                            CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#,##0.00"))
+                            aba_destino, f"L{inicio}:L{fim}",
+                            CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#.##0,00"))
                         )
 
                         st.success(f"✅ {len(novos_dados)} registros enviados!")
                     if duplicados:
-                        st.warning("⚠️ Alguns registros duplicados não foram enviados (chave: Data+Hora+Código Everest).")
+                        st.warning("⚠️ Alguns registros duplicados não foram enviados (chave: Data+Hora+Código+Valor).")

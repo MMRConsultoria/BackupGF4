@@ -86,7 +86,7 @@ with st.spinner("⏳ Processando..."):
             else:
                 df = df_dados.copy()
 
-                # Campos que serão preenchidos durante o parsing
+                # Campos preenchidos durante o parsing
                 df["Loja"] = np.nan
                 df["Data"] = np.nan
                 df["Funcionário"] = np.nan
@@ -127,7 +127,7 @@ with st.spinner("⏳ Processando..."):
                     df["Descrição"].astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
                 )
                 df["Funcionário"] = df["Funcionário"].astype(str).str.strip()
-                df["Valor(R$)"] = pd.to_numeric(df["Valor(R$)"], errors="coerce").fillna(0.0)
+                df["Valor(R$)"] = pd.to_numeric(df["Valor(R$)"], errors="coerce").fillna(0.0).round(2)
 
                 # Dia semana / mês / ano
                 dias_semana = {0: 'segunda-feira', 1: 'terça-feira', 2: 'quarta-feira',
@@ -158,10 +158,10 @@ with st.spinner("⏳ Processando..."):
                 # ➕ Colunas adicionais
                 df["Sistema"] = NOME_SISTEMA
 
-                # 🔑 DUPLICIDADE = Data + Hora + Código + Valor(em centavos) + Descrição normalizada
+                # 🔑 DUPLICIDADE = Data + Hora + Código + Valor(em centavos) + Descrição
                 data_key = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
                 hora_key = pd.to_datetime(df["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
-                valor_centavos = (df["Valor(R$)"].astype(float).round(2) * 100).astype(int).astype(str)
+                valor_centavos = (df["Valor(R$)"].astype(float) * 100).round().astype(int).astype(str)
                 desc_key = df["Descrição"].fillna("").astype(str)
 
                 df["Duplicidade"] = (
@@ -176,7 +176,7 @@ with st.spinner("⏳ Processando..."):
                 if "Meio de recebimento" not in df.columns:
                     df["Meio de recebimento"] = ""
 
-                # Ordenação conforme cabeçalho da aba "Sangria"
+                # Ordenação conforme cabeçalho da aba "sangria"
                 colunas_ordenadas = [
                     "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
                     "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
@@ -188,12 +188,14 @@ with st.spinner("⏳ Processando..."):
                 # Métricas
                 periodo_min = pd.to_datetime(df["Data"], dayfirst=True).min().strftime("%d/%m/%Y")
                 periodo_max = pd.to_datetime(df["Data"], dayfirst=True).max().strftime("%d/%m/%Y")
-                valor_total = df["Valor(R$)"].sum()
+                valor_total = float(df["Valor(R$)"].sum())
 
                 col1, col2 = st.columns(2)
                 col1.metric("📅 Período processado", f"{periodo_min} até {periodo_max}")
-                col2.metric("💰 Valor total de sangria",
-                            f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                col2.metric(
+                    "💰 Valor total de sangria",
+                    f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                )
 
                 st.success("✅ Relatório gerado com sucesso!")
 
@@ -208,16 +210,16 @@ with st.spinner("⏳ Processando..."):
                 # Guarda para Aba 2
                 st.session_state.df_sangria = df.copy()
 
-                # Download
+                # Download Excel local (sem formatação especial)
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                    df.to_excel(writer, index=False, sheet_name="sangria")
+                    df.to_excel(writer, index=False, sheet_name="Sangria")
                 output.seek(0)
                 st.download_button("📥 Baixar relatório de sangria",
                                    data=output, file_name="Sangria_estruturada.xlsx")
 
     # ================
-    # 🔄 Aba 2 — Atualizar Google Sheets (aba: Sangria)
+    # 🔄 Aba 2 — Atualizar Google Sheets (aba: sangria)
     # ================
     with tab2:
         st.markdown("🔗 [Abrir planilha Vendas diarias](https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU)")
@@ -239,16 +241,15 @@ with st.spinner("⏳ Processando..."):
                 st.error(f"❌ Colunas ausentes para envio: {faltantes}")
                 st.stop()
 
-            # Recalcula Duplicidade por garantia (Data + Hora + Código + Valor + Descrição)
+            # Recalcula Duplicidade (Data + Hora + Código + Valor + Descrição)
             df_final["Descrição"] = (
                 df_final["Descrição"].astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
             )
             data_key = pd.to_datetime(df_final["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
             hora_key = pd.to_datetime(df_final["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
-            df_final["Valor(R$)"] = pd.to_numeric(df_final["Valor(R$)"], errors="coerce").fillna(0.0)
-            valor_centavos = (df_final["Valor(R$)"].astype(float).round(2) * 100).astype(int).astype(str)
+            df_final["Valor(R$)"] = pd.to_numeric(df_final["Valor(R$)"], errors="coerce").fillna(0.0).round(2)
+            valor_centavos = (df_final["Valor(R$)"].astype(float) * 100).round().astype(int).astype(str)
             desc_key = df_final["Descrição"].fillna("").astype(str)
-
             df_final["Duplicidade"] = (
                 data_key.fillna("") + "|" +
                 hora_key.fillna("") + "|" +
@@ -257,7 +258,7 @@ with st.spinner("⏳ Processando..."):
                 desc_key
             )
 
-            # Inteiros opcionais
+            # Inteiros opcionais (mantém string vazia quando não há número)
             for col in ["Código Everest", "Código Grupo Everest", "Ano"]:
                 df_final[col] = df_final[col].apply(lambda x: int(x) if pd.notnull(x) and str(x).strip() != "" else "")
 
@@ -289,39 +290,39 @@ with st.spinner("⏳ Processando..."):
             # Prepara linhas na ordem do destino
             df_final = df_final[destino_cols].fillna("")
 
-            # ✅ Agora ignoramos duplicidade interna do arquivo:
-            #    NÃO adicionamos a chave ao set durante o loop.
+            # ✅ Ignorar duplicidade interna do arquivo, checar só com o Sheets
             novos_dados, duplicados_sheet = [], []
             for linha in df_final.values.tolist():
                 chave = linha[dup_idx]
                 if chave in dados_existentes:
-                    duplicados_sheet.append(linha)     # dup apenas versus o que já existe no Sheets
+                    duplicados_sheet.append(linha)
                 else:
-                    novos_dados.append(linha)          # mesmo que repita dentro do arquivo, enviamos
+                    novos_dados.append(linha)
 
-            #st.write(f"🧮 Prontos para envio (não contando duplicidade interna): {len(novos_dados)}")
-            #st.write(f"🚫 Duplicados no Google Sheets: {len(duplicados_sheet)}")
+            st.write(f"🧮 Prontos para envio: {len(novos_dados)}")
+            st.write(f"🚫 Duplicados no Google Sheets: {len(duplicados_sheet)}")
 
             if st.button("📥 Enviar dados para a aba 'sangria'"):
                 with st.spinner("🔄 Enviando..."):
                     if novos_dados:
-                        # USER_ENTERED => Sheets interpreta Data (dd/mm/yyyy) como data
+                        # USER_ENTERED => Sheets interpreta Data e Hora, valor numérico sem texto
                         aba_destino.append_rows(novos_dados, value_input_option="USER_ENTERED")
 
-                        # Formatação das novas linhas (Data e Valor) para exibir como 1.000,00
-                        inicio = len(valores_existentes) + 1  # primeira linha dos novos dados
+                        # ▸ Formatação das novas linhas
+                        inicio = len(valores_existentes) + 1
                         fim = inicio + len(novos_dados) - 1
 
                         if fim >= inicio:
-                            # Data dd/mm/yyyy
+                            # Data (coluna A) -> dd/mm/yyyy
                             format_cell_range(
                                 aba_destino, f"A{inicio}:A{fim}",
                                 CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
                             )
-                            # Valor(R$) com separador brasileiro
+                            # Valor(R$) (coluna L) -> padrão locale: 1.000,00 em pt-BR
+                            # Use SEMPRE "#,##0.00" (Google Sheets aplica separadores conforme locale da planilha)
                             format_cell_range(
                                 aba_destino, f"L{inicio}:L{fim}",
-                                CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#.##0,00"))
+                                CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#,##0.00"))
                             )
 
                         st.success(f"✅ {len(novos_dados)} registros enviados!")

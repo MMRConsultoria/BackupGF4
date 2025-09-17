@@ -40,7 +40,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-NOME_SISTEMA = "Colibri"
+NOME_SISTEMA = "Sangria"
 
 with st.spinner("⏳ Processando..."):
     # 🔌 Conexão Google Sheets
@@ -176,7 +176,7 @@ with st.spinner("⏳ Processando..."):
                 if "Meio de recebimento" not in df.columns:
                     df["Meio de recebimento"] = ""
 
-                # Ordenação conforme cabeçalho da aba "Sangria"
+                # Ordenação conforme cabeçalho da aba "sangria"
                 colunas_ordenadas = [
                     "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
                     "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
@@ -227,7 +227,7 @@ with st.spinner("⏳ Processando..."):
         else:
             df_final = st.session_state.df_sangria.copy()
 
-            # Valida colunas necessárias (conforme cabeçalho da aba 'sangria')
+            # Colunas na ordem do destino
             destino_cols = [
                 "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
                 "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
@@ -239,7 +239,7 @@ with st.spinner("⏳ Processando..."):
                 st.error(f"❌ Colunas ausentes para envio: {faltantes}")
                 st.stop()
 
-            # Recalcula Duplicidade por garantia (Data + Hora + Código + Valor + Descrição normalizada)
+            # Recalcula Duplicidade por garantia (Data + Hora + Código + Valor + Descrição)
             df_final["Descrição"] = (
                 df_final["Descrição"].astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
             )
@@ -257,18 +257,12 @@ with st.spinner("⏳ Processando..."):
                 desc_key
             )
 
-            # Inteiros opcionais (mantém strings vazias quando não há número)
+            # Inteiros opcionais
             for col in ["Código Everest", "Código Grupo Everest", "Ano"]:
                 df_final[col] = df_final[col].apply(lambda x: int(x) if pd.notnull(x) and str(x).strip() != "" else "")
 
-            # Verifica lojas sem código
-            lojas_nao_cadastradas = df_final[df_final["Código Everest"].isin(["", np.nan])]["Loja"].unique()
-            todas_lojas_ok = len(lojas_nao_cadastradas) == 0
-            if not todas_lojas_ok:
-                st.warning(f"⚠️ Existem lojas sem Código Everest: {', '.join(lojas_nao_cadastradas)}")
-
             # Acessa a aba de destino
-            aba_destino = planilha.worksheet("Sangria")
+            aba_destino = planilha.worksheet("sangria")
             valores_existentes = aba_destino.get_all_values()
             if not valores_existentes:
                 st.error("❌ A aba 'sangria' está vazia ou sem cabeçalho. Crie o cabeçalho antes de enviar.")
@@ -286,25 +280,29 @@ with st.spinner("⏳ Processando..."):
                 st.error("❌ Cabeçalho da aba 'sangria' não contém a coluna 'Duplicidade'.")
                 st.stop()
 
-            # Chaves já existentes
-            dados_existentes = set([linha[dup_idx] for linha in valores_existentes[1:]
-                                    if len(linha) > dup_idx and linha[dup_idx] != ""])
+            # ⚠️ CHAVES JÁ EXISTENTES (apenas do Google Sheets!)
+            dados_existentes = set([
+                linha[dup_idx] for linha in valores_existentes[1:]
+                if len(linha) > dup_idx and linha[dup_idx] != ""
+            ])
 
             # Prepara linhas na ordem do destino
             df_final = df_final[destino_cols].fillna("")
 
-            novos_dados, duplicados = [], []
+            # ✅ Agora ignoramos duplicidade interna do arquivo:
+            #    NÃO adicionamos a chave ao set durante o loop.
+            novos_dados, duplicados_sheet = [], []
             for linha in df_final.values.tolist():
                 chave = linha[dup_idx]
-                if chave not in dados_existentes:
-                    novos_dados.append(linha)
-                    dados_existentes.add(chave)
+                if chave in dados_existentes:
+                    duplicados_sheet.append(linha)     # dup apenas versus o que já existe no Sheets
                 else:
-                    duplicados.append(linha)
+                    novos_dados.append(linha)          # mesmo que repita dentro do arquivo, enviamos
 
-            st.write(f"🧮 Prontos para envio: {len(novos_dados)} | Duplicados detectados: {len(duplicados)}")
+            st.write(f"🧮 Prontos para envio (não contando duplicidade interna): {len(novos_dados)}")
+            st.write(f"🚫 Duplicados no Google Sheets: {len(duplicados_sheet)}")
 
-            if todas_lojas_ok and st.button("📥 Enviar dados para a aba 'sangria'"):
+            if st.button("📥 Enviar dados para a aba 'sangria'"):
                 with st.spinner("🔄 Enviando..."):
                     if novos_dados:
                         # USER_ENTERED => Sheets interpreta Data (dd/mm/yyyy) como data
@@ -314,17 +312,18 @@ with st.spinner("⏳ Processando..."):
                         inicio = len(valores_existentes) + 1  # primeira linha dos novos dados
                         fim = inicio + len(novos_dados) - 1
 
-                        # Data dd/mm/yyyy
-                        format_cell_range(
-                            aba_destino, f"A{inicio}:A{fim}",
-                            CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
-                        )
-                        # Valor(R$) com separador brasileiro
-                        format_cell_range(
-                            aba_destino, f"L{inicio}:L{fim}",
-                            CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#.##0,00"))
-                        )
+                        if fim >= inicio:
+                            # Data dd/mm/yyyy
+                            format_cell_range(
+                                aba_destino, f"A{inicio}:A{fim}",
+                                CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
+                            )
+                            # Valor(R$) com separador brasileiro
+                            format_cell_range(
+                                aba_destino, f"L{inicio}:L{fim}",
+                                CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#.##0,00"))
+                            )
 
                         st.success(f"✅ {len(novos_dados)} registros enviados!")
-                    if duplicados:
-                        st.warning("⚠️ Alguns registros duplicados não foram enviados (chave: Data+Hora+Código+Valor+Descrição).")
+                    if duplicados_sheet:
+                        st.warning("⚠️ Alguns registros já existiam no Google Sheets e não foram enviados.")

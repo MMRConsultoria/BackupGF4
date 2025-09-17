@@ -61,7 +61,7 @@ with st.spinner("⏳ Processando..."):
 
 
 
-df_empresa = pd.DataFrame(planilha.worksheet("Tabela_Empresa").get_all_records())
+df_empresa = pd.DataFrame(planilha.worksheet("Tabela Empresa").get_all_records())
 df_descricoes = pd.DataFrame(
     planilha.worksheet("Tabela Sangria").get_all_values(),
     columns=["Palavra-chave", "Descrição Agrupada"]

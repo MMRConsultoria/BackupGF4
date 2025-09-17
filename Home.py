@@ -50,7 +50,7 @@ if nocache == "1":
 
 # ✅ Gate de login
 if not st.session_state.get("acesso_liberado"):
-    st.switch_page("pages/Login.py")
+    st.switch_page("pages/Acesso.py")
     st.stop()
 
 # ✅ Código da empresa logada

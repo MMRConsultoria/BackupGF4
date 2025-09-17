@@ -39,7 +39,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-NOME_SISTEMA = "Sangria"
+NOME_SISTEMA = "Colibri"
 
 with st.spinner("⏳ Processando..."):
     # 🔌 Conexão Google Sheets
@@ -287,7 +287,7 @@ with st.spinner("⏳ Processando..."):
 
             st.write(f"🧮 Prontos para envio: {len(novos_dados)} | Duplicados detectados: {len(duplicados)}")
 
-            if todas_lojas_ok and st.button("📥 Enviar dados para a aba 'sangria'"):
+            if todas_lojas_ok and st.button("📥 Enviar dados para a aba 'Sangria'"):
                 with st.spinner("🔄 Enviando..."):
                     if novos_dados:
                         aba_destino.append_rows(novos_dados)

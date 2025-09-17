@@ -40,7 +40,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-NOME_SISTEMA = "Colibri"
+NOME_SISTEMA = "Sangria"
 
 with st.spinner("⏳ Processando..."):
     # 🔌 Conexão Google Sheets
@@ -123,7 +123,9 @@ with st.spinner("⏳ Processando..."):
                 df.ffill(inplace=True)
 
                 # Limpeza e conversões
-                df["Descrição"] = df["Descrição"].astype(str).str.strip().str.lower()
+                df["Descrição"] = (
+                    df["Descrição"].astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
+                )
                 df["Funcionário"] = df["Funcionário"].astype(str).str.strip()
                 df["Valor(R$)"] = pd.to_numeric(df["Valor(R$)"], errors="coerce").fillna(0.0)
 
@@ -156,15 +158,18 @@ with st.spinner("⏳ Processando..."):
                 # ➕ Colunas adicionais
                 df["Sistema"] = NOME_SISTEMA
 
-                # 🔑 DUPLICIDADE = Data(YYYY-MM-DD) + Hora(HH:MM:SS) + Código Everest + Valor em centavos (inteiro)
+                # 🔑 DUPLICIDADE = Data + Hora + Código + Valor(em centavos) + Descrição normalizada
                 data_key = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
                 hora_key = pd.to_datetime(df["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
                 valor_centavos = (df["Valor(R$)"].astype(float).round(2) * 100).astype(int).astype(str)
+                desc_key = df["Descrição"].fillna("").astype(str)
+
                 df["Duplicidade"] = (
                     data_key.fillna("") + "|" +
                     hora_key.fillna("") + "|" +
                     df["Código Everest"].fillna("").astype(str) + "|" +
-                    valor_centavos
+                    valor_centavos + "|" +
+                    desc_key
                 )
 
                 # Garante coluna opcional
@@ -234,16 +239,22 @@ with st.spinner("⏳ Processando..."):
                 st.error(f"❌ Colunas ausentes para envio: {faltantes}")
                 st.stop()
 
-            # Recalcula Duplicidade por garantia (Data + Hora + Código + Valor em centavos)
+            # Recalcula Duplicidade por garantia (Data + Hora + Código + Valor + Descrição normalizada)
+            df_final["Descrição"] = (
+                df_final["Descrição"].astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
+            )
             data_key = pd.to_datetime(df_final["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
             hora_key = pd.to_datetime(df_final["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
             df_final["Valor(R$)"] = pd.to_numeric(df_final["Valor(R$)"], errors="coerce").fillna(0.0)
             valor_centavos = (df_final["Valor(R$)"].astype(float).round(2) * 100).astype(int).astype(str)
+            desc_key = df_final["Descrição"].fillna("").astype(str)
+
             df_final["Duplicidade"] = (
                 data_key.fillna("") + "|" +
                 hora_key.fillna("") + "|" +
                 df_final["Código Everest"].fillna("").astype(str) + "|" +
-                valor_centavos
+                valor_centavos + "|" +
+                desc_key
             )
 
             # Inteiros opcionais (mantém strings vazias quando não há número)
@@ -257,7 +268,7 @@ with st.spinner("⏳ Processando..."):
                 st.warning(f"⚠️ Existem lojas sem Código Everest: {', '.join(lojas_nao_cadastradas)}")
 
             # Acessa a aba de destino
-            aba_destino = planilha.worksheet("Sangria")
+            aba_destino = planilha.worksheet("sangria")
             valores_existentes = aba_destino.get_all_values()
             if not valores_existentes:
                 st.error("❌ A aba 'sangria' está vazia ou sem cabeçalho. Crie o cabeçalho antes de enviar.")
@@ -308,7 +319,7 @@ with st.spinner("⏳ Processando..."):
                             aba_destino, f"A{inicio}:A{fim}",
                             CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
                         )
-                        # Valor(R$) com separador BR
+                        # Valor(R$) com separador brasileiro
                         format_cell_range(
                             aba_destino, f"L{inicio}:L{fim}",
                             CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#.##0,00"))
@@ -316,4 +327,4 @@ with st.spinner("⏳ Processando..."):
 
                         st.success(f"✅ {len(novos_dados)} registros enviados!")
                     if duplicados:
-                        st.warning("⚠️ Alguns registros duplicados não foram enviados (chave: Data+Hora+Código+Valor).")
+                        st.warning("⚠️ Alguns registros duplicados não foram enviados (chave: Data+Hora+Código+Valor+Descrição).")

@@ -40,7 +40,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-NOME_SISTEMA = "Sangria"
+NOME_SISTEMA = "Colibri"
 
 with st.spinner("⏳ Processando..."):
     # 🔌 Conexão Google Sheets
@@ -248,7 +248,7 @@ with st.spinner("⏳ Processando..."):
                 st.warning(f"⚠️ Existem lojas sem Código Everest: {', '.join(lojas_nao_cadastradas)}")
 
             # Acessa a aba de destino
-            aba_destino = planilha.worksheet("sangria")  # nome exato informado
+            aba_destino = planilha.worksheet("Sangria")  # nome exato informado
             valores_existentes = aba_destino.get_all_values()
 
             if not valores_existentes:

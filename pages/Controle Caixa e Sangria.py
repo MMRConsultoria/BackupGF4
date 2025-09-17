@@ -8,35 +8,62 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 st.set_page_config(page_title="Relatório de Sangria", layout="wide")
 
+# 🔥 CSS para estilizar as abas
+st.markdown("""
+    <style>
+    .stApp { background-color: #f9f9f9; }
+    div[data-baseweb="tab-list"] { margin-top: 20px; }
+    button[data-baseweb="tab"] {
+        background-color: #f0f2f6;
+        border-radius: 10px;
+        padding: 10px 20px;
+        margin-right: 10px;
+        transition: all 0.3s ease;
+        font-size: 16px;
+        font-weight: 600;
+    }
+    button[data-baseweb="tab"]:hover { background-color: #dce0ea; color: black; }
+    button[data-baseweb="tab"][aria-selected="true"] { background-color: #0366d6; color: white; }
+    </style>
+""", unsafe_allow_html=True)
+
 # 🔒 Bloqueia o acesso caso o usuário não esteja logado
 if not st.session_state.get("acesso_liberado"):
     st.stop()
-    
-
+# ======================
+# CSS para esconder só a barra superior
+# ======================
 st.markdown("""
-    <div style='display: flex; align-items: center; gap: 10px;'>
-        <img src='https://img.icons8.com/color/48/clipboard-list.png' width='40'/>
-        <h1 style='display: inline; margin: 0; font-size: 2.4rem;'>Relatório de Sangria</h1>
-    </div>
+    <style>
+        [data-testid="stToolbar"] {
+            visibility: hidden;
+            height: 0%;
+            position: fixed;
+        }
+        .stSpinner {
+            visibility: visible !important;
+        }
+    </style>
 """, unsafe_allow_html=True)
 
-# Conexão com Google Sheets via secrets (correção: usar from_json_keyfile_dict)
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+# ======================
+# Spinner durante todo o processamento
+# ======================
+with st.spinner("⏳ Processando..."):
+
+# 🔌 Conexão com Google Sheets
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+    credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+    gc = gspread.authorize(credentials)
+    planilha = gc.open("Vendas diarias")
 
 
-#json da Google Shett consultoriaGF4
-import json
-credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
-credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
 
-
-
-gc = gspread.authorize(credentials)
-planilha = gc.open("Tabela")
 
 df_empresa = pd.DataFrame(planilha.worksheet("Tabela_Empresa").get_all_records())
 df_descricoes = pd.DataFrame(
-    planilha.worksheet("Tabela_Descrição_Sangria").get_all_values(),
+    planilha.worksheet("Tabela Sangria").get_all_values(),
     columns=["Palavra-chave", "Descrição Agrupada"]
 )
 

@@ -40,7 +40,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-NOME_SISTEMA = "Sangria"
+NOME_SISTEMA = "Colibri"
 
 with st.spinner("⏳ Processando..."):
     # 🔌 Conexão Google Sheets
@@ -217,7 +217,7 @@ with st.spinner("⏳ Processando..."):
                                    data=output, file_name="Sangria_estruturada.xlsx")
 
     # ================
-    # 🔄 Aba 2 — Atualizar Google Sheets (aba: sangria)
+    # 🔄 Aba 2 — Atualizar Google Sheets (aba: Sangria)
     # ================
     with tab2:
         st.markdown("🔗 [Abrir planilha Vendas diarias](https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU)")

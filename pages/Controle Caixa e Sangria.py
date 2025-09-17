@@ -299,8 +299,8 @@ with st.spinner("⏳ Processando..."):
                 else:
                     novos_dados.append(linha)
 
-            st.write(f"🧮 Prontos para envio: {len(novos_dados)}")
-            st.write(f"🚫 Duplicados no Google Sheets: {len(duplicados_sheet)}")
+            #st.write(f"🧮 Prontos para envio: {len(novos_dados)}")
+            #st.write(f"🚫 Duplicados no Google Sheets: {len(duplicados_sheet)}")
 
             if st.button("📥 Enviar dados para a aba 'sangria'"):
                 with st.spinner("🔄 Enviando..."):

@@ -94,11 +94,12 @@ with st.spinner("⏳ Processando..."):
     # ================================
     # 3. Separação em ABAS
     # ================================
-    aba1, aba3, aba4, aba5 = st.tabs([
+    aba1, aba2, aba3, aba4, aba5 = st.tabs([
         "📈 Gráficos",
         "📆 Relatórios Vendas",
         "📋 Relatório Diario Vendas/Metas",
-        "📋 Relatórios Financeiros"
+        "📋 Relatórios Financeiros",
+        "🧾 Relatórios Caixa e Sangria"
     ])
     # ================================
     # Aba 1: Graficos Anuais
@@ -612,9 +613,9 @@ with st.spinner("⏳ Processando..."):
     
     
     # ================================
-    # Aba 3: Relatórios Vendas
+    # Aba 2: Relatórios Vendas
     # ================================
-    with aba3:
+    with aba2:
         import pandas as pd
         import numpy as np
         import streamlit as st
@@ -1079,9 +1080,9 @@ with st.spinner("⏳ Processando..."):
     
     
     # ================================
-    # Aba 4: Relatório Vendas/Metas
+    # Aba 3: Relatório Vendas/Metas
     # ================================
-    with aba4:
+    with aba3:
         # Carrega dados
         df_empresa = pd.DataFrame(planilha_empresa.worksheet("Tabela Empresa").get_all_records())
         df_vendas = pd.DataFrame(planilha_empresa.worksheet("Fat Sistema Externo").get_all_records())
@@ -1847,7 +1848,7 @@ with st.spinner("⏳ Processando..."):
     # 📝 Relatórios Financeiros
     # ======================
     
-    with aba5:
+    with aba4:
         try:
             st.markdown("""
             <div style="background-color:#fff3cd; border-left: 6px solid #ffecb5; padding: 1rem; border-radius: 6px; font-size: 16px;">
@@ -2476,5 +2477,143 @@ with st.spinner("⏳ Processando..."):
                 st.warning("📌 em desenvolvimento")
         except Exception as e:
             st.error(f"❌ Erro ao acessar dados: {e}")
+
+    # ================================
+    # Nova ABA: Relatórios Caixa e Sangria (com sub-abas)
+    # ================================
+    with aba5:
+        st.markdown("### 🧾 Relatórios Caixa e Sangria")
+    
+        # tenta carregar a aba 'sangria' da planilha
+        df_sangria = None
+        try:
+            ws_sangria = planilha_empresa.worksheet("sangria")
+            df_sangria = pd.DataFrame(ws_sangria.get_all_records())
+            # normalizações básicas
+            df_sangria.columns = [c.strip() for c in df_sangria.columns]
+            if "Data" in df_sangria.columns:
+                df_sangria["Data"] = pd.to_datetime(df_sangria["Data"], dayfirst=True, errors="coerce")
+            if "Valor(R$)" in df_sangria.columns:
+                def _to_float(v):
+                    if isinstance(v, (int, float)):
+                        return float(v)
+                    s = str(v).strip()
+                    if s == "":
+                        return 0.0
+                    return float(
+                        s.replace("R$", "").replace(" ", "").replace(".", "").replace(",", ".")
+                    )
+                df_sangria["Valor(R$)"] = pd.to_numeric(df_sangria["Valor(R$)"].apply(_to_float), errors="coerce").fillna(0.0)
+        except Exception as e:
+            st.warning(f"⚠️ Não foi possível carregar a aba 'sangria': {e}")
+    
+        sub_sangria, sub_caixa, sub_evx = st.tabs(["💸 Sangria", "🧰 Controle de Caixa", "🗂️ Everest x Sangria"])
+    
+        # -------------------------------
+        # Sub-aba: SANGRIA
+        # -------------------------------
+        with sub_sangria:
+            if df_sangria is None or df_sangria.empty:
+                st.info("Sem dados de **sangria** disponíveis.")
+            else:
+                # filtros básicos
+                colf1, colf2, colf3 = st.columns([1.2, 1.2, 2.6])
+    
+                with colf1:
+                    data_min = pd.to_datetime(df_sangria["Data"].min())
+                    data_max = pd.to_datetime(df_sangria["Data"].max())
+                    dt_inicio, dt_fim = st.date_input(
+                        "Período",
+                        value=(data_max.date(), data_max.date()),
+                        min_value=data_min.date() if pd.notnull(data_min) else None,
+                        max_value=data_max.date() if pd.notnull(data_max) else None
+                    )
+    
+                with colf2:
+                    lojas = sorted(df_sangria.get("Loja", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
+                    lojas_sel = st.multiselect("Lojas", options=lojas, default=[])
+    
+                with colf3:
+                    descrs = sorted(df_sangria.get("Descrição Agrupada", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
+                    descrs_sel = st.multiselect("Descrição Agrupada", options=descrs, default=[])
+    
+                # aplica filtros
+                df_fil = df_sangria.copy()
+                if "Data" in df_fil.columns:
+                    df_fil = df_fil[(df_fil["Data"].dt.date >= dt_inicio) & (df_fil["Data"].dt.date <= dt_fim)]
+                if lojas_sel:
+                    df_fil = df_fil[df_fil["Loja"].astype(str).isin(lojas_sel)]
+                if descrs_sel:
+                    df_fil = df_fil[df_fil["Descrição Agrupada"].astype(str).isin(descrs_sel)]
+    
+                # métricas
+                total = float(df_fil.get("Valor(R$)", pd.Series([0])).sum())
+                colm1, colm2, colm3 = st.columns(3)
+                colm1.metric("Qtd. Registros", f"{len(df_fil):,}".replace(",", "."))
+                colm2.metric("Período", f"{pd.to_datetime(dt_inicio).strftime('%d/%m/%Y')} — {pd.to_datetime(dt_fim).strftime('%d/%m/%Y')}")
+                colm3.metric("Total Sangria", f"R$ {total:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    
+                # tabela formatada
+                df_exibe = df_fil.copy()
+                if "Data" in df_exibe.columns:
+                    df_exibe["Data"] = df_exibe["Data"].dt.strftime("%d/%m/%Y")
+                if "Valor(R$)" in df_exibe.columns:
+                    df_exibe["Valor(R$)"] = df_exibe["Valor(R$)"].apply(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    
+                st.dataframe(df_exibe, use_container_width=True, height=480)
+    
+                # download excel
+                buf = BytesIO()
+                with pd.ExcelWriter(buf, engine="openpyxl") as w:
+                    df_fil.to_excel(w, index=False, sheet_name="Sangria")
+                buf.seek(0)
+                st.download_button("⬇️ Baixar Excel (Sangria Filtrada)", buf, "sangria_filtrada.xlsx")
+    
+        # -------------------------------
+        # Sub-aba: CONTROLE DE CAIXA
+        # -------------------------------
+        with sub_caixa:
+            # se você já tiver uma aba específica de "Controle de Caixa" no Sheets, descomente e ajuste o nome:
+            try:
+                ws_cc = planilha_empresa.worksheet("Controle Caixa")
+                df_cc = pd.DataFrame(ws_cc.get_all_records())
+                st.success("✅ Dados de 'Controle Caixa' carregados.")
+                st.dataframe(df_cc, use_container_width=True, height=480)
+            except Exception:
+                st.info("📌 A aba **'Controle Caixa'** não foi encontrada na planilha. Podemos configurar depois.")
+    
+        # -------------------------------
+        # Sub-aba: EVEREST x SANGRIA
+        # -------------------------------
+        with sub_evx:
+            if df_sangria is None or df_sangria.empty:
+                st.info("Sem dados para comparação.")
+            else:
+                # visão rápida por Código Everest / Loja
+                cols = [c for c in ["Código Everest", "Loja", "Grupo", "Descrição Agrupada", "Valor(R$)"] if c in df_sangria.columns]
+                if not {"Código Everest", "Valor(R$)"}.issubset(df_sangria.columns):
+                    st.info("Para esta comparação, a planilha 'sangria' precisa ter as colunas **Código Everest** e **Valor(R$)**.")
+                else:
+                    df_top = (
+                        df_sangria.groupby(["Código Everest", "Loja"], dropna=False)["Valor(R$)"]
+                        .sum()
+                        .reset_index()
+                        .sort_values("Valor(R$)", ascending=False)
+                        .head(50)
+                    )
+                    df_top["Valor(R$)"] = df_top["Valor(R$)"].apply(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+                    st.markdown("#### Top 50 — Sangria por Código Everest / Loja")
+                    st.dataframe(df_top, use_container_width=True, height=480)
+    
+                    # download
+                    buf2 = BytesIO()
+                    with pd.ExcelWriter(buf2, engine="openpyxl") as w:
+                        df_top.to_excel(w, index=False, sheet_name="Everest_x_Sangria")
+                    buf2.seek(0)
+                    st.download_button("⬇️ Baixar Excel (Everest x Sangria)", buf2, "everest_x_sangria.xlsx")
+    
+        
+        
+
     
     

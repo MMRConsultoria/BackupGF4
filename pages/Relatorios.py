@@ -94,7 +94,7 @@ with st.spinner("⏳ Processando..."):
     # ================================
     # 3. Separação em ABAS
     # ================================
-    aba1, aba2_cs, aba3, aba4, aba5 = st.tabs([
+    aba1, aba2, aba3, aba4, aba5 = st.tabs([
         "📈 Gráficos",
         "📆 Relatórios Vendas",
         "📋 Relatório Diario Vendas/Metas",

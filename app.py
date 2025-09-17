@@ -1,4 +1,6 @@
 import streamlit as st
+st.caption(f"Streamlit {st.__version__}")
+import streamlit as st
 
 st.set_page_config(page_title="Relatórios", layout="wide", initial_sidebar_state="expanded")
 

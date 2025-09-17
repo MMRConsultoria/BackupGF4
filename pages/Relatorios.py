@@ -2481,7 +2481,7 @@ with st.spinner("⏳ Processando..."):
     # ================================
     # Nova ABA: Relatórios Caixa e Sangria (com sub-abas)
     # ================================
-    with aba2_cs:
+    with aba5_cs:
         st.markdown("### 🧾 Relatórios Caixa e Sangria")
     
         # tenta carregar a aba 'sangria' da planilha

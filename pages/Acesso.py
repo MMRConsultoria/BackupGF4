@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 import streamlit as st
 
-st.set_page_config(page_title="Login | MMR Consultoria")
+st.set_page_config(page_title="Acesso | MMR Consultoria")
 
 # =====================================
 # CSS para esconder barra de botões do canto superior direito

@@ -49,9 +49,42 @@ if nocache == "1":
     st.warning("🧹 Cache limpo via ?nocache=1")
 
 # ✅ Gate de login
+# ✅ Gate de login (robusto)
 if not st.session_state.get("acesso_liberado"):
-    st.switch_page("Acesso")
+    def safe_switch_to_acesso():
+        # 1) Tenta pelo caminho do script (mais estável)
+        try:
+            st.switch_page("pages/Acesso.py")
+            return
+        except Exception:
+            pass
+
+        # 2) Tenta localizar pela lista de páginas registradas
+        try:
+            pages = st.experimental_get_pages()
+            # pages é um dict {route: {"page_name": ..., "script_path": ...}}
+            for route, meta in pages.items():
+                name = (meta.get("page_name") or "").lower()
+                path = (meta.get("script_path") or "")
+                if name == "acesso" or path.endswith("pages/Acesso.py"):
+                    # route funciona bem em versões novas; path em versões antigas
+                    try:
+                        st.switch_page(route)
+                        return
+                    except Exception:
+                        st.switch_page(path)
+                        return
+        except Exception:
+            pass
+
+        # 3) Fallback: oferece link clicável (evita crash)
+        st.warning("Não consegui redirecionar automaticamente para a página de Acesso.")
+        st.page_link("pages/Acesso.py", label="🔐 Ir para Acesso")
+        st.stop()
+
+    safe_switch_to_acesso()
     st.stop()
+
 
 # ✅ Código da empresa logada
 codigo_empresa = st.session_state.get("empresa")

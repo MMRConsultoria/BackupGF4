@@ -2597,7 +2597,11 @@ with aba5:
                 return None
 
             col_valor = pick_valor_col(df_sangria.columns)
-
+            # ⬇️ ADICIONE ISSO AQUI
+            from pandas.api.types import is_numeric_dtype
+            if col_valor and not is_numeric_dtype(df_sangria[col_valor]):
+                df_sangria[col_valor] = df_sangria[col_valor].apply(to_number_br).astype(float)
+        # ⬆️ ADICIONE ISSO AQUI
             # ===== Filtros =====
             top1, top2, top3, top4 = st.columns([1.2, 1.2, 1.6, 1.6])
             with top1:

@@ -90,7 +90,7 @@ def registrar_acesso(nome_usuario):
 
 # ✅ Redireciona se já estiver logado
 if st.session_state.get("acesso_liberado"):
-    st.switch_page("Home.py")
+    st.switch_page("Home")
 
 # 🧾 Tela de login
 st.title("🔐 Acesso Restrito")

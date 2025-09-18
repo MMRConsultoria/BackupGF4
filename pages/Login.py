@@ -1,13 +1,12 @@
-# pages/Acesso.py
 import streamlit as st
 import requests
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 from datetime import datetime
-import pytz
+import streamlit as st
 
-st.set_page_config(page_title="Acesso | MMR Consultoria")
+st.set_page_config(page_title="Login | MMR Consultoria")
 
 # =====================================
 # CSS para esconder barra de botões do canto superior direito
@@ -50,6 +49,33 @@ if not codigo_param or not empresa_param:
     """, unsafe_allow_html=True)
     st.stop()
 
+## 🔍 Descobrir IP externo do usuário
+#@st.cache_data(ttl=600)
+#def get_ip():
+#    try:
+#        return requests.get("https://api.ipify.org").text
+#    except:
+#        return "0.0.0.0"
+
+# Lista de IPs autorizados
+#IPS_AUTORIZADOS = ["35.203.187.165", "201.10.22.33"]  # atualize conforme necessário
+
+# 👉 Captura o IP corretamente
+#ip_usuario = get_ip()
+
+# ❌ Bloqueia se IP não estiver na lista
+#if ip_usuario not in IPS_AUTORIZADOS:
+#    st.markdown("""
+#        <style>
+#        #MainMenu, header, footer, .stSidebar { display: none; }
+#        </style>
+#        ## 🔐 IP não autorizado
+#        Seu IP detectado: """ + ip_usuario + """
+#
+#        Copie este IP e envie para a equipe da MMR Consultoria para liberar o acesso.
+#    """, unsafe_allow_html=True)
+#    st.stop()
+
 # ✅ Lista de usuários
 USUARIOS = [
     {"codigo": "1825", "email": "carlos.soveral@grupofit.com.br", "senha": "$%252M"},
@@ -74,6 +100,9 @@ credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_ACESSOS"])
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
 gc = gspread.authorize(credentials)
 
+from datetime import datetime
+import pytz
+
 def registrar_acesso(nome_usuario):
     try:
         fuso_brasilia = pytz.timezone("America/Sao_Paulo")
@@ -90,13 +119,16 @@ def registrar_acesso(nome_usuario):
 
 # ✅ Redireciona se já estiver logado
 if st.session_state.get("acesso_liberado"):
-    st.switch_page("Home")
+    st.switch_page("Home.py")
+
+# ✅ Exibe o IP do usuário discretamente
+#st.markdown(f"<p style='font-size:12px; color:#aaa;'>🛠️ Seu IP: <code>{ip_usuario}</code></p>", unsafe_allow_html=True)
 
 # 🧾 Tela de login
 st.title("🔐 Acesso Restrito")
 st.markdown("Informe o código da empresa, e-mail e senha.")
 
-codigo = st.text_input("Código da Empresa:", value=codigo_param)
+codigo = st.text_input("Código da Empresa:")
 email = st.text_input("E-mail:")
 senha = st.text_input("Senha:", type="password")
 
@@ -113,5 +145,6 @@ if st.button("Entrar"):
         st.session_state["usuario_logado"] = email
         registrar_acesso(email)
         st.switch_page("Home.py")
+
     else:
         st.error("❌ Código, e-mail ou senha incorretos.")

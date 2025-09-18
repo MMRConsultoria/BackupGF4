@@ -2564,6 +2564,7 @@ with st.spinner("⏳ Processando..."):
     
         sub_sangria, sub_caixa, sub_evx = st.tabs(["💸 Sangria", "🧰 Controle de Caixa", "🗂️ Everest x Sangria"])
     
+        
         # -------------------------------
         # Sub-aba: SANGRIA
         # -------------------------------
@@ -2571,9 +2572,34 @@ with st.spinner("⏳ Processando..."):
             if df_sangria is None or df_sangria.empty:
                 st.info("Sem dados de **sangria** disponíveis.")
             else:
-                # filtros básicos
+                # ---------- Normalizações seguras ----------
+                # Data -> datetime
+                if "Data" in df_sangria.columns:
+                    df_sangria["Data"] = pd.to_datetime(df_sangria["Data"], dayfirst=True, errors="coerce")
+        
+                # Valor(R$) -> float (PT-BR -> float)
+                def parse_brl(x):
+                    if x is None or (isinstance(x, float) and pd.isna(x)):
+                        return 0.0
+                    s = str(x).strip().replace("R$", "").replace(" ", "")
+                    # se vier com . e , -> ponto milhar + vírgula decimal
+                    if "," in s and "." in s:
+                        s = s.replace(".", "").replace(",", ".")
+                    # se vier só com vírgula -> vírgula decimal
+                    elif "," in s:
+                        s = s.replace(",", ".")
+                    # caso contrário, assume já com ponto decimal
+                    try:
+                        return float(s)
+                    except:
+                        return 0.0
+        
+                if "Valor(R$)" in df_sangria.columns:
+                    df_sangria["Valor(R$)"] = df_sangria["Valor(R$)"].apply(parse_brl)
+        
+                # ---------- Filtros ----------
                 colf1, colf2, colf3 = st.columns([1.2, 1.2, 2.6])
-    
+        
                 with colf1:
                     data_min = pd.to_datetime(df_sangria["Data"].min())
                     data_max = pd.to_datetime(df_sangria["Data"].max())
@@ -2583,15 +2609,15 @@ with st.spinner("⏳ Processando..."):
                         min_value=data_min.date() if pd.notnull(data_min) else None,
                         max_value=data_max.date() if pd.notnull(data_max) else None
                     )
-    
+        
                 with colf2:
                     lojas = sorted(df_sangria.get("Loja", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
                     lojas_sel = st.multiselect("Lojas", options=lojas, default=[])
-    
+        
                 with colf3:
                     descrs = sorted(df_sangria.get("Descrição Agrupada", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
                     descrs_sel = st.multiselect("Descrição Agrupada", options=descrs, default=[])
-    
+        
                 # aplica filtros
                 df_fil = df_sangria.copy()
                 if "Data" in df_fil.columns:
@@ -2600,8 +2626,8 @@ with st.spinner("⏳ Processando..."):
                     df_fil = df_fil[df_fil["Loja"].astype(str).isin(lojas_sel)]
                 if descrs_sel:
                     df_fil = df_fil[df_fil["Descrição Agrupada"].astype(str).isin(descrs_sel)]
-    
-                # formatação para exibição
+        
+                # ---------- Exibição ----------
                 df_exibe = df_fil.copy()
                 if "Data" in df_exibe.columns:
                     df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
@@ -2609,26 +2635,38 @@ with st.spinner("⏳ Processando..."):
                     df_exibe["Valor(R$)"] = df_exibe["Valor(R$)"].apply(
                         lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                     )
-    
+        
                 # 👇 oculta colunas na tela
                 colunas_ocultar = [
                     "Código Everest", "Código Grupo Everest",
                     "Duplicidade", "duplicidade",
                     "Sistema", "sistema",
-                    "Mês", "Mes", "MES",   # <- novos
-                    "Ano", "ANO"           # <- novos
+                    "Mês", "Mes", "MES",
+                    "Ano", "ANO"
                 ]
                 df_exibe = df_exibe.drop(columns=colunas_ocultar, errors="ignore")
-    
+        
                 st.dataframe(df_exibe, use_container_width=True, height=480)
-    
-                # 📥 download excel (também sem as colunas ocultas)
+        
+                # ---------- Exportar Excel (valores numéricos corretos) ----------
                 buf = BytesIO()
                 df_export = df_fil.drop(columns=colunas_ocultar, errors="ignore").copy()
                 with pd.ExcelWriter(buf, engine="openpyxl") as w:
                     df_export.to_excel(w, index=False, sheet_name="Sangria")
+                    # formatação opcional da coluna Valor(R$) como moeda no Excel
+                    try:
+                        ws = w.book["Sangria"]
+                        # acha o índice da coluna Valor(R$)
+                        header = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+                        if "Valor(R$)" in header:
+                            col_idx = header.index("Valor(R$)") + 1
+                            for cell in ws.iter_cols(min_col=col_idx, max_col=col_idx, min_row=2)[0]:
+                                cell.number_format = 'R$ #,##0.00'
+                    except Exception:
+                        pass
                 buf.seek(0)
                 st.download_button("⬇️ Baixar Excel (Sangria Filtrada)", buf, "sangria_filtrada.xlsx")
+
     
         # -------------------------------
         # Sub-aba: CONTROLE DE CAIXA

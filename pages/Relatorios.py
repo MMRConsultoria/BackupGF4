@@ -2632,8 +2632,6 @@ with st.spinner("⏳ Processando..."):
                 with top3:
                     descrs = sorted(df_sangria.get("Descrição Agrupada", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
                     descrs_sel = st.multiselect("Descrição Agrupada", options=descrs, default=[])
-                with top4:
-                    modo_verificacao = st.checkbox("🔎 Verificar por Loja + Dia")
                 with top5:
                     visao = st.selectbox(
                         "Visão do Relatório",
@@ -2705,7 +2703,7 @@ with st.spinner("⏳ Processando..."):
                             st.info("Sem detalhes para a seleção.")
         
                 # ===== Visões =====
-                st.markdown(f"### 📄 Visão: **{visao}** (com TOTAL no topo)")
+                #st.markdown(f"### 📄 Visão: **{visao}** (com TOTAL no topo)")
         
                 def formata_valor_col(df, col):
                     df[col] = df[col].apply(

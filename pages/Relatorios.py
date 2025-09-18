@@ -2566,8 +2566,10 @@ with st.spinner("⏳ Processando..."):
         sub_sangria, sub_caixa, sub_evx = st.tabs(["💸 Sangria", "🧰 Controle de Caixa", "🗂️ Everest x Sangria"])
     
         # -------------------------------
-        # Sub-aba: SANGRIA (Everest desativado)
+        # Sub-aba: SANGRIA (sem verificação Loja+Dia; Everest desativado)
         # -------------------------------
+        from io import BytesIO
+        
         with sub_sangria:
             if df_sangria is None or df_sangria.empty:
                 st.info("Sem dados de **sangria** disponíveis.")
@@ -2615,8 +2617,8 @@ with st.spinner("⏳ Processando..."):
                             conv = conv / 100.0
                     df_sangria[col_valor] = conv.fillna(0.0)
         
-                # ===== Filtros (inclui Visão do Relatório) =====
-                top1, top2, top3, top4, top5 = st.columns([1.2, 1.2, 1.6, 1.0, 1.6])
+                # ===== Filtros (com Visão do Relatório) =====
+                top1, top2, top3, top4 = st.columns([1.2, 1.2, 1.6, 1.6])
                 with top1:
                     data_min = pd.to_datetime(df_sangria["Data"].min())
                     data_max = pd.to_datetime(df_sangria["Data"].max())
@@ -2632,7 +2634,7 @@ with st.spinner("⏳ Processando..."):
                 with top3:
                     descrs = sorted(df_sangria.get("Descrição Agrupada", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
                     descrs_sel = st.multiselect("Descrição Agrupada", options=descrs, default=[])
-                with top5:
+                with top4:
                     visao = st.selectbox(
                         "Visão do Relatório",
                         options=["Analítico", "Sintético", "Comparativa Everest", "Diferenças Everest"],
@@ -2648,63 +2650,7 @@ with st.spinner("⏳ Processando..."):
                 if descrs_sel:
                     df_fil = df_fil[df_fil["Descrição Agrupada"].astype(str).isin(descrs_sel)]
         
-                # ===== Verificação Loja + Dia (sem qtd, com TOTAL no topo) =====
-                if modo_verificacao:
-                    st.markdown("### 🔎 Conferência por **Loja + Dia**")
-                    if "Loja" not in df_fil.columns or "Data" not in df_fil.columns or not col_valor:
-                        st.warning("Não encontrei as colunas necessárias (Loja, Data e Valor).")
-                    else:
-                        df_chk = (
-                            df_fil.assign(Dia=lambda d: d["Data"].dt.date)
-                                  .groupby(["Loja", "Dia"], as_index=False)
-                                  .agg(qtd=("Loja", "size"), total=(col_valor, "sum"))
-                                  .sort_values(["Loja", "Dia"])
-                        )
-                        colc1, _ = st.columns([1, 3])
-                        with colc1:
-                            apenas_repetidos = st.checkbox("Mostrar apenas (Loja, Dia) com múltiplos lançamentos", value=True)
-        
-                        df_view = df_chk[df_chk["qtd"] > 1].copy() if apenas_repetidos else df_chk.copy()
-        
-                        if df_view.empty:
-                            st.info("Nenhum par (Loja, Dia) encontrado para os critérios.")
-                        else:
-                            df_show = df_view[["Loja", "Dia", "total"]].copy()
-                            total_ver = df_show["total"].sum()
-                            total_row = {"Loja": "TOTAL", "Dia": None, "total": total_ver}
-                            df_show = pd.concat([pd.DataFrame([total_row]), df_show], ignore_index=True)
-        
-                            df_show["Dia"] = pd.to_datetime(df_show["Dia"], errors="coerce").dt.strftime("%d/%m/%Y")
-                            df_show.loc[df_show.index == 0, "Dia"] = ""
-                            df_show["total"] = df_show["total"].apply(
-                                lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                            )
-                            st.dataframe(df_show, use_container_width=True, height=360)
-        
-                        # Detalhes
-                        st.markdown("#### Detalhes do par Loja + Dia")
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            loja_pick = st.selectbox("Loja (detalhe)", options=lojas_sel or lojas)
-                        with c2:
-                            dias_disponiveis = sorted(df_fil.loc[df_fil["Loja"].astype(str) == str(loja_pick), "Data"].dt.date.unique())
-                            dia_pick = st.selectbox("Dia (detalhe)", options=dias_disponiveis)
-        
-                        det = df_fil[(df_fil["Loja"].astype(str) == str(loja_pick)) & (df_fil["Data"].dt.date == dia_pick)].copy()
-                        if not det.empty:
-                            det_exibe = det.copy()
-                            det_exibe["Data"] = det_exibe["Data"].dt.strftime("%d/%m/%Y")
-                            if col_valor:
-                                det_exibe[col_valor] = det_exibe[col_valor].apply(
-                                    lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                                )
-                            st.dataframe(det_exibe, use_container_width=True, height=300)
-                        else:
-                            st.info("Sem detalhes para a seleção.")
-        
-                # ===== Visões =====
-                #st.markdown(f"### 📄 Visão: **{visao}** (com TOTAL no topo)")
-        
+                # ===== Visões (Everest desativadas) =====
                 def formata_valor_col(df, col):
                     df[col] = df[col].apply(
                         lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -2712,7 +2658,6 @@ with st.spinner("⏳ Processando..."):
                     )
                     return df
         
-                from io import BytesIO
                 df_exibe = pd.DataFrame()
         
                 if visao == "Analítico":
@@ -2746,7 +2691,7 @@ with st.spinner("⏳ Processando..."):
         
                 elif visao in ("Comparativa Everest", "Diferenças Everest"):
                     st.info("Esta visão está **desativada** no momento.")
-                    df_exibe = pd.DataFrame()  # não faz nada
+                    df_exibe = pd.DataFrame()
         
                 # ===== Ocultar colunas técnicas + Render/Export =====
                 if not df_exibe.empty:
@@ -2760,7 +2705,7 @@ with st.spinner("⏳ Processando..."):
                     df_show = df_exibe.drop(columns=colunas_ocultar, errors="ignore").copy()
                     st.dataframe(df_show, use_container_width=True, height=480)
         
-                    # Exporta Excel com TOTAL na 1ª linha (somente para visões ativas)
+                    # Exporta Excel com TOTAL na 1ª linha
                     buf = BytesIO()
                     with pd.ExcelWriter(buf, engine="openpyxl") as w:
                         df_show.to_excel(w, index=False, sheet_name="Sangria")
@@ -2787,9 +2732,7 @@ with st.spinner("⏳ Processando..."):
                             pass
                     buf.seek(0)
                     st.download_button("⬇️ Baixar Excel (Sangria - Visão atual)", buf, "sangria.xlsx")
-                else:
-                    # Visões desativadas não exportam nada
-                    pass
+
 
     
         # -------------------------------

@@ -1,5 +1,4 @@
 # pages/PainelResultados.py
-
 import streamlit as st
 st.set_page_config(page_title="Vendas Diarias", layout="wide")  # ✅ Escolha um título só
 

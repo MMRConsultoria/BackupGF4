@@ -2676,18 +2676,56 @@ with st.spinner("⏳ Processando..."):
                     if col_valor:
                         df_exibe = formata_valor_col(df_exibe, col_valor)
         
+              
                 elif visao == "Sintético":
                     if not col_valor or "Loja" not in df_fil.columns or "Descrição Agrupada" not in df_fil.columns:
                         st.warning("Para 'Sintético', preciso de 'Loja', 'Descrição Agrupada' e valor.")
                     else:
-                        df_exibe = (
+                        # 1) Agrega por Loja + Descrição Agrupada (sem agrupar por Grupo)
+                        df_agg = (
                             df_fil.groupby(["Loja", "Descrição Agrupada"], as_index=False)[col_valor].sum()
                                  .sort_values(["Loja", "Descrição Agrupada"])
                         )
+                
+                        # 2) Se existir alguma coluna 'Grupo' (qualquer nome contendo 'grupo' e não 'everest'),
+                        #    anexa um valor representativo (modo -> mais frequente; fallback: primeiro não-nulo)
+                        col_grupo = next(
+                            (c for c in df_fil.columns
+                             if "grupo" in str(c).lower()
+                             and "everest" not in str(c).lower()),
+                            None
+                        )
+                
+                        if col_grupo:
+                            def _pick_group(s):
+                                s = s.dropna().astype(str)
+                                if s.empty:
+                                    return ""
+                                m = s.mode()
+                                return m.iloc[0] if not m.empty else s.iloc[0]
+                
+                            df_map = (
+                                df_fil.groupby(["Loja", "Descrição Agrupada"], as_index=False)[col_grupo].agg(_pick_group)
+                            )
+                            df_exibe = df_agg.merge(df_map, on=["Loja", "Descrição Agrupada"], how="left")
+                            # Reordena para mostrar Grupo no meio
+                            df_exibe = df_exibe[["Loja", col_grupo, "Descrição Agrupada", col_valor]]
+                        else:
+                            df_exibe = df_agg
+                
+                        # 3) TOTAL na primeira linha
                         total_val = df_exibe[col_valor].sum()
-                        total_row = {"Loja": "TOTAL", "Descrição Agrupada": "", col_valor: total_val}
+                        total_row = {c: "" for c in df_exibe.columns}
+                        total_row["Loja"] = "TOTAL"
+                        total_row["Descrição Agrupada"] = ""
+                        total_row[col_valor] = total_val
                         df_exibe = pd.concat([pd.DataFrame([total_row]), df_exibe], ignore_index=True)
-                        df_exibe = formata_valor_col(df_exibe, col_valor)
+                
+                        # 4) Formatação monetária
+                        df_exibe[col_valor] = df_exibe[col_valor].apply(
+                            lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                        )
+
         
                 elif visao in ("Comparativa Everest", "Diferenças Everest"):
                     st.info("Esta visão está **desativada** no momento.")

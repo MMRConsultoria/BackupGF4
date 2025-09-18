@@ -1,116 +1,95 @@
-# Home.py
-import streamlit as st
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>MMR Consultoria - Login</title>
+  <link rel="icon" href="logo-mmr.png">
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f2f2f2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      text-align: center;
+    }
+    .container {
+      background: #fff;
+      padding: 40px;
+      border-radius: 16px;
+      box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+    }
+    .logo {
+      height: 140px;
+      margin-bottom: 20px;
+    }
+    input {
+      padding: 10px;
+      margin-top: 10px;
+      font-size: 16px;
+      width: 100%;
+      max-width: 300px;
+    }
+    button {
+      margin-top: 20px;
+      padding: 10px 20px;
+      font-size: 16px;
+      border-radius: 10px;
+      border: none;
+      background-color: #4CAF50;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    .error {
+      color: red;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
 
-# =====================================
-# CSS para esconder barra de botões do canto superior direito
-# =====================================
-st.markdown("""
-    <style>
-        [data-testid="stToolbar"] {
-            visibility: hidden;
-            height: 0%;
-            position: fixed;
-        }
-    </style>
-""", unsafe_allow_html=True)
+<div class="container">
+  <img src="logo-mmr.png" alt="MMR Consultoria" class="logo">
+  <h2>Acesso ao Portal de Relatórios</h2>
 
-import time, hashlib, glob, os
-import streamlit as st
+  <input type="text" id="codigo" placeholder="Código da empresa"><br>
+  <input type="text" id="empresa" placeholder="Nome da empresa"><br>
 
-# ⚙️ Config da página (sempre no topo)
-st.set_page_config(page_title="Portal de Relatórios | MMR Consultoria")
+  <button onclick="validarLogin()">Acessar o Portal</button>
 
-from datetime import datetime
-from zoneinfo import ZoneInfo
+  <div class="error" id="erro"></div>
+</div>
 
-# ⏰ Agora em Brasília
-now_br = datetime.now(ZoneInfo("America/Sao_Paulo"))
+<script>
+  const usuariosAutorizados = [
+    { codigo: "1825", empresa: "grupofit" },
+    { codigo: "3377", empresa: "rossi" },
+    { codigo: "0041", empresa: "consultoria" }
+  ];
 
-st.sidebar.write("🔄 Build time (Brasília):", now_br.strftime("%Y-%m-%d %H:%M:%S"))
+  function validarLogin() {
+    const codigo = document.getElementById("codigo").value.trim();
+    const empresa = document.getElementById("empresa").value.trim().toLowerCase();
+    const erro = document.getElementById("erro");
 
-def app_version():
-    h = hashlib.sha256()
-    for p in sorted(glob.glob("**/*.py", recursive=True) + ["requirements.txt"]):
-        if os.path.exists(p):
-            with open(p, "rb") as f:
-                h.update(f.read())
-    return h.hexdigest()[:8]
+    console.log("Digitado:", codigo, empresa);
+    console.log("Comparando com:", usuariosAutorizados);
 
-st.sidebar.caption(f"🧩 Versão do app: {app_version()}")
-
-# (Opcional) limpar cache via URL ?nocache=1
-# ✅ novo (compatível com 1.49+)
-nocache = st.query_params.get("nocache", "0")
-if isinstance(nocache, list):  # st.query_params pode retornar lista
-    nocache = nocache[0] if nocache else "0"
-
-if nocache == "1":
-    st.cache_data.clear()
-    st.warning("🧹 Cache limpo via ?nocache=1")
-
-# ✅ Gate de login
-# ✅ Gate de login (robusto)
-if not st.session_state.get("acesso_liberado"):
-    def safe_switch_to_acesso():
-        # 1) Tenta pelo caminho do script (mais estável)
-        try:
-            st.switch_page("pages/Acesso.py")
-            return
-        except Exception:
-            pass
-
-        # 2) Tenta localizar pela lista de páginas registradas
-        try:
-            pages = st.experimental_get_pages()
-            # pages é um dict {route: {"page_name": ..., "script_path": ...}}
-            for route, meta in pages.items():
-                name = (meta.get("page_name") or "").lower()
-                path = (meta.get("script_path") or "")
-                if name == "acesso" or path.endswith("pages/Acesso.py"):
-                    # route funciona bem em versões novas; path em versões antigas
-                    try:
-                        st.switch_page(route)
-                        return
-                    except Exception:
-                        st.switch_page(path)
-                        return
-        except Exception:
-            pass
-
-        # 3) Fallback: oferece link clicável (evita crash)
-        st.warning("Não consegui redirecionar automaticamente para a página de Acesso.")
-        st.page_link("pages/Acesso.py", label="🔐 Ir para Acesso")
-        st.stop()
-
-    safe_switch_to_acesso()
-    st.stop()
-
-
-# ✅ Código da empresa logada
-codigo_empresa = st.session_state.get("empresa")
-
-# ✅ Logos por código
-LOGOS_CLIENTES = {
-    "1825": "https://raw.githubusercontent.com/MMRConsultoria/MMRBackup/main/logo_grupofit.png",
-    "3377": "https://raw.githubusercontent.com/MMRConsultoria/MMRBackup/main/rossi_ferramentas_logo.png",
-    "0041": "https://raw.githubusercontent.com/MMRConsultoria/MMRBackup/main/logo_empresa3.png",
-}
-
-# ✅ Logo na sidebar
-logo_cliente = LOGOS_CLIENTES.get(codigo_empresa)
-if logo_cliente:
-    st.sidebar.markdown(
-        f"""
-        <div style="text-align: center; padding: 10px 0 30px 0;">
-            <img src="{logo_cliente}" width="100">
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-# ✅ Logo principal
-st.image(logo_cliente or "https://raw.githubusercontent.com/MMRConsultoria/MMRBackup/main/logo-mmr.png", width=150)
-
-# ✅ Mensagem
-st.markdown("## Bem-vindo ao Portal de Relatórios")
-st.success(f"✅ Acesso liberado para o código {codigo_empresa}!")
+    const autorizado = usuariosAutorizados.some(
+      u => u.codigo === codigo && u.empresa === empresa
+    );
+ 
+    if (autorizado) {
+      const url = `https://backupgf4-wufbz7wchlnuqwfejjee7p.streamlit.app/Login?codigo=${encodeURIComponent(codigo)}&empresa=${encodeURIComponent(empresa)}`;
+      window.location.href = url;
+    } else {
+      erro.textContent = "❌ Código ou nome da empresa inválido.";
+    }
+  }
+</script>

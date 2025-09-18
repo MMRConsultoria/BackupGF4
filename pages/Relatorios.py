@@ -2568,8 +2568,7 @@ with st.spinner("⏳ Processando..."):
         # -------------------------------
         # Sub-aba: SANGRIA (com correção de moeda)
         # -------------------------------
-        # -------------------------------
-        # Sub-aba: SANGRIA (total primeiro + verificação Loja+Dia)
+        # Sub-aba: SANGRIA (total primeiro + verificação Loja+Dia s/ qtd)
         # -------------------------------
         with sub_sangria:
             if df_sangria is None or df_sangria.empty:
@@ -2582,7 +2581,7 @@ with st.spinner("⏳ Processando..."):
                 def pick_valor_col(cols):
                     for c in cols:
                         c_low = c.lower().replace(" ", "")
-                        if "valor" in c_low:
+                        if "valor" in c_low:  # cobre "Valor", "Valor(R$)" etc.
                             return c
                     return None
         
@@ -2597,9 +2596,9 @@ with st.spinner("⏳ Processando..."):
                         return None
                     s = s.replace("R$", "").replace(" ", "")
                     if "," in s and "." in s:
-                        s = s.replace(".", "").replace(",", ".")
+                        s = s.replace(".", "").replace(",", ".")   # milhar . / decimal ,
                     elif "," in s:
-                        s = s.replace(",", ".")
+                        s = s.replace(",", ".")                    # só decimal ,
                     try:
                         return float(s)
                     except:
@@ -2647,40 +2646,55 @@ with st.spinner("⏳ Processando..."):
                 if descrs_sel:
                     df_fil = df_fil[df_fil["Descrição Agrupada"].astype(str).isin(descrs_sel)]
         
-                # -------- MODO VERIFICAÇÃO: Loja + Dia --------
+                # -------- MODO VERIFICAÇÃO: Loja + Dia (sem qtd, com TOTAL no topo) --------
                 if modo_verificacao:
                     st.markdown("### 🔎 Conferência por **Loja + Dia**")
         
                     if "Loja" not in df_fil.columns or "Data" not in df_fil.columns or not col_valor:
                         st.warning("Não encontrei as colunas necessárias (Loja, Data e Valor).")
                     else:
+                        # agrega por (Loja, Dia)
                         df_chk = (
                             df_fil
                             .assign(Dia=lambda d: d["Data"].dt.date)
                             .groupby(["Loja", "Dia"], as_index=False)
-                            .agg(qtd=("Loja", "size"), total=(col_valor, "sum"))
+                            .agg(
+                                qtd=("Loja", "size"),    # usado só para filtrar repetidos (não será exibido)
+                                total=(col_valor, "sum")
+                            )
                             .sort_values(["Loja", "Dia"])
                         )
         
-                        # mostrar só combinações com mais de 1 lançamento, se desejar
+                        # mostrar apenas pares com múltiplos lançamentos (opcional)
                         colc1, colc2 = st.columns([1, 3])
                         with colc1:
-                            apenas_repetidos = st.checkbox("Mostrar apenas dias com múltiplos lançamentos", value=True)
+                            apenas_repetidos = st.checkbox("Mostrar apenas (Loja, Dia) com múltiplos lançamentos", value=True)
+        
                         if apenas_repetidos:
                             df_view = df_chk[df_chk["qtd"] > 1].copy()
                         else:
                             df_view = df_chk.copy()
         
-                        # formata total
-                        df_view["total"] = df_view["total"].apply(
-                            lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                        )
+                        # prepara exibição: sem 'qtd' e com TOTAL no topo
+                        if df_view.empty:
+                            st.info("Nenhum par (Loja, Dia) encontrado para os critérios.")
+                        else:
+                            df_show = df_view[["Loja", "Dia", "total"]].copy()
+                            # linha de TOTAL (somente dos dados exibidos)
+                            total_ver = df_show["total"].sum()
+                            total_row = {"Loja": "TOTAL", "Dia": None, "total": total_ver}
+                            df_show = pd.concat([pd.DataFrame([total_row]), df_show], ignore_index=True)
         
-                        # reordena colunas
-                        df_view = df_view[["Loja", "Dia", "qtd", "total"]]
-                        st.dataframe(df_view, use_container_width=True, height=360)
+                            # formatações
+                            df_show["Dia"] = pd.to_datetime(df_show["Dia"], errors="coerce").dt.strftime("%d/%m/%Y")
+                            df_show.loc[df_show.index == 0, "Dia"] = ""  # linha do TOTAL
+                            df_show["total"] = df_show["total"].apply(
+                                lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                            )
         
-                        # ajuda: clicar uma loja/dia e filtrar os detalhes
+                            st.dataframe(df_show, use_container_width=True, height=360)
+        
+                        # painel de detalhes
                         st.markdown("#### Detalhes do par Loja + Dia")
                         c1, c2 = st.columns(2)
                         with c1:
@@ -2708,9 +2722,8 @@ with st.spinner("⏳ Processando..."):
                 # calcula o total
                 total_val = df_fil[col_valor].sum() if col_valor else 0.0
         
-                # monta a linha de TOTAL com as mesmas colunas do df
+                # monta a linha de TOTAL
                 total_row = {c: "" for c in df_exibe.columns}
-                # sugestão de preenchimento:
                 if "Loja" in total_row: total_row["Loja"] = "TOTAL"
                 if "Data" in total_row: total_row["Data"] = pd.NaT
                 if "Descrição Agrupada" in total_row: total_row["Descrição Agrupada"] = ""
@@ -2722,14 +2735,14 @@ with st.spinner("⏳ Processando..."):
                 # formata Data e Valor
                 if "Data" in df_exibe.columns:
                     df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
-                    df_exibe.loc[df_exibe.index == 0, "Data"] = ""  # deixa vazio na linha do TOTAL
+                    df_exibe.loc[df_exibe.index == 0, "Data"] = ""  # vazio no TOTAL
                 if col_valor:
                     df_exibe[col_valor] = df_exibe[col_valor].apply(
                         lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                         if isinstance(v, (int, float)) else v
                     )
         
-                # ocultar colunas
+                # ocultar colunas indesejadas
                 colunas_ocultar = [
                     "Código Everest", "Código Grupo Everest",
                     "Duplicidade", "duplicidade",
@@ -2738,14 +2751,12 @@ with st.spinner("⏳ Processando..."):
                     "Ano", "ANO"
                 ]
                 df_exibe = df_exibe.drop(columns=colunas_ocultar, errors="ignore")
-        
                 st.dataframe(df_exibe, use_container_width=True, height=480)
         
                 # -------- Exportar Excel (com TOTAL no topo) --------
                 from io import BytesIO
                 buf = BytesIO()
         
-                # monta versão numérica para o Excel (sem formatação string)
                 df_export = df_fil.drop(columns=colunas_ocultar, errors="ignore").copy()
                 total_row_x = {c: "" for c in df_export.columns}
                 if "Loja" in total_row_x: total_row_x["Loja"] = "TOTAL"
@@ -2757,18 +2768,17 @@ with st.spinner("⏳ Processando..."):
                     df_export.to_excel(w, index=False, sheet_name="Sangria")
                     try:
                         ws = w.book["Sangria"]
-                        # formata Data
                         header = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+                        # formata Data (pula a linha do TOTAL)
                         if "Data" in header:
                             col_dt = header.index("Data") + 1
-                            for cell in ws.iter_cols(min_col=col_dt, max_col=col_dt, min_row=3)[0]:  # pula a linha TOTAL
+                            for cell in ws.iter_cols(min_col=col_dt, max_col=col_dt, min_row=3)[0]:
                                 cell.number_format = "dd/mm/yyyy"
-                        # formata Valor
+                        # formata Valor e destaca TOTAL
                         if col_valor in header:
                             col_idx = header.index(col_valor) + 1
                             for i, cell in enumerate(ws.iter_cols(min_col=col_idx, max_col=col_idx, min_row=2)[0], start=2):
                                 cell.number_format = 'R$ #,##0.00'
-                                # negrito na primeira linha (TOTAL)
                                 if i == 2:
                                     cell.font = cell.font.copy(bold=True)
                         # negrito e fundo leve na linha TOTAL
@@ -2780,7 +2790,6 @@ with st.spinner("⏳ Processando..."):
         
                 buf.seek(0)
                 st.download_button("⬇️ Baixar Excel (Sangria Filtrada)", buf, "sangria_filtrada.xlsx")
-
 
     
         # -------------------------------

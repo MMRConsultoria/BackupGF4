@@ -2564,42 +2564,73 @@ with st.spinner("⏳ Processando..."):
     
         sub_sangria, sub_caixa, sub_evx = st.tabs(["💸 Sangria", "🧰 Controle de Caixa", "🗂️ Everest x Sangria"])
     
-        
         # -------------------------------
-        # Sub-aba: SANGRIA
+        # Sub-aba: SANGRIA (com correção de moeda)
         # -------------------------------
         with sub_sangria:
             if df_sangria is None or df_sangria.empty:
                 st.info("Sem dados de **sangria** disponíveis.")
             else:
-                # ---------- Normalizações seguras ----------
-                # Data -> datetime
+                # -------- Normalizações de nomes --------
+                df_sangria = df_sangria.copy()
+                df_sangria.columns = [str(c).strip() for c in df_sangria.columns]
+        
+                # mapeia possíveis nomes da coluna de valor
+                def pick_valor_col(cols):
+                    alvo = None
+                    for c in cols:
+                        c_low = c.lower().replace(" ", "")
+                        if "valor" in c_low:  # cobre "Valor", "Valor(R$)", "Valor (R$)"
+                            alvo = c
+                            break
+                    return alvo
+        
+                col_valor = pick_valor_col(df_sangria.columns)
                 if "Data" in df_sangria.columns:
                     df_sangria["Data"] = pd.to_datetime(df_sangria["Data"], dayfirst=True, errors="coerce")
         
-                # Valor(R$) -> float (PT-BR -> float)
-                def parse_brl(x):
-                    if x is None or (isinstance(x, float) and pd.isna(x)):
-                        return 0.0
-                    s = str(x).strip().replace("R$", "").replace(" ", "")
-                    # se vier com . e , -> ponto milhar + vírgula decimal
+                # -------- Conversão PT-BR segura --------
+                def parse_brl_str(x):
+                    s = str(x).strip()
+                    if not s or s.lower() in ("nan", "none"):
+                        return None
+                    s = s.replace("R$", "").replace(" ", "")
                     if "," in s and "." in s:
+                        # ponto como milhar e vírgula decimal
                         s = s.replace(".", "").replace(",", ".")
-                    # se vier só com vírgula -> vírgula decimal
                     elif "," in s:
+                        # só vírgula decimal
                         s = s.replace(",", ".")
-                    # caso contrário, assume já com ponto decimal
+                    # senão já está com ponto decimal ou inteiro
                     try:
                         return float(s)
                     except:
-                        return 0.0
+                        return None
         
-                if "Valor(R$)" in df_sangria.columns:
-                    df_sangria["Valor(R$)"] = df_sangria["Valor(R$)"].apply(parse_brl)
+                if col_valor:
+                    # preserva original para decisão de escala
+                    orig = df_sangria[col_valor].copy()
         
-                # ---------- Filtros ----------
+                    # 1) tenta converter a partir do TEXTO
+                    conv = orig.apply(parse_brl_str)
+        
+                    # 2) onde deu None e já é número, aproveita
+                    mask_none = conv.isna()
+                    conv.loc[mask_none & orig.apply(lambda v: isinstance(v, (int, float)))] = orig[mask_none]
+        
+                    # 3) se tudo (ou quase tudo) ficou inteiro e grande (provável x100), divide por 100
+                    serie = conv.dropna()
+                    if not serie.empty:
+                        # “inteiro” aqui = parte decimal muito próxima de 0
+                        frac_zero = (serie % 1).abs().lt(1e-9).mean() >= 0.95
+                        grande = (serie.ge(1000).mean() >= 0.5)  # metade ou mais dos valores ≥ 1000
+                        if frac_zero and grande:
+                            conv = conv / 100.0
+        
+                    df_sangria[col_valor] = conv.fillna(0.0)
+        
+                # -------- Filtros --------
                 colf1, colf2, colf3 = st.columns([1.2, 1.2, 2.6])
-        
                 with colf1:
                     data_min = pd.to_datetime(df_sangria["Data"].min())
                     data_max = pd.to_datetime(df_sangria["Data"].max())
@@ -2609,16 +2640,13 @@ with st.spinner("⏳ Processando..."):
                         min_value=data_min.date() if pd.notnull(data_min) else None,
                         max_value=data_max.date() if pd.notnull(data_max) else None
                     )
-        
                 with colf2:
                     lojas = sorted(df_sangria.get("Loja", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
                     lojas_sel = st.multiselect("Lojas", options=lojas, default=[])
-        
                 with colf3:
                     descrs = sorted(df_sangria.get("Descrição Agrupada", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
                     descrs_sel = st.multiselect("Descrição Agrupada", options=descrs, default=[])
         
-                # aplica filtros
                 df_fil = df_sangria.copy()
                 if "Data" in df_fil.columns:
                     df_fil = df_fil[(df_fil["Data"].dt.date >= dt_inicio) & (df_fil["Data"].dt.date <= dt_fim)]
@@ -2627,16 +2655,15 @@ with st.spinner("⏳ Processando..."):
                 if descrs_sel:
                     df_fil = df_fil[df_fil["Descrição Agrupada"].astype(str).isin(descrs_sel)]
         
-                # ---------- Exibição ----------
+                # -------- Exibição --------
                 df_exibe = df_fil.copy()
                 if "Data" in df_exibe.columns:
                     df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
-                if "Valor(R$)" in df_exibe.columns:
-                    df_exibe["Valor(R$)"] = df_exibe["Valor(R$)"].apply(
+                if col_valor:
+                    df_exibe[col_valor] = df_exibe[col_valor].apply(
                         lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                     )
         
-                # 👇 oculta colunas na tela
                 colunas_ocultar = [
                     "Código Everest", "Código Grupo Everest",
                     "Duplicidade", "duplicidade",
@@ -2645,27 +2672,26 @@ with st.spinner("⏳ Processando..."):
                     "Ano", "ANO"
                 ]
                 df_exibe = df_exibe.drop(columns=colunas_ocultar, errors="ignore")
-        
                 st.dataframe(df_exibe, use_container_width=True, height=480)
         
-                # ---------- Exportar Excel (valores numéricos corretos) ----------
+                # -------- Exportar Excel --------
+                from io import BytesIO
                 buf = BytesIO()
                 df_export = df_fil.drop(columns=colunas_ocultar, errors="ignore").copy()
                 with pd.ExcelWriter(buf, engine="openpyxl") as w:
                     df_export.to_excel(w, index=False, sheet_name="Sangria")
-                    # formatação opcional da coluna Valor(R$) como moeda no Excel
                     try:
                         ws = w.book["Sangria"]
-                        # acha o índice da coluna Valor(R$)
                         header = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
-                        if "Valor(R$)" in header:
-                            col_idx = header.index("Valor(R$)") + 1
+                        if col_valor in header:
+                            col_idx = header.index(col_valor) + 1
                             for cell in ws.iter_cols(min_col=col_idx, max_col=col_idx, min_row=2)[0]:
                                 cell.number_format = 'R$ #,##0.00'
                     except Exception:
                         pass
                 buf.seek(0)
                 st.download_button("⬇️ Baixar Excel (Sangria Filtrada)", buf, "sangria_filtrada.xlsx")
+
 
     
         # -------------------------------

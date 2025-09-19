@@ -2601,27 +2601,72 @@ with aba5:
     # -------------------------------
     # Sub-aba: SANGRIA (Everest desativado)
     # -------------------------------
+    # -------------------------------
+    # Sub-aba: SANGRIA (com correção de moeda via parse_brl_str)
+    # -------------------------------
     with sub_sangria:
         if df_sangria is None or df_sangria.empty:
             st.info("Sem dados de **sangria** disponíveis.")
         else:
-            # ===== Helpers =====
+            # -------- Normalizações de nomes --------
             df_sangria = df_sangria.copy()
             df_sangria.columns = [str(c).strip() for c in df_sangria.columns]
-
+    
+            # mapeia possíveis nomes da coluna de valor
             def pick_valor_col(cols):
                 for c in cols:
-                    if "valor" in c.lower().replace(" ", ""):
+                    c_low = c.lower().replace(" ", "")
+                    if "valor" in c_low:  # cobre "Valor", "Valor(R$)", "Valor (R$)", etc.
                         return c
                 return None
-
+    
             col_valor = pick_valor_col(df_sangria.columns)
-            # ⬇️ ADICIONE ISSO AQUI
+    
+            if "Data" in df_sangria.columns:
+                df_sangria["Data"] = pd.to_datetime(df_sangria["Data"], dayfirst=True, errors="coerce")
+    
+            # -------- Conversão PT-BR segura (a que funcionou) --------
             from pandas.api.types import is_numeric_dtype
+    
+            def parse_brl_str(x):
+                s = str(x).strip()
+                if not s or s.lower() in ("nan", "none"):
+                    return None
+                s = s.replace("R$", "").replace(" ", "")
+                if "," in s and "." in s:
+                    # ponto como milhar e vírgula decimal -> "13.956,00" => 13956.00
+                    s = s.replace(".", "").replace(",", ".")
+                elif "," in s:
+                    # só vírgula decimal -> "135,96" => 135.96
+                    s = s.replace(",", ".")
+                # senão: já está com ponto decimal ou inteiro
+                try:
+                    return float(s)
+                except:
+                    return None
+    
             if col_valor and not is_numeric_dtype(df_sangria[col_valor]):
-                df_sangria[col_valor] = df_sangria[col_valor].apply(to_number_br).astype(float)
-        # ⬆️ ADICIONE ISSO AQUI
-            # ===== Filtros =====
+                # preserva original para decisão de escala
+                orig = df_sangria[col_valor].copy()
+    
+                # 1) tenta converter a partir do TEXTO
+                conv = orig.apply(parse_brl_str)
+    
+                # 2) onde deu None e já é número, aproveita
+                mask_none = conv.isna()
+                conv.loc[mask_none & orig.apply(lambda v: isinstance(v, (int, float)))] = orig[mask_none]
+    
+                # 3) se quase tudo é "inteiro" e grande (provável x100), divide por 100
+                serie = conv.dropna()
+                if not serie.empty:
+                    frac_zero = (serie % 1).abs().lt(1e-9).mean() >= 0.95  # parte decimal ~0 em 95%+
+                    grande = (serie.ge(1000).mean() >= 0.5)               # metade ou mais ≥ 1000
+                    if frac_zero and grande:
+                        conv = conv / 100.0
+    
+                df_sangria[col_valor] = conv.fillna(0.0)
+    
+            # -------- Filtros --------
             top1, top2, top3, top4 = st.columns([1.2, 1.2, 1.6, 1.6])
             with top1:
                 data_min = pd.to_datetime(df_sangria["Data"].min())
@@ -2644,7 +2689,7 @@ with aba5:
                     options=["Analítico", "Sintético", "Comparativa Everest", "Diferenças Everest"],
                     index=0
                 )
-
+    
             # Aplica filtros base
             df_fil = df_sangria.copy()
             if "Data" in df_fil.columns:
@@ -2653,49 +2698,51 @@ with aba5:
                 df_fil = df_fil[df_fil["Loja"].astype(str).isin(lojas_sel)]
             if descrs_sel:
                 df_fil = df_fil[df_fil["Descrição Agrupada"].astype(str).isin(descrs_sel)]
-
-            # ===== Visões =====
+    
+            # -------- Exibição (com TOTAL no topo) --------
             def formata_valor_col(df, col):
                 df[col] = df[col].apply(
                     lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                     if isinstance(v, (int, float)) else v
                 )
                 return df
-
+    
             df_exibe = pd.DataFrame()
-
+    
             if visao == "Analítico":
                 df_exibe = df_fil.copy()
-                total_val = df_fil[col_valor].sum() if col_valor else 0.0
+                if col_valor:
+                    total_val = df_fil[col_valor].sum()
+                else:
+                    total_val = 0.0
                 total_row = {c: "" for c in df_exibe.columns}
                 if "Loja" in total_row: total_row["Loja"] = "TOTAL"
                 if "Data" in total_row: total_row["Data"] = pd.NaT
                 if "Descrição Agrupada" in total_row: total_row["Descrição Agrupada"] = ""
                 if col_valor: total_row[col_valor] = total_val
                 df_exibe = pd.concat([pd.DataFrame([total_row]), df_exibe], ignore_index=True)
-
+    
                 if "Data" in df_exibe.columns:
                     df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
                     df_exibe.loc[df_exibe.index == 0, "Data"] = ""
                 if col_valor:
                     df_exibe = formata_valor_col(df_exibe, col_valor)
-
+    
             elif visao == "Sintético":
                 if not col_valor or "Loja" not in df_fil.columns or "Descrição Agrupada" not in df_fil.columns:
                     st.warning("Para 'Sintético', preciso de 'Loja', 'Descrição Agrupada' e valor.")
                 else:
-                    # 1) Agrega por Loja + Descrição Agrupada (sem agrupar por Grupo)
+                    # Agrega por Loja + Descrição Agrupada (sem agrupar por Grupo)
                     df_agg = (
                         df_fil.groupby(["Loja", "Descrição Agrupada"], as_index=False)[col_valor].sum()
                              .sort_values(["Loja", "Descrição Agrupada"])
                     )
-
-                    # 2) Se existir alguma coluna 'Grupo', mostra sem impactar a soma
+    
+                    # Se existir alguma coluna 'Grupo', apenas exibe (modo -> valor mais frequente)
                     col_grupo = next(
                         (c for c in df_fil.columns if "grupo" in str(c).lower() and "everest" not in str(c).lower()),
                         None
                     )
-
                     if col_grupo:
                         def _pick_group(s):
                             s = s.dropna().astype(str)
@@ -2703,15 +2750,12 @@ with aba5:
                                 return ""
                             m = s.mode()
                             return m.iloc[0] if not m.empty else s.iloc[0]
-
-                        df_map = (
-                            df_fil.groupby(["Loja", "Descrição Agrupada"], as_index=False)[col_grupo].agg(_pick_group)
-                        )
+                        df_map = df_fil.groupby(["Loja", "Descrição Agrupada"], as_index=False)[col_grupo].agg(_pick_group)
                         df_exibe = df_agg.merge(df_map, on=["Loja", "Descrição Agrupada"], how="left")
                         df_exibe = df_exibe[["Loja", col_grupo, "Descrição Agrupada", col_valor]]
                     else:
                         df_exibe = df_agg
-
+    
                     total_val = df_exibe[col_valor].sum()
                     total_row = {c: "" for c in df_exibe.columns}
                     total_row["Loja"] = "TOTAL"
@@ -2719,13 +2763,14 @@ with aba5:
                         total_row["Descrição Agrupada"] = ""
                     total_row[col_valor] = total_val
                     df_exibe = pd.concat([pd.DataFrame([total_row]), df_exibe], ignore_index=True)
+    
                     df_exibe = formata_valor_col(df_exibe, col_valor)
-
+    
             elif visao in ("Comparativa Everest", "Diferenças Everest"):
                 st.info("Esta visão está **desativada** no momento.")
                 df_exibe = pd.DataFrame()
-
-            # Render + export
+    
+            # -------- Ocultar colunas técnicas + Render/Export --------
             if not df_exibe.empty:
                 colunas_ocultar = [
                     "Código Everest", "Código Grupo Everest",
@@ -2736,7 +2781,8 @@ with aba5:
                 ]
                 df_show = df_exibe.drop(columns=colunas_ocultar, errors="ignore").copy()
                 _render_df(df_show, height=480)
-
+    
+                # Exportar Excel
                 buf = BytesIO()
                 with pd.ExcelWriter(buf, engine="openpyxl") as w:
                     df_show.to_excel(w, index=False, sheet_name="Sangria")
@@ -2760,6 +2806,7 @@ with aba5:
                         pass
                 buf.seek(0)
                 st.download_button("⬇️ Baixar Excel (Sangria - Visão atual)", buf, "sangria.xlsx")
+
 
     # -------------------------------
     # Sub-aba: CONTROLE DE CAIXA

@@ -2625,28 +2625,81 @@ with aba5:
                 df_sangria["Data"] = pd.to_datetime(df_sangria["Data"], dayfirst=True, errors="coerce")
     
             # -------- Conversão PT-BR segura (a que funcionou) --------
-            from pandas.api.types import is_numeric_dtype
-    
+            # -------- Conversão PT-BR segura (corrige casos "13.956" -> 139,56) --------
+            import re  # precisa do regex
+            
             def parse_brl_str(x):
+                # 0) normaliza entrada
                 s = str(x).strip()
-                if not s or s.lower() in ("nan", "none"):
-                    return None
-                s = s.replace("R$", "").replace(" ", "")
-                if "," in s and "." in s:
-                    # ponto como milhar e vírgula decimal -> "13.956,00" => 13956.00
-                    s = s.replace(".", "").replace(",", ".")
-                elif "," in s:
-                    # só vírgula decimal -> "135,96" => 135.96
-                    s = s.replace(",", ".")
-                # senão: já está com ponto decimal ou inteiro
+                if s == "" or s.lower() in ("nan", "none"):
+                    return 0.0
+            
+                # remove símbolos/espacos comuns
+                s = (s.replace("R$", "")
+                       .replace("\u00A0", "")
+                       .replace(" ", ""))
+            
+                # negativos "(...)" ou "-..."
+                neg = False
+                if s.startswith("(") and s.endswith(")"):
+                    neg = True
+                    s = s[1:-1]
+                if s.startswith("-"):
+                    neg = True
+                    s = s[1:]
+            
+                has_comma = "," in s
+                has_dot   = "." in s
+            
+                # CASO A: vírgula presente (formato BR)
+                if has_comma:
+                    # "13.956,00" / "1.234,56" / "139,56"
+                    val = 0.0
+                    try:
+                        val = float(s.replace(".", "").replace(",", "."))
+                    except:
+                        val = 0.0
+            
+                    # Se veio "13.956,00" (== 13956.00) mas deveria ser 139,56,
+                    # detecta padrão de milhar + ",00" e divide por 100
+                    if re.fullmatch(r"\d{1,3}(?:\.\d{3})+,\d{2}", s):
+                        dec = s.split(",")[-1]
+                        if dec == "00":
+                            val = val / 100.0
+                    return -val if neg else val
+            
+                # CASO B: só ponto e parece milhar (ex.: "13.956") -> 139,56
+                if has_dot:
+                    if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", s):
+                        joined = s.replace(".", "")     # "13.956" -> "13956"
+                        val = float(joined) / 100.0     # -> 139.56
+                        return -val if neg else val
+                    # caso "12.34" (decimal com ponto): usa direto
+                    try:
+                        val = float(s)
+                    except:
+                        val = 0.0
+                    return -val if neg else val
+            
+                # CASO C: só dígitos (ex.: "13956") -> geralmente centavos
+                if s.isdigit():
+                    val = float(s)
+                    if val >= 1000:
+                        val = val / 100.0
+                    return -val if neg else val
+            
+                # fallback: limpa e tenta
+                s_norm = re.sub(r"[^\d\.-]", "", s)
                 try:
-                    return float(s)
+                    val = float(s_norm)
                 except:
-                    return None
-    
-            if col_valor and not is_numeric_dtype(df_sangria[col_valor]):
-                # preserva original para decisão de escala
-                orig = df_sangria[col_valor].copy()
+                    val = 0.0
+                return -val if neg else val
+            
+            # ✅ APLICAÇÃO: reprocessa a coluna INTEIRA como string (garante correção mesmo se já veio como float)
+            if col_valor:
+                df_sangria[col_valor] = df_sangria[col_valor].astype(str).apply(parse_brl_str).astype(float)
+
     
                 # 1) tenta converter a partir do TEXTO
                 conv = orig.apply(parse_brl_str)

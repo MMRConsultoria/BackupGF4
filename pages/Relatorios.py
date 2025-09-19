@@ -2519,8 +2519,8 @@ with aba5:
 
         # Função robusta para valores BR
         def to_number_br(v):
-        
             import re
+            # 0) Nulos / já numérico
             if v is None or (isinstance(v, float) and pd.isna(v)):
                 return 0.0
             if isinstance(v, (int, float)):
@@ -2530,12 +2530,10 @@ with aba5:
             if s == "":
                 return 0.0
         
-            # remove símbolos/espacos comuns
-            s = (s.replace("R$", "")
-                   .replace("\u00A0", "")
-                   .replace(" ", ""))
+            # 1) limpeza básica
+            s = (s.replace("R$", "").replace("\u00A0", "").replace(" ", ""))
         
-            # negativo entre parênteses ou com sinal
+            # 2) negativos: "(...)" ou prefixo "-"
             neg = False
             if s.startswith("(") and s.endswith(")"):
                 neg = True
@@ -2547,41 +2545,42 @@ with aba5:
             has_comma = "," in s
             has_dot   = "." in s
         
-            # CASO 1: tem vírgula (BR)  -> milhar '.' e decimal ','
+            # 3) CASO A: tem vírgula (formato BR normal, ex: "1.234,56" ou "139,56")
             if has_comma:
+                # remove pontos de milhar e troca vírgula por ponto
                 s_norm = s.replace(".", "").replace(",", ".")
                 try:
                     val = float(s_norm)
                 except:
                     val = 0.0
-                # Heurística: se veio como "13.956,00" (== 13956.00) mas era 139,56
-                if val >= 1000:
-                    dec = s.split(",")[-1]
-                    if dec == "00":
-                        val = val / 100.0
+                # se veio "13.956,00" (== 13956.00) mas era 139,56 → decimal "00" => divide por 100
+                dec = s.split(",")[-1]
+                if dec == "00":
+                    val = val / 100.0
                 return -val if neg else val
         
-            # CASO 2: só ponto e parece milhar (ex.: "13.956") -> tratar como "centavos ausentes"
+            # 4) CASO B: só com ponto E padrão de milhar (ex: "13.956" → na prática 139,56)
             if has_dot:
-                parts = s.split(".")
-                if len(parts) >= 2 and all(p.isdigit() for p in parts) and len(parts[-1]) == 3:
-                    joined = "".join(parts)  # "13.956" -> "13956"
-                    # Heurística segura p/ valores de caixa: assumir que faltam 2 casas decimais
-                    if 4 <= len(joined) <= 6:
-                        val = float(joined) / 100.0  # 13956 -> 139.56
-                        return -val if neg else val
-                    else:
-                        # caso raro: deixa como inteiro sem dividir
-                        s = joined
+                # Checa padrão estrito de milhar: 1 a 3 dígitos, depois blocos de 3
+                if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", s):
+                    joined = s.replace(".", "")        # "13.956" -> "13956"
+                    val = float(joined) / 100.0        # -> 139.56
+                    return -val if neg else val
+                # Caso contrário, tenta como decimal com ponto (ex: "12.34")
+                try:
+                    val = float(s)
+                except:
+                    val = 0.0
+                return -val if neg else val
         
-            # CASO 3: só dígitos (ex.: "13956") -> geralmente é em centavos
+            # 5) CASO C: só dígitos (ex: "13956" → 139,56)
             if s.isdigit():
                 val = float(s)
                 if val >= 1000:
                     val = val / 100.0
                 return -val if neg else val
         
-            # fallback: limpar e tentar
+            # 6) fallback
             s_norm = re.sub(r"[^\d\.-]", "", s)
             try:
                 val = float(s_norm)

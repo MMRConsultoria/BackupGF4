@@ -388,10 +388,8 @@ with st.spinner("⏳ Processando..."):
 
 
     # ================
-    # 🔄 Aba 2 — Atualizar Google Sheets (aba: sangria — fluxo existente)
     # ================
-    # ================
-    # 🔄 Aba 2 — Atualizar Google Sheets
+    # 🔄 Aba 2 — Atualizar Google Sheets (layout unificado)
     # ================
     with tab2:
         st.markdown("🔗 [Abrir planilha Vendas diarias](https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU)")
@@ -401,132 +399,199 @@ with st.spinner("⏳ Processando..."):
         def normalize_dates(s):
             return pd.to_datetime(s, errors="coerce", dayfirst=True).dt.normalize()
     
+        # ---------- MODO EVEREST ----------
         if mode == "everest" and "df_everest" in st.session_state:
-            # ------------- Atualização para a aba SANGRIA EVEREST -------------
-            df_ev = st.session_state.df_everest.copy()
-            header_file = list(df_ev.columns)
+            ws_name = "Sangria Everest"
+            df_file = st.session_state.df_everest.copy()
+            header_file = list(df_file.columns)
     
-            if "D. Lançamento" not in df_ev.columns:
-                st.error("❌ Para atualizar a aba **Sangria Everest**, o arquivo precisa conter a coluna **'D. Lançamento'**.")
-                st.stop()
+            # Colunas detectadas na Aba 1
+            date_col = st.session_state.get("everest_date_col")
+            valor_col = st.session_state.get("everest_value_col")
     
-            datas_set = set(d for d in normalize_dates(df_ev["D. Lançamento"]).dropna().unique())
+            # Fallbacks mínimos (caso algo não tenha ficado no estado)
+            if date_col is None:
+                for cand in ["D. Lançamento", "D.Lançamento", "D. Lancamento", "D.Lancamento"]:
+                    if cand in df_file.columns:
+                        date_col = cand; break
+            if valor_col is None:
+                for cand in ["Valor Lancamento ", "Valor Lançamento ", "Valor Lancamento", "Valor Lançamento"]:
+                    if cand in df_file.columns:
+                        valor_col = cand; break
+    
+            # Período
+            periodo_txt = "—"
+            if date_col and date_col in df_file.columns:
+                dt = pd.to_datetime(df_file[date_col], errors="coerce", dayfirst=True).dropna()
+                if not dt.empty:
+                    periodo_txt = f"{dt.min():%d/%m/%Y} até {dt.max():%d/%m/%Y}"
+                    datas_set = set(dt.dt.normalize().unique())
+                else:
+                    datas_set = set()
+            else:
+                datas_set = set()
+                st.warning("⚠️ Coluna de data 'D. Lançamento' não encontrada no arquivo.")
+    
+            # Total (Valor Lançamento) com sinal real
+            total_txt = "—"
+            if valor_col and valor_col in df_file.columns:
+                # Conversor pt-BR robusto
+                import re
+                def to_number_br(series):
+                    def _one(x):
+                        if pd.isna(x): return 0.0
+                        s = str(x).strip()
+                        if s == "": return 0.0
+                        neg = False
+                        if s.startswith("(") and s.endswith(")"):
+                            neg = True; s = s[1:-1].strip()
+                        s = s.replace("R$", "").replace("r$", "").strip()
+                        if s.endswith("-"):
+                            neg = True; s = s[:-1].strip()
+                        s = s.replace(".", "").replace(",", ".")
+                        s_clean = re.sub(r"[^0-9.\-]", "", s)
+                        if s_clean in ["", "-", "."]: return 0.0
+                        try:
+                            val = float(s_clean)
+                        except:
+                            s_fallback = re.sub(r"[^0-9.]", "", s_clean)
+                            val = float(s_fallback) if s_fallback else 0.0
+                        return -abs(val) if neg else val
+                    return series.apply(_one)
+    
+                serie_val = pd.to_numeric(df_file[valor_col], errors="coerce") if pd.api.types.is_numeric_dtype(df_file[valor_col]) else to_number_br(df_file[valor_col])
+                total_liquido = float(serie_val.sum())
+                sinal = "-" if total_liquido < 0 else ""
+                total_fmt = f"{abs(total_liquido):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                total_txt = f"{sinal}R$ {total_fmt}"
+            else:
+                st.info("ℹ️ Não encontrei coluna de valor (ex.: 'Valor Lançamento'). O total ficará vazio.")
+    
+            # ---- Métricas (layout unificado) ----
+            m1, m2, m3 = st.columns(3)
+            m1.metric("📅 Período processado", periodo_txt)
+            m2.metric("🧾 Linhas do arquivo", f"{len(df_file)}")
+            m3.metric("💰 Total (Valor Lançamento)", total_txt)
+    
+            # ---- Alcance da atualização (datas a substituir) ----
             if not datas_set:
-                st.error("❌ A coluna **'D. Lançamento'** não possui datas válidas para substituição.")
-                st.stop()
+                st.warning("⚠️ Não há datas válidas em 'D. Lançamento' para substituir na planilha.")
+            else:
+                st.caption(f"Alcance da atualização: **{len(datas_set)}** data(s) em 'D. Lançamento'.")
     
-            st.info(f"Serão substituídas as linhas das datas presentes em **'D. Lançamento'** "
-                    f"(total de datas: {len(datas_set)}). O cabeçalho da planilha será o **mesmo do arquivo**.")
+            # ---- Pré-cálculo de impacto na planilha (mantém o mesmo visual para os dois modos) ----
+            try:
+                ws = planilha.worksheet(ws_name)
+            except Exception as e:
+                st.error(f"❌ Não consegui abrir a aba '{ws_name}': {e}")
+                ws = None
     
-            if st.button("🚀 Atualizar aba 'Sangria Everest' (substituir pelas datas de 'D. Lançamento')", type="primary", use_container_width=True):
-                with st.spinner("Atualizando 'Sangria Everest'…"):
-                    try:
-                        ws_ev = planilha.worksheet("Sangria Everest")
-                    except Exception as e:
-                        st.error(f"❌ Não consegui abrir a aba 'Sangria Everest': {e}")
-                        st.stop()
-    
-                    rows = ws_ev.get_all_values()
-                    if not rows:
-                        values = [header_file] + df_ev.fillna("").astype(str).values.tolist()
-                        ws_ev.clear()
-                        ws_ev.update("A1", values, value_input_option="USER_ENTERED")
-                        st.success(f"✅ Aba 'Sangria Everest' criada com {len(df_ev)} linhas.")
-                        st.balloons()
-                        st.stop()
-    
-                    # Monta df da planilha
+            linhas_removidas = 0
+            linhas_finais = None
+            if ws:
+                rows = ws.get_all_values()
+                if not rows:
+                    linhas_removidas = 0
+                    linhas_finais = len(df_file)
+                else:
                     header_sheet = rows[0]
                     data_sheet = rows[1:]
-                    df_sheet = pd.DataFrame(data_sheet, columns=header_sheet)
-    
-                    # Alinha ao cabeçalho do arquivo (mantemos o header do arquivo)
+                    import pandas as _pd
+                    df_sheet = _pd.DataFrame(data_sheet, columns=header_sheet)
+                    # alinhar colunas ao cabeçalho do arquivo
                     for c in header_file:
                         if c not in df_sheet.columns:
                             df_sheet[c] = ""
-                    df_sheet = df_sheet[header_file]  # remove colunas extras
+                    df_sheet = df_sheet[header_file]
+                    if date_col in df_sheet.columns:
+                        datas_sheet_norm = normalize_dates(df_sheet[date_col])
+                        linhas_removidas = int(datas_sheet_norm.isin(datas_set).sum())
+                        linhas_finais = int(len(df_sheet) - linhas_removidas + len(df_file))
+                    else:
+                        # Se o destino não tiver a coluna -> reescreve inteiro
+                        linhas_removidas = len(df_sheet)
+                        linhas_finais = len(df_file)
     
-                    if "D. Lançamento" not in df_sheet.columns:
-                        st.warning("⚠️ A aba atual não tem a coluna **'D. Lançamento'**. "
-                                   "Ela será reescrita integralmente com o conteúdo do arquivo.")
-                        values = [header_file] + df_ev.fillna("").astype(str).values.tolist()
-                        ws_ev.clear()
-                        ws_ev.update("A1", values, value_input_option="USER_ENTERED")
-                        st.success(f"✅ 'Sangria Everest' reescrita com {len(df_ev)} linhas.")
-                        st.balloons()
-                        st.stop()
+            s1, s2 = st.columns(2)
+            s1.metric("🧹 Linhas a substituir/remover", f"{linhas_removidas}" if linhas_finais is not None else "—")
+            s2.metric("📊 Linhas totais após atualização", f"{linhas_finais}" if linhas_finais is not None else "—")
     
-                    # Mantém somente linhas cuja 'D. Lançamento' NÃO está no arquivo
-                    datas_sheet_norm = normalize_dates(df_sheet["D. Lançamento"])
-                    kept = df_sheet.loc[~datas_sheet_norm.isin(datas_set)].copy()
+            # ---- Botão único (ação Everest) ----
+            if st.button("🚀 Atualizar Google Sheets", type="primary", use_container_width=True):
+                if not ws:
+                    st.stop()
+                # Recarrega conteúdo e executa a substituição
+                rows = ws.get_all_values()
+                if not rows:
+                    values = [header_file] + df_file.fillna("").astype(str).values.tolist()
+                    ws.clear()
+                    ws.update("A1", values, value_input_option="USER_ENTERED")
+                    st.success(f"✅ '{ws_name}' criada com {len(df_file)} linhas.")
+                else:
+                    header_sheet = rows[0]
+                    data_sheet = rows[1:]
+                    df_sheet = pd.DataFrame(data_sheet, columns=header_sheet)
+                    for c in header_file:
+                        if c not in df_sheet.columns:
+                            df_sheet[c] = ""
+                    df_sheet = df_sheet[header_file]
+                    if date_col in df_sheet.columns and datas_set:
+                        datas_sheet_norm = normalize_dates(df_sheet[date_col])
+                        kept = df_sheet.loc[~datas_sheet_norm.isin(datas_set)].copy()
+                        df_final = pd.concat([kept, df_file[header_file].copy()], ignore_index=True)
+                    else:
+                        df_final = df_file[header_file].copy()
+                    values = [header_file] + df_final.fillna("").astype(str).values.tolist()
+                    ws.clear()
+                    ws.update("A1", values, value_input_option="USER_ENTERED")
+                    st.success(f"✅ '{ws_name}' atualizada! Linhas finais: {len(df_final)}")
+                st.balloons()
     
-                    # Final: mantém outras datas + linhas do arquivo (cabeçalho do arquivo)
-                    df_final_ev = pd.concat([kept, df_ev[header_file].copy()], ignore_index=True)
-                    values = [header_file] + df_final_ev.fillna("").astype(str).values.tolist()
+        # ---------- MODO COLIBRI ----------
+        elif "df_sangria" in st.session_state:
+            ws_name = "Sangria"
+            df_final = st.session_state.df_sangria.copy()
     
-                    ws_ev.clear()
-                    ws_ev.update("A1", values, value_input_option="USER_ENTERED")
+            # Período / Total
+            dt = pd.to_datetime(df_final["Data"], dayfirst=True, errors="coerce").dropna()
+            periodo_txt = f"{dt.min():%d/%m/%Y} até {dt.max():%d/%m/%Y}" if not dt.empty else "—"
+            total_val = float(pd.to_numeric(df_final["Valor(R$)"], errors="coerce").fillna(0.0).sum())
+            sinal = "-" if total_val < 0 else ""
+            total_fmt = f"{abs(total_val):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            total_txt = f"{sinal}R$ {total_fmt}"
     
-                    st.success(
-                        f"✅ 'Sangria Everest' atualizada!\n\n"
-                        f"- Datas substituídas (por 'D. Lançamento'): **{len(datas_set)}**\n"
-                        f"- Linhas novas (arquivo): **{len(df_ev)}**\n"
-                        f"- Total final (sem contar cabeçalho): **{len(df_final_ev)}**"
-                    )
-                    st.balloons()
+            # Métricas (layout igual ao Everest)
+            m1, m2, m3 = st.columns(3)
+            m1.metric("📅 Período processado", periodo_txt)
+            m2.metric("🧾 Linhas do arquivo", f"{len(df_final)}")
+            m3.metric("💰 Total (Valor R$)", total_txt)
     
-        else:
-            # ------------- Fluxo existente para a aba SANGRIA (Colibri) -------------
-            if "df_sangria" not in st.session_state:
-                st.warning("⚠️ Primeiro faça o upload e o processamento na Aba 1 (modo Colibri).")
-            else:
-                df_final = st.session_state.df_sangria.copy()
+            # Alcance da atualização = registros novos (não duplicados)
+            try:
+                aba_destino = planilha.worksheet(ws_name)
+                valores_existentes = aba_destino.get_all_values()
+            except Exception as e:
+                st.error(f"❌ Não consegui abrir a aba '{ws_name}': {e}")
+                valores_existentes = []
     
+            novos_dados = []
+            duplicados_sheet = []
+    
+            if valores_existentes:
+                header = valores_existentes[0]
                 destino_cols = [
                     "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
                     "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
                     "Descrição Agrupada", "Meio de recebimento", "Valor(R$)",
                     "Mês", "Ano", "Duplicidade", "Sistema"
                 ]
-                faltantes = [c for c in destino_cols if c not in df_final.columns]
-                if faltantes:
-                    st.error(f"❌ Colunas ausentes para envio: {faltantes}")
-                    st.stop()
-    
-                df_final["Descrição"] = (
-                    df_final["Descrição"].astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
-                )
-                data_key = pd.to_datetime(df_final["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
-                hora_key = pd.to_datetime(df_final["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
-                df_final["Valor(R$)"] = pd.to_numeric(df_final["Valor(R$)"], errors="coerce").fillna(0.0).round(2)
-                valor_centavos = (df_final["Valor(R$)"].astype(float) * 100).round().astype(int).astype(str)
-                desc_key = df_final["Descrição"].fillna("").astype(str)
-                df_final["Duplicidade"] = (
-                    data_key.fillna("") + "|" +
-                    hora_key.fillna("") + "|" +
-                    df_final["Código Everest"].fillna("").astype(str) + "|" +
-                    valor_centavos + "|" +
-                    desc_key
-                )
-    
-                for col in ["Código Everest", "Código Grupo Everest", "Ano"]:
-                    df_final[col] = df_final[col].apply(lambda x: int(x) if pd.notnull(x) and str(x).strip() != "" else "")
-    
-                aba_destino = planilha.worksheet("Sangria")
-                valores_existentes = aba_destino.get_all_values()
-                if not valores_existentes:
-                    st.error("❌ A aba 'sangria' está vazia ou sem cabeçalho. Crie o cabeçalho antes de enviar.")
-                    st.stop()
-    
-                header = valores_existentes[0]
                 if header[:len(destino_cols)] != destino_cols:
-                    st.error("❌ O cabeçalho da aba 'sangria' não corresponde ao esperado.")
+                    st.error("❌ O cabeçalho da aba 'Sangria' não corresponde ao esperado.")
                     st.stop()
-    
                 try:
                     dup_idx = header.index("Duplicidade")
                 except ValueError:
-                    st.error("❌ Cabeçalho da aba 'sangria' não contém a coluna 'Duplicidade'.")
+                    st.error("❌ Cabeçalho da aba 'Sangria' não contém a coluna 'Duplicidade'.")
                     st.stop()
     
                 dados_existentes = set([
@@ -534,34 +599,47 @@ with st.spinner("⏳ Processando..."):
                     if len(linha) > dup_idx and linha[dup_idx] != ""
                 ])
     
-                df_final = df_final[destino_cols].fillna("")
-                novos_dados, duplicados_sheet = [], []
-                for linha in df_final.values.tolist():
+                df_envio = df_final[destino_cols].fillna("")
+                for linha in df_envio.values.tolist():
                     chave = linha[dup_idx]
-                    if chave in dados_existentes:
-                        duplicados_sheet.append(linha)
-                    else:
-                        novos_dados.append(linha)
+                    (duplicados_sheet if chave in dados_existentes else novos_dados).append(linha)
+            else:
+                # Planilha vazia → tudo é novo
+                destino_cols = [
+                    "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
+                    "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
+                    "Descrição Agrupada", "Meio de recebimento", "Valor(R$)",
+                    "Mês", "Ano", "Duplicidade", "Sistema"
+                ]
+                df_envio = df_final[destino_cols].fillna("")
+                novos_dados = df_envio.values.tolist()
     
-                if st.button("📥 Enviar dados para a aba 'sangria'"):
-                    with st.spinner("🔄 Enviando..."):
-                        if novos_dados:
-                            aba_destino.append_rows(novos_dados, value_input_option="USER_ENTERED")
+            st.caption(f"Alcance da atualização: **{len(novos_dados)}** novo(s) registro(s) "
+                       f"(duplicados ignorados: {len(duplicados_sheet)}).")
     
-                            inicio = len(valores_existentes) + 1
-                            fim = inicio + len(novos_dados) - 1
+            # Métricas adicionais para manter o layout coerente
+            s1, s2 = st.columns(2)
+            s1.metric("🧹 Linhas a substituir/remover", "—")  # Colibri não remove por data
+            s2.metric("📊 Linhas totais após atualização",
+                      f"{(len(valores_existentes)-1 if valores_existentes else 0) + len(novos_dados)}")
     
-                            if fim >= inicio:
-                                format_cell_range(
-                                    aba_destino, f"A{inicio}:A{fim}",
-                                    CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
-                                )
-                                format_cell_range(
-                                    aba_destino, f"L{inicio}:L{fim}",
-                                    CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#,##0.00"))
-                                )
+            # Botão único (ação Colibri)
+            if st.button("🚀 Atualizar Google Sheets", type="primary", use_container_width=True):
+                if novos_dados:
+                    aba_destino.append_rows(novos_dados, value_input_option="USER_ENTERED")
+                    inicio = (len(valores_existentes) if valores_existentes else 1) + 1
+                    fim = inicio + len(novos_dados) - 1
+                    if valores_existentes and fim >= inicio:
+                        format_cell_range(
+                            aba_destino, f"A{inicio}:A{fim}",
+                            CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
+                        )
+                        format_cell_range(
+                            aba_destino, f"L{inicio}:L{fim}",
+                            CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#,##0.00"))
+                        )
+                st.success(f"✅ '{ws_name}' atualizada!")
+                st.balloons()
     
-                            st.success(f"✅ {len(novos_dados)} registros enviados!")
-                        if duplicados_sheet:
-                            st.warning("⚠️ Alguns registros já existiam no Google Sheets e não foram enviados.")
-    
+        else:
+            st.warning("⚠️ Primeiro faça o upload na Aba 1.")

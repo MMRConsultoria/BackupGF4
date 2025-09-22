@@ -390,106 +390,178 @@ with st.spinner("⏳ Processando..."):
     # ================
     # 🔄 Aba 2 — Atualizar Google Sheets (aba: sangria — fluxo existente)
     # ================
+    # ================
+    # 🔄 Aba 2 — Atualizar Google Sheets
+    # ================
     with tab2:
         st.markdown("🔗 [Abrir planilha Vendas diarias](https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU)")
-
-        if "df_sangria" not in st.session_state:
-            st.warning("⚠️ Primeiro faça o upload e o processamento na Aba 1 (modo Colibri).")
+    
+        mode = st.session_state.get("mode")
+    
+        def normalize_dates(s):
+            return pd.to_datetime(s, errors="coerce", dayfirst=True).dt.normalize()
+    
+        if mode == "everest" and "df_everest" in st.session_state:
+            # ------------- Atualização para a aba SANGRIA EVEREST -------------
+            df_ev = st.session_state.df_everest.copy()
+            header_file = list(df_ev.columns)
+    
+            if "D. Lançamento" not in df_ev.columns:
+                st.error("❌ Para atualizar a aba **Sangria Everest**, o arquivo precisa conter a coluna **'D. Lançamento'**.")
+                st.stop()
+    
+            datas_set = set(d for d in normalize_dates(df_ev["D. Lançamento"]).dropna().unique())
+            if not datas_set:
+                st.error("❌ A coluna **'D. Lançamento'** não possui datas válidas para substituição.")
+                st.stop()
+    
+            st.info(f"Serão substituídas as linhas das datas presentes em **'D. Lançamento'** "
+                    f"(total de datas: {len(datas_set)}). O cabeçalho da planilha será o **mesmo do arquivo**.")
+    
+            if st.button("🚀 Atualizar aba 'Sangria Everest' (substituir pelas datas de 'D. Lançamento')", type="primary", use_container_width=True):
+                with st.spinner("Atualizando 'Sangria Everest'…"):
+                    try:
+                        ws_ev = planilha.worksheet("Sangria Everest")
+                    except Exception as e:
+                        st.error(f"❌ Não consegui abrir a aba 'Sangria Everest': {e}")
+                        st.stop()
+    
+                    rows = ws_ev.get_all_values()
+                    if not rows:
+                        values = [header_file] + df_ev.fillna("").astype(str).values.tolist()
+                        ws_ev.clear()
+                        ws_ev.update("A1", values, value_input_option="USER_ENTERED")
+                        st.success(f"✅ Aba 'Sangria Everest' criada com {len(df_ev)} linhas.")
+                        st.balloons()
+                        st.stop()
+    
+                    # Monta df da planilha
+                    header_sheet = rows[0]
+                    data_sheet = rows[1:]
+                    df_sheet = pd.DataFrame(data_sheet, columns=header_sheet)
+    
+                    # Alinha ao cabeçalho do arquivo (mantemos o header do arquivo)
+                    for c in header_file:
+                        if c not in df_sheet.columns:
+                            df_sheet[c] = ""
+                    df_sheet = df_sheet[header_file]  # remove colunas extras
+    
+                    if "D. Lançamento" not in df_sheet.columns:
+                        st.warning("⚠️ A aba atual não tem a coluna **'D. Lançamento'**. "
+                                   "Ela será reescrita integralmente com o conteúdo do arquivo.")
+                        values = [header_file] + df_ev.fillna("").astype(str).values.tolist()
+                        ws_ev.clear()
+                        ws_ev.update("A1", values, value_input_option="USER_ENTERED")
+                        st.success(f"✅ 'Sangria Everest' reescrita com {len(df_ev)} linhas.")
+                        st.balloons()
+                        st.stop()
+    
+                    # Mantém somente linhas cuja 'D. Lançamento' NÃO está no arquivo
+                    datas_sheet_norm = normalize_dates(df_sheet["D. Lançamento"])
+                    kept = df_sheet.loc[~datas_sheet_norm.isin(datas_set)].copy()
+    
+                    # Final: mantém outras datas + linhas do arquivo (cabeçalho do arquivo)
+                    df_final_ev = pd.concat([kept, df_ev[header_file].copy()], ignore_index=True)
+                    values = [header_file] + df_final_ev.fillna("").astype(str).values.tolist()
+    
+                    ws_ev.clear()
+                    ws_ev.update("A1", values, value_input_option="USER_ENTERED")
+    
+                    st.success(
+                        f"✅ 'Sangria Everest' atualizada!\n\n"
+                        f"- Datas substituídas (por 'D. Lançamento'): **{len(datas_set)}**\n"
+                        f"- Linhas novas (arquivo): **{len(df_ev)}**\n"
+                        f"- Total final (sem contar cabeçalho): **{len(df_final_ev)}**"
+                    )
+                    st.balloons()
+    
         else:
-            df_final = st.session_state.df_sangria.copy()
-
-            # Colunas na ordem do destino
-            destino_cols = [
-                "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
-                "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
-                "Descrição Agrupada", "Meio de recebimento", "Valor(R$)",
-                "Mês", "Ano", "Duplicidade", "Sistema"
-            ]
-            faltantes = [c for c in destino_cols if c not in df_final.columns]
-            if faltantes:
-                st.error(f"❌ Colunas ausentes para envio: {faltantes}")
-                st.stop()
-
-            # Recalcula Duplicidade (Data + Hora + Código + Valor + Descrição)
-            df_final["Descrição"] = (
-                df_final["Descrição"].astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
-            )
-            data_key = pd.to_datetime(df_final["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
-            hora_key = pd.to_datetime(df_final["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
-            df_final["Valor(R$)"] = pd.to_numeric(df_final["Valor(R$)"], errors="coerce").fillna(0.0).round(2)
-            valor_centavos = (df_final["Valor(R$)"].astype(float) * 100).round().astype(int).astype(str)
-            desc_key = df_final["Descrição"].fillna("").astype(str)
-            df_final["Duplicidade"] = (
-                data_key.fillna("") + "|" +
-                hora_key.fillna("") + "|" +
-                df_final["Código Everest"].fillna("").astype(str) + "|" +
-                valor_centavos + "|" +
-                desc_key
-            )
-
-            # Inteiros opcionais (mantém string vazia quando não há número)
-            for col in ["Código Everest", "Código Grupo Everest", "Ano"]:
-                df_final[col] = df_final[col].apply(lambda x: int(x) if pd.notnull(x) and str(x).strip() != "" else "")
-
-            # Acessa a aba de destino
-            aba_destino = planilha.worksheet("Sangria")
-            valores_existentes = aba_destino.get_all_values()
-            if not valores_existentes:
-                st.error("❌ A aba 'sangria' está vazia ou sem cabeçalho. Crie o cabeçalho antes de enviar.")
-                st.stop()
-
-            header = valores_existentes[0]
-            if header[:len(destino_cols)] != destino_cols:
-                st.error("❌ O cabeçalho da aba 'sangria' não corresponde ao esperado.")
-                st.stop()
-
-            # Índice da coluna 'Duplicidade' no destino
-            try:
-                dup_idx = header.index("Duplicidade")
-            except ValueError:
-                st.error("❌ Cabeçalho da aba 'sangria' não contém a coluna 'Duplicidade'.")
-                st.stop()
-
-            # ⚠️ CHAVES JÁ EXISTENTES (apenas do Google Sheets!)
-            dados_existentes = set([
-                linha[dup_idx] for linha in valores_existentes[1:]
-                if len(linha) > dup_idx and linha[dup_idx] != ""
-            ])
-
-            # Prepara linhas na ordem do destino
-            df_final = df_final[destino_cols].fillna("")
-
-            # ✅ Ignorar duplicidade interna do arquivo, checar só com o Sheets
-            novos_dados, duplicados_sheet = [], []
-            for linha in df_final.values.tolist():
-                chave = linha[dup_idx]
-                if chave in dados_existentes:
-                    duplicados_sheet.append(linha)
-                else:
-                    novos_dados.append(linha)
-
-            if st.button("📥 Enviar dados para a aba 'sangria'"):
-                with st.spinner("🔄 Enviando..."):
-                    if novos_dados:
-                        # USER_ENTERED => Sheets interpreta Data e Hora, valor numérico sem texto
-                        aba_destino.append_rows(novos_dados, value_input_option="USER_ENTERED")
-
-                        # ▸ Formatação das novas linhas
-                        inicio = len(valores_existentes) + 1
-                        fim = inicio + len(novos_dados) - 1
-
-                        if fim >= inicio:
-                            # Data (coluna A) -> dd/mm/yyyy
-                            format_cell_range(
-                                aba_destino, f"A{inicio}:A{fim}",
-                                CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
-                            )
-                            # Valor(R$) (coluna L) -> padrão locale: 1.000,00 em pt-BR
-                            format_cell_range(
-                                aba_destino, f"L{inicio}:L{fim}",
-                                CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#,##0.00"))
-                            )
-
-                        st.success(f"✅ {len(novos_dados)} registros enviados!")
-                    if duplicados_sheet:
-                        st.warning("⚠️ Alguns registros já existiam no Google Sheets e não foram enviados.")
+            # ------------- Fluxo existente para a aba SANGRIA (Colibri) -------------
+            if "df_sangria" not in st.session_state:
+                st.warning("⚠️ Primeiro faça o upload e o processamento na Aba 1 (modo Colibri).")
+            else:
+                df_final = st.session_state.df_sangria.copy()
+    
+                destino_cols = [
+                    "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
+                    "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
+                    "Descrição Agrupada", "Meio de recebimento", "Valor(R$)",
+                    "Mês", "Ano", "Duplicidade", "Sistema"
+                ]
+                faltantes = [c for c in destino_cols if c not in df_final.columns]
+                if faltantes:
+                    st.error(f"❌ Colunas ausentes para envio: {faltantes}")
+                    st.stop()
+    
+                df_final["Descrição"] = (
+                    df_final["Descrição"].astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
+                )
+                data_key = pd.to_datetime(df_final["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
+                hora_key = pd.to_datetime(df_final["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
+                df_final["Valor(R$)"] = pd.to_numeric(df_final["Valor(R$)"], errors="coerce").fillna(0.0).round(2)
+                valor_centavos = (df_final["Valor(R$)"].astype(float) * 100).round().astype(int).astype(str)
+                desc_key = df_final["Descrição"].fillna("").astype(str)
+                df_final["Duplicidade"] = (
+                    data_key.fillna("") + "|" +
+                    hora_key.fillna("") + "|" +
+                    df_final["Código Everest"].fillna("").astype(str) + "|" +
+                    valor_centavos + "|" +
+                    desc_key
+                )
+    
+                for col in ["Código Everest", "Código Grupo Everest", "Ano"]:
+                    df_final[col] = df_final[col].apply(lambda x: int(x) if pd.notnull(x) and str(x).strip() != "" else "")
+    
+                aba_destino = planilha.worksheet("Sangria")
+                valores_existentes = aba_destino.get_all_values()
+                if not valores_existentes:
+                    st.error("❌ A aba 'sangria' está vazia ou sem cabeçalho. Crie o cabeçalho antes de enviar.")
+                    st.stop()
+    
+                header = valores_existentes[0]
+                if header[:len(destino_cols)] != destino_cols:
+                    st.error("❌ O cabeçalho da aba 'sangria' não corresponde ao esperado.")
+                    st.stop()
+    
+                try:
+                    dup_idx = header.index("Duplicidade")
+                except ValueError:
+                    st.error("❌ Cabeçalho da aba 'sangria' não contém a coluna 'Duplicidade'.")
+                    st.stop()
+    
+                dados_existentes = set([
+                    linha[dup_idx] for linha in valores_existentes[1:]
+                    if len(linha) > dup_idx and linha[dup_idx] != ""
+                ])
+    
+                df_final = df_final[destino_cols].fillna("")
+                novos_dados, duplicados_sheet = [], []
+                for linha in df_final.values.tolist():
+                    chave = linha[dup_idx]
+                    if chave in dados_existentes:
+                        duplicados_sheet.append(linha)
+                    else:
+                        novos_dados.append(linha)
+    
+                if st.button("📥 Enviar dados para a aba 'sangria'"):
+                    with st.spinner("🔄 Enviando..."):
+                        if novos_dados:
+                            aba_destino.append_rows(novos_dados, value_input_option="USER_ENTERED")
+    
+                            inicio = len(valores_existentes) + 1
+                            fim = inicio + len(novos_dados) - 1
+    
+                            if fim >= inicio:
+                                format_cell_range(
+                                    aba_destino, f"A{inicio}:A{fim}",
+                                    CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
+                                )
+                                format_cell_range(
+                                    aba_destino, f"L{inicio}:L{fim}",
+                                    CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#,##0.00"))
+                                )
+    
+                            st.success(f"✅ {len(novos_dados)} registros enviados!")
+                        if duplicados_sheet:
+                            st.warning("⚠️ Alguns registros já existiam no Google Sheets e não foram enviados.")
+    

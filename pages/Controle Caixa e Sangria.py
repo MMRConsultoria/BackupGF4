@@ -582,27 +582,62 @@ with st.spinner("⏳ Processando..."):
             df_final = pd.concat([kept, df_insert], ignore_index=True)
         
             # 6) Atualiza (mesmo layout: um botão)
+            # ⏩ Botão super-rápido: deleta em FAIXAS + append único
             if st.button("📥 Enviar dados para a aba 'Sangria Everest'"):
-               with st.spinner("🔄 Enviando..."):
-                    # 1) Quais linhas do SHEET devo remover? (datas que estão no arquivo)
-                    sheet_dates_str = date_to_str(df_sheet[date_sheet_col])  # dd/mm/aaaa
-                    mask_remove = sheet_dates_str.isin(file_dates_str) & sheet_dates_str.ne("")
-                    # linhas do gspread são 1-based, header é linha 1, dados começam na 2
-                    rows_to_delete = [i + 2 for i, rm in enumerate(mask_remove) if bool(rm)]
-            
-                    # 2) Remover de baixo para cima (para não deslocar índices)
-                    for r in sorted(rows_to_delete, reverse=True):
-                        ws.delete_rows(r)
-            
-                    # 3) Preparar as NOVAS linhas do arquivo, alinhadas ao cabeçalho do SHEET
+                with st.spinner("🔄 Enviando..."):
                     import pandas as _pd
+            
+                    # 1) Quais linhas do SHEET remover? (datas que estão no arquivo)
+                    sheet_dates_str = date_to_str(df_sheet[date_sheet_col])  # 'dd/mm/aaaa'
+                    mask_remove = sheet_dates_str.isin(file_dates_str) & sheet_dates_str.ne("")
+                    rows_to_delete = [i + 2 for i, rm in enumerate(mask_remove) if bool(rm)]  # 1-based; +1 p/ header, +1 p/ 0-index
+            
+                    # 1a) Agrupa linhas contíguas em FAIXAS para deletar por intervalo (muito mais rápido)
+                    def compress_ranges(rows_1based):
+                        if not rows_1based:
+                            return []
+                        rows = sorted(rows_1based)
+                        start = prev = rows[0]
+                        out = []
+                        for r in rows[1:]:
+                            if r == prev + 1:
+                                prev = r
+                            else:
+                                out.append((start, prev))  # inclusive
+                                start = prev = r
+                        out.append((start, prev))
+                        return out
+            
+                    ranges_1based = compress_ranges(rows_to_delete)
+                    # Converte para índices 0-based/exclusivos exigidos pelo Sheets API
+                    # Lembrando: linha 1 = header → já não entra; aqui estão linhas ≥2.
+                    reqs = []
+                    for (r1, r2) in sorted(ranges_1based, key=lambda t: t[0], reverse=True):
+                        start_idx_0 = r1 - 1  # 0-based
+                        end_idx_0   = r2      # exclusivo
+                        reqs.append({
+                            "deleteDimension": {
+                                "range": {
+                                    "sheetId": ws.id,           # id da worksheet (gid)
+                                    "dimension": "ROWS",
+                                    "startIndex": start_idx_0,
+                                    "endIndex": end_idx_0
+                                }
+                            }
+                        })
+            
+                    # 2) Dispara UM batch_update com todas as deleções (ordem descendente evita shift)
+                    if reqs:
+                        ws.spreadsheet.batch_update({"requests": reqs})
+            
+                    # 3) Prepara as NOVAS linhas (alinhadas ao cabeçalho do SHEET)
                     df_insert = _pd.DataFrame({col: (df_file[col] if col in df_file.columns else "") for col in header_sheet})
             
-                    # 3a) Data: gravar como dd/mm/aaaa na coluna de data do SHEET
+                    # 3a) Data no padrão dd/mm/aaaa na coluna do SHEET
                     if date_file_col in df_file.columns and date_sheet_col in df_insert.columns:
                         df_insert[date_sheet_col] = date_to_str(df_file[date_file_col])
             
-                    # 3b) Valores: enviar com vírgula e 2 casas (texto), para Valor Lançamento e V. Rateio
+                    # 3b) Valores com vírgula e 2 casas: Valor Lançamento e V. Rateio
                     def to_str_comma(series_like):
                         if _pd.api.types.is_numeric_dtype(series_like):
                             nums = _pd.to_numeric(series_like, errors="coerce").fillna(0.0)
@@ -620,12 +655,14 @@ with st.spinner("⏳ Processando..."):
                                    else df_insert.get(rateio_sheet_col, ""))
                         df_insert[rateio_sheet_col] = to_str_comma(src_rat)
             
-                    # 4) Anexar somente as novas linhas (sem limpar o sheet inteiro)
+                    # 4) Append ÚNICO das novas linhas (sem limpar o sheet)
                     novas_linhas = df_insert.fillna("").astype(str).values.tolist()
                     if novas_linhas:
                         ws.append_rows(novas_linhas, value_input_option="USER_ENTERED")
             
-                    st.success(f"✅ Removidas {len(rows_to_delete)} linha(s) pelas datas do arquivo e inseridas {len(novas_linhas)} nova(s) linha(s).")
+                    st.success(
+                        f"✅ Removidas {len(rows_to_delete)} linha(s) em {len(ranges_1based)} faixa(s) e inseridas {len(novas_linhas)} nova(s) linha(s)."
+                    )
 
 
     

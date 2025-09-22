@@ -2512,21 +2512,20 @@ with st.spinner("⏳ Processando..."):
     
     # parser PT-BR linha-a-linha (cobre "13.956", "13.956,00", "13956", "13956.0", "139,56")
     def parse_brl_str(x):
-        # já numérico?
+        """Converte 'R$ 1.234,56' -> 1234.56 | '(1.234,56)' -> -1234.56 | '1,66' -> 1.66.
+        Não faz nenhuma divisão por 100."""
+        # já numérico
         if isinstance(x, (int, float)):
-            if isinstance(x, float) and (x != x):  # NaN
+            try:
+                return float(x)
+            except Exception:
                 return 0.0
-            v = float(x)
-            # inteiro grande típico de centavos (ex.: 13956.0) -> 139,56
-            if abs(v - round(v)) < 1e-9 and 1000 <= abs(v) < 1000000:
-                return v / 100.0
-            return v
     
         s = str(x).strip()
-        if s == "" or s.lower() in ("nan", "none"):
+        if s == "" or s.lower() in {"nan", "none"}:
             return 0.0
     
-        s = (s.replace("R$", "").replace("\u00A0", "").replace(" ", ""))
+        # parênteses = negativo; também aceita sinal "-"
         neg = False
         if s.startswith("(") and s.endswith(")"):
             neg = True
@@ -2535,51 +2534,24 @@ with st.spinner("⏳ Processando..."):
             neg = True
             s = s[1:]
     
-        has_comma = "," in s
-        has_dot   = "." in s
+        # tira rótulos/espacos
+        s = s.replace("R$", "").replace("\u00A0", "").replace(" ", "")
     
-        # A) tem vírgula (BR): "1.234,56" / "13.956,00" / "139,56"
-        if has_comma:
-            try:
-                val = float(s.replace(".", "").replace(",", "."))
-            except:
-                val = 0.0
-            # "13.956,00" (milhar + ,00) → 139,56
-            if re.fullmatch(r"\d{1,3}(?:\.\d{3})+,\d{2}", s) and s.endswith(",00"):
-                val = val / 100.0
-            return -val if neg else val
-    
-        # B) só ponto e padrão milhar: "13.956" → 139,56
-        if has_dot:
-            if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", s):
-                val = float(s.replace(".", "")) / 100.0
-                return -val if neg else val
-            # caso especial "13956.0" → 139,56
-            m = re.fullmatch(r"(\d+)\.0{1,2}", s)
-            if m and len(m.group(1)) >= 4:
-                val = float(m.group(1)) / 100.0
-                return -val if neg else val
-            # decimal com ponto ("12.34")
-            try:
-                val = float(s)
-            except:
-                val = 0.0
-            return -val if neg else val
-    
-        # C) só dígitos: "13956" → 139,56
-        if s.isdigit():
-            val = float(s)
-            if abs(val) >= 1000:
-                val = val / 100.0
-            return -val if neg else val
-    
-        # fallback
-        s_norm = re.sub(r"[^\d\.-]", "", s)
         try:
-            val = float(s_norm)
-        except:
-            val = 0.0
-        return -val if neg else val
+            if "," in s:
+                # padrão BR: "." é milhar, "," é decimal
+                s = s.replace(".", "").replace(",", ".")
+                v = float(s)
+            else:
+                # sem vírgula → tenta como float "normal" (ponto decimal)
+                v = float(s)
+        except Exception:
+            v = 0.0
+    
+        return -v if neg else v
+
+    
+        
     
     
     # ================================

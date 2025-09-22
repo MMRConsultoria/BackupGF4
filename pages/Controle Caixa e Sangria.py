@@ -583,13 +583,50 @@ with st.spinner("⏳ Processando..."):
         
             # 6) Atualiza (mesmo layout: um botão)
             if st.button("📥 Enviar dados para a aba 'Sangria Everest'"):
-                with st.spinner("🔄 Enviando..."):
-                    values = [header_sheet] + df_final.fillna("").astype(str).values.tolist()
-                    ws.clear()
-                    ws.update("A1", values, value_input_option="USER_ENTERED")
-                    st.success(
-                        f"✅ Atualizado! Removidas {removidas} linha(s) pelas datas do arquivo e inseridas {len(df_insert)} nova(s) linha(s)."
-                    )
+               with st.spinner("🔄 Enviando..."):
+                    # 1) Quais linhas do SHEET devo remover? (datas que estão no arquivo)
+                    sheet_dates_str = date_to_str(df_sheet[date_sheet_col])  # dd/mm/aaaa
+                    mask_remove = sheet_dates_str.isin(file_dates_str) & sheet_dates_str.ne("")
+                    # linhas do gspread são 1-based, header é linha 1, dados começam na 2
+                    rows_to_delete = [i + 2 for i, rm in enumerate(mask_remove) if bool(rm)]
+            
+                    # 2) Remover de baixo para cima (para não deslocar índices)
+                    for r in sorted(rows_to_delete, reverse=True):
+                        ws.delete_rows(r)
+            
+                    # 3) Preparar as NOVAS linhas do arquivo, alinhadas ao cabeçalho do SHEET
+                    import pandas as _pd
+                    df_insert = _pd.DataFrame({col: (df_file[col] if col in df_file.columns else "") for col in header_sheet})
+            
+                    # 3a) Data: gravar como dd/mm/aaaa na coluna de data do SHEET
+                    if date_file_col in df_file.columns and date_sheet_col in df_insert.columns:
+                        df_insert[date_sheet_col] = date_to_str(df_file[date_file_col])
+            
+                    # 3b) Valores: enviar com vírgula e 2 casas (texto), para Valor Lançamento e V. Rateio
+                    def to_str_comma(series_like):
+                        if _pd.api.types.is_numeric_dtype(series_like):
+                            nums = _pd.to_numeric(series_like, errors="coerce").fillna(0.0)
+                        else:
+                            nums = to_number_br(series_like)
+                        return nums.apply(lambda v: f"{float(v):.2f}".replace(".", ","))
+            
+                    if valor_sheet_col:
+                        src_val = (df_file[valor_file_col] if (valor_file_col and valor_file_col in df_file.columns)
+                                   else df_insert.get(valor_sheet_col, ""))
+                        df_insert[valor_sheet_col] = to_str_comma(src_val)
+            
+                    if rateio_sheet_col:
+                        src_rat = (df_file[rateio_file_col] if (rateio_file_col and rateio_file_col in df_file.columns)
+                                   else df_insert.get(rateio_sheet_col, ""))
+                        df_insert[rateio_sheet_col] = to_str_comma(src_rat)
+            
+                    # 4) Anexar somente as novas linhas (sem limpar o sheet inteiro)
+                    novas_linhas = df_insert.fillna("").astype(str).values.tolist()
+                    if novas_linhas:
+                        ws.append_rows(novas_linhas, value_input_option="USER_ENTERED")
+            
+                    st.success(f"✅ Removidas {len(rows_to_delete)} linha(s) pelas datas do arquivo e inseridas {len(novas_linhas)} nova(s) linha(s).")
+
 
     
         # --- caso contrário, fluxo Colibri original ---

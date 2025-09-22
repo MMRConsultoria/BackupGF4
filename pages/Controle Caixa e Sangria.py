@@ -113,7 +113,7 @@ with st.spinner("⏳ Processando..."):
     
                 if is_everest:
                     # ---------------- MODO EVEREST ----------------
-                    #st.success("🔎 Detectado **padrão Everest** (cabeçalho do arquivo será mantido).")
+                    st.success("🔎 Detectado **padrão Everest** (cabeçalho do arquivo será mantido).")
     
                     # Guarda no estado para a Tab2 decidir a atualização
                     st.session_state.mode = "everest"

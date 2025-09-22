@@ -42,6 +42,44 @@ st.markdown("""
 
 NOME_SISTEMA = "Colibri"
 
+# -----------------------
+# Helpers
+# -----------------------
+def auto_read_first_or_sheet(uploaded_file, preferred="Sheet"):
+    """
+    Lê a guia 'preferred' se existir. Caso contrário, lê a primeira guia do arquivo.
+    Retorna (df, nome_da_guia_lida, lista_de_guias).
+    """
+    xls = pd.ExcelFile(uploaded_file)
+    sheets = xls.sheet_names
+    if preferred in sheets:
+        sheet_to_read = preferred
+    else:
+        sheet_to_read = sheets[0]
+    df = pd.read_excel(xls, sheet_name=sheet_to_read)
+    return df, sheet_to_read, sheets
+
+def to_number_br(series):
+    """
+    Converte strings pt-BR (ex.: '13.956,00') para float.
+    Mantém números já numéricos e trata erros como 0.0.
+    """
+    def _one(x):
+        if pd.isna(x):
+            return 0.0
+        if isinstance(x, (int, float, np.number)):
+            return float(x)
+        s = str(x).strip()
+        if s == "":
+            return 0.0
+        # remove milhares '.', troca ',' por '.'
+        s = s.replace(".", "").replace(",", ".")
+        try:
+            return float(s)
+        except:
+            return 0.0
+    return series.apply(_one)
+
 with st.spinner("⏳ Processando..."):
     # 🔌 Conexão Google Sheets
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -83,8 +121,9 @@ with st.spinner("⏳ Processando..."):
 
         if uploaded_file:
             try:
-                xls = pd.ExcelFile(uploaded_file)
-                df_dados = pd.read_excel(xls, sheet_name="Sheet")
+                # ⚠️ AQUI ESTÁ A CORREÇÃO: tentar 'Sheet' e, se não existir, cair na 1ª guia
+                df_dados, guia_lida, lista_guias = auto_read_first_or_sheet(uploaded_file, preferred="Sheet")
+                st.caption(f"Guia lida: **{guia_lida}** (disponíveis: {', '.join(lista_guias)})")
             except Exception as e:
                 st.error(f"❌ Não foi possível ler o arquivo enviado. Detalhes: {e}")
             else:
@@ -99,6 +138,11 @@ with st.spinner("⏳ Processando..."):
                 funcionario_atual = None
                 loja_atual = None
                 linhas_validas = []
+
+                # Garante colunas essenciais
+                if "Hora" not in df.columns or "Valor(R$)" not in df.columns or "Descrição" not in df.columns:
+                    st.error("❌ O arquivo deve conter as colunas 'Hora', 'Valor(R$)' e 'Descrição'.")
+                    st.stop()
 
                 for i, row in df.iterrows():
                     valor = str(row["Hora"]).strip()
@@ -131,18 +175,20 @@ with st.spinner("⏳ Processando..."):
                     df["Descrição"].astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
                 )
                 df["Funcionário"] = df["Funcionário"].astype(str).str.strip()
-                df["Valor(R$)"] = pd.to_numeric(df["Valor(R$)"], errors="coerce").fillna(0.0).round(2)
+
+                # ✅ Conversão robusta pt-BR
+                df["Valor(R$)"] = to_number_br(df["Valor(R$)"]).round(2)
 
                 # Dia semana / mês / ano
                 dias_semana = {0: 'segunda-feira', 1: 'terça-feira', 2: 'quarta-feira',
                                3: 'quinta-feira', 4: 'sexta-feira', 5: 'sábado', 6: 'domingo'}
-                df["Dia da Semana"] = df["Data"].dt.dayofweek.map(dias_semana)
-                df["Mês"] = df["Data"].dt.month.map({
+                df["Dia da Semana"] = pd.to_datetime(df["Data"], errors="coerce").dt.dayofweek.map(dias_semana)
+                df["Mês"] = pd.to_datetime(df["Data"], errors="coerce").dt.month.map({
                     1: 'jan', 2: 'fev', 3: 'mar', 4: 'abr', 5: 'mai', 6: 'jun',
                     7: 'jul', 8: 'ago', 9: 'set', 10: 'out', 11: 'nov', 12: 'dez'
                 })
-                df["Ano"] = df["Data"].dt.year
-                df["Data"] = df["Data"].dt.strftime("%d/%m/%Y")
+                df["Ano"] = pd.to_datetime(df["Data"], errors="coerce").dt.year
+                df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
 
                 # Merge com cadastro de lojas
                 df["Loja"] = df["Loja"].astype(str).str.strip().str.lower()
@@ -168,6 +214,14 @@ with st.spinner("⏳ Processando..."):
                 valor_centavos = (df["Valor(R$)"].astype(float) * 100).round().astype(int).astype(str)
                 desc_key = df["Descrição"].fillna("").astype(str)
 
+                # cria colunas que serão usadas (se não existirem no merge)
+                if "Código Everest" not in df.columns:
+                    df["Código Everest"] = ""
+                if "Grupo" not in df.columns:
+                    df["Grupo"] = ""
+                if "Código Grupo Everest" not in df.columns:
+                    df["Código Grupo Everest"] = ""
+
                 df["Duplicidade"] = (
                     data_key.fillna("") + "|" +
                     hora_key.fillna("") + "|" +
@@ -187,15 +241,22 @@ with st.spinner("⏳ Processando..."):
                     "Descrição Agrupada", "Meio de recebimento", "Valor(R$)",
                     "Mês", "Ano", "Duplicidade", "Sistema"
                 ]
-                df = df[colunas_ordenadas].sort_values(by=["Data", "Loja"])
+                # cria ausentes
+                for c in colunas_ordenadas:
+                    if c not in df.columns:
+                        df[c] = ""
+                df = df[colunas_ordenadas].sort_values(by=["Data", "Loja"], na_position="last")
 
                 # Métricas
-                periodo_min = pd.to_datetime(df["Data"], dayfirst=True).min().strftime("%d/%m/%Y")
-                periodo_max = pd.to_datetime(df["Data"], dayfirst=True).max().strftime("%d/%m/%Y")
+                data_parsed = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
+                periodo_min = data_parsed.min()
+                periodo_max = data_parsed.max()
                 valor_total = float(df["Valor(R$)"].sum())
 
                 col1, col2 = st.columns(2)
-                col1.metric("📅 Período processado", f"{periodo_min} até {periodo_max}")
+                col1.metric("📅 Período processado",
+                            f"{periodo_min.strftime('%d/%m/%Y') if pd.notna(periodo_min) else '-'} até "
+                            f"{periodo_max.strftime('%d/%m/%Y') if pd.notna(periodo_max) else '-'}")
                 col2.metric(
                     "💰 Valor total de sangria",
                     f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -204,7 +265,7 @@ with st.spinner("⏳ Processando..."):
                 st.success("✅ Relatório gerado com sucesso!")
 
                 # Aviso de lojas sem código
-                lojas_sem_codigo = df[df["Código Everest"].isna()]["Loja"].unique()
+                lojas_sem_codigo = df[df["Código Everest"].astype(str).str.strip().eq("")]["Loja"].dropna().unique()
                 if len(lojas_sem_codigo) > 0:
                     st.warning(
                         f"⚠️ Lojas sem Código Everest cadastrado: {', '.join(lojas_sem_codigo)}\n\n"
@@ -251,7 +312,8 @@ with st.spinner("⏳ Processando..."):
             )
             data_key = pd.to_datetime(df_final["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
             hora_key = pd.to_datetime(df_final["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
-            df_final["Valor(R$)"] = pd.to_numeric(df_final["Valor(R$)"], errors="coerce").fillna(0.0).round(2)
+            # ✅ conversão robusta pt-BR
+            df_final["Valor(R$)"] = to_number_br(df_final["Valor(R$)"]).round(2)
             valor_centavos = (df_final["Valor(R$)"].astype(float) * 100).round().astype(int).astype(str)
             desc_key = df_final["Descrição"].fillna("").astype(str)
             df_final["Duplicidade"] = (
@@ -347,9 +409,10 @@ with st.spinner("⏳ Processando..."):
         if file_everest:
             try:
                 xls2 = pd.ExcelFile(file_everest)
-                # Lê a PRIMEIRA guia do arquivo para simplificar. Se quiser escolher, eu habilito depois.
+                # Lê a PRIMEIRA guia do arquivo para simplificar
                 df_ev = pd.read_excel(xls2, sheet_name=xls2.sheet_names[0])
                 df_ev.columns = [str(c) for c in df_ev.columns]  # mantém o cabeçalho exatamente como no arquivo
+                st.caption(f"Guia lida (Sangria Everest): **{xls2.sheet_names[0]}**")
             except Exception as e:
                 st.error(f"❌ Não foi possível ler o arquivo: {e}")
                 st.stop()
@@ -399,16 +462,15 @@ with st.spinner("⏳ Processando..."):
                     df_sheet = pd.DataFrame(data_sheet, columns=header_sheet)
 
                     # Alinhar o df_sheet ao cabeçalho do arquivo (garantir mesmas colunas na escrita final)
-                    # — cria colunas ausentes e remove as sobrando
                     target_header = list(df_ev.columns)
                     for c in target_header:
                         if c not in df_sheet.columns:
                             df_sheet[c] = ""
+                    # remove colunas extras:
                     df_sheet = df_sheet[target_header]
 
                     # Normalizar datas do sheet para comparar
                     if "Data" not in df_sheet.columns:
-                        # se não existir, simplesmente reescreve só com o arquivo
                         st.warning("⚠️ A aba atual não possui a coluna 'Data'. Ela será reescrita com o conteúdo do arquivo.")
                         values = [target_header] + df_ev.fillna("").astype(str).values.tolist()
                         ws_ev.clear()

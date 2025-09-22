@@ -116,22 +116,20 @@ with st.spinner("⏳ Processando..."):
                     st.session_state.mode = "everest"
                     st.session_state.df_everest = df.copy()
 
-                    # Helpers locais para achar colunas
+                    # Helpers p/ detectar colunas e converter valores
                     import unicodedata, re
-                    def _norm(s):
+                    def _norm(s: str) -> str:
                         s = unicodedata.normalize('NFKD', str(s)).encode('ASCII','ignore').decode('ASCII')
                         s = s.lower()
                         s = re.sub(r'[^a-z0-9]+', ' ', s)
                         return re.sub(r'\s+', ' ', s).strip()
 
-                    # 1) Detecta coluna de DATA (prioriza exatamente "D. Lançamento")
+                    # 1) DATA => "D. Lançamento" com tolerância
                     date_col = None
-                    # tenta variações comuns primeiro
                     for cand in ["D. Lançamento", "D.Lançamento", "D. Lancamento", "D.Lancamento"]:
                         if cand in df.columns:
                             date_col = cand
                             break
-                    # fallback por normalização
                     if date_col is None:
                         for col in df.columns:
                             if _norm(col) in ["d lancamento", "d lancamento data", "data lancamento"]:
@@ -139,40 +137,64 @@ with st.spinner("⏳ Processando..."):
                                 break
                     st.session_state.everest_date_col = date_col
 
-                    # 2) Detecta coluna de VALOR ("Valor Lancamento" com tolerância)
+                    # 2) VALOR => "Valor Lancamento" (variações e espaço final)
                     valor_col = None
-                    # tenta variações (com/sem acento e espaço extra)
                     for cand in ["Valor Lancamento ", "Valor Lançamento ", "Valor Lancamento", "Valor Lançamento"]:
                         if cand in df.columns:
                             valor_col = cand
                             break
-                    # fallback por normalização/contains
                     if valor_col is None:
                         for col in df.columns:
-                            n = _norm(col)
-                            if n in ["valor lancamento", "valor de lancamento", "valor do lancamento"]:
+                            if _norm(col) in ["valor lancamento", "valor de lancamento", "valor do lancamento"]:
                                 valor_col = col
                                 break
+                    st.session_state.everest_value_col = valor_col
 
-                    # Conversor pt-BR para número
+                    # Conversor pt-BR com suporte a R$, (..), e sinal no FINAL (ex.: 1.234,56-)
                     def to_number_br(series):
                         def _one(x):
-                            if pd.isna(x): return 0.0
-                            s = str(x).strip()
-                            if s == "": return 0.0
-                            s = s.replace(".", "").replace(",", ".")
-                            try:
-                                return float(s)
-                            except:
+                            if pd.isna(x):
                                 return 0.0
+                            s = str(x).strip()
+                            if s == "":
+                                return 0.0
+
+                            neg = False
+                            # parênteses => negativo
+                            if s.startswith("(") and s.endswith(")"):
+                                neg = True
+                                s = s[1:-1].strip()
+
+                            # remove R$ e espaços extras
+                            s = s.replace("R$", "").replace("r$", "").strip()
+
+                            # sinal no final
+                            if s.endswith("-"):
+                                neg = True
+                                s = s[:-1].strip()
+
+                            # padroniza separadores
+                            s = s.replace(".", "").replace(",", ".")
+
+                            # remove sobras não numéricas
+                            s_clean = re.sub(r"[^0-9.\-]", "", s)
+                            if s_clean in ["", "-", "."]:
+                                return 0.0
+                            try:
+                                val = float(s_clean)
+                            except:
+                                # último recurso: tira tudo que nao for número/ponto
+                                s_fallback = re.sub(r"[^0-9.]", "", s_clean)
+                                val = float(s_fallback) if s_fallback else 0.0
+
+                            return -abs(val) if neg else val
                         return series.apply(_one)
 
-                    # 3) Métricas: período (por D. Lançamento) e total (por Valor Lancamento)
+                    # 3) Métricas: período e total
                     periodo_txt = "—"
                     total_txt = "—"
-                    total_valor = None
 
-                    # Período
+                    # Período (por D. Lançamento)
                     if date_col is not None:
                         dt = pd.to_datetime(df[date_col], errors="coerce", dayfirst=True)
                         valid = dt.dropna()
@@ -180,34 +202,37 @@ with st.spinner("⏳ Processando..."):
                             periodo_min = valid.min().strftime("%d/%m/%Y")
                             periodo_max = valid.max().strftime("%d/%m/%Y")
                             periodo_txt = f"{periodo_min} até {periodo_max}"
-                            # guarda datas normalizadas para a aba 2
+                            # guarda datas normalizadas para a aba de atualização
                             st.session_state.everest_dates = valid.dt.normalize().unique().tolist()
                         else:
                             st.warning("⚠️ A coluna 'D. Lançamento' existe, mas não tem datas válidas.")
                     else:
-                        st.error("❌ Não encontrei a coluna **'D. Lançamento'** (tentei também: D.Lançamento / D. Lancamento / D.Lancamento).")
+                        st.error("❌ Não encontrei a coluna **'D. Lançamento'**.")
 
-                    # Total
+                    # Total (por Valor Lancamento) — exibimos o ABS do total líquido
                     if valor_col is not None:
-                        total_valor = float(to_number_br(df[valor_col]).sum())
-                        total_txt = f"R$ {total_valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                        st.session_state.everest_total = total_valor
-                        st.session_state.everest_value_col = valor_col
+                        serie_val = to_number_br(df[valor_col])
+                        total_liquido = float(serie_val.sum())          # pode ser negativo
+                        total_exibicao = abs(total_liquido)             # mostra positivo
+                        st.session_state.everest_total_liquido = total_liquido
+                        st.session_state.everest_total_abs = total_exibicao
+
+                        total_txt = f"R$ {total_exibicao:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                     else:
-                        st.warning("⚠️ Coluna de valor **'Valor Lancamento'** não encontrada (aceito variações com acento/sem acento).")
+                        st.warning("⚠️ Coluna **'Valor Lancamento'** não encontrada (aceito variações com/sem acento ou espaço).")
 
                     # Exibe métricas (sem preview)
-                    if date_col is not None and periodo_txt != "—":
+                    if periodo_txt != "—":
                         c1, c2, c3 = st.columns(3)
                         c1.metric("📅 Período processado", periodo_txt)
                         c2.metric("🧾 Linhas lidas", f"{len(df)}")
-                        c3.metric("💰 Valor total (Lançamento)", total_txt)
+                        c3.metric("💰 Total (Valor Lancamento)", total_txt)
                     else:
                         c1, c2 = st.columns(2)
                         c1.metric("🧾 Linhas lidas", f"{len(df)}")
-                        c2.metric("💰 Valor total (Lançamento)", total_txt)
+                        c2.metric("💰 Total (Valor Lancamento)", total_txt)
 
-                    # 4) Download do arquivo com cabeçalho original (sem preview)
+                    # 4) Download do arquivo com cabeçalho original
                     output_ev = BytesIO()
                     with pd.ExcelWriter(output_ev, engine="openpyxl") as writer:
                         df.to_excel(writer, index=False, sheet_name="Sangria Everest")
@@ -218,6 +243,7 @@ with st.spinner("⏳ Processando..."):
                         file_name="Sangria_Everest.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
+
 
     
                 else:

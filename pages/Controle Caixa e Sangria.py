@@ -392,74 +392,153 @@ with st.spinner("⏳ Processando..."):
     with tab2:
         st.markdown("🔗 [Abrir planilha Vendas diarias](https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU)")
     
-        # --- modo Everest? (arquivo cuja 1ª coluna é Lançamento) ---
-        mode = st.session_state.get("mode")
+        # --- modo Everest: substituir apenas as datas presentes no arquivo e enviar valor com vírgula ---
         if mode == "everest" and "df_everest" in st.session_state:
             df_file = st.session_state.df_everest.copy()
             header_file = list(df_file.columns)
-    
-            # 1) detectar coluna de data (D. Lançamento)
-            date_col = st.session_state.get("everest_date_col")
-            if date_col is None:
-                for cand in ["D. Lançamento", "D.Lançamento", "D. Lancamento", "D.Lancamento"]:
-                    if cand in df_file.columns:
-                        date_col = cand
-                        break
-            if date_col is None or date_col not in df_file.columns:
-                st.error("❌ Para atualizar a aba **Sangria Everest**, o arquivo precisa conter a coluna **'D. Lançamento'**.")
+        
+            import unicodedata, re
+            def _norm(s: str) -> str:
+                s = unicodedata.normalize('NFKD', str(s)).encode('ASCII','ignore').decode('ASCII')
+                s = s.lower()
+                s = re.sub(r'[^a-z0-9]+', ' ', s)
+                return re.sub(r'\s+', ' ', s).strip()
+        
+            def to_number_br(series):
+                def _one(x):
+                    if pd.isna(x): return 0.0
+                    s = str(x).strip()
+                    if s == "": return 0.0
+                    neg = False
+                    if s.startswith("(") and s.endswith(")"):
+                        neg = True; s = s[1:-1].strip()
+                    s = s.replace("R$", "").replace("r$", "").strip()
+                    if s.endswith("-"):
+                        neg = True; s = s[:-1].strip()
+                    s = s.replace(".", "").replace(",", ".")
+                    s_clean = re.sub(r"[^0-9.\-]", "", s)
+                    if s_clean in ["", "-", "."]: return 0.0
+                    try:
+                        val = float(s_clean)
+                    except:
+                        s_fallback = re.sub(r"[^0-9.]", "", s_clean)
+                        val = float(s_fallback) if s_fallback else 0.0
+                    return -abs(val) if neg else val
+                return series.apply(_one)
+        
+            def detect_date_col(cols):
+                # tenta 'D. Lançamento' e variações + nomes equivalentes
+                aliases = {
+                    "d lancamento", "d lancamento data", "data lancamento",
+                    "d lancamento.", "d. lancamento", "d.lancamento",
+                    "data do lancamento"
+                }
+                for c in cols:
+                    if _norm(c) in aliases:
+                        return c
+                return None
+        
+            def detect_valor_col(cols):
+                aliases = {
+                    "valor lancamento", "valor lançamento",
+                    "valor do lancamento", "valor de lancamento",
+                    "valor do lançamento", "valor de lançamento"
+                }
+                # prioridade: match exato por nome normalizado
+                for c in cols:
+                    if _norm(c) in aliases:
+                        return c
+                # fallback: coluna com mais dígitos (evita pegar a de data)
+                best, sc = None, -1
+                for c in cols:
+                    score = pd.Series(df_file[c]).astype(str).str.contains(r"\d").sum()
+                    if score > sc:
+                        best, sc = c, score
+                return best
+        
+            # colunas no ARQUIVO
+            date_file_col = st.session_state.get("everest_date_col") or detect_date_col(df_file.columns)
+            valor_file_col = st.session_state.get("everest_value_col") or detect_valor_col(df_file.columns)
+        
+            if not date_file_col or date_file_col not in df_file.columns:
+                st.error("❌ Para atualizar a aba **Sangria Everest**, preciso da coluna **'D. Lançamento'** no arquivo.")
                 st.stop()
-    
-            # 2) conjunto de datas do arquivo (normalizadas)
-            datas_file = normalize_dates(df_file[date_col])
-            datas_set = set(d for d in datas_file.dropna().unique())
+        
+            # datas do ARQUIVO (normalizadas)
+            datas_set = set(normalize_dates(df_file[date_file_col]).dropna().unique())
             if not datas_set:
-                st.error("❌ A coluna **'D. Lançamento'** não possui datas válidas para substituição.")
+                st.error("❌ A coluna **'D. Lançamento'** do arquivo não possui datas válidas.")
                 st.stop()
-    
-            # 3) abrir aba de destino
+        
+            # abre a aba destino
             try:
                 ws = planilha.worksheet("Sangria Everest")
             except Exception as e:
                 st.error(f"❌ Não consegui abrir a aba 'Sangria Everest': {e}")
                 st.stop()
-    
+        
             rows = ws.get_all_values()
             if not rows:
-                # planilha vazia → escreve cabeçalho do arquivo + dados
-                values = [header_file] + df_file.fillna("").astype(str).values.tolist()
+                # planilha vazia → escreve cabeçalho do arquivo + dados (formatando o valor com vírgula)
+                df_insert = df_file.copy()
+                if valor_file_col and valor_file_col in df_insert.columns:
+                    if pd.api.types.is_numeric_dtype(df_insert[valor_file_col]):
+                        serie_val = pd.to_numeric(df_insert[valor_file_col], errors="coerce").fillna(0.0)
+                    else:
+                        serie_val = to_number_br(df_insert[valor_file_col])
+                    # usar vírgula como separador decimal (sem milhar p/ evitar ambiguidade)
+                    df_insert[valor_file_col] = serie_val.apply(lambda v: f"{v:.2f}".replace(".", ","))
+                values = [header_file] + df_insert.fillna("").astype(str).values.tolist()
                 ws.clear()
                 ws.update("A1", values, value_input_option="USER_ENTERED")
-                st.success(f"✅ 'Sangria Everest' criada com {len(df_file)} linhas.")
+                st.success(f"✅ 'Sangria Everest' criada com {len(df_insert)} linhas.")
                 st.balloons()
                 st.stop()
-    
-            # 4) alinhar sheet ao cabeçalho do arquivo
+        
+            # há dados no sheet → manter outras datas e substituir só as do arquivo
             header_sheet = rows[0]
             data_sheet = rows[1:]
             df_sheet = pd.DataFrame(data_sheet, columns=header_sheet)
-            for c in header_file:
-                if c not in df_sheet.columns:
-                    df_sheet[c] = ""
-            df_sheet = df_sheet[header_file]  # remove colunas extras do sheet
-    
-            # 5) manter linhas de datas NÃO presentes no arquivo e anexar as novas
-            if date_col not in df_sheet.columns:
-                # destino sem a coluna → reescreve tudo com o cabeçalho do arquivo
-                df_final_ev = df_file[header_file].copy()
-                removidas = len(df_sheet)
-            else:
-                datas_sheet_norm = normalize_dates(df_sheet[date_col])
-                manter = df_sheet.loc[~datas_sheet_norm.isin(datas_set)].copy()
-                removidas = int((datas_sheet_norm.isin(datas_set)).sum())
-                df_final_ev = pd.concat([manter, df_file[header_file]], ignore_index=True)
-    
-            # 6) botão único (mesmo layout)
+        
+            # detectar colunas equivalentes no SHEET
+            date_sheet_col = detect_date_col(df_sheet.columns)
+            if not date_sheet_col:
+                st.error("❌ A aba **Sangria Everest** não tem uma coluna de data equivalente a 'D. Lançamento'. Nada foi alterado.")
+                st.stop()
+        
+            valor_sheet_col = detect_valor_col(df_sheet.columns)
+        
+            # 1) manter linhas do sheet cujas datas NÃO estão no arquivo
+            datas_sheet_norm = normalize_dates(df_sheet[date_sheet_col])
+            kept = df_sheet.loc[~datas_sheet_norm.isin(datas_set)].copy()
+        
+            # 2) alinhar o DF do ARQUIVO à ordem de colunas do SHEET
+            df_insert = pd.DataFrame({col: df_file[col] if col in df_file.columns else "" for col in header_sheet})
+        
+            # 3) formatar a coluna de VALOR para entrar com vírgula (se a coluna existir no sheet)
+            if valor_sheet_col:
+                # fonte: preferir a coluna de valor do arquivo, senão a já alinhada
+                src = df_file[valor_file_col] if (valor_file_col and valor_file_col in df_file.columns) else df_insert[valor_sheet_col]
+                if pd.api.types.is_numeric_dtype(src):
+                    serie_val = pd.to_numeric(src, errors="coerce").fillna(0.0)
+                else:
+                    serie_val = to_number_br(src)
+                df_insert[valor_sheet_col] = serie_val.apply(lambda v: f"{v:.2f}".replace(".", ","))
+        
+            # 4) final = LINHAS MANTIDAS + NOVAS (apenas as datas do arquivo)
+            df_final = pd.concat([kept, df_insert], ignore_index=True)
+        
+            # 5) atualizar de uma vez (reescreve cabeçalho + linhas mantidas + novas)
             if st.button("📥 Enviar dados para a aba 'Sangria Everest'"):
                 with st.spinner("🔄 Enviando..."):
-                    values = [header_file] + df_final_ev.fillna("").astype(str).values.tolist()
+                    values = [header_sheet] + df_final.fillna("").astype(str).values.tolist()
                     ws.clear()
                     ws.update("A1", values, value_input_option="USER_ENTERED")
-                    st.success(f"✅ Atualizado! {removidas} linha(s) substituída(s) e {len(df_file)} nova(s) linha(s) inserida(s).")
+                    st.success(
+                        f"✅ Atualizado! Removidas {int((datas_sheet_norm.isin(datas_set)).sum())} "
+                        f"linha(s) por data e inseridas {len(df_insert)} nova(s) linha(s)."
+                    )
+
     
         # --- caso contrário, fluxo Colibri original ---
         else:

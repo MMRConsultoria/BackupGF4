@@ -163,7 +163,6 @@ with st.spinner("⏳ Processando..."):
                 
                     valor_col = detect_valor_col(df, avoid_col=date_col)
                     st.session_state.everest_value_col = valor_col
-                
                     # Conversor pt-BR robusto: R$, parênteses, sinal no final (1.234,56-)
                     def to_number_br(series):
                         def _one(x):

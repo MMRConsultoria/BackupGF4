@@ -396,17 +396,52 @@ with st.spinner("⏳ Processando..."):
         mode = st.session_state.get("mode", None)
     
         # --- modo Everest: substituir apenas as datas presentes no arquivo e enviar valor com vírgula ---
+        # --- MODO EVEREST: apaga só as datas do arquivo e insere novas; valores com vírgula/2 casas ---
         if mode == "everest" and "df_everest" in st.session_state:
             df_file = st.session_state.df_everest.copy()
-            header_file = list(df_file.columns)
         
-            import unicodedata, re
+            import re, unicodedata
+        
             def _norm(s: str) -> str:
-                s = unicodedata.normalize('NFKD', str(s)).encode('ASCII','ignore').decode('ASCII')
+                s = unicodedata.normalize('NFKD', str(s)).encode('ASCII', 'ignore').decode('ASCII')
                 s = s.lower()
                 s = re.sub(r'[^a-z0-9]+', ' ', s)
                 return re.sub(r'\s+', ' ', s).strip()
         
+            # Detecta colunas no ARQUIVO
+            date_file_col = st.session_state.get("everest_date_col")
+            if not date_file_col or date_file_col not in df_file.columns:
+                for cand in ["D. Lançamento", "D.Lançamento", "D. Lancamento", "D.Lancamento"]:
+                    if cand in df_file.columns:
+                        date_file_col = cand
+                        break
+            if not date_file_col or date_file_col not in df_file.columns:
+                st.error("❌ Para atualizar a aba **Sangria Everest**, preciso da coluna **'D. Lançamento'** no arquivo.")
+                st.stop()
+        
+            # Detecta colunas de valor no ARQUIVO
+            def detect_valor_col(cols):
+                aliases = {
+                    "valor lancamento", "valor lançamento",
+                    "valor do lancamento", "valor de lancamento",
+                    "valor do lançamento", "valor de lançamento"
+                }
+                for c in cols:
+                    if _norm(c) in aliases:
+                        return c
+                return None
+        
+            def detect_rateio_col(cols):
+                aliases = {"v rateio", "v. rateio", "valor rateio"}
+                for c in cols:
+                    if _norm(c) in aliases:
+                        return c
+                return None
+        
+            valor_file_col  = detect_valor_col(df_file.columns)
+            rateio_file_col = detect_rateio_col(df_file.columns)
+        
+            # Conversor robusto pt-BR → número (R$, parênteses, sinal no fim, etc.)
             def to_number_br(series):
                 def _one(x):
                     if pd.isna(x): return 0.0
@@ -429,51 +464,34 @@ with st.spinner("⏳ Processando..."):
                     return -abs(val) if neg else val
                 return series.apply(_one)
         
-            def detect_date_col(cols):
-                # tenta 'D. Lançamento' e variações + nomes equivalentes
-                aliases = {
-                    "d lancamento", "d lancamento data", "data lancamento",
-                    "d lancamento.", "d. lancamento", "d.lancamento",
-                    "data do lancamento"
-                }
-                for c in cols:
-                    if _norm(c) in aliases:
-                        return c
-                return None
+            # Parser de datas que funciona para texto (dd/mm/aaaa, ISO) e número serial do Excel
+            def parse_date_any(series):
+                def _parse_one(x):
+                    if pd.isna(x): return pd.NaT
+                    s = str(x).strip()
+                    if s == "": return pd.NaT
+                    # número/float → trata como serial do Excel
+                    if re.fullmatch(r"\d+([.,]\d+)?", s):
+                        try:
+                            f = float(s.replace(",", "."))
+                            return pd.Timestamp("1899-12-30") + pd.to_timedelta(f, unit="D")
+                        except Exception:
+                            pass
+                    # tenta dd/mm/aaaa hh:mm[:ss] (dayfirst)
+                    dt = pd.to_datetime(s, dayfirst=True, errors="coerce")
+                    if pd.isna(dt):
+                        # tenta ISO
+                        dt = pd.to_datetime(s, errors="coerce")
+                    return dt
+                return series.apply(_parse_one).dt.normalize()
         
-            def detect_valor_col(cols):
-                aliases = {
-                    "valor lancamento", "valor lançamento",
-                    "valor do lancamento", "valor de lancamento",
-                    "valor do lançamento", "valor de lançamento"
-                }
-                # prioridade: match exato por nome normalizado
-                for c in cols:
-                    if _norm(c) in aliases:
-                        return c
-                # fallback: coluna com mais dígitos (evita pegar a de data)
-                best, sc = None, -1
-                for c in cols:
-                    score = pd.Series(df_file[c]).astype(str).str.contains(r"\d").sum()
-                    if score > sc:
-                        best, sc = c, score
-                return best
-        
-            # colunas no ARQUIVO
-            date_file_col = st.session_state.get("everest_date_col") or detect_date_col(df_file.columns)
-            valor_file_col = st.session_state.get("everest_value_col") or detect_valor_col(df_file.columns)
-        
-            if not date_file_col or date_file_col not in df_file.columns:
-                st.error("❌ Para atualizar a aba **Sangria Everest**, preciso da coluna **'D. Lançamento'** no arquivo.")
-                st.stop()
-        
-            # datas do ARQUIVO (normalizadas)
-            datas_set = set(normalize_dates(df_file[date_file_col]).dropna().unique())
+            # Conjunto de DATAS (normalizadas) vindo do ARQUIVO
+            datas_set = set(parse_date_any(df_file[date_file_col]).dropna().unique())
             if not datas_set:
                 st.error("❌ A coluna **'D. Lançamento'** do arquivo não possui datas válidas.")
                 st.stop()
         
-            # abre a aba destino
+            # Abre a aba destino
             try:
                 ws = planilha.worksheet("Sangria Everest")
             except Exception as e:
@@ -482,64 +500,87 @@ with st.spinner("⏳ Processando..."):
         
             rows = ws.get_all_values()
             if not rows:
-                # planilha vazia → escreve cabeçalho do arquivo + dados (formatando o valor com vírgula)
+                # planilha vazia → escreve arquivo (formatando colunas de valor com vírgula/2 casas)
+                header_sheet = list(df_file.columns)  # vira o cabeçalho no sheet
                 df_insert = df_file.copy()
-                if valor_file_col and valor_file_col in df_insert.columns:
-                    if pd.api.types.is_numeric_dtype(df_insert[valor_file_col]):
-                        serie_val = pd.to_numeric(df_insert[valor_file_col], errors="coerce").fillna(0.0)
+        
+                def to_str_comma(series_like):
+                    if pd.api.types.is_numeric_dtype(series_like):
+                        nums = pd.to_numeric(series_like, errors="coerce").fillna(0.0)
                     else:
-                        serie_val = to_number_br(df_insert[valor_file_col])
-                    # usar vírgula como separador decimal (sem milhar p/ evitar ambiguidade)
-                    df_insert[valor_file_col] = serie_val.apply(lambda v: f"{v:.2f}".replace(".", ","))
-                values = [header_file] + df_insert.fillna("").astype(str).values.tolist()
+                        nums = to_number_br(series_like)
+                    return nums.apply(lambda v: f"{float(v):.2f}".replace(".", ","))
+        
+                if valor_file_col and valor_file_col in df_insert.columns:
+                    df_insert[valor_file_col] = to_str_comma(df_insert[valor_file_col])
+                if rateio_file_col and rateio_file_col in df_insert.columns:
+                    df_insert[rateio_file_col] = to_str_comma(df_insert[rateio_file_col])
+        
+                values = [header_sheet] + df_insert.fillna("").astype(str).values.tolist()
                 ws.clear()
                 ws.update("A1", values, value_input_option="USER_ENTERED")
                 st.success(f"✅ 'Sangria Everest' criada com {len(df_insert)} linhas.")
                 st.balloons()
                 st.stop()
         
-            # há dados no sheet → manter outras datas e substituir só as do arquivo
+            # Já existe conteúdo no sheet → REMOVER apenas as datas do arquivo e inserir as novas
             header_sheet = rows[0]
-            data_sheet = rows[1:]
-            df_sheet = pd.DataFrame(data_sheet, columns=header_sheet)
+            data_sheet   = rows[1:]
+            df_sheet     = pd.DataFrame(data_sheet, columns=header_sheet)
         
-            # detectar colunas equivalentes no SHEET
-            date_sheet_col = detect_date_col(df_sheet.columns)
+            # Detecta coluna de data no SHEET
+            date_sheet_col = None
+            for c in df_sheet.columns:
+                if _norm(c) in {"d lancamento", "data lancamento", "d lancamento data", "d lancamento.", "d. lancamento", "d.lancamento"}:
+                    date_sheet_col = c
+                    break
             if not date_sheet_col:
                 st.error("❌ A aba **Sangria Everest** não tem uma coluna de data equivalente a 'D. Lançamento'. Nada foi alterado.")
                 st.stop()
         
-            valor_sheet_col = detect_valor_col(df_sheet.columns)
+            # Detecta colunas de valor no SHEET (para formatar)
+            valor_sheet_col  = None
+            rateio_sheet_col = None
+            for c in df_sheet.columns:
+                if _norm(c) in {"valor lancamento", "valor lançamento", "valor do lancamento", "valor de lancamento", "valor do lançamento", "valor de lançamento"}:
+                    valor_sheet_col = c
+                if _norm(c) in {"v rateio", "v. rateio", "valor rateio"}:
+                    rateio_sheet_col = c
         
-            # 1) manter linhas do sheet cujas datas NÃO estão no arquivo
-            datas_sheet_norm = normalize_dates(df_sheet[date_sheet_col])
+            # 1) Mantém as linhas cujas DATAS NÃO estão no arquivo
+            datas_sheet_norm = parse_date_any(df_sheet[date_sheet_col])
             kept = df_sheet.loc[~datas_sheet_norm.isin(datas_set)].copy()
         
-            # 2) alinhar o DF do ARQUIVO à ordem de colunas do SHEET
-            df_insert = pd.DataFrame({col: df_file[col] if col in df_file.columns else "" for col in header_sheet})
+            # 2) Alinhar as colunas do ARQUIVO à ordem do SHEET
+            df_insert = pd.DataFrame({col: (df_file[col] if col in df_file.columns else "") for col in header_sheet})
         
-            # 3) formatar a coluna de VALOR para entrar com vírgula (se a coluna existir no sheet)
-            if valor_sheet_col:
-                # fonte: preferir a coluna de valor do arquivo, senão a já alinhada
-                src = df_file[valor_file_col] if (valor_file_col and valor_file_col in df_file.columns) else df_insert[valor_sheet_col]
-                if pd.api.types.is_numeric_dtype(src):
-                    serie_val = pd.to_numeric(src, errors="coerce").fillna(0.0)
+            # 3) Formatar VALORES (vírgula, 2 casas) para Valor Lançamento e V. Rateio
+            def to_str_comma(series_like):
+                if pd.api.types.is_numeric_dtype(series_like):
+                    nums = pd.to_numeric(series_like, errors="coerce").fillna(0.0)
                 else:
-                    serie_val = to_number_br(src)
-                df_insert[valor_sheet_col] = serie_val.apply(lambda v: f"{v:.2f}".replace(".", ","))
+                    nums = to_number_br(series_like)
+                return nums.apply(lambda v: f"{float(v):.2f}".replace(".", ","))
         
-            # 4) final = LINHAS MANTIDAS + NOVAS (apenas as datas do arquivo)
+            if valor_sheet_col:
+                src = df_file[valor_file_col] if (valor_file_col and valor_file_col in df_file.columns) else df_insert[valor_sheet_col]
+                df_insert[valor_sheet_col] = to_str_comma(src)
+            if rateio_sheet_col and (rateio_file_col in df_file.columns if rateio_file_col else False or rateio_sheet_col in df_insert.columns):
+                src = df_file[rateio_file_col] if (rateio_file_col and rateio_file_col in df_file.columns) else df_insert[rateio_sheet_col]
+                df_insert[rateio_sheet_col] = to_str_comma(src)
+        
+            # 4) Final = LINHAS MANTIDAS (outras datas) + NOVAS (datas do arquivo)
             df_final = pd.concat([kept, df_insert], ignore_index=True)
         
-            # 5) atualizar de uma vez (reescreve cabeçalho + linhas mantidas + novas)
+            # 5) Atualiza (mesmo layout: um botão)
             if st.button("📥 Enviar dados para a aba 'Sangria Everest'"):
                 with st.spinner("🔄 Enviando..."):
                     values = [header_sheet] + df_final.fillna("").astype(str).values.tolist()
                     ws.clear()
                     ws.update("A1", values, value_input_option="USER_ENTERED")
+                    removidas = int((datas_sheet_norm.isin(datas_set)).sum())
                     st.success(
-                        f"✅ Atualizado! Removidas {int((datas_sheet_norm.isin(datas_set)).sum())} "
-                        f"linha(s) por data e inseridas {len(df_insert)} nova(s) linha(s)."
+                        f"✅ Atualizado! Removidas {removidas} linha(s) pelas datas do arquivo e inseridas {len(df_insert)} nova(s) linha(s)."
                     )
 
     

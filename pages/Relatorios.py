@@ -2478,7 +2478,7 @@ with st.spinner("⏳ Processando..."):
         except Exception as e:
             st.error(f"❌ Erro ao acessar dados: {e}")
 
-    # ================================
+ 
     # ================================
     # Nova ABA: Relatórios Caixa e Sangria (com sub-abas)
     # ================================
@@ -2504,11 +2504,30 @@ with st.spinner("⏳ Processando..."):
         st.dataframe(df, use_container_width=True, height=height, hide_index=True)
         return df
     
+
     def pick_valor_col(cols):
-        for c in cols:
-            if "valor" in str(c).lower().replace(" ", ""):
+        import re
+        def norm(s): 
+            return re.sub(r"[\s\u00A0]+", " ", str(s)).strip().lower()
+        nm = {c: norm(c) for c in cols}
+    
+        # 1) preferidos (match exato, sem confundir com 'valores')
+        prefer = ["valor(r$)", "valor (r$)", "valor", "valor r$"]
+        for want in prefer:
+            for c, n in nm.items():
+                if n == want:
+                    return c
+    
+        # 2) fallback: contém 'valor' mas NÃO contém ruídos
+        for c, n in nm.items():
+            if ("valor" in n 
+                and "valores" not in n 
+                and "google" not in n 
+                and "sheet"  not in n):
                 return c
+    
         return None
+
     
     # parser PT-BR linha-a-linha (cobre "13.956", "13.956,00", "13956", "13956.0", "139,56")
     def parse_brl_str(x):
@@ -2563,7 +2582,16 @@ with st.spinner("⏳ Processando..."):
         try:
             ws_sangria = planilha_empresa.worksheet("Sangria")
             df_sangria = pd.DataFrame(ws_sangria.get_all_records())
-    
+
+            
+            col_valor = None
+            if "Valor(R$)" in df_sangria.columns:
+                col_valor = "Valor(R$)"
+            else:
+                col_valor = pick_valor_col(df_sangria.columns)
+            
+            
+            
             # normalizações básicas
             df_sangria.columns = [c.strip() for c in df_sangria.columns]
             if "Data" in df_sangria.columns:

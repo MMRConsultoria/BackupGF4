@@ -68,8 +68,9 @@ with st.spinner("⏳ Processando..."):
     tab1, tab2 = st.tabs(["📥 Upload e Processamento", "🔄 Atualizar Google Sheets"])
 
    
+  
     # ================
-    # 📥 Aba 1 — (ATUALIZADA para aceitar 'Hora' OU 'Lançamento')
+    # 📥 Aba 1 — (ATUALIZADA para aceitar 'Hora' OU 'Lançamento' e achar a coluna de Valor)
     # ================
     with tab1:
         uploaded_file = st.file_uploader(
@@ -80,12 +81,56 @@ with st.spinner("⏳ Processando..."):
     
         if uploaded_file:
             # --- helpers locais ---
+            import unicodedata, re
+    
             def auto_read_first_or_sheet(uploaded, preferred="Sheet"):
                 xls = pd.ExcelFile(uploaded)
                 sheets = xls.sheet_names
                 sheet_to_read = preferred if preferred in sheets else sheets[0]
                 df0 = pd.read_excel(xls, sheet_name=sheet_to_read)
                 return df0, sheet_to_read, sheets
+    
+            def norm_txt(s: str) -> str:
+                s = unicodedata.normalize('NFKD', str(s)).encode('ASCII', 'ignore').decode('ASCII')
+                s = s.lower().strip()
+                s = re.sub(r'[^a-z0-9 ]+', ' ', s)
+                s = re.sub(r'\s+', ' ', s)
+                return s
+    
+            def find_col_by_alias(df, aliases):
+                """Procura coluna por nomes equivalentes (com normalização)."""
+                aliases_norm = [norm_txt(a) for a in aliases]
+                for col in df.columns:
+                    n = norm_txt(col)
+                    if n in aliases_norm:
+                        return col
+                # tenta 'contains'
+                for col in df.columns:
+                    n = norm_txt(col)
+                    if any(a in n for a in aliases_norm):
+                        return col
+                return None
+    
+            def detect_value_column(df):
+                """Acha a coluna de valor (ex.: 'Valor', 'Valor (R$)', 'Valor R$', 'Vlr', etc.)."""
+                preferred_aliases = [
+                    "valor(r$)","valor (r$)","valor r$","valor","vlr","valor liquido","valor líquido","valor recebido"
+                ]
+                col = find_col_by_alias(df, preferred_aliases)
+                if col:
+                    return col
+                # fallback: escolhe a coluna com mais valores numéricos interpretáveis
+                best_col, best_score = None, -1
+                for c in df.columns:
+                    s = df[c].astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+                    try:
+                        conv = pd.to_numeric(s, errors="coerce")
+                        score = conv.notna().sum()
+                    except Exception:
+                        score = 0
+                    if score > best_score:
+                        best_col, best_score = c, score
+                return best_col
     
             def to_number_br(series):
                 def _one(x):
@@ -113,24 +158,36 @@ with st.spinner("⏳ Processando..."):
                 df.columns = [str(c).strip() for c in df.columns]
     
                 # 🔎 Qual coluna carrega os textos de cabeçalho ("Loja:", "Data:", "Funcionário:")?
-                TEXT_COL = "Hora" if "Hora" in df.columns else ("Lançamento" if "Lançamento" in df.columns else None)
-                if TEXT_COL is None:
+                text_col = None
+                # tenta 'Hora' primeiro, depois 'Lançamento' (ou 'Lancamento' sem acento)
+                for cand in ["Hora", "Lançamento", "Lancamento"]:
+                    if cand in df.columns:
+                        text_col = cand
+                        break
+                if text_col is None:
+                    # varre por alguma coluna cujo nome normalizado contenha 'hora' ou 'lancamento'
+                    for col in df.columns:
+                        n = norm_txt(col)
+                        if ("hora" in n) or ("lancamento" in n):
+                            text_col = col
+                            break
+                if text_col is None:
                     st.error("❌ O arquivo precisa ter a coluna 'Hora' **ou** 'Lançamento'.")
                     st.stop()
     
-                # ⚠️ Garante colunas essenciais
-                if "Valor(R$)" not in df.columns:
-                    st.error("❌ O arquivo deve conter a coluna 'Valor(R$)'.")
+                # 🔎 Detecta coluna de valor
+                val_col = detect_value_column(df)
+                if val_col is None:
+                    st.error(f"❌ Não encontrei coluna de valor. Colunas do arquivo: {list(df.columns)}")
                     st.stop()
     
-                # Se não houver 'Descrição', criamos usando 'Lançamento' (caso exista)
+                # Se não houver 'Descrição', criamos usando 'Lançamento' (ou a própria text_col)
                 if "Descrição" not in df.columns:
-                    if "Lançamento" in df.columns:
-                        df["Descrição"] = df["Lançamento"].astype(str)
-                    else:
-                        # Sem 'Descrição' e sem 'Lançamento': não há de onde tirar a descrição
+                    base_desc_col = "Lançamento" if "Lançamento" in df.columns else (text_col if text_col in df.columns else None)
+                    if base_desc_col is None:
                         st.error("❌ O arquivo precisa ter a coluna 'Descrição' ou 'Lançamento'.")
                         st.stop()
+                    df["Descrição"] = df[base_desc_col].astype(str)
     
                 # Campos preenchidos durante o parsing
                 df["Loja"] = np.nan
@@ -142,9 +199,9 @@ with st.spinner("⏳ Processando..."):
                 loja_atual = None
                 linhas_validas = []
     
-                # Percorre linhas, lendo cabeçalhos através de TEXT_COL
+                # Percorre linhas, lendo cabeçalhos através de text_col
                 for i, row in df.iterrows():
-                    texto = str(row[TEXT_COL]).strip() if pd.notna(row[TEXT_COL]) else ""
+                    texto = str(row[text_col]).strip() if pd.notna(row[text_col]) else ""
     
                     if texto.startswith("Loja:"):
                         loja = texto.split("Loja:")[1].split("(Total")[0].strip()
@@ -164,8 +221,8 @@ with st.spinner("⏳ Processando..."):
                         funcionario_atual = texto.split("Funcionário:")[1].split("(Total")[0].strip()
     
                     else:
-                        # Linha de dado: precisa ter valor e algum texto (Descrição ou Lançamento)
-                        tem_valor = pd.notna(row.get("Valor(R$)"))
+                        # Linha de dado: precisa ter valor e alguma descrição
+                        tem_valor = pd.notna(row.get(val_col))
                         tem_desc = pd.notna(row.get("Descrição")) and str(row.get("Descrição")).strip() != ""
                         if tem_valor and tem_desc:
                             df.at[i, "Data"] = data_atual
@@ -183,8 +240,8 @@ with st.spinner("⏳ Processando..."):
                 )
                 df["Funcionário"] = df["Funcionário"].astype(str).str.strip()
     
-                # ✅ Conversão robusta pt-BR
-                df["Valor(R$)"] = to_number_br(df["Valor(R$)"]).round(2)
+                # ✅ Conversão robusta pt-BR → cria a coluna canônica 'Valor(R$)'
+                df["Valor(R$)"] = to_number_br(df[val_col]).round(2)
     
                 # Dia semana / mês / ano
                 dt_parsed = pd.to_datetime(df["Data"], errors="coerce")
@@ -217,8 +274,6 @@ with st.spinner("⏳ Processando..."):
                 df["Sistema"] = NOME_SISTEMA
     
                 # 🔑 DUPLICIDADE = Data + Hora(opcional) + Código + Valor(em centavos) + Descrição
-                # - Se a coluna 'Hora' existir, usamos. Caso contrário, fica vazio.
-                hora_str = ""
                 if "Hora" in df.columns:
                     hora_str_series = pd.to_datetime(df["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
                 else:
@@ -229,12 +284,9 @@ with st.spinner("⏳ Processando..."):
                 desc_key = df["Descrição"].fillna("").astype(str)
     
                 # cria colunas que serão usadas (se não existirem no merge)
-                if "Código Everest" not in df.columns:
-                    df["Código Everest"] = ""
-                if "Grupo" not in df.columns:
-                    df["Grupo"] = ""
-                if "Código Grupo Everest" not in df.columns:
-                    df["Código Grupo Everest"] = ""
+                for cfix in ["Código Everest","Grupo","Código Grupo Everest"]:
+                    if cfix not in df.columns:
+                        df[cfix] = ""
     
                 df["Duplicidade"] = (
                     data_key.fillna("") + "|" +
@@ -255,7 +307,6 @@ with st.spinner("⏳ Processando..."):
                     "Descrição Agrupada", "Meio de recebimento", "Valor(R$)",
                     "Mês", "Ano", "Duplicidade", "Sistema"
                 ]
-                # cria ausentes
                 for c in colunas_ordenadas:
                     if c not in df.columns:
                         df[c] = ""
@@ -295,6 +346,7 @@ with st.spinner("⏳ Processando..."):
                 output.seek(0)
                 st.download_button("📥 Baixar relatório de sangria",
                                    data=output, file_name="Sangria_estruturada.xlsx")
+
 
 
     # ================

@@ -661,7 +661,7 @@ with st.spinner("⏳ Processando..."):
                         ws.append_rows(novas_linhas, value_input_option="USER_ENTERED")
             
                     st.success(
-                        f"✅ Removidas {len(rows_to_delete)} linha(s) em {len(ranges_1based)} faixa(s) e inseridas {len(novas_linhas)} nova(s) linha(s)."
+                        f"✅ Removidas"
                     )
 
 

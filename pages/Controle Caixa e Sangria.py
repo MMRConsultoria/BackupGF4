@@ -233,11 +233,11 @@ with st.spinner("⏳ Processando..."):
                     if periodo_txt != "—":
                         c1, c2, c3 = st.columns(3)
                         c1.metric("📅 Período processado", periodo_txt)
-                        c2.metric("🧾 Linhas lidas", f"{len(df)}")
+                        #c2.metric("🧾 Linhas lidas", f"{len(df)}")
                         c3.metric("💰 Total (Valor Lançamento)", total_txt)
                     else:
                         c1, c2 = st.columns(2)
-                        c1.metric("🧾 Linhas lidas", f"{len(df)}")
+                        #c1.metric("🧾 Linhas lidas", f"{len(df)}")
                         c2.metric("💰 Total (Valor Lançamento)", total_txt)
                 
                     # 5) Download do arquivo como veio
@@ -246,7 +246,7 @@ with st.spinner("⏳ Processando..."):
                         df.to_excel(writer, index=False, sheet_name="Sangria Everest")
                     output_ev.seek(0)
                     st.download_button(
-                        "📥 Baixar arquivo (Everest)",
+                        "📥 Sangria Everest",
                         data=output_ev,
                         file_name="Sangria_Everest.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -381,7 +381,7 @@ with st.spinner("⏳ Processando..."):
                         with pd.ExcelWriter(output, engine="openpyxl") as writer:
                             df.to_excel(writer, index=False, sheet_name="Sangria")
                         output.seek(0)
-                        st.download_button("📥 Baixar relatório de sangria",
+                        st.download_button("📥Sangria Colibri",
                                            data=output, file_name="Sangria_estruturada.xlsx")
                     except KeyError as e:
                         st.error(f"❌ Coluna obrigatória ausente para o padrão Colibri: {e}")

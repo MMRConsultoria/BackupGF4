@@ -103,7 +103,7 @@ with st.spinner("⏳ Processando..."):
     
             try:
                 df_dados, guia_lida, lista_guias = auto_read_first_or_sheet(uploaded_file, preferred="Sheet")
-                st.caption(f"Guia lida: **{guia_lida}** (disponíveis: {', '.join(lista_guias)})")
+                #st.caption(f"Guia lida: **{guia_lida}** (disponíveis: {', '.join(lista_guias)})")
             except Exception as e:
                 st.error(f"❌ Não foi possível ler o arquivo enviado. Detalhes: {e}")
             else:

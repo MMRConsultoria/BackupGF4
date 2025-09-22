@@ -583,7 +583,7 @@ with st.spinner("⏳ Processando..."):
         
             # 6) Atualiza (mesmo layout: um botão)
             # ⏩ Botão super-rápido: deleta em FAIXAS + append único
-            if st.button("📥 Enviar dados para a aba 'Sangria Everest'"):
+            if st.button("📥 Atualizar Google Sheets Sangria Everest"):
                 with st.spinner("🔄 Enviando..."):
                     import pandas as _pd
             
@@ -743,7 +743,7 @@ with st.spinner("⏳ Processando..."):
                     else:
                         novos_dados.append(linha)
     
-                if st.button("📥 Enviar dados para a aba 'sangria'"):
+                if st.button("📥 Atualizar Google Sheets Sangria"):
                     with st.spinner("🔄 Enviando..."):
                         if novos_dados:
                             # USER_ENTERED => Sheets interpreta Data e Hora, valor numérico sem texto

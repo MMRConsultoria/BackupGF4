@@ -2714,115 +2714,115 @@ with st.spinner("⏳ Processando..."):
                         df_exibe = pd.concat([pd.DataFrame([total_row]), df_exibe], ignore_index=True)
                         df_exibe = formata_valor_col(df_exibe, col_valor)
     
-                    elif visao == "Comparativa Everest":
-                    # ⚙️ Ignora filtros de Loja/Descrição: só respeita o período selecionado
-                    base = df_sangria.copy()
-                    if "Data" not in base.columns or "Código Everest" not in base.columns:
-                        st.error("❌ Para a Comparativa, preciso de 'Data' e 'Código Everest' na aba Sangria.")
-                        df_exibe = pd.DataFrame()
+                elif visao == "Comparativa Everest":
+                # ⚙️ Ignora filtros de Loja/Descrição: só respeita o período selecionado
+                base = df_sangria.copy()
+                if "Data" not in base.columns or "Código Everest" not in base.columns:
+                    st.error("❌ Para a Comparativa, preciso de 'Data' e 'Código Everest' na aba Sangria.")
+                    df_exibe = pd.DataFrame()
+                else:
+                    # Normaliza base Sangria (sistema)
+                    base["Data"] = pd.to_datetime(base["Data"], dayfirst=True, errors="coerce").dt.normalize()
+                    base = base[(base["Data"].dt.date >= dt_inicio) & (base["Data"].dt.date <= dt_fim)]
+            
+                    # valor da sangria (já detectado em col_valor) → float
+                    if col_valor:
+                        base[col_valor] = pd.Series(base[col_valor]).apply(parse_brl_str).astype(float)
                     else:
-                        # Normaliza base Sangria (sistema)
-                        base["Data"] = pd.to_datetime(base["Data"], dayfirst=True, errors="coerce").dt.normalize()
-                        base = base[(base["Data"].dt.date >= dt_inicio) & (base["Data"].dt.date <= dt_fim)]
-                
-                        # valor da sangria (já detectado em col_valor) → float
-                        if col_valor:
-                            base[col_valor] = pd.Series(base[col_valor]).apply(parse_brl_str).astype(float)
-                        else:
-                            st.error("❌ Não consegui identificar a coluna de valor na aba Sangria.")
-                            df_exibe = pd.DataFrame()
-                            st.stop()
-                
-                        # Código Everest como string numérica
-                        base["Código Everest"] = base["Código Everest"].astype(str).str.extract(r"(\d+)")
-                
-                        # 📌 Sangria (Sistema) agrupada por Código Everest + Data
-                        df_sys = (base.groupby(["Código Everest", "Data"], as_index=False)[col_valor]
-                                        .sum().rename(columns={col_valor: "Sangria (Sistema)"}))
-                
-                        # ================================
-                        #    Carrega "Sangria Everest"
-                        # ================================
-                        try:
-                            ws_ev = planilha_empresa.worksheet("Sangria Everest")
-                            df_ev = pd.DataFrame(ws_ev.get_all_records())
-                            df_ev.columns = [c.strip() for c in df_ev.columns]
-                        except Exception as e:
-                            st.error(f"❌ Não consegui carregar a aba 'Sangria Everest': {e}")
-                            df_exibe = pd.DataFrame()
-                            st.stop()
-                
-                        import re
-                        def _norm(c): return re.sub(r"[^a-z0-9]", "", c.lower())
-                
-                        # detecta colunas da planilha Everest
-                        cols_map = {c: _norm(c) for c in df_ev.columns}
-                        # Empresa (onde está o Código Everest)
-                        col_emp = next((c for c,n in cols_map.items() if "empresa" in n), None)
-                        # Data do lançamento
-                        col_dt = next((c for c,n in cols_map.items() if "dlancamento" in n or n.endswith("dlancamento")), None)
-                        if col_dt is None:
-                            col_dt = next((c for c,n in cols_map.items() if n.startswith("data")), None)
-                        # Valor do lançamento
-                        col_val_ev = next((c for c,n in cols_map.items() if "valorlancamento" in n or n.endswith("lancamento")), None)
-                
-                        if not all([col_emp, col_dt, col_val_ev]):
-                            st.error("❌ Na aba 'Sangria Everest' espero encontrar: 'Empresa', 'D. Lançamento' e 'Valor Lancamento'.")
-                            df_exibe = pd.DataFrame()
-                            st.stop()
-                
-                        # Extrai Código Everest numérico da coluna Empresa (ex.: '12345 - Loja')
-                        def _extract_code(s):
-                            m = re.findall(r"\d+", str(s))
-                            return m[-1] if m else None
-                
-                        df_ev = df_ev.copy()
-                        df_ev["Código Everest"] = df_ev[col_emp].apply(_extract_code)
-                        df_ev["Data"] = pd.to_datetime(df_ev[col_dt], dayfirst=True, errors="coerce").dt.normalize()
-                        df_ev["Valor Lancamento"] = pd.Series(df_ev[col_val_ev]).apply(parse_brl_str).astype(float)
-                
-                        # período igual ao selecionado
-                        df_ev = df_ev[(df_ev["Data"].dt.date >= dt_inicio) & (df_ev["Data"].dt.date <= dt_fim)]
-                
-                        # 🔁 Sangria Everest em POSITIVO (abs) e agrupada
-                        df_ev["Sangria Everest"] = df_ev["Valor Lancamento"].abs()
-                        df_ev = (df_ev.groupby(["Código Everest", "Data"], as_index=False)["Sangria Everest"]
-                                      .sum())
-                
-                        # ================================
-                        #      Merge + Diferença
-                        # ================================
-                        df_cmp = df_sys.merge(df_ev, on=["Código Everest", "Data"], how="outer").fillna(0)
-                        df_cmp["Diferença"] = df_cmp["Sangria (Sistema)"] - df_cmp["Sangria Everest"]
-                
-                        # Junta Loja/Grupo (da Tabela Empresa), se disponível
-                        if "Código Everest" in df_empresa.columns:
-                            map_emp = df_empresa.copy()
-                            map_emp["Código Everest"] = map_emp["Código Everest"].astype(str).str.extract(r"(\d+)")
-                            map_emp = map_emp[["Código Everest", "Loja", "Grupo"]].drop_duplicates()
-                            df_cmp = df_cmp.merge(map_emp, on="Código Everest", how="left")
-                
-                        # Ordena e formata
-                        df_cmp = df_cmp[["Grupo","Loja","Código Everest","Data","Sangria (Sistema)","Sangria Everest","Diferença"]]
-                        df_cmp = df_cmp.sort_values(["Grupo","Loja","Código Everest","Data"])
-                
-                        # Linha de TOTAL
-                        total_row = {
-                            "Grupo": "TOTAL", "Loja": "", "Código Everest": "",
-                            "Data": pd.NaT,
-                            "Sangria (Sistema)": df_cmp["Sangria (Sistema)"].sum(),
-                            "Sangria Everest": df_cmp["Sangria Everest"].sum(),
-                            "Diferença": df_cmp["Diferença"].sum()
-                        }
-                        df_exibe = pd.concat([pd.DataFrame([total_row]), df_cmp], ignore_index=True)
-                
-                        # Formatação visual
-                        df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
-                        for c in ["Sangria (Sistema)", "Sangria Everest", "Diferença"]:
-                            df_exibe[c] = df_exibe[c].apply(
-                                lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                                if isinstance(v,(int,float)) else v
-                            )
+                        st.error("❌ Não consegui identificar a coluna de valor na aba Sangria.")
+                        df_exibe = pd.DataFrame()
+                        st.stop()
+            
+                    # Código Everest como string numérica
+                    base["Código Everest"] = base["Código Everest"].astype(str).str.extract(r"(\d+)")
+            
+                    # 📌 Sangria (Sistema) agrupada por Código Everest + Data
+                    df_sys = (base.groupby(["Código Everest", "Data"], as_index=False)[col_valor]
+                                    .sum().rename(columns={col_valor: "Sangria (Sistema)"}))
+            
+                    # ================================
+                    #    Carrega "Sangria Everest"
+                    # ================================
+                    try:
+                        ws_ev = planilha_empresa.worksheet("Sangria Everest")
+                        df_ev = pd.DataFrame(ws_ev.get_all_records())
+                        df_ev.columns = [c.strip() for c in df_ev.columns]
+                    except Exception as e:
+                        st.error(f"❌ Não consegui carregar a aba 'Sangria Everest': {e}")
+                        df_exibe = pd.DataFrame()
+                        st.stop()
+            
+                    import re
+                    def _norm(c): return re.sub(r"[^a-z0-9]", "", c.lower())
+            
+                    # detecta colunas da planilha Everest
+                    cols_map = {c: _norm(c) for c in df_ev.columns}
+                    # Empresa (onde está o Código Everest)
+                    col_emp = next((c for c,n in cols_map.items() if "empresa" in n), None)
+                    # Data do lançamento
+                    col_dt = next((c for c,n in cols_map.items() if "dlancamento" in n or n.endswith("dlancamento")), None)
+                    if col_dt is None:
+                        col_dt = next((c for c,n in cols_map.items() if n.startswith("data")), None)
+                    # Valor do lançamento
+                    col_val_ev = next((c for c,n in cols_map.items() if "valorlancamento" in n or n.endswith("lancamento")), None)
+            
+                    if not all([col_emp, col_dt, col_val_ev]):
+                        st.error("❌ Na aba 'Sangria Everest' espero encontrar: 'Empresa', 'D. Lançamento' e 'Valor Lancamento'.")
+                        df_exibe = pd.DataFrame()
+                        st.stop()
+            
+                    # Extrai Código Everest numérico da coluna Empresa (ex.: '12345 - Loja')
+                    def _extract_code(s):
+                        m = re.findall(r"\d+", str(s))
+                        return m[-1] if m else None
+            
+                    df_ev = df_ev.copy()
+                    df_ev["Código Everest"] = df_ev[col_emp].apply(_extract_code)
+                    df_ev["Data"] = pd.to_datetime(df_ev[col_dt], dayfirst=True, errors="coerce").dt.normalize()
+                    df_ev["Valor Lancamento"] = pd.Series(df_ev[col_val_ev]).apply(parse_brl_str).astype(float)
+            
+                    # período igual ao selecionado
+                    df_ev = df_ev[(df_ev["Data"].dt.date >= dt_inicio) & (df_ev["Data"].dt.date <= dt_fim)]
+            
+                    # 🔁 Sangria Everest em POSITIVO (abs) e agrupada
+                    df_ev["Sangria Everest"] = df_ev["Valor Lancamento"].abs()
+                    df_ev = (df_ev.groupby(["Código Everest", "Data"], as_index=False)["Sangria Everest"]
+                                  .sum())
+            
+                    # ================================
+                    #      Merge + Diferença
+                    # ================================
+                    df_cmp = df_sys.merge(df_ev, on=["Código Everest", "Data"], how="outer").fillna(0)
+                    df_cmp["Diferença"] = df_cmp["Sangria (Sistema)"] - df_cmp["Sangria Everest"]
+            
+                    # Junta Loja/Grupo (da Tabela Empresa), se disponível
+                    if "Código Everest" in df_empresa.columns:
+                        map_emp = df_empresa.copy()
+                        map_emp["Código Everest"] = map_emp["Código Everest"].astype(str).str.extract(r"(\d+)")
+                        map_emp = map_emp[["Código Everest", "Loja", "Grupo"]].drop_duplicates()
+                        df_cmp = df_cmp.merge(map_emp, on="Código Everest", how="left")
+            
+                    # Ordena e formata
+                    df_cmp = df_cmp[["Grupo","Loja","Código Everest","Data","Sangria (Sistema)","Sangria Everest","Diferença"]]
+                    df_cmp = df_cmp.sort_values(["Grupo","Loja","Código Everest","Data"])
+            
+                    # Linha de TOTAL
+                    total_row = {
+                        "Grupo": "TOTAL", "Loja": "", "Código Everest": "",
+                        "Data": pd.NaT,
+                        "Sangria (Sistema)": df_cmp["Sangria (Sistema)"].sum(),
+                        "Sangria Everest": df_cmp["Sangria Everest"].sum(),
+                        "Diferença": df_cmp["Diferença"].sum()
+                    }
+                    df_exibe = pd.concat([pd.DataFrame([total_row]), df_cmp], ignore_index=True)
+            
+                    # Formatação visual
+                    df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
+                    for c in ["Sangria (Sistema)", "Sangria Everest", "Diferença"]:
+                        df_exibe[c] = df_exibe[c].apply(
+                            lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                            if isinstance(v,(int,float)) else v
+                        )
                 
                     # Render e export (mantém o mesmo padrão do resto da sub-aba)
                     if not df_exibe.empty:

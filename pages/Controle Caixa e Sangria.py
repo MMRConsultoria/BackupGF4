@@ -661,7 +661,7 @@ with st.spinner("⏳ Processando..."):
                         ws.append_rows(novas_linhas, value_input_option="USER_ENTERED")
             
                     st.success(
-                        f"✅ Removidas"
+                        f"✅Atualização Concluida"
                     )
 
 

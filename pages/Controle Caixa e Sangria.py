@@ -112,14 +112,38 @@ with st.spinner("⏳ Processando..."):
     
                 if is_everest:
                     # ---------------- MODO EVEREST ----------------
-                    #st.success("🔎 Detectado **padrão Everest** (cabeçalho do arquivo será mantido).")
-    
-                    # Guarda no estado para a Tab2 decidir a atualização
                     st.session_state.mode = "everest"
                     st.session_state.df_everest = df.copy()
-                    st.session_state.everest_date_col = "D. Lançamento" if "D. Lançamento" in df.columns else None
-    
-                    # Download do arquivo com cabeçalho original
+
+                    # Detecta a coluna de data exatamente como você quer (D. Lançamento)
+                    date_col = None
+                    for cand in ["D. Lançamento", "D.Lançamento", "D. Lancamento", "D.Lancamento"]:
+                        if cand in df.columns:
+                            date_col = cand
+                            break
+                    st.session_state.everest_date_col = date_col
+
+                    # Métricas de período (somente se a coluna existir e tiver datas válidas)
+                    if date_col is not None:
+                        dt = pd.to_datetime(df[date_col], errors="coerce", dayfirst=True)
+                        valid = dt.dropna()
+                        if not valid.empty:
+                            periodo_min = valid.min().strftime("%d/%m/%Y")
+                            periodo_max = valid.max().strftime("%d/%m/%Y")
+                            # Normaliza e guarda para a aba de atualização
+                            st.session_state.everest_dates = valid.dt.normalize().unique().tolist()
+
+                            c1, c2, c3 = st.columns(3)
+                            c1.metric("📅 Período processado", f"{periodo_min} até {periodo_max}")
+                            c2.metric("🧾 Linhas lidas", f"{len(df)}")
+                            c3.metric("📌 Datas distintas", f"{pd.Series(st.session_state.everest_dates).nunique()}")
+                        else:
+                            st.warning("⚠️ A coluna 'D. Lançamento' existe, mas não tem datas válidas.")
+                    else:
+                        st.error("❌ Não encontrei a coluna **'D. Lançamento'** (tentei também: D.Lançamento / D. Lancamento / D.Lancamento).")
+                        # Continua permitindo o download, porém a atualização por data na aba 2 ficará desativada
+
+                    # Download do arquivo com cabeçalho original (sem preview)
                     output_ev = BytesIO()
                     with pd.ExcelWriter(output_ev, engine="openpyxl") as writer:
                         df.to_excel(writer, index=False, sheet_name="Sangria Everest")
@@ -130,9 +154,7 @@ with st.spinner("⏳ Processando..."):
                         file_name="Sangria_Everest.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
-    
-                    #st.info("ℹ️ A atualização no Google Sheets será feita na aba **“🔄 Atualizar Google Sheets”** "
-                    #        "usando a coluna **'D. Lançamento'** para substituir as datas correspondentes.")
+
     
                 else:
                     # ---------------- MODO COLIBRI (seu fluxo atual) ----------------

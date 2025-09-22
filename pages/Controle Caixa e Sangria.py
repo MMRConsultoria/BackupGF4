@@ -193,19 +193,18 @@ with st.spinner("⏳ Processando..."):
                     # 3) Métricas: período e total
                     periodo_txt = "—"
                     total_txt = "—"
+                    if valor_col is not None:
+                        serie_val = to_number_br(df[valor_col])   # usa seu conversor pt-BR
+                        total_liquido = float(serie_val.sum())    # soma simples (pode ser negativo)
+                        st.session_state.everest_total_liquido = total_liquido
+                    
+                        # formata em pt-BR preservando o sinal
+                        sinal = "-" if total_liquido < 0 else ""
+                        total_fmt = f"{abs(total_liquido):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                        total_txt = f"{sinal}R$ {total_fmt}"
+                    else:
+                        st.warning("⚠️ Coluna **'Valor Lancamento'** não encontrada (aceito variações com/sem acento ou espaço).")
 
-                    # Período (por D. Lançamento)
-                    if date_col is not None:
-                        dt = pd.to_datetime(df[date_col], errors="coerce", dayfirst=True)
-                        valid = dt.dropna()
-                        if not valid.empty:
-                            periodo_min = valid.min().strftime("%d/%m/%Y")
-                            periodo_max = valid.max().strftime("%d/%m/%Y")
-                            periodo_txt = f"{periodo_min} até {periodo_max}"
-                            # guarda datas normalizadas para a aba de atualização
-                            st.session_state.everest_dates = valid.dt.normalize().unique().tolist()
-                        else:
-                            st.warning("⚠️ A coluna 'D. Lançamento' existe, mas não tem datas válidas.")
                     else:
                         st.error("❌ Não encontrei a coluna **'D. Lançamento'**.")
 

@@ -113,7 +113,7 @@ with st.spinner("⏳ Processando..."):
     
                 if is_everest:
                     # ---------------- MODO EVEREST ----------------
-                    st.success("🔎 Detectado **padrão Everest** (cabeçalho do arquivo será mantido).")
+                    #st.success("🔎 Detectado **padrão Everest** (cabeçalho do arquivo será mantido).")
     
                     # Guarda no estado para a Tab2 decidir a atualização
                     st.session_state.mode = "everest"
@@ -132,8 +132,8 @@ with st.spinner("⏳ Processando..."):
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
     
-                    st.info("ℹ️ A atualização no Google Sheets será feita na aba **“🔄 Atualizar Google Sheets”** "
-                            "usando a coluna **'D. Lançamento'** para substituir as datas correspondentes.")
+                    #st.info("ℹ️ A atualização no Google Sheets será feita na aba **“🔄 Atualizar Google Sheets”** "
+                    #        "usando a coluna **'D. Lançamento'** para substituir as datas correspondentes.")
     
                 else:
                     # ---------------- MODO COLIBRI (seu fluxo atual) ----------------

@@ -193,43 +193,101 @@ with st.spinner("⏳ Processando..."):
                     # 3) Métricas: período e total
                     periodo_txt = "—"
                     total_txt = "—"
+                    
+                    # --- Período (pela coluna de data "D. Lançamento") ---
+                    # Se você já tem `date_col` definido acima, reutilizamos; caso não, detectamos aqui:
+                    try:
+                        date_col
+                    except NameError:
+                        date_col = None
+                        for cand in ["D. Lançamento", "D.Lançamento", "D. Lancamento", "D.Lancamento"]:
+                            if cand in df.columns:
+                                date_col = cand
+                                break
+                    
+                    if date_col is not None:
+                        dt = pd.to_datetime(df[date_col], errors="coerce", dayfirst=True)
+                        valid = dt.dropna()
+                        if not valid.empty:
+                            periodo_min = valid.min().strftime("%d/%m/%Y")
+                            periodo_max = valid.max().strftime("%d/%m/%Y")
+                            periodo_txt = f"{periodo_min} até {periodo_max}"
+                            # guarda no estado para a aba 2
+                            st.session_state.everest_dates = valid.dt.normalize().unique().tolist()
+                            st.session_state.everest_date_col = date_col
+                        else:
+                            st.warning("⚠️ A coluna 'D. Lançamento' existe, mas não tem datas válidas.")
+                    else:
+                        st.error("❌ Não encontrei a coluna **'D. Lançamento'**.")
+                    
+                    # --- Total (soma real, com sinal) pela coluna "Valor Lancamento" ---
+                    # Se você já tem `valor_col` e `to_number_br` definidos acima, reutilizamos; caso não, definimos:
+                    try:
+                        valor_col
+                    except NameError:
+                        valor_col = None
+                        for cand in ["Valor Lancamento ", "Valor Lançamento ", "Valor Lancamento", "Valor Lançamento"]:
+                            if cand in df.columns:
+                                valor_col = cand
+                                break
+                    
+                    try:
+                        to_number_br
+                    except NameError:
+                        import re
+                        def to_number_br(series):
+                            def _one(x):
+                                if pd.isna(x):
+                                    return 0.0
+                                s = str(x).strip()
+                                if s == "":
+                                    return 0.0
+                                neg = False
+                                # parênteses -> negativo
+                                if s.startswith("(") and s.endswith(")"):
+                                    neg = True
+                                    s = s[1:-1].strip()
+                                # remove R$
+                                s = s.replace("R$", "").replace("r$", "").strip()
+                                # sinal no final (ex.: 1.234,56-)
+                                if s.endswith("-"):
+                                    neg = True
+                                    s = s[:-1].strip()
+                                # troca separadores pt-BR
+                                s = s.replace(".", "").replace(",", ".")
+                                s_clean = re.sub(r"[^0-9.\-]", "", s)
+                                if s_clean in ["", "-", "."]:
+                                    return 0.0
+                                try:
+                                    val = float(s_clean)
+                                except:
+                                    s_fallback = re.sub(r"[^0-9.]", "", s_clean)
+                                    val = float(s_fallback) if s_fallback else 0.0
+                                return -abs(val) if neg else val
+                            return series.apply(_one)
+                    
                     if valor_col is not None:
-                        serie_val = to_number_br(df[valor_col])   # usa seu conversor pt-BR
-                        total_liquido = float(serie_val.sum())    # soma simples (pode ser negativo)
+                        serie_val = to_number_br(df[valor_col])
+                        total_liquido = float(serie_val.sum())  # pode ser negativo
                         st.session_state.everest_total_liquido = total_liquido
                     
-                        # formata em pt-BR preservando o sinal
+                        # formata pt-BR preservando o sinal
                         sinal = "-" if total_liquido < 0 else ""
                         total_fmt = f"{abs(total_liquido):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                         total_txt = f"{sinal}R$ {total_fmt}"
                     else:
                         st.warning("⚠️ Coluna **'Valor Lancamento'** não encontrada (aceito variações com/sem acento ou espaço).")
-
-                    else:
-                        st.error("❌ Não encontrei a coluna **'D. Lançamento'**.")
-
-                    # Total (por Valor Lancamento) — exibimos o ABS do total líquido
-                    if valor_col is not None:
-                        serie_val = to_number_br(df[valor_col])
-                        total_liquido = float(serie_val.sum())          # pode ser negativo
-                        total_exibicao = abs(total_liquido)             # mostra positivo
-                        st.session_state.everest_total_liquido = total_liquido
-                        st.session_state.everest_total_abs = total_exibicao
-
-                        total_txt = f"R$ {total_exibicao:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                    else:
-                        st.warning("⚠️ Coluna **'Valor Lancamento'** não encontrada (aceito variações com/sem acento ou espaço).")
-
-                    # Exibe métricas (sem preview)
+                    
+                    # --- Exibe métricas (sem preview) ---
                     if periodo_txt != "—":
                         c1, c2, c3 = st.columns(3)
                         c1.metric("📅 Período processado", periodo_txt)
                         c2.metric("🧾 Linhas lidas", f"{len(df)}")
-                        c3.metric("💰 Total (Valor Lancamento)", total_txt)
+                        c3.metric("💰 Total (Valor Lançamento)", total_txt)
                     else:
                         c1, c2 = st.columns(2)
                         c1.metric("🧾 Linhas lidas", f"{len(df)}")
-                        c2.metric("💰 Total (Valor Lancamento)", total_txt)
+                        c2.metric("💰 Total (Valor Lançamento)", total_txt)
 
                     # 4) Download do arquivo com cabeçalho original
                     output_ev = BytesIO()

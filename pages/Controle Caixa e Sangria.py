@@ -42,44 +42,6 @@ st.markdown("""
 
 NOME_SISTEMA = "Colibri"
 
-# -----------------------
-# Helpers
-# -----------------------
-def auto_read_first_or_sheet(uploaded_file, preferred="Sheet"):
-    """
-    Lê a guia 'preferred' se existir. Caso contrário, lê a primeira guia do arquivo.
-    Retorna (df, nome_da_guia_lida, lista_de_guias).
-    """
-    xls = pd.ExcelFile(uploaded_file)
-    sheets = xls.sheet_names
-    if preferred in sheets:
-        sheet_to_read = preferred
-    else:
-        sheet_to_read = sheets[0]
-    df = pd.read_excel(xls, sheet_name=sheet_to_read)
-    return df, sheet_to_read, sheets
-
-def to_number_br(series):
-    """
-    Converte strings pt-BR (ex.: '13.956,00') para float.
-    Mantém números já numéricos e trata erros como 0.0.
-    """
-    def _one(x):
-        if pd.isna(x):
-            return 0.0
-        if isinstance(x, (int, float, np.number)):
-            return float(x)
-        s = str(x).strip()
-        if s == "":
-            return 0.0
-        # remove milhares '.', troca ',' por '.'
-        s = s.replace(".", "").replace(",", ".")
-        try:
-            return float(s)
-        except:
-            return 0.0
-    return series.apply(_one)
-
 with st.spinner("⏳ Processando..."):
     # 🔌 Conexão Google Sheets
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -103,14 +65,11 @@ with st.spinner("⏳ Processando..."):
     """, unsafe_allow_html=True)
 
     # 🗂️ Abas
-    tab1, tab2, tab3 = st.tabs([
-        "📥 Upload e Processamento",
-        "🔄 Atualizar Google Sheets",
-        "⬆️ Sangria Everest (substituir por data)"
-    ])
+    tab1, tab2 = st.tabs(["📥 Upload e Processamento", "🔄 Atualizar Google Sheets"])
 
+   
     # ================
-    # 📥 Aba 1
+    # 📥 Aba 1 — (ATUALIZADA para aceitar 'Hora' OU 'Lançamento')
     # ================
     with tab1:
         uploaded_file = st.file_uploader(
@@ -118,83 +77,132 @@ with st.spinner("⏳ Processando..."):
             type=["xlsx", "xlsm"],
             help="Somente arquivos .xlsx ou .xlsm. Tamanho máximo: 200MB."
         )
-
+    
         if uploaded_file:
+            # --- helpers locais ---
+            def auto_read_first_or_sheet(uploaded, preferred="Sheet"):
+                xls = pd.ExcelFile(uploaded)
+                sheets = xls.sheet_names
+                sheet_to_read = preferred if preferred in sheets else sheets[0]
+                df0 = pd.read_excel(xls, sheet_name=sheet_to_read)
+                return df0, sheet_to_read, sheets
+    
+            def to_number_br(series):
+                def _one(x):
+                    if pd.isna(x):
+                        return 0.0
+                    if isinstance(x, (int, float, np.number)):
+                        return float(x)
+                    s = str(x).strip()
+                    if s == "":
+                        return 0.0
+                    s = s.replace(".", "").replace(",", ".")
+                    try:
+                        return float(s)
+                    except:
+                        return 0.0
+                return series.apply(_one)
+    
             try:
-                # ⚠️ AQUI ESTÁ A CORREÇÃO: tentar 'Sheet' e, se não existir, cair na 1ª guia
                 df_dados, guia_lida, lista_guias = auto_read_first_or_sheet(uploaded_file, preferred="Sheet")
                 st.caption(f"Guia lida: **{guia_lida}** (disponíveis: {', '.join(lista_guias)})")
             except Exception as e:
                 st.error(f"❌ Não foi possível ler o arquivo enviado. Detalhes: {e}")
             else:
                 df = df_dados.copy()
-
+                df.columns = [str(c).strip() for c in df.columns]
+    
+                # 🔎 Qual coluna carrega os textos de cabeçalho ("Loja:", "Data:", "Funcionário:")?
+                TEXT_COL = "Hora" if "Hora" in df.columns else ("Lançamento" if "Lançamento" in df.columns else None)
+                if TEXT_COL is None:
+                    st.error("❌ O arquivo precisa ter a coluna 'Hora' **ou** 'Lançamento'.")
+                    st.stop()
+    
+                # ⚠️ Garante colunas essenciais
+                if "Valor(R$)" not in df.columns:
+                    st.error("❌ O arquivo deve conter a coluna 'Valor(R$)'.")
+                    st.stop()
+    
+                # Se não houver 'Descrição', criamos usando 'Lançamento' (caso exista)
+                if "Descrição" not in df.columns:
+                    if "Lançamento" in df.columns:
+                        df["Descrição"] = df["Lançamento"].astype(str)
+                    else:
+                        # Sem 'Descrição' e sem 'Lançamento': não há de onde tirar a descrição
+                        st.error("❌ O arquivo precisa ter a coluna 'Descrição' ou 'Lançamento'.")
+                        st.stop()
+    
                 # Campos preenchidos durante o parsing
                 df["Loja"] = np.nan
                 df["Data"] = np.nan
                 df["Funcionário"] = np.nan
-
+    
                 data_atual = None
                 funcionario_atual = None
                 loja_atual = None
                 linhas_validas = []
-
-                # Garante colunas essenciais
-                if "Hora" not in df.columns or "Valor(R$)" not in df.columns or "Descrição" not in df.columns:
-                    st.error("❌ O arquivo deve conter as colunas 'Hora', 'Valor(R$)' e 'Descrição'.")
-                    st.stop()
-
+    
+                # Percorre linhas, lendo cabeçalhos através de TEXT_COL
                 for i, row in df.iterrows():
-                    valor = str(row["Hora"]).strip()
-                    if valor.startswith("Loja:"):
-                        loja = valor.split("Loja:")[1].split("(Total")[0].strip()
+                    texto = str(row[TEXT_COL]).strip() if pd.notna(row[TEXT_COL]) else ""
+    
+                    if texto.startswith("Loja:"):
+                        loja = texto.split("Loja:")[1].split("(Total")[0].strip()
                         if "-" in loja:
                             loja = loja.split("-", 1)[1].strip()
                         loja_atual = loja or "Loja não cadastrada"
-                    elif valor.startswith("Data:"):
+    
+                    elif texto.startswith("Data:"):
                         try:
                             data_atual = pd.to_datetime(
-                                valor.split("Data:")[1].split("(Total")[0].strip(), dayfirst=True
+                                texto.split("Data:")[1].split("(Total")[0].strip(), dayfirst=True
                             )
                         except Exception:
                             data_atual = pd.NaT
-                    elif valor.startswith("Funcionário:"):
-                        funcionario_atual = valor.split("Funcionário:")[1].split("(Total")[0].strip()
+    
+                    elif texto.startswith("Funcionário:"):
+                        funcionario_atual = texto.split("Funcionário:")[1].split("(Total")[0].strip()
+    
                     else:
-                        if pd.notna(row["Valor(R$)"]) and pd.notna(row["Hora"]):
+                        # Linha de dado: precisa ter valor e algum texto (Descrição ou Lançamento)
+                        tem_valor = pd.notna(row.get("Valor(R$)"))
+                        tem_desc = pd.notna(row.get("Descrição")) and str(row.get("Descrição")).strip() != ""
+                        if tem_valor and tem_desc:
                             df.at[i, "Data"] = data_atual
                             df.at[i, "Funcionário"] = funcionario_atual
                             df.at[i, "Loja"] = loja_atual
                             linhas_validas.append(i)
-
+    
+                # Mantém apenas as linhas válidas
                 df = df.loc[linhas_validas].copy()
                 df.ffill(inplace=True)
-
+    
                 # Limpeza e conversões
                 df["Descrição"] = (
                     df["Descrição"].astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
                 )
                 df["Funcionário"] = df["Funcionário"].astype(str).str.strip()
-
+    
                 # ✅ Conversão robusta pt-BR
                 df["Valor(R$)"] = to_number_br(df["Valor(R$)"]).round(2)
-
+    
                 # Dia semana / mês / ano
+                dt_parsed = pd.to_datetime(df["Data"], errors="coerce")
                 dias_semana = {0: 'segunda-feira', 1: 'terça-feira', 2: 'quarta-feira',
                                3: 'quinta-feira', 4: 'sexta-feira', 5: 'sábado', 6: 'domingo'}
-                df["Dia da Semana"] = pd.to_datetime(df["Data"], errors="coerce").dt.dayofweek.map(dias_semana)
-                df["Mês"] = pd.to_datetime(df["Data"], errors="coerce").dt.month.map({
+                df["Dia da Semana"] = dt_parsed.dt.dayofweek.map(dias_semana)
+                df["Mês"] = dt_parsed.dt.month.map({
                     1: 'jan', 2: 'fev', 3: 'mar', 4: 'abr', 5: 'mai', 6: 'jun',
                     7: 'jul', 8: 'ago', 9: 'set', 10: 'out', 11: 'nov', 12: 'dez'
                 })
-                df["Ano"] = pd.to_datetime(df["Data"], errors="coerce").dt.year
-                df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
-
+                df["Ano"] = dt_parsed.dt.year
+                df["Data"] = dt_parsed.dt.strftime("%d/%m/%Y")
+    
                 # Merge com cadastro de lojas
                 df["Loja"] = df["Loja"].astype(str).str.strip().str.lower()
                 df_empresa["Loja"] = df_empresa["Loja"].astype(str).str.strip().str.lower()
                 df = pd.merge(df, df_empresa, on="Loja", how="left")
-
+    
                 # Agrupamento de descrição
                 def mapear_descricao(desc):
                     desc_lower = str(desc).lower()
@@ -202,18 +210,24 @@ with st.spinner("⏳ Processando..."):
                         if str(r["Palavra-chave"]).lower() in desc_lower:
                             return r["Descrição Agrupada"]
                     return "Outros"
-
+    
                 df["Descrição Agrupada"] = df["Descrição"].apply(mapear_descricao)
-
+    
                 # ➕ Colunas adicionais
                 df["Sistema"] = NOME_SISTEMA
-
-                # 🔑 DUPLICIDADE = Data + Hora + Código + Valor(em centavos) + Descrição
+    
+                # 🔑 DUPLICIDADE = Data + Hora(opcional) + Código + Valor(em centavos) + Descrição
+                # - Se a coluna 'Hora' existir, usamos. Caso contrário, fica vazio.
+                hora_str = ""
+                if "Hora" in df.columns:
+                    hora_str_series = pd.to_datetime(df["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
+                else:
+                    hora_str_series = pd.Series([""] * len(df), index=df.index)
+    
                 data_key = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
-                hora_key = pd.to_datetime(df["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
                 valor_centavos = (df["Valor(R$)"].astype(float) * 100).round().astype(int).astype(str)
                 desc_key = df["Descrição"].fillna("").astype(str)
-
+    
                 # cria colunas que serão usadas (se não existirem no merge)
                 if "Código Everest" not in df.columns:
                     df["Código Everest"] = ""
@@ -221,19 +235,19 @@ with st.spinner("⏳ Processando..."):
                     df["Grupo"] = ""
                 if "Código Grupo Everest" not in df.columns:
                     df["Código Grupo Everest"] = ""
-
+    
                 df["Duplicidade"] = (
                     data_key.fillna("") + "|" +
-                    hora_key.fillna("") + "|" +
+                    hora_str_series.fillna("") + "|" +
                     df["Código Everest"].fillna("").astype(str) + "|" +
                     valor_centavos + "|" +
                     desc_key
                 )
-
+    
                 # Garante coluna opcional
                 if "Meio de recebimento" not in df.columns:
                     df["Meio de recebimento"] = ""
-
+    
                 # Ordenação conforme cabeçalho da aba "sangria"
                 colunas_ordenadas = [
                     "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
@@ -246,13 +260,12 @@ with st.spinner("⏳ Processando..."):
                     if c not in df.columns:
                         df[c] = ""
                 df = df[colunas_ordenadas].sort_values(by=["Data", "Loja"], na_position="last")
-
+    
                 # Métricas
-                data_parsed = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
-                periodo_min = data_parsed.min()
-                periodo_max = data_parsed.max()
+                periodo_min = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce").min()
+                periodo_max = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce").max()
                 valor_total = float(df["Valor(R$)"].sum())
-
+    
                 col1, col2 = st.columns(2)
                 col1.metric("📅 Período processado",
                             f"{periodo_min.strftime('%d/%m/%Y') if pd.notna(periodo_min) else '-'} até "
@@ -261,9 +274,9 @@ with st.spinner("⏳ Processando..."):
                     "💰 Valor total de sangria",
                     f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                 )
-
+    
                 st.success("✅ Relatório gerado com sucesso!")
-
+    
                 # Aviso de lojas sem código
                 lojas_sem_codigo = df[df["Código Everest"].astype(str).str.strip().eq("")]["Loja"].dropna().unique()
                 if len(lojas_sem_codigo) > 0:
@@ -271,10 +284,10 @@ with st.spinner("⏳ Processando..."):
                         f"⚠️ Lojas sem Código Everest cadastrado: {', '.join(lojas_sem_codigo)}\n\n"
                         "🔗 Atualize na planilha de empresas."
                     )
-
+    
                 # Guarda para Aba 2
                 st.session_state.df_sangria = df.copy()
-
+    
                 # Download Excel local (sem formatação especial)
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -282,6 +295,7 @@ with st.spinner("⏳ Processando..."):
                 output.seek(0)
                 st.download_button("📥 Baixar relatório de sangria",
                                    data=output, file_name="Sangria_estruturada.xlsx")
+
 
     # ================
     # 🔄 Aba 2 — Atualizar Google Sheets (aba: sangria)
@@ -312,8 +326,7 @@ with st.spinner("⏳ Processando..."):
             )
             data_key = pd.to_datetime(df_final["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
             hora_key = pd.to_datetime(df_final["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
-            # ✅ conversão robusta pt-BR
-            df_final["Valor(R$)"] = to_number_br(df_final["Valor(R$)"]).round(2)
+            df_final["Valor(R$)"] = pd.to_numeric(df_final["Valor(R$)"], errors="coerce").fillna(0.0).round(2)
             valor_centavos = (df_final["Valor(R$)"].astype(float) * 100).round().astype(int).astype(str)
             desc_key = df_final["Descrição"].fillna("").astype(str)
             df_final["Duplicidade"] = (
@@ -365,6 +378,9 @@ with st.spinner("⏳ Processando..."):
                 else:
                     novos_dados.append(linha)
 
+            #st.write(f"🧮 Prontos para envio: {len(novos_dados)}")
+            #st.write(f"🚫 Duplicados no Google Sheets: {len(duplicados_sheet)}")
+
             if st.button("📥 Enviar dados para a aba 'sangria'"):
                 with st.spinner("🔄 Enviando..."):
                     if novos_dados:
@@ -382,6 +398,7 @@ with st.spinner("⏳ Processando..."):
                                 CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
                             )
                             # Valor(R$) (coluna L) -> padrão locale: 1.000,00 em pt-BR
+                            # Use SEMPRE "#,##0.00" (Google Sheets aplica separadores conforme locale da planilha)
                             format_cell_range(
                                 aba_destino, f"L{inicio}:L{fim}",
                                 CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#,##0.00"))
@@ -390,112 +407,3 @@ with st.spinner("⏳ Processando..."):
                         st.success(f"✅ {len(novos_dados)} registros enviados!")
                     if duplicados_sheet:
                         st.warning("⚠️ Alguns registros já existiam no Google Sheets e não foram enviados.")
-
-    # ============================================================
-    # ⬆️ Aba 3 — Sangria Everest (substituir por data)
-    # Lê um Excel e atualiza a aba 'Sangria Everest' mantendo o
-    # cabeçalho do arquivo e substituindo as datas já existentes.
-    # ============================================================
-    with tab3:
-        st.markdown("### ⬆️ Importar arquivo para **Sangria Everest** (substitui pelas datas do arquivo)")
-        st.caption("Mantém o **mesmo cabeçalho do arquivo** e **remove/insere** por **Data**.")
-        st.info("A coluna de data é **'Data'**. Se no seu arquivo tiver outro nome, me avise que ajusto.")
-
-        file_everest = st.file_uploader(
-            "Selecione o Excel (xlsx/xlsm) da Sangria Everest",
-            type=["xlsx", "xlsm"], key="up_everest"
-        )
-
-        if file_everest:
-            try:
-                xls2 = pd.ExcelFile(file_everest)
-                # Lê a PRIMEIRA guia do arquivo para simplificar
-                df_ev = pd.read_excel(xls2, sheet_name=xls2.sheet_names[0])
-                df_ev.columns = [str(c) for c in df_ev.columns]  # mantém o cabeçalho exatamente como no arquivo
-                st.caption(f"Guia lida (Sangria Everest): **{xls2.sheet_names[0]}**")
-            except Exception as e:
-                st.error(f"❌ Não foi possível ler o arquivo: {e}")
-                st.stop()
-
-            if "Data" not in df_ev.columns:
-                st.error("❌ O arquivo precisa ter a coluna 'Data'.")
-                st.stop()
-
-            # Datas do arquivo (para filtrar o que será substituído)
-            datas_norm_file = pd.to_datetime(df_ev["Data"], errors="coerce", dayfirst=True).dt.normalize()
-            datas_set = set([d for d in datas_norm_file.dropna().unique()])
-
-            if len(datas_set) == 0:
-                st.warning("⚠️ Não encontrei datas válidas no arquivo (coluna 'Data').")
-                st.stop()
-
-            c1, c2, c3 = st.columns(3)
-            dd_sorted = sorted(list(datas_set))
-            c1.metric("Datas no arquivo", f"{len(dd_sorted)}")
-            c2.metric("Primeira data", pd.to_datetime(dd_sorted[0]).strftime("%d/%m/%Y"))
-            c3.metric("Última data", pd.to_datetime(dd_sorted[-1]).strftime("%d/%m/%Y"))
-
-            st.dataframe(df_ev.head(30), use_container_width=True, hide_index=True)
-            st.divider()
-
-            if st.button("🚀 Atualizar aba 'Sangria Everest' (substituir pelas datas do arquivo)", type="primary", use_container_width=True):
-                with st.spinner("Atualizando 'Sangria Everest'…"):
-                    try:
-                        ws_ev = planilha.worksheet("Sangria Everest")
-                    except Exception as e:
-                        st.error(f"❌ Não consegui abrir a aba 'Sangria Everest': {e}")
-                        st.stop()
-
-                    # Lê a planilha atual (header + dados)
-                    rows = ws_ev.get_all_values()
-                    if not rows:
-                        # Aba vazia — apenas escreve o arquivo (header + dados)
-                        values = [list(df_ev.columns)] + df_ev.fillna("").astype(str).values.tolist()
-                        ws_ev.clear()
-                        ws_ev.update("A1", values, value_input_option="USER_ENTERED")
-                        st.success(f"✅ Aba 'Sangria Everest' criada com {len(df_ev)} linhas do arquivo.")
-                        st.balloons()
-                        st.stop()
-
-                    header_sheet = rows[0]
-                    data_sheet = rows[1:]
-                    df_sheet = pd.DataFrame(data_sheet, columns=header_sheet)
-
-                    # Alinhar o df_sheet ao cabeçalho do arquivo (garantir mesmas colunas na escrita final)
-                    target_header = list(df_ev.columns)
-                    for c in target_header:
-                        if c not in df_sheet.columns:
-                            df_sheet[c] = ""
-                    # remove colunas extras:
-                    df_sheet = df_sheet[target_header]
-
-                    # Normalizar datas do sheet para comparar
-                    if "Data" not in df_sheet.columns:
-                        st.warning("⚠️ A aba atual não possui a coluna 'Data'. Ela será reescrita com o conteúdo do arquivo.")
-                        values = [target_header] + df_ev.fillna("").astype(str).values.tolist()
-                        ws_ev.clear()
-                        ws_ev.update("A1", values, value_input_option="USER_ENTERED")
-                        st.success(f"✅ Aba 'Sangria Everest' reescrita com {len(df_ev)} linhas do arquivo.")
-                        st.balloons()
-                        st.stop()
-
-                    datas_norm_sheet = pd.to_datetime(df_sheet["Data"], errors="coerce", dayfirst=True).dt.normalize()
-                    # Manter apenas linhas do sheet cujas datas NÃO estão no arquivo
-                    mask_keep = ~datas_norm_sheet.isin(datas_set)
-                    kept = df_sheet.loc[mask_keep].copy()
-
-                    # Montar final: manter outras datas + linhas do arquivo (na ordem do cabeçalho do arquivo)
-                    df_final_ev = pd.concat([kept, df_ev[target_header].copy()], ignore_index=True)
-
-                    # Escrever de volta (limpa e atualiza tudo de uma vez)
-                    values = [target_header] + df_final_ev.fillna("").astype(str).values.tolist()
-                    ws_ev.clear()
-                    ws_ev.update("A1", values, value_input_option="USER_ENTERED")
-
-                    st.success(
-                        f"✅ 'Sangria Everest' atualizada!\n\n"
-                        f"- Datas substituídas: **{len(datas_set)}**\n"
-                        f"- Linhas novas (arquivo): **{len(df_ev)}**\n"
-                        f"- Total final (sem contar cabeçalho): **{len(df_final_ev)}**"
-                    )
-                    st.balloons()

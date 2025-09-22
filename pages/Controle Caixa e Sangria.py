@@ -8,7 +8,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 from gspread_formatting import format_cell_range, CellFormat, NumberFormat
 
 st.set_page_config(page_title="Relatório de Sangria", layout="wide")
-
 # 🔥 CSS para estilizar as abas
 st.markdown("""
     <style>

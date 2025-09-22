@@ -83,7 +83,7 @@ with st.spinner("⏳ Processando..."):
     tab1, tab2 = st.tabs(["📥 Upload e Processamento", "🔄 Atualizar Google Sheets"])
 
     # ================
-    # 📥 Aba 1 — Upload e Processamento (com detecção automática)
+    # 📥 Aba 1 — Upload e Processamento (detecção Colibri × Everest)
     # ================
     with tab1:
         uploaded_file = st.file_uploader(
@@ -93,9 +93,6 @@ with st.spinner("⏳ Processando..."):
         )
     
         if uploaded_file:
-            # --- helpers locais ---
-            import unicodedata, re
-    
             def auto_read_first_or_sheet(uploaded, preferred="Sheet"):
                 xls = pd.ExcelFile(uploaded)
                 sheets = xls.sheet_names
@@ -103,46 +100,6 @@ with st.spinner("⏳ Processando..."):
                 df0 = pd.read_excel(xls, sheet_name=sheet_to_read)
                 df0.columns = [str(c).strip() for c in df0.columns]
                 return df0, sheet_to_read, sheets
-    
-            def norm_txt(s: str) -> str:
-                s = unicodedata.normalize('NFKD', str(s)).encode('ASCII', 'ignore').decode('ASCII')
-                s = s.lower().strip()
-                s = re.sub(r'[^a-z0-9 ]+', ' ', s)
-                s = re.sub(r'\s+', ' ', s)
-                return s
-    
-            def detect_date_column(df):
-                """Tenta achar a coluna de data por aliases e, se não achar,
-                escolhe a coluna com mais valores que viram datetime."""
-                aliases = [
-                    "data", "dt", "data lancamento", "data do lancamento",
-                    "data movimento", "movimento", "emissao", "data/hora", "data hora"
-                ]
-                # 1) match por nome normalizado
-                df_norm_map = {col: norm_txt(col) for col in df.columns}
-                for col, n in df_norm_map.items():
-                    if any(a == n for a in aliases):
-                        return col
-                for col, n in df_norm_map.items():
-                    if any(a in n for a in aliases):
-                        return col
-                # 2) heurística: coluna com mais parsings válidos
-                best_col, best_score = None, -1
-                for c in df.columns:
-                    try:
-                        parsed = pd.to_datetime(df[c], errors="coerce", dayfirst=True)
-                        score = parsed.notna().sum()
-                        if score > best_score:
-                            best_col, best_score = c, score
-                    except Exception:
-                        pass
-                # só aceita se houver quantidade razoável de datas válidas
-                if best_score >= max(5, int(0.2 * len(df))):
-                    return best_col
-                return None
-    
-            def normalize_dates(s):
-                return pd.to_datetime(s, errors="coerce", dayfirst=True).dt.normalize()
     
             try:
                 df_dados, guia_lida, lista_guias = auto_read_first_or_sheet(uploaded_file, preferred="Sheet")
@@ -152,116 +109,35 @@ with st.spinner("⏳ Processando..."):
             else:
                 df = df_dados.copy()
                 primeira_col = df.columns[0] if len(df.columns) else ""
-                is_everest = (
-                    norm_txt(primeira_col) == "lancamento" or
-                    any(norm_txt(c) == "lancamento" for c in df.columns)
-                )
+                is_everest = primeira_col.lower() in ["lançamento", "lancamento"] or ("Lançamento" in df.columns) or ("Lancamento" in df.columns)
     
                 if is_everest:
-                    # ===============================
-                    # MODO EVEREST
-                    # - NÃO mostra preview/listas
-                    # - Gera download do Excel com cabeçalho original
-                    # - Se detectar coluna de data -> botão de atualizar planilha por data
-                    # ===============================
+                    # ---------------- MODO EVEREST ----------------
                     st.success("🔎 Detectado **padrão Everest** (cabeçalho do arquivo será mantido).")
     
-                    header_file = list(df.columns)
+                    # Guarda no estado para a Tab2 decidir a atualização
+                    st.session_state.mode = "everest"
+                    st.session_state.df_everest = df.copy()
+                    st.session_state.everest_date_col = "D. Lançamento" if "D. Lançamento" in df.columns else None
     
-                    # 🔽 DOWNLOAD do Excel (sem alterar cabeçalho/ordem)
-                    out = BytesIO()
-                    with pd.ExcelWriter(out, engine="openpyxl") as writer:
+                    # Download do arquivo com cabeçalho original
+                    output_ev = BytesIO()
+                    with pd.ExcelWriter(output_ev, engine="openpyxl") as writer:
                         df.to_excel(writer, index=False, sheet_name="Sangria Everest")
-                    out.seek(0)
+                    output_ev.seek(0)
                     st.download_button(
                         "📥 Baixar arquivo (Everest)",
-                        data=out,
+                        data=output_ev,
                         file_name="Sangria_Everest.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
     
-                    # 🔎 Detecta a coluna de data automaticamente
-                    date_col = detect_date_column(df)
-                    if date_col is None:
-                        st.warning("⚠️ Não encontrei uma coluna de **Data**. O arquivo foi gerado para download, "
-                                   "mas não dá para substituir linhas por data na planilha.")
-                        # Sem botão de atualizar planilha
-                        st.stop()
-    
-                    # Conjunto de datas do arquivo
-                    datas_file = normalize_dates(df[date_col])
-                    datas_set = set(d for d in datas_file.dropna().unique())
-                    if not datas_set:
-                        st.warning("⚠️ A coluna detectada como data não contém datas válidas suficientes. "
-                                   "O arquivo foi gerado para download, mas não dá para substituir por data no Sheets.")
-                        st.stop()
-    
-                    # Botão de atualização (substitui por data)
-                    if st.button("🚀 Atualizar aba 'Sangria Everest' (substituir pelas datas do arquivo)", type="primary", use_container_width=True):
-                        with st.spinner("Atualizando 'Sangria Everest'…"):
-                            try:
-                                ws_ev = planilha.worksheet("Sangria Everest")
-                            except Exception as e:
-                                st.error(f"❌ Não consegui abrir a aba 'Sangria Everest': {e}")
-                                st.stop()
-    
-                            rows = ws_ev.get_all_values()
-                            if not rows:
-                                # Aba vazia — escreve direto
-                                values = [header_file] + df.fillna("").astype(str).values.tolist()
-                                ws_ev.clear()
-                                ws_ev.update("A1", values, value_input_option="USER_ENTERED")
-                                st.success(f"✅ Aba 'Sangria Everest' criada com {len(df)} linhas do arquivo.")
-                                st.balloons()
-                                st.stop()
-    
-                            header_sheet = rows[0]
-                            data_sheet = rows[1:]
-                            df_sheet = pd.DataFrame(data_sheet, columns=header_sheet)
-    
-                            # Detecta coluna de data também na planilha
-                            sheet_date_col = detect_date_column(df_sheet)
-                            if sheet_date_col is None:
-                                st.warning("⚠️ A aba atual não possui coluna de Data reconhecível. "
-                                           "Ela será reescrita integralmente com o conteúdo do arquivo.")
-                                values = [header_file] + df.fillna("").astype(str).values.tolist()
-                                ws_ev.clear()
-                                ws_ev.update("A1", values, value_input_option="USER_ENTERED")
-                                st.success(f"✅ 'Sangria Everest' reescrita com {len(df)} linhas.")
-                                st.balloons()
-                                st.stop()
-    
-                            # alinhar colunas do sheet ao cabeçalho do arquivo
-                            for c in header_file:
-                                if c not in df_sheet.columns:
-                                    df_sheet[c] = ""
-                            df_sheet = df_sheet[header_file]
-    
-                            # filtra mantendo linhas do sheet cujas datas NÃO estão no arquivo
-                            datas_sheet_norm = normalize_dates(df_sheet[sheet_date_col])
-                            kept = df_sheet.loc[~datas_sheet_norm.isin(datas_set)].copy()
-    
-                            # final = mantidas + novas (cabeçalho do arquivo)
-                            df_final_ev = pd.concat([kept, df[header_file].copy()], ignore_index=True)
-                            values = [header_file] + df_final_ev.fillna("").astype(str).values.tolist()
-    
-                            ws_ev.clear()
-                            ws_ev.update("A1", values, value_input_option="USER_ENTERED")
-    
-                            st.success(
-                                f"✅ 'Sangria Everest' atualizada!\n\n"
-                                f"- Datas substituídas: **{len(datas_set)}**\n"
-                                f"- Linhas novas (arquivo): **{len(df)}**\n"
-                                f"- Total final (sem contar cabeçalho): **{len(df_final_ev)}**"
-                            )
-                            st.balloons()
+                    st.info("ℹ️ A atualização no Google Sheets será feita na aba **“🔄 Atualizar Google Sheets”** "
+                            "usando a coluna **'D. Lançamento'** para substituir as datas correspondentes.")
     
                 else:
-                    # ===============================
-                    # MODO COLIBRI (seu fluxo atual com 'Hora')
-                    # ===============================
+                    # ---------------- MODO COLIBRI (seu fluxo atual) ----------------
                     try:
-                        # Campos preenchidos durante o parsing
                         df["Loja"] = np.nan
                         df["Data"] = np.nan
                         df["Funcionário"] = np.nan
@@ -333,12 +209,11 @@ with st.spinner("⏳ Processando..."):
                         # ➕ Colunas adicionais
                         df["Sistema"] = NOME_SISTEMA
     
-                        # 🔑 DUPLICIDADE = Data + Hora + Código + Valor(em centavos) + Descrição
+                        # 🔑 DUPLICIDADE
                         data_key = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
                         hora_key = pd.to_datetime(df["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
                         valor_centavos = (df["Valor(R$)"].astype(float) * 100).round().astype(int).astype(str)
                         desc_key = df["Descrição"].fillna("").astype(str)
-    
                         df["Duplicidade"] = (
                             data_key.fillna("") + "|" +
                             hora_key.fillna("") + "|" +
@@ -347,11 +222,9 @@ with st.spinner("⏳ Processando..."):
                             desc_key
                         )
     
-                        # Garante coluna opcional
                         if "Meio de recebimento" not in df.columns:
                             df["Meio de recebimento"] = ""
     
-                        # Ordenação conforme cabeçalho da aba "sangria"
                         colunas_ordenadas = [
                             "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
                             "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
@@ -374,7 +247,6 @@ with st.spinner("⏳ Processando..."):
     
                         st.success("✅ Relatório gerado com sucesso!")
     
-                        # Aviso de lojas sem código
                         lojas_sem_codigo = df[df["Código Everest"].isna()]["Loja"].unique()
                         if len(lojas_sem_codigo) > 0:
                             st.warning(
@@ -382,7 +254,8 @@ with st.spinner("⏳ Processando..."):
                                 "🔗 Atualize na planilha de empresas."
                             )
     
-                        # Guarda para Aba 2
+                        # Guarda para a Tab2 (fluxo antigo)
+                        st.session_state.mode = "colibri"
                         st.session_state.df_sangria = df.copy()
     
                         # Download Excel local (sem formatação especial)

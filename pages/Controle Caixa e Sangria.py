@@ -65,7 +65,11 @@ with st.spinner("⏳ Processando..."):
     """, unsafe_allow_html=True)
 
     # 🗂️ Abas
-    tab1, tab2 = st.tabs(["📥 Upload e Processamento", "🔄 Atualizar Google Sheets"])
+    tab1, tab2, tab3 = st.tabs([
+        "📥 Upload e Processamento",
+        "🔄 Atualizar Google Sheets",
+        "⬆️ Sangria Everest (substituir por data)"
+    ])
 
     # ================
     # 📥 Aba 1
@@ -299,9 +303,6 @@ with st.spinner("⏳ Processando..."):
                 else:
                     novos_dados.append(linha)
 
-            #st.write(f"🧮 Prontos para envio: {len(novos_dados)}")
-            #st.write(f"🚫 Duplicados no Google Sheets: {len(duplicados_sheet)}")
-
             if st.button("📥 Enviar dados para a aba 'sangria'"):
                 with st.spinner("🔄 Enviando..."):
                     if novos_dados:
@@ -319,7 +320,6 @@ with st.spinner("⏳ Processando..."):
                                 CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
                             )
                             # Valor(R$) (coluna L) -> padrão locale: 1.000,00 em pt-BR
-                            # Use SEMPRE "#,##0.00" (Google Sheets aplica separadores conforme locale da planilha)
                             format_cell_range(
                                 aba_destino, f"L{inicio}:L{fim}",
                                 CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#,##0.00"))
@@ -328,3 +328,112 @@ with st.spinner("⏳ Processando..."):
                         st.success(f"✅ {len(novos_dados)} registros enviados!")
                     if duplicados_sheet:
                         st.warning("⚠️ Alguns registros já existiam no Google Sheets e não foram enviados.")
+
+    # ============================================================
+    # ⬆️ Aba 3 — Sangria Everest (substituir por data)
+    # Lê um Excel e atualiza a aba 'Sangria Everest' mantendo o
+    # cabeçalho do arquivo e substituindo as datas já existentes.
+    # ============================================================
+    with tab3:
+        st.markdown("### ⬆️ Importar arquivo para **Sangria Everest** (substitui pelas datas do arquivo)")
+        st.caption("Mantém o **mesmo cabeçalho do arquivo** e **remove/insere** por **Data**.")
+        st.info("A coluna de data é **'Data'**. Se no seu arquivo tiver outro nome, me avise que ajusto.")
+
+        file_everest = st.file_uploader(
+            "Selecione o Excel (xlsx/xlsm) da Sangria Everest",
+            type=["xlsx", "xlsm"], key="up_everest"
+        )
+
+        if file_everest:
+            try:
+                xls2 = pd.ExcelFile(file_everest)
+                # Lê a PRIMEIRA guia do arquivo para simplificar. Se quiser escolher, eu habilito depois.
+                df_ev = pd.read_excel(xls2, sheet_name=xls2.sheet_names[0])
+                df_ev.columns = [str(c) for c in df_ev.columns]  # mantém o cabeçalho exatamente como no arquivo
+            except Exception as e:
+                st.error(f"❌ Não foi possível ler o arquivo: {e}")
+                st.stop()
+
+            if "Data" not in df_ev.columns:
+                st.error("❌ O arquivo precisa ter a coluna 'Data'.")
+                st.stop()
+
+            # Datas do arquivo (para filtrar o que será substituído)
+            datas_norm_file = pd.to_datetime(df_ev["Data"], errors="coerce", dayfirst=True).dt.normalize()
+            datas_set = set([d for d in datas_norm_file.dropna().unique()])
+
+            if len(datas_set) == 0:
+                st.warning("⚠️ Não encontrei datas válidas no arquivo (coluna 'Data').")
+                st.stop()
+
+            c1, c2, c3 = st.columns(3)
+            dd_sorted = sorted(list(datas_set))
+            c1.metric("Datas no arquivo", f"{len(dd_sorted)}")
+            c2.metric("Primeira data", pd.to_datetime(dd_sorted[0]).strftime("%d/%m/%Y"))
+            c3.metric("Última data", pd.to_datetime(dd_sorted[-1]).strftime("%d/%m/%Y"))
+
+            st.dataframe(df_ev.head(30), use_container_width=True, hide_index=True)
+            st.divider()
+
+            if st.button("🚀 Atualizar aba 'Sangria Everest' (substituir pelas datas do arquivo)", type="primary", use_container_width=True):
+                with st.spinner("Atualizando 'Sangria Everest'…"):
+                    try:
+                        ws_ev = planilha.worksheet("Sangria Everest")
+                    except Exception as e:
+                        st.error(f"❌ Não consegui abrir a aba 'Sangria Everest': {e}")
+                        st.stop()
+
+                    # Lê a planilha atual (header + dados)
+                    rows = ws_ev.get_all_values()
+                    if not rows:
+                        # Aba vazia — apenas escreve o arquivo (header + dados)
+                        values = [list(df_ev.columns)] + df_ev.fillna("").astype(str).values.tolist()
+                        ws_ev.clear()
+                        ws_ev.update("A1", values, value_input_option="USER_ENTERED")
+                        st.success(f"✅ Aba 'Sangria Everest' criada com {len(df_ev)} linhas do arquivo.")
+                        st.balloons()
+                        st.stop()
+
+                    header_sheet = rows[0]
+                    data_sheet = rows[1:]
+                    df_sheet = pd.DataFrame(data_sheet, columns=header_sheet)
+
+                    # Alinhar o df_sheet ao cabeçalho do arquivo (garantir mesmas colunas na escrita final)
+                    # — cria colunas ausentes e remove as sobrando
+                    target_header = list(df_ev.columns)
+                    for c in target_header:
+                        if c not in df_sheet.columns:
+                            df_sheet[c] = ""
+                    df_sheet = df_sheet[target_header]
+
+                    # Normalizar datas do sheet para comparar
+                    if "Data" not in df_sheet.columns:
+                        # se não existir, simplesmente reescreve só com o arquivo
+                        st.warning("⚠️ A aba atual não possui a coluna 'Data'. Ela será reescrita com o conteúdo do arquivo.")
+                        values = [target_header] + df_ev.fillna("").astype(str).values.tolist()
+                        ws_ev.clear()
+                        ws_ev.update("A1", values, value_input_option="USER_ENTERED")
+                        st.success(f"✅ Aba 'Sangria Everest' reescrita com {len(df_ev)} linhas do arquivo.")
+                        st.balloons()
+                        st.stop()
+
+                    datas_norm_sheet = pd.to_datetime(df_sheet["Data"], errors="coerce", dayfirst=True).dt.normalize()
+                    # Manter apenas linhas do sheet cujas datas NÃO estão no arquivo
+                    mask_keep = ~datas_norm_sheet.isin(datas_set)
+                    kept = df_sheet.loc[mask_keep].copy()
+
+                    # Montar final: manter outras datas + linhas do arquivo (na ordem do cabeçalho do arquivo)
+                    df_final_ev = pd.concat([kept, df_ev[target_header].copy()], ignore_index=True)
+
+                    # Escrever de volta (limpa e atualiza tudo de uma vez)
+                    values = [target_header] + df_final_ev.fillna("").astype(str).values.tolist()
+                    ws_ev.clear()
+                    ws_ev.update("A1", values, value_input_option="USER_ENTERED")
+
+                    st.success(
+                        f"✅ 'Sangria Everest' atualizada!\n\n"
+                        f"- Datas substituídas: **{len(datas_set)}**\n"
+                        f"- Linhas novas (arquivo): **{len(df_ev)}**\n"
+                        f"- Total final (sem contar cabeçalho): **{len(df_final_ev)}**"
+                    )
+                    st.balloons()

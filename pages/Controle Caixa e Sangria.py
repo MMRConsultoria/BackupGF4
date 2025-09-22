@@ -391,6 +391,9 @@ with st.spinner("⏳ Processando..."):
     # ================
     with tab2:
         st.markdown("🔗 [Abrir planilha Vendas diarias](https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU)")
+        
+        # ✅ defina o mode ANTES de usá-lo
+        mode = st.session_state.get("mode", None)
     
         # --- modo Everest: substituir apenas as datas presentes no arquivo e enviar valor com vírgula ---
         if mode == "everest" and "df_everest" in st.session_state:

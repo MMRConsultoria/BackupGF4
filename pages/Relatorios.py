@@ -2485,7 +2485,45 @@ with st.spinner("⏳ Processando..."):
     
     import re, math
     from io import BytesIO
+    import pandas as pd
+    import re
     
+    def ensure_valor_float(df, col):
+        s = df[col]
+    
+        # 1) Se já for numérica, não reparse (evita “dupla conversão”)
+        if pd.api.types.is_numeric_dtype(s):
+            return pd.to_numeric(s, errors="coerce").fillna(0.0)
+    
+        # 2) Texto → normaliza
+        raw = s.astype(str).str.strip()
+    
+        # marca negativo: "(...)" ou prefixo "-"
+        neg_mask = raw.str.match(r"^\(.*\)$") | raw.str.startswith("-")
+        raw = raw.str.replace(r"^\(|\)$", "", regex=True)  # tira parênteses
+        raw = raw.str.lstrip("-")                          # tira "-"
+    
+        # remove rótulos/espacos
+        raw = (raw.str.replace("R$", "", regex=False)
+                   .str.replace("\u00A0", "", regex=False)
+                   .str.replace(" ", "", regex=False))
+    
+        # 3) Decide locale pela amostra: se maioria tem vírgula → vírgula é decimal
+        sample = raw[raw.ne("")].head(300)
+        use_comma = sample.str.contains(",", regex=False).mean() > 0.5
+    
+        if use_comma:
+            # BR: "." milhar, "," decimal
+            cleaned = raw.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+        else:
+            # EN: "." decimal, pode haver milhar com "," (raro). Remove vírgulas de milhar.
+            cleaned = raw.str.replace(",", "", regex=False)
+    
+        vals = pd.to_numeric(cleaned, errors="coerce").fillna(0.0)
+        vals = vals.where(~neg_mask, -vals)  # aplica sinal negativo
+    
+        return vals
+
     # ------------ helpers ------------
     
     def _render_df(df, *, height=480):
@@ -2621,7 +2659,7 @@ with st.spinner("⏳ Processando..."):
     
                 # 🔧 conversão PT-BR robusta (corrige todos os casos)
                 if col_valor:
-                    df_sangria[col_valor] = pd.Series(df_sangria[col_valor]).apply(parse_brl_str).astype(float)
+                    df_sangria[col_valor] = ensure_valor_float(df_sangria, col_valor)
     
                 # filtros
                 top1, top2, top3, top4 = st.columns([1.2, 1.2, 1.6, 1.6])
@@ -2726,7 +2764,7 @@ with st.spinner("⏳ Processando..."):
                     else:
                         base["Data"] = pd.to_datetime(base["Data"], dayfirst=True, errors="coerce").dt.normalize()
                         base = base[(base["Data"].dt.date >= dt_inicio) & (base["Data"].dt.date <= dt_fim)]
-                        base[col_valor] = pd.Series(base[col_valor]).apply(parse_brl_str).astype(float)
+                        base[col_valor] = ensure_valor_float(base, col_valor)
                         base["Código Everest"] = base["Código Everest"].astype(str).str.extract(r"(\d+)")
                         df_sys = (
                             base.groupby(["Código Everest","Data"], as_index=False)[col_valor]
@@ -2759,7 +2797,7 @@ with st.spinner("⏳ Processando..."):
                             df_ev["Código Everest"]   = df_ev[col_emp].astype(str).str.extract(r"(\d+)")
                             df_ev["Fantasia Everest"] = df_ev[col_fant_ev] if col_fant_ev else ""
                             df_ev["Data"]             = pd.to_datetime(df_ev[col_dt_ev], dayfirst=True, errors="coerce").dt.normalize()
-                            df_ev["Valor Lancamento"] = pd.Series(df_ev[col_val_ev]).apply(parse_brl_str).astype(float)
+                            df_ev["Valor Lancamento"] = ensure_valor_float(df_ev, col_val_ev)
                             df_ev = df_ev[(df_ev["Data"].dt.date >= dt_inicio) & (df_ev["Data"].dt.date <= dt_fim)]
                 
                             # Everest sempre POSITIVO na comparação

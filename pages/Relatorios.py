@@ -2491,18 +2491,27 @@ with st.spinner("⏳ Processando..."):
     
     
     # -------------------- parser de valores --------------------
+    
+    import re
+
+    # padrões
+    _BR_DEC_THOUS   = re.compile(r"^\d{1,3}(?:\.\d{3})+,\d{1,3}$")   # 1.234,56
+    _BR_DEC         = re.compile(r"^\d+,\d{1,3}$")                   # 15,00 / 37,8
+    _EN_DEC_THOUS   = re.compile(r"^\d{1,3}(?:,\d{3})+\.\d{1,3}$")   # 1,234.56
+    _EN_DEC         = re.compile(r"^\d+\.\d{1,3}$")                  # 1234.56
+    _BR_THOUS_ONLY  = re.compile(r"^\d{1,3}(?:\.\d{3})+$")           # 13.956
+    _EN_THOUS_ONLY  = re.compile(r"^\d{1,3}(?:,\d{3})+$")            # 13,956
+    _DIGITS_ONLY    = re.compile(r"^\d+$")                           # 13956
+    
     def parse_money_cell(x):
         """
-        Converte por célula (sem multiplicar/dividir por 100):
-          '15,00'      -> 15.0
-          '1.661,00'   -> 1661.0
-          '1,661.00'   -> 1661.0
-          '13.956'     -> 13956.0
-          '(1.234,56)' -> -1234.56
+        Converte valores monetários sem NUNCA dividir/multiplicar por 100.
+        Cobre BR (vírgula decimal), EN (ponto decimal) e negativos com () ou -.
         """
+        # já numérico → devolve como float
         if isinstance(x, (int, float)):
             try:
-                return float(x)  # já veio numérico do Sheets
+                return float(x)
             except Exception:
                 return 0.0
     
@@ -2510,7 +2519,7 @@ with st.spinner("⏳ Processando..."):
         if s == "" or s.lower() in {"nan", "none"}:
             return 0.0
     
-        # negativos: "(...)" ou "-"
+        # negativo por parênteses ou hífen
         neg = False
         if s.startswith("(") and s.endswith(")"):
             neg = True
@@ -2519,56 +2528,37 @@ with st.spinner("⏳ Processando..."):
             neg = True
             s = s[1:].strip()
     
-        # remove rótulos/espaços
+        # remove rótulos/espacos
         s = (s.replace("R$", "")
                .replace("\u00A0", "")
                .replace(" ", ""))
     
-        has_comma = "," in s
-        has_dot   = "." in s
-    
         try:
-            if has_comma and has_dot:
-                # usa o último separador como decimal
-                if s.rfind(",") > s.rfind("."):
-                    # "1.234,56" (BR)
-                    val = float(s.replace(".", "").replace(",", "."))
-                else:
-                    # "1,234.56" (EN)
-                    val = float(s.replace(",", ""))
-            elif has_comma:
-                # "123,45" (decimal BR) ou "1,234" (milhar EN)
-                if re.fullmatch(r"\d+,\d{1,2}", s):
-                    val = float(s.replace(",", "."))
-                elif re.fullmatch(r"\d{1,3}(?:,\d{3})+", s):
-                    val = float(s.replace(",", ""))  # remove vírgulas de milhar
-                else:
-                    val = float(s.replace(",", "."))
-            elif has_dot:
-                # "1234.56" (decimal EN) ou "1.234" (milhar BR)
-                if re.fullmatch(r"\d+\.\d{1,2}", s):
-                    val = float(s)
-                elif re.fullmatch(r"\d{1,3}(?:\.\d{3})+", s):
-                    val = float(s.replace(".", ""))  # remove pontos de milhar
-                else:
-                    val = float(s)
-            else:
-                # só dígitos
+            if _BR_DEC_THOUS.match(s):      # 1.234,56
+                val = float(s.replace(".", "").replace(",", "."))
+            elif _BR_DEC.match(s):          # 15,00 / 37,8
+                val = float(s.replace(",", "."))
+            elif _EN_DEC_THOUS.match(s):    # 1,234.56
+                val = float(s.replace(",", ""))
+            elif _EN_DEC.match(s):          # 1234.56
                 val = float(s)
+            elif _BR_THOUS_ONLY.match(s):   # 13.956 → 13956
+                val = float(s.replace(".", ""))
+            elif _EN_THOUS_ONLY.match(s):   # 13,956 → 13956
+                val = float(s.replace(",", ""))
+            elif _DIGITS_ONLY.match(s):     # 13956
+                val = float(s)
+            else:
+                # fallback defensivo: tenta BR e depois EN
+                val = float(s.replace(".", "").replace(",", "."))
         except Exception:
-            # fallback defensivo
-            s2 = re.sub(r"[^\d,.\-]", "", s)
             try:
-                val = float(s2.replace(".", "").replace(",", "."))
+                val = float(s.replace(",", ""))  # tenta EN duro
             except Exception:
-                try:
-                    val = float(s2.replace(",", ""))
-                except Exception:
-                    val = 0.0
+                val = 0.0
     
-        if neg:
-            val = -val
-        return val
+        return -val if neg else val
+
     
     
     # -------------------- helpers de UI --------------------

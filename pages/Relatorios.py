@@ -2687,7 +2687,10 @@ with st.spinner("⏳ Processando..."):
                 # -------- visões --------
 
                 if visao == "Analítico":
-   
+
+                    from io import BytesIO
+                    import pandas as pd
+                
                     grid = st.empty()  # placeholder para garantir um único render
                 
                     df_base = df_fil.copy()
@@ -2728,11 +2731,89 @@ with st.spinner("⏳ Processando..."):
                     if to_drop:
                         df_exibe = df_exibe.drop(columns=to_drop)
                 
-                    # 6) Render ÚNICO
+                    # ---------- Render único na tela ----------
                     grid.dataframe(df_exibe, use_container_width=True, hide_index=True)
+                
+                    # ---------- Exportação Excel (xlsxwriter) ----------
+                    # Monta base para export com tipos corretos ANTES de formatar
+                    df_export = pd.concat([pd.DataFrame([total_row]), df_base], ignore_index=True)
+                
+                    # Remove as mesmas colunas proibidas também no Excel
+                    to_drop_exp = [c for c in aliases_remover if c in df_export.columns]
+                    if to_drop_exp:
+                        df_export = df_export.drop(columns=to_drop_exp)
+                
+                    # Tipos
+                    if "Data" in df_export.columns:
+                        df_export["Data"] = pd.to_datetime(df_export["Data"], errors="coerce")
+                    if col_valor and col_valor in df_export.columns:
+                        df_export[col_valor] = pd.to_numeric(df_export[col_valor], errors="coerce")
+                
+                    buffer = BytesIO()
+                    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+                        sheet_name = "Analítico"
+                        df_export.to_excel(writer, sheet_name=sheet_name, index=False)
+                        wb = writer.book
+                        ws = writer.sheets[sheet_name]
+                
+                        # Estilos
+                        header_fmt = wb.add_format({
+                            "bold": True, "align": "center", "valign": "vcenter",
+                            "bg_color": "#F2F2F2", "border": 1
+                        })
+                        date_fmt = wb.add_format({"num_format": "dd/mm/yyyy", "border": 1})
+                        money_fmt = wb.add_format({"num_format": "R$ #,##0.00", "border": 1})
+                        text_fmt = wb.add_format({"border": 1})
+                        total_row_fmt = wb.add_format({"bold": True, "bg_color": "#FCE5CD", "border": 1})
+                        total_money_fmt = wb.add_format({
+                            "bold": True, "bg_color": "#FCE5CD", "border": 1,
+                            "num_format": "R$ #,##0.00"
+                        })
+                
+                        # Cabeçalho estilizado
+                        for col_idx, col_name in enumerate(df_export.columns):
+                            ws.write(0, col_idx, col_name, header_fmt)
+                
+                        # Larguras e formatos por coluna
+                        for col_idx, col_name in enumerate(df_export.columns):
+                            # largura padrão por heurística
+                            largura = 18
+                            fmt = text_fmt
+                            if col_name.lower() == "data":
+                                largura, fmt = 12, date_fmt
+                            elif col_valor and col_name == col_valor:
+                                largura, fmt = 16, money_fmt
+                            elif "loja" in col_name.lower():
+                                largura = 28
+                            elif "grupo" in col_name.lower():
+                                largura = 22
+                            ws.set_column(col_idx, col_idx, largura, fmt)
+                
+                        # Destaca a linha TOTAL (primeira linha de dados → linha 1 no Excel)
+                        ws.set_row(1, None, total_row_fmt)
+                        # Se houver coluna de valor, reescreve com formato de moeda destacado
+                        if col_valor and col_valor in df_export.columns:
+                            total_val_num = df_export.iloc[0][col_valor]
+                            if pd.notna(total_val_num):
+                                ws.write_number(1, list(df_export.columns).index(col_valor), float(total_val_num), total_money_fmt)
+                        # Se houver coluna "Loja", reescreve "TOTAL" com destaque (texto)
+                        if "Loja" in df_export.columns:
+                            ws.write_string(1, list(df_export.columns).index("Loja"), "TOTAL", total_row_fmt)
+                
+                        # Congela cabeçalho
+                        ws.freeze_panes(1, 0)
+                
+                    st.download_button(
+                        label="⬇️ Baixar Excel (Analítico)",
+                        data=buffer.getvalue(),
+                        file_name="Relatorio_Analitico.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
                 
                     # Evita qualquer outro dataframe aparecer abaixo
                     st.stop()
+
 
     
                 elif visao == "Sintético":

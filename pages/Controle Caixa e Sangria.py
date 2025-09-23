@@ -8,11 +8,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 from gspread_formatting import format_cell_range, CellFormat, NumberFormat
 
 
-# Formato contábil: positivo; negativo entre parênteses; zero como “-”; texto
-ACCOUNTING_FMT = CellFormat(
-    numberFormat=NumberFormat(type="NUMBER", pattern="#,##0.00_);(#,##0.00);-;@")
-)
-
 
 
 st.set_page_config(page_title="Relatório de Sangria", layout="wide")
@@ -414,7 +409,16 @@ with st.spinner("⏳ Processando..."):
     # ================
     with tab2:
         st.markdown("🔗 [Abrir planilha Vendas diarias](https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU)")
-        
+        from gspread_formatting import format_cell_range, CellFormat, NumberFormat
+
+        # Formato contábil com símbolo R$ (positivo; negativo entre parênteses; zero como "-"; texto)
+        ACCOUNTING_R$ = CellFormat(
+            numberFormat=NumberFormat(
+                type="CURRENCY",
+                pattern="R$ * #,##0.00_);R$ * (#,##0.00);R$ * -_;@"
+            )
+        )
+
         # ✅ defina o mode ANTES de usá-lo
         mode = st.session_state.get("mode", None)
     
@@ -871,7 +875,8 @@ with st.spinner("⏳ Processando..."):
                     linha[dup_idx] for linha in valores_existentes[1:]
                     if len(linha) > dup_idx and linha[dup_idx] != ""
                 ])
-                
+                # 🔽 AQUI: garanta que Valor(R$) é número antes de virar lista
+                df_final["Valor(R$)"] = pd.to_numeric(df_final["Valor(R$)"], errors="coerce").fillna(0.0)
                 # ✅ Ignorar duplicidade interna do arquivo, checar só com o Sheets
                 novos_dados, duplicados_sheet = [], []
                 for linha in df_final.values.tolist():
@@ -897,21 +902,22 @@ with st.spinner("⏳ Processando..."):
                             except Exception:
                                 col_valor_letter = None
                 
+
                             inicio = len(valores_existentes) + 1
-                           
                             fim = inicio + len(novos_dados) - 1
                             
                             if fim >= inicio:
+                                # Data (mantém como está)
                                 if col_data_letter:
                                     format_cell_range(
                                         aba_destino, f"{col_data_letter}{inicio}:{col_data_letter}{fim}",
                                         CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
                                     )
-                                # 👉 Agora “Valor(R$)” em formato CONTÁBIL
+                                # Valor(R$) em CONTÁBIL com R$
                                 if col_valor_letter:
                                     format_cell_range(
                                         aba_destino, f"{col_valor_letter}{inicio}:{col_valor_letter}{fim}",
-                                        ACCOUNTING_FMT
+                                        ACCOUNTING_R$
                                     )
 
                 

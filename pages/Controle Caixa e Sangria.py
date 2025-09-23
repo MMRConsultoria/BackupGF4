@@ -412,7 +412,7 @@ with st.spinner("⏳ Processando..."):
         from gspread_formatting import format_cell_range, CellFormat, NumberFormat
 
         # Formato contábil com símbolo R$ (positivo; negativo entre parênteses; zero como "-"; texto)
-        ACCOUNTING_R$ = CellFormat(
+        ACCOUNTING_RS = CellFormat(
             numberFormat=NumberFormat(
                 type="CURRENCY",
                 pattern="R$ * #,##0.00_);R$ * (#,##0.00);R$ * -_;@"

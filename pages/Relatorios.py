@@ -2493,15 +2493,23 @@ with st.spinner("⏳ Processando..."):
 
     import re
 
+  
+
     def parse_valor_brl_sheets(x):
         """
-        Regras do Sheets:
-          • Sem vírgula           -> acrescenta ,00   (ex.: "548" -> 548,00)
-          • Vírgula com 1 dígito  -> ,X0              (ex.: "1,5" -> 1,50)
-          • Vírgula com 2+ dígitos-> mantém 2         (ex.: "1,234" -> 1,23)
-        Remove pontos de milhar e aceita negativos '(...)' ou '-'.
-        Retorna float (em reais).
+        Normaliza valores vindo do Sheets:
+          • Com vírgula: força 2 casas.
+          • Sem vírgula:
+              - 1 a 3 dígitos -> reais inteiros      (548   -> 548,00)
+              - 4 dígitos:
+                  * termina com '00' -> ÷100         (1200  -> 12,00)
+                  * termina com '0'  -> ÷10          (5480  -> 548,00)
+                  * outros           -> mantém       (1234  -> 1.234,00)
+              - 5+ dígitos -> ÷100                    (54800 -> 548,00)
+        Aceita negativos '(...)' ou '-'. Remove 'R$', espaços e pontos de milhar.
+        Retorna float.
         """
+        # já numérico
         if isinstance(x, (int, float)):
             try:
                 return float(x)
@@ -2512,6 +2520,7 @@ with st.spinner("⏳ Processando..."):
         if s == "" or s.lower() in {"nan", "none"}:
             return 0.0
     
+        # sinal
         neg = False
         if s.startswith("(") and s.endswith(")"):
             neg = True
@@ -2520,7 +2529,7 @@ with st.spinner("⏳ Processando..."):
             neg = True
             s = s[1:].strip()
     
-        # limpa rótulos/espaços e pontos de milhar
+        # limpa rótulos e separadores
         s = (s.replace("R$", "")
              .replace("\u00A0", "")
              .replace(" ", "")
@@ -2530,27 +2539,37 @@ with st.spinner("⏳ Processando..."):
             inteiro, dec = s.rsplit(",", 1)
             inteiro = re.sub(r"\D", "", inteiro)
             dec     = re.sub(r"\D", "", dec)
-    
             if dec == "":
                 dec = "00"
             elif len(dec) == 1:
                 dec = dec + "0"
             else:
                 dec = dec[:2]
-    
             num_str = f"{inteiro}.{dec}" if inteiro != "" else f"0.{dec}"
             try:
                 val = float(num_str)
             except Exception:
                 val = 0.0
         else:
-            # ✅ sem vírgula: trata como reais inteiros (NÃO divide nada)
-            inteiro = re.sub(r"\D", "", s)
-            val = float(inteiro) if inteiro != "" else 0.0
+            # sem vírgula -> decide pela quantidade de dígitos
+            digits = re.sub(r"\D", "", s)
+            if digits == "":
+                val = 0.0
+            else:
+                n = len(digits)
+                if n <= 3:
+                    val = float(digits)                      # 548 -> 548,00
+                elif n == 4:
+                    if digits.endswith("00"):
+                        val = float(digits) / 100.0          # 1200 -> 12,00
+                    elif digits.endswith("0"):
+                        val = float(digits) / 10.0           # 5480 -> 548,00
+                    else:
+                        val = float(digits)                  # 1234 -> 1.234,00
+                else:  # n >= 5
+                    val = float(digits) / 100.0              # 54800 -> 548,00
     
-        if neg:
-            val = -val
-        return val
+        return -val if neg else val
 
 
     

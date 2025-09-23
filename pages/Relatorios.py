@@ -2490,28 +2490,28 @@ with st.spinner("⏳ Processando..."):
     
     # ---------------- helpers ----------------
     
-    def parse_valor_brl_sheets(x):
 
+    import re
+
+    def parse_valor_brl_sheets(x):
         """
-        Regras:
-          - remove R$, espaços, pontos, parênteses (negativo) e normaliza
-          - se tiver vírgula:
-              0 decimais  -> ,00
-              1 decimal   -> ,X0
-              2+ decimais -> corta para 2
-          - se NÃO tiver vírgula:
-              * se tiver 4+ dígitos e terminar com '00' => trata como centavos sem vírgula (ex.: 54800 -> 548,00)
-              * caso contrário, trata como inteiro em reais (150 -> 150,00)
-        Retorna float em reais.
+        Regras do Sheets:
+          • Sem vírgula           -> acrescenta ,00   (ex.: "548" -> 548,00)
+          • Vírgula com 1 dígito  -> ,X0              (ex.: "1,5" -> 1,50)
+          • Vírgula com 2+ dígitos-> mantém 2         (ex.: "1,234" -> 1,23)
+        Remove pontos de milhar e aceita negativos '(...)' ou '-'.
+        Retorna float (em reais).
         """
-        import re
+        if isinstance(x, (int, float)):
+            try:
+                return float(x)
+            except Exception:
+                return 0.0
     
-        # força caminho textual MESMO se vier como número
-        s = "" if x is None else str(x).strip()
+        s = str(x).strip()
         if s == "" or s.lower() in {"nan", "none"}:
             return 0.0
     
-        # negativo: "(...)" ou "-"
         neg = False
         if s.startswith("(") and s.endswith(")"):
             neg = True
@@ -2520,11 +2520,11 @@ with st.spinner("⏳ Processando..."):
             neg = True
             s = s[1:].strip()
     
-        # remove rótulos, espaços e pontos de milhar
+        # limpa rótulos/espaços e pontos de milhar
         s = (s.replace("R$", "")
-               .replace("\u00A0", "")
-               .replace(" ", "")
-               .replace(".", ""))
+             .replace("\u00A0", "")
+             .replace(" ", "")
+             .replace(".", ""))
     
         if "," in s:
             inteiro, dec = s.rsplit(",", 1)
@@ -2544,21 +2544,14 @@ with st.spinner("⏳ Processando..."):
             except Exception:
                 val = 0.0
         else:
-            # sem vírgula → pode ser inteiro em reais ou centavos compactados (ex.: 54800 -> 548,00)
-            digits = re.sub(r"\D", "", s)
-            if digits == "":
-                val = 0.0
-            else:
-                if len(digits) >= 4 and digits.endswith("00"):
-                    # heurística segura para casos como 54800 -> 548,00
-                    val = float(digits) / 100.0
-                else:
-                    # trata como inteiro em reais
-                    val = float(digits)
+            # ✅ sem vírgula: trata como reais inteiros (NÃO divide nada)
+            inteiro = re.sub(r"\D", "", s)
+            val = float(inteiro) if inteiro != "" else 0.0
     
         if neg:
             val = -val
         return val
+
 
     
     

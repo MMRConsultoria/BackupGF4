@@ -2702,35 +2702,56 @@ with st.spinner("⏳ Processando..."):
                         df_exibe = formata_valor_col(df_exibe, col_valor)
     
                 elif visao == "Sintético":
-                    if not col_valor or "Loja" not in df_fil.columns or "Descrição Agrupada" not in df_fil.columns:
-                        st.warning("Para 'Sintético', preciso de 'Loja', 'Descrição Agrupada' e valor.")
+
+                    if not col_valor or "Loja" not in df_fil.columns or "Data" not in df_fil.columns:
+                        st.warning("Para 'Sintético', preciso de 'Data', 'Loja' e da coluna de valor.")
                     else:
-                        df_agg = (
-                            df_fil.groupby(["Loja", "Descrição Agrupada"], as_index=False)[col_valor].sum()
-                                  .sort_values(["Loja", "Descrição Agrupada"])
+                        tmp = df_fil.copy()
+                
+                        # garante datetime para ordenação correta
+                        tmp["Data"] = pd.to_datetime(tmp["Data"], errors="coerce").dt.normalize()
+                
+                        # acha a coluna de Grupo (preferência para 'Grupo'; senão, tenta outra que contenha 'grupo')
+                        col_grupo = None
+                        for c in tmp.columns:
+                            cl = str(c).strip().lower()
+                            if cl == "grupo":
+                                col_grupo = c
+                                break
+                        if not col_grupo:
+                            col_grupo = next(
+                                (c for c in tmp.columns
+                                 if "grupo" in str(c).lower() and "everest" not in str(c).lower()),
+                                None
+                            )
+                        # se ainda não tiver Grupo, busca da Tabela Empresa
+                        if not col_grupo and "Loja" in tmp.columns:
+                            mapa = df_empresa[["Loja", "Grupo"]].drop_duplicates()
+                            tmp = tmp.merge(mapa, on="Loja", how="left")
+                            col_grupo = "Grupo"
+                
+                        # agrega por Grupo/Loja/Dia
+                        group_cols = [c for c in [col_grupo, "Loja", "Data"] if c]
+                        df_agg = (tmp.groupby(group_cols, as_index=False)[col_valor].sum())
+                
+                        # renomeia e ordena (primeiro por Data para ficar 01, 02, 03…)
+                        ren = {col_valor: "Sangria"}
+                        if col_grupo and col_grupo != "Grupo":
+                            ren[col_grupo] = "Grupo"
+                        df_agg = df_agg.rename(columns=ren)
+                
+                        df_agg = df_agg.sort_values(["Data", "Grupo", "Loja"], na_position="last")
+                
+                        # formata para exibição
+                        df_agg["Data"] = pd.to_datetime(df_agg["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
+                        df_agg["Sangria"] = df_agg["Sangria"].apply(
+                            lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                         )
-                        col_grupo = next((c for c in df_fil.columns if "grupo" in str(c).lower() and "everest" not in str(c).lower()), None)
-                        if col_grupo:
-                            def _pick_group(s):
-                                s = s.dropna().astype(str)
-                                if s.empty:
-                                    return ""
-                                m = s.mode()
-                                return m.iloc[0] if not m.empty else s.iloc[0]
-                            df_map = df_fil.groupby(["Loja", "Descrição Agrupada"], as_index=False)[col_grupo].agg(_pick_group)
-                            df_exibe = df_agg.merge(df_map, on=["Loja", "Descrição Agrupada"], how="left")
-                            df_exibe = df_exibe[["Loja", col_grupo, "Descrição Agrupada", col_valor]]
-                        else:
-                            df_exibe = df_agg
-    
-                        total_val = df_exibe[col_valor].sum()
-                        total_row = {c: "" for c in df_exibe.columns}
-                        total_row["Loja"] = "TOTAL"
-                        if "Descrição Agrupada" in total_row:
-                            total_row["Descrição Agrupada"] = ""
-                        total_row[col_valor] = total_val
-                        df_exibe = pd.concat([pd.DataFrame([total_row]), df_exibe], ignore_index=True)
-                        df_exibe = formata_valor_col(df_exibe, col_valor)
+                
+                        # mantém somente as 4 colunas pedidas
+                        colunas_final = ["Grupo", "Loja", "Data", "Sangria"]
+                        df_exibe = df_agg[colunas_final]
+
     
                 elif visao in ("Comparativa Everest", "Diferenças Everest"):
                     base = df_sangria.copy()

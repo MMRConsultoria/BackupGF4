@@ -2769,7 +2769,9 @@ with st.spinner("⏳ Processando..."):
                 
                         # exibe
                         st.dataframe(df_exibe, use_container_width=True, hide_index=True)
-
+                        
+                        # impede que outro bloco mais abaixo exiba outra tabela
+                        st.stop()
     
                 elif visao in ("Comparativa Everest", "Diferenças Everest"):
                     base = df_sangria.copy()

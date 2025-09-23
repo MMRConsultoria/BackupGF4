@@ -2702,9 +2702,13 @@ with st.spinner("⏳ Processando..."):
                         df_exibe = formata_valor_col(df_exibe, col_valor)
     
                 elif visao == "Sintético":
+             
                     if not col_valor or "Loja" not in df_fil.columns or "Data" not in df_fil.columns:
                         st.warning("Para 'Sintético', preciso de 'Data', 'Loja' e da coluna de valor.")
                     else:
+                        from io import BytesIO
+                        import pandas as pd
+                
                         tmp = df_fil.copy()
                 
                         # garante datetime para ordenação correta
@@ -2742,36 +2746,95 @@ with st.spinner("⏳ Processando..."):
                         # ordena pelos dias (01, 02, 03…) e, dentro do dia, Grupo/Loja
                         df_agg = df_agg.sort_values(["Data", "Grupo", "Loja"], na_position="last")
                 
-                        # ===== Linha TOTAL como PRIMEIRA linha (antes de formatar) =====
+                        # ===== Linha TOTAL como PRIMEIRA linha (mantendo tipos corretos) =====
                         total_sangria = df_agg["Sangria"].sum(min_count=1)
                         linha_total = pd.DataFrame({
                             "Grupo":   ["TOTAL"],
                             "Loja":    [""],
-                            "Data":    [pd.NaT],       # fica em branco na exibição
+                            "Data":    [pd.NaT],       # NaT para ficar em branco na exibição e Excel
                             "Sangria": [total_sangria]
                         })
                         df_agg_total = pd.concat([linha_total, df_agg], ignore_index=True)
                 
-                        # ===== Formatação para exibição (Data dd/mm/aaaa; moeda BRL) =====
+                        # ===== Exibição (sem quebrar tipos para o Excel) =====
                         df_exibe = df_agg_total.copy()
                         # Data em dd/mm/aaaa, mantendo a do TOTAL vazia
                         df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce")
                         df_exibe["Data"] = df_exibe["Data"].dt.strftime("%d/%m/%Y").fillna("")
-                
-                        # moeda BRL
+                        # moeda BRL (apenas para exibição)
                         df_exibe["Sangria"] = df_exibe["Sangria"].apply(
                             lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                         )
-                
                         # mantém somente as 4 colunas pedidas
                         colunas_final = ["Grupo", "Loja", "Data", "Sangria"]
                         df_exibe = df_exibe[colunas_final]
                 
-                        # exibe
                         st.dataframe(df_exibe, use_container_width=True, hide_index=True)
-                        
-                        # impede que outro bloco mais abaixo exiba outra tabela
+                
+                        # ===== Exportação Excel (xlsxwriter) =====
+                        # Usamos o df_agg_total (com tipos corretos) para o arquivo
+                        df_export = df_agg_total[["Grupo", "Loja", "Data", "Sangria"]].copy()
+                        # garante tipos
+                        df_export["Data"] = pd.to_datetime(df_export["Data"], errors="coerce")
+                        df_export["Sangria"] = pd.to_numeric(df_export["Sangria"], errors="coerce")
+                
+                        buffer = BytesIO()
+                        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+                            sheet_name = "Sintético"
+                            df_export.to_excel(writer, sheet_name=sheet_name, index=False)
+                            wb  = writer.book
+                            ws  = writer.sheets[sheet_name]
+                
+                            # formatos
+                            header_fmt = wb.add_format({
+                                "bold": True, "align": "center", "valign": "vcenter",
+                                "bg_color": "#F2F2F2", "border": 1
+                            })
+                            date_fmt = wb.add_format({"num_format": "dd/mm/yyyy", "border": 1})
+                            money_fmt = wb.add_format({"num_format": "R$ #,##0.00", "border": 1})
+                            text_fmt = wb.add_format({"border": 1})
+                            total_row_fmt = wb.add_format({"bold": True, "bg_color": "#FCE5CD", "border": 1})
+                            total_money_fmt = wb.add_format({
+                                "bold": True, "bg_color": "#FCE5CD", "border": 1,
+                                "num_format": "R$ #,##0.00"
+                            })
+                
+                            # cabeçalho com estilo
+                            for col_idx, col_name in enumerate(colunas_final):
+                                ws.write(0, col_idx, col_name, header_fmt)
+                
+                            nrows, ncols = df_export.shape
+                
+                            # larguras de coluna
+                            ws.set_column("A:A", 20, text_fmt)    # Grupo
+                            ws.set_column("B:B", 28, text_fmt)    # Loja
+                            ws.set_column("C:C", 12, date_fmt)    # Data
+                            ws.set_column("D:D", 14, money_fmt)   # Sangria
+                
+                            # destaca TOTAL (primeira linha de dados = linha 1 no Excel)
+                            # aplica fundo/bolo na linha inteira
+                            ws.set_row(1, None, total_row_fmt)
+                            # reescreve célula da Sangria do TOTAL com formato moeda + destaque
+                            total_val = df_export.iloc[0]["Sangria"]
+                            if pd.notna(total_val):
+                                ws.write_number(1, 3, float(total_val), total_money_fmt)
+                            # e a célula "TOTAL" (texto) com o mesmo fundo
+                            ws.write_string(1, 0, "TOTAL", total_row_fmt)
+                
+                            # congelar cabeçalho
+                            ws.freeze_panes(1, 0)
+                
+                        st.download_button(
+                            label="⬇️ Baixar Excel (Sintético)",
+                            data=buffer.getvalue(),
+                            file_name="Relatorio_Sintetico.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+                
+                        # impede que outra parte da página gere grid duplicado
                         st.stop()
+
     
                 elif visao in ("Comparativa Everest", "Diferenças Everest"):
                     base = df_sangria.copy()

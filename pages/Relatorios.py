@@ -2479,31 +2479,24 @@ with st.spinner("⏳ Processando..."):
             st.error(f"❌ Erro ao acessar dados: {e}")
 
     # ================================
-   # ================================
-    # Nova ABA: Relatórios Caixa e Sangria (com sub-abas)
+  
+    # 🧾 Relatórios Caixa e Sangria (com sub-abas)
     # ================================
-    
-    import re, math
     from io import BytesIO
+    import re
     import numpy as np
     import pandas as pd
-    import streamlit as st   # se já importou antes, pode remover esta linha
+    import streamlit as st
     
     # ---------------- helpers ----------------
     
-    
-    import re
-
     def parse_valor_brl_sheets(x):
         """
-        Regras do Sheets:
-          1) Sem vírgula -> coloca ,00 (mas se for 'centavos sem vírgula' tipo 54800 -> 548,00)
-          2) Vírgula com 1 dígito -> ,X0
-          3) Vírgula com 2+ dígitos -> mantém 2 (corta o resto)
-        Também remove pontos de milhar e aceita negativos '(...)' ou '-'.
-        Retorna float (em reais).
+        Limpeza igual às outras abas:
+          - remove 'R$', espaços, pontos de milhar, parênteses (negativo)
+          - troca vírgula por ponto
+          - NÃO divide por 100 em hipótese alguma
         """
-        # já numérico: preserva
         if isinstance(x, (int, float)):
             try:
                 return float(x)
@@ -2514,51 +2507,19 @@ with st.spinner("⏳ Processando..."):
         if s == "" or s.lower() in {"nan", "none"}:
             return 0.0
     
-        # negativo '(...)' ou '-'
-        neg = False
+        # parênteses como negativo
         if s.startswith("(") and s.endswith(")"):
-            neg = True
-            s = s[1:-1].strip()
-        if s.startswith("-"):
-            neg = True
-            s = s[1:].strip()
+            s = "-" + s[1:-1]
     
-        # remove rótulos/espaços e pontos de milhar
         s = (s.replace("R$", "")
                .replace("\u00A0", "")
-               .replace(" ", ""))
-        s = s.replace(".", "")
-    
-        if "," in s:
-            # tem vírgula: aplica as 3 regras de casas decimais
-            inteiro, dec = s.rsplit(",", 1)
-            inteiro = re.sub(r"\D", "", inteiro)
-            dec     = re.sub(r"\D", "", dec)
-            if dec == "":
-                dec = "00"
-            elif len(dec) == 1:
-                dec = dec + "0"
-            else:
-                dec = dec[:2]
-            num_str = f"{inteiro}.{dec}" if inteiro != "" else f"0.{dec}"
-            try:
-                val = float(num_str)
-            except Exception:
-                val = 0.0
-        else:
-            # sem vírgula: pode ser inteiro em reais OU inteiro em centavos (ex.: '54800' -> 548,00)
-            inteiro = re.sub(r"\D", "", s)
-            if inteiro == "":
-                val = 0.0
-            else:
-                # heurística de centavos: >=4 dígitos e termina com '00' => divide por 100
-                if len(inteiro) >= 4 and inteiro.endswith("00"):
-                    val = float(inteiro) / 100.0
-                else:
-                    val = float(inteiro)
-    
-        return -val if neg else val
-
+               .replace(" ", "")
+               .replace(".", "")
+               .replace(",", "."))
+        try:
+            return float(s)
+        except Exception:
+            return 0.0
     
     
     def _render_df(df, *, height=480):
@@ -2632,7 +2593,7 @@ with st.spinner("⏳ Processando..."):
     
                 col_valor = pick_valor_col(df_sangria.columns)
     
-                # ► Converte valores (uma única vez, sem 'correção 100x')
+                # ► Converte valores (uma única vez) exatamente como nas outras abas
                 if col_valor:
                     raw_series = df_sangria[col_valor]
                     parsed = raw_series.map(parse_valor_brl_sheets).astype(float)
@@ -2780,7 +2741,7 @@ with st.spinner("⏳ Processando..."):
                             df_ev["Fantasia Everest"] = df_ev[col_fant_ev] if col_fant_ev else ""
                             df_ev["Data"]             = pd.to_datetime(df_ev[col_dt_ev], dayfirst=True, errors="coerce").dt.normalize()
     
-                            # parse seguindo as mesmas regras do Sheets
+                            # parse seguindo as mesmas regras do Sheets (sem ÷100)
                             df_ev["Valor Lancamento"] = (
                                 df_ev[col_val_ev].map(parse_valor_brl_sheets).astype(float)
                             )
@@ -2850,35 +2811,35 @@ with st.spinner("⏳ Processando..."):
                             # flag para a renderização colorida
                             st.session_state.__cmp_has_red = True
     
-        # --- render e export (comum a todas as visões) ---
-        if 'df_exibe' in locals() and not df_exibe.empty:
-            # Na Comparativa/Diferenças mantemos "Código Everest" visível
-            if visao in ("Comparativa Everest", "Diferenças Everest"):
-                colunas_ocultar_local = []  # NÃO ocultar "Código Everest"
-            else:
-                colunas_ocultar_local = ["Código Grupo Everest","Duplicidade","Sistema","Mês","Ano"]
+                # --- render e export (comum a todas as visões) ---
+                if 'df_exibe' in locals() and not df_exibe.empty:
+                    # Na Comparativa/Diferenças mantemos "Código Everest" visível
+                    if visao in ("Comparativa Everest", "Diferenças Everest"):
+                        colunas_ocultar_local = []  # NÃO ocultar "Código Everest"
+                    else:
+                        colunas_ocultar_local = ["Código Grupo Everest","Duplicidade","Sistema","Mês","Ano"]
     
-            df_show = df_exibe.drop(columns=colunas_ocultar_local, errors="ignore").copy()
+                    df_show = df_exibe.drop(columns=colunas_ocultar_local, errors="ignore").copy()
     
-            # pinta a Loja em vermelho quando só veio do Everest (usou Fantasia)
-            if st.session_state.get("__cmp_has_red") and "Nao Mapeada?" in df_show.columns and "Loja" in df_show.columns:
-                def _paint_row(row):
-                    styles = [""] * len(df_show.columns)
-                    if bool(row.get("Nao Mapeada?", False)):
-                        styles[df_show.columns.get_loc("Loja")] = "color: red; font-weight: 700"
-                    return styles
-                st.dataframe(df_show.style.apply(_paint_row, axis=1), use_container_width=True, height=480)
-            else:
-                _render_df(df_show, height=480)
+                    # pinta a Loja em vermelho quando só veio do Everest (usou Fantasia)
+                    if st.session_state.get("__cmp_has_red") and "Nao Mapeada?" in df_show.columns and "Loja" in df_show.columns:
+                        def _paint_row(row):
+                            styles = [""] * len(df_show.columns)
+                            if bool(row.get("Nao Mapeada?", False)):
+                                styles[df_show.columns.get_loc("Loja")] = "color: red; font-weight: 700"
+                            return styles
+                        st.dataframe(df_show.style.apply(_paint_row, axis=1), use_container_width=True, height=480)
+                    else:
+                        _render_df(df_show, height=480)
     
-            # Export: remove apenas a coluna técnica
-            df_exportar = df_show.drop(columns=["Nao Mapeada?"], errors="ignore")
+                    # Export: remove apenas a coluna técnica
+                    df_exportar = df_show.drop(columns=["Nao Mapeada?"], errors="ignore")
     
-            buf = BytesIO()
-            with pd.ExcelWriter(buf, engine="openpyxl") as w:
-                df_exportar.to_excel(w, index=False, sheet_name="Sangria")
-            buf.seek(0)
-            st.download_button("⬇️ Baixar Excel (Sangria - Visão atual)", buf, "sangria.xlsx")
+                    buf = BytesIO()
+                    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+                        df_exportar.to_excel(w, index=False, sheet_name="Sangria")
+                    buf.seek(0)
+                    st.download_button("⬇️ Baixar Excel (Sangria - Visão atual)", buf, "sangria.xlsx")
     
         # -------------------------------
         # Sub-aba: CONTROLE DE CAIXA
@@ -2893,7 +2854,7 @@ with st.spinner("⏳ Processando..."):
                 st.info("📌 A aba **'Controle Caixa'** não foi encontrada na planilha. Podemos configurar depois.")
     
         # -------------------------------
-        # Sub-aba: EVEREST x SANGRIA
+        # Sub-aba: EVEREST x SANGRIA (Top 50)
         # -------------------------------
         with sub_evx:
             if df_sangria is None or df_sangria.empty:

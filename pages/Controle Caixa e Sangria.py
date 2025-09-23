@@ -705,35 +705,150 @@ with st.spinner("⏳ Processando..."):
                 # Inteiros opcionais
                 for col in ["Código Everest", "Código Grupo Everest", "Ano"]:
                     df_final[col] = df_final[col].apply(lambda x: int(x) if pd.notnull(x) and str(x).strip() != "" else "")
-    
+
                 # Acessa a aba de destino
                 aba_destino = planilha.worksheet("Sangria")
                 valores_existentes = aba_destino.get_all_values()
+                
                 if not valores_existentes:
-                    st.error("❌ A aba 'sangria' está vazia ou sem cabeçalho. Crie o cabeçalho antes de enviar.")
+                    st.error("❌ A aba 'Sangria' está vazia. Crie o cabeçalho antes de enviar.")
                     st.stop()
-    
-                header = valores_existentes[0]
-                if header[:len(destino_cols)] != destino_cols:
-                    st.error("❌ O cabeçalho da aba 'sangria' não corresponde ao esperado.")
+                
+                header_raw = valores_existentes[0]  # cabeçalho como está no Sheets (linha 1)
+                
+                # =========================
+                # Normalização/matching
+                # =========================
+                import unicodedata
+                import re
+                
+                def _normalize_name(s: str) -> str:
+                    s = str(s or "").strip()
+                    # remove acentos
+                    s = unicodedata.normalize("NFKD", s).encode("ASCII", "ignore").decode("ASCII")
+                    s = s.lower()
+                    # troca separadores por espaço
+                    s = re.sub(r"[_\-]+", " ", s)
+                    # remove múltiplos espaços
+                    s = re.sub(r"\s+", " ", s).strip()
+                    return s
+                
+                # nomes "canônicos" (o que seu código espera)
+                destino_cols = [
+                    "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
+                    "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
+                    "Descrição Agrupada", "Meio de recebimento", "Valor(R$)",
+                    "Mês", "Ano", "Duplicidade", "Sistema"
+                ]
+                
+                # versões normalizadas dos canônicos
+                canon_norm = [_normalize_name(c) for c in destino_cols]
+                
+                # cria um índice do header existente por normalização
+                header_norm_map = {}  # normalizado -> nome original do sheet
+                for col_name in header_raw:
+                    header_norm_map[_normalize_name(col_name)] = col_name
+                
+                # tenta mapear cada canônico para um nome real existente no sheet
+                col_map = {}         # nome canonico -> nome existente no sheet (original)
+                faltando = []        # canônicos que não foram encontrados
+                for canon, canon_n in zip(destino_cols, canon_norm):
+                    if canon_n in header_norm_map:
+                        col_map[canon] = header_norm_map[canon_n]
+                    else:
+                        faltando.append(canon)
+                
+                if faltando:
+                    # Diagnóstico amigável
+                    st.error("❌ O cabeçalho da aba 'Sangria' não corresponde ao esperado.")
+                    with st.expander("Ver diagnóstico"):
+                        st.write("**Esperado (canônico):**", destino_cols)
+                        st.write("**Encontrado (linha 1 do Sheet):**", header_raw)
+                        # quais equivalências foram reconhecidas
+                        reconhecidas = [f"{k} → {v}" for k, v in col_map.items()]
+                        if reconhecidas:
+                            st.write("**Equivalências reconhecidas:**", reconhecidas)
+                        st.write("**Faltando no Sheet:**", faltando)
+                        sobras = [h for h in header_raw if _normalize_name(h) not in set(canon_norm)]
+                        if sobras:
+                            st.write("**Colunas extras no Sheet (não usadas):**", sobras)
+                
+                    # 👉 BOTÃO OPCIONAL para corrigir só o cabeçalho (mantendo dados)
+                    # Use APENAS se tiver certeza de que as linhas abaixo já estão na ordem das colunas canônicas!
+                    if st.button("⚠️ Corrigir cabeçalho (linha 1) para o padrão esperado"):
+                        # atualiza somente a linha 1 com os nomes canônicos
+                        aba_destino.update("A1", [destino_cols])
+                        st.success("✅ Cabeçalho atualizado. Rode o envio novamente.")
                     st.stop()
-    
-                # Índice da coluna 'Duplicidade' no destino
+                
+                # Se chegou aqui, todas as colunas canônicas existem no Sheet (mesmo que com outro nome/ordem)
+                # Vamos alinhar o DataFrame à ORDEM ATUAL do Sheet, preservando layout existente.
+                # Monta a ordem final de colunas para enviar, com base no header do Sheet:
+                # - se a coluna do sheet está entre as que mapeiam para canônicas, usamos o nome canônico
+                # - se for uma coluna extra do sheet, vamos preenchê-la com vazio para as novas linhas
+                sheet_order_canon = []       # nomes CANÔNICOS na ordem do sheet
+                sheet_order_real = []        # nomes REAIS do sheet na mesma ordem (útil para log)
+                sheet_extras = []
+                
+                norm_to_canon = {_normalize_name(v): k for k, v in col_map.items()}  # nome real(normalizado) -> canônico
+                
+                for h in header_raw:
+                    hn = _normalize_name(h)
+                    if hn in norm_to_canon:
+                        sheet_order_canon.append(norm_to_canon[hn])  # canônico correspondente
+                        sheet_order_real.append(h)                   # nome real no sheet
+                    else:
+                        sheet_extras.append(h)
+                
+                # Reindexa df_final para a ordem do Sheet:
+                # - primeiras colunas: os canônicos na ordem em que aparecem no sheet
+                # - para colunas extra do sheet (que não existem no df_final), preenche com ""
+                df_final = df_final.copy()
+                
+                for extra in sheet_extras:
+                    # cria coluna vazia para cobrir colunas excedentes do sheet (se houverem)
+                    df_final[extra] = ""
+                
+                # O df deve conter todas as colunas canônicas; garantimos isso:
+                for c in destino_cols:
+                    if c not in df_final.columns:
+                        df_final[c] = ""
+                
+                # Monta a lista de colunas finais na ordem do sheet:
+                colunas_finais = []
+                for h in header_raw:
+                    hn = _normalize_name(h)
+                    if hn in norm_to_canon:
+                        # pega o canônico correspondente
+                        ccanon = norm_to_canon[hn]
+                        colunas_finais.append(ccanon)
+                    else:
+                        # coluna extra do sheet
+                        colunas_finais.append(h)
+                
+                # aplica a ordem
+                df_final = df_final[colunas_finais].fillna("")
+                
+                # =========================
+                # Duplicidade (usando a coluna 'Duplicidade' CANÔNICA)
+                # =========================
+                # encontra a posição da coluna 'Duplicidade' na ORDEM DO SHEET
                 try:
-                    dup_idx = header.index("Duplicidade")
-                except ValueError:
-                    st.error("❌ Cabeçalho da aba 'sangria' não contém a coluna 'Duplicidade'.")
-                    st.stop()
-    
+                    dup_idx = header_raw.index(col_map["Duplicidade"])  # nome real do sheet para 'Duplicidade'
+                except Exception:
+                    # fallback: tenta achar 'Duplicidade' literal no header
+                    try:
+                        dup_idx = header_raw.index("Duplicidade")
+                    except ValueError:
+                        st.error("❌ Cabeçalho não contém a coluna 'Duplicidade'.")
+                        st.stop()
+                
                 # ⚠️ CHAVES JÁ EXISTENTES (apenas do Google Sheets!)
                 dados_existentes = set([
                     linha[dup_idx] for linha in valores_existentes[1:]
                     if len(linha) > dup_idx and linha[dup_idx] != ""
                 ])
-    
-                # Prepara linhas na ordem do destino
-                df_final = df_final[destino_cols].fillna("")
-    
+                
                 # ✅ Ignorar duplicidade interna do arquivo, checar só com o Sheets
                 novos_dados, duplicados_sheet = [], []
                 for linha in df_final.values.tolist():
@@ -742,29 +857,38 @@ with st.spinner("⏳ Processando..."):
                         duplicados_sheet.append(linha)
                     else:
                         novos_dados.append(linha)
-    
+                
                 if st.button("📥 Atualizar Google Sheets Sangria"):
                     with st.spinner("🔄 Enviando..."):
                         if novos_dados:
-                            # USER_ENTERED => Sheets interpreta Data e Hora, valor numérico sem texto
                             aba_destino.append_rows(novos_dados, value_input_option="USER_ENTERED")
-    
-                            # ▸ Formatação das novas linhas
+                
+                            # Descobre índices (1-based) das colunas Data e Valor para formatar
+                            try:
+                                col_data_letter = chr(ord('A') + header_raw.index(col_map["Data"]))
+                            except Exception:
+                                col_data_letter = None
+                
+                            try:
+                                col_valor_letter = chr(ord('A') + header_raw.index(col_map["Valor(R$)"]))
+                            except Exception:
+                                col_valor_letter = None
+                
                             inicio = len(valores_existentes) + 1
                             fim = inicio + len(novos_dados) - 1
-    
+                
                             if fim >= inicio:
-                                # Data (coluna A) -> dd/mm/yyyy
-                                format_cell_range(
-                                    aba_destino, f"A{inicio}:A{fim}",
-                                    CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
-                                )
-                                # Valor(R$) (coluna L) -> padrão locale pt-BR
-                                format_cell_range(
-                                    aba_destino, f"L{inicio}:L{fim}",
-                                    CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#,##0.00"))
-                                )
-    
+                                if col_data_letter:
+                                    format_cell_range(
+                                        aba_destino, f"{col_data_letter}{inicio}:{col_data_letter}{fim}",
+                                        CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
+                                    )
+                                if col_valor_letter:
+                                    format_cell_range(
+                                        aba_destino, f"{col_valor_letter}{inicio}:{col_valor_letter}{fim}",
+                                        CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#,##0.00"))
+                                    )
+                
                             st.success(f"✅ {len(novos_dados)} registros enviados!")
                         if duplicados_sheet:
                             st.warning("⚠️ Alguns registros já existiam no Google Sheets e não foram enviados.")

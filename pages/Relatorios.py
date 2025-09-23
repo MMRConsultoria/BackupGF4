@@ -2635,12 +2635,12 @@ with st.spinner("⏳ Processando..."):
                     parsed = raw_series.map(parse_valor_brl_sheets).astype(float)
                     df_sangria[col_valor] = parsed
     
-                    with st.expander("🔎 Diagnóstico de valores (original x parseado)", expanded=False):
-                        show = pd.DataFrame({
-                            "Original (texto)": raw_series.astype(str).head(30),
-                            "Parseado (float)": parsed.head(30),
-                        })
-                        _render_df(show, height=360)
+                   # with st.expander("🔎 Diagnóstico de valores (original x parseado)", expanded=False):
+                   #     show = pd.DataFrame({
+                   #         "Original (texto)": raw_series.astype(str).head(30),
+                   #         "Parseado (float)": parsed.head(30),
+                   #     })
+                   #     _render_df(show, height=360)
     
                 # filtros
                 top1, top2, top3, top4 = st.columns([1.2, 1.2, 1.6, 1.6])

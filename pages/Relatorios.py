@@ -2487,42 +2487,87 @@ with st.spinner("⏳ Processando..."):
     from io import BytesIO
     import pandas as pd
     import re
+      def parse_money_cell(x):
+        """
+        Converte por célula:
+          '15,00' -> 15.0
+          '1.661,00' -> 1661.0
+          '1,661.00' -> 1661.0
+          '13.956' -> 13956.0
+          '(1.234,56)' -> -1234.56
+        Não divide/multiplica por 100 em hipótese alguma.
+        """
+        if isinstance(x, (int, float)):
+            # se o Sheets já mandou como número, preserva
+            try:
+                return float(x)
+            except Exception:
+                return 0.0
     
-    def ensure_valor_float(df, col):
-        s = df[col]
+        s = str(x).strip()
+        if s == "" or s.lower() in {"nan", "none"}:
+            return 0.0
     
-        # 1) Se já for numérica, não reparse (evita “dupla conversão”)
-        if pd.api.types.is_numeric_dtype(s):
-            return pd.to_numeric(s, errors="coerce").fillna(0.0)
+        # negativos: "(...)" ou "-"
+        neg = False
+        if s.startswith("(") and s.endswith(")"):
+            neg = True
+            s = s[1:-1].strip()
+        if s.startswith("-"):
+            neg = True
+            s = s[1:].strip()
     
-        # 2) Texto → normaliza
-        raw = s.astype(str).str.strip()
+        # remove rótulos/espaços
+        s = (s.replace("R$", "")
+               .replace("\u00A0", "")
+               .replace(" ", ""))
     
-        # marca negativo: "(...)" ou prefixo "-"
-        neg_mask = raw.str.match(r"^\(.*\)$") | raw.str.startswith("-")
-        raw = raw.str.replace(r"^\(|\)$", "", regex=True)  # tira parênteses
-        raw = raw.str.lstrip("-")                          # tira "-"
+        has_comma = "," in s
+        has_dot   = "." in s
     
-        # remove rótulos/espacos
-        raw = (raw.str.replace("R$", "", regex=False)
-                   .str.replace("\u00A0", "", regex=False)
-                   .str.replace(" ", "", regex=False))
+        try:
+            if has_comma and has_dot:
+                # decide pelo último separador como decimal
+                if s.rfind(",") > s.rfind("."):
+                    # "1.234,56" (BR)
+                    val = float(s.replace(".", "").replace(",", "."))
+                else:
+                    # "1,234.56" (EN)
+                    val = float(s.replace(",", ""))
+            elif has_comma:
+                # "123,45" (decimal BR) ou "1,234" (milhar EN)
+                if re.fullmatch(r"\d+,\d{1,2}", s):
+                    val = float(s.replace(",", "."))
+                elif re.fullmatch(r"\d{1,3}(?:,\d{3})+", s):
+                    val = float(s.replace(",", ""))
+                else:
+                    val = float(s.replace(",", "."))
+            elif has_dot:
+                # "1234.56" (decimal EN) ou "1.234" (milhar BR)
+                if re.fullmatch(r"\d+\.\d{1,2}", s):
+                    val = float(s)
+                elif re.fullmatch(r"\d{1,3}(?:\.\d{3})+", s):
+                    val = float(s.replace(".", ""))
+                else:
+                    val = float(s)
+            else:
+                # só dígitos
+                val = float(s)
+        except Exception:
+            # fallback defensivo
+            s2 = re.sub(r"[^\d,.\-]", "", s)
+            try:
+                val = float(s2.replace(".", "").replace(",", "."))
+            except Exception:
+                try:
+                    val = float(s2.replace(",", ""))
+                except Exception:
+                    val = 0.0
     
-        # 3) Decide locale pela amostra: se maioria tem vírgula → vírgula é decimal
-        sample = raw[raw.ne("")].head(300)
-        use_comma = sample.str.contains(",", regex=False).mean() > 0.5
-    
-        if use_comma:
-            # BR: "." milhar, "," decimal
-            cleaned = raw.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
-        else:
-            # EN: "." decimal, pode haver milhar com "," (raro). Remove vírgulas de milhar.
-            cleaned = raw.str.replace(",", "", regex=False)
-    
-        vals = pd.to_numeric(cleaned, errors="coerce").fillna(0.0)
-        vals = vals.where(~neg_mask, -vals)  # aplica sinal negativo
-    
-        return vals
+        if neg:
+            val = -val
+        return val
+
 
     # ------------ helpers ------------
     
@@ -2659,7 +2704,7 @@ with st.spinner("⏳ Processando..."):
     
                 # 🔧 conversão PT-BR robusta (corrige todos os casos)
                 if col_valor:
-                    df_sangria[col_valor] = ensure_valor_float(df_sangria, col_valor)
+                    df_sangria[col_valor] = df_sangria[col_valor].map(parse_money_cell).astype(float)
     
                 # filtros
                 top1, top2, top3, top4 = st.columns([1.2, 1.2, 1.6, 1.6])
@@ -2764,7 +2809,7 @@ with st.spinner("⏳ Processando..."):
                     else:
                         base["Data"] = pd.to_datetime(base["Data"], dayfirst=True, errors="coerce").dt.normalize()
                         base = base[(base["Data"].dt.date >= dt_inicio) & (base["Data"].dt.date <= dt_fim)]
-                        base[col_valor] = ensure_valor_float(base, col_valor)
+                        base[col_valor] = base[col_valor].map(parse_money_cell).astype(float)
                         base["Código Everest"] = base["Código Everest"].astype(str).str.extract(r"(\d+)")
                         df_sys = (
                             base.groupby(["Código Everest","Data"], as_index=False)[col_valor]
@@ -2797,7 +2842,7 @@ with st.spinner("⏳ Processando..."):
                             df_ev["Código Everest"]   = df_ev[col_emp].astype(str).str.extract(r"(\d+)")
                             df_ev["Fantasia Everest"] = df_ev[col_fant_ev] if col_fant_ev else ""
                             df_ev["Data"]             = pd.to_datetime(df_ev[col_dt_ev], dayfirst=True, errors="coerce").dt.normalize()
-                            df_ev["Valor Lancamento"] = ensure_valor_float(df_ev, col_val_ev)
+                            df_ev["Valor Lancamento"] = df_ev[col_val_ev].map(parse_money_cell).astype(float)
                             df_ev = df_ev[(df_ev["Data"].dt.date >= dt_inicio) & (df_ev["Data"].dt.date <= dt_fim)]
                 
                             # Everest sempre POSITIVO na comparação

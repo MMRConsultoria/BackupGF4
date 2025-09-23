@@ -2479,7 +2479,7 @@ with st.spinner("⏳ Processando..."):
             st.error(f"❌ Erro ao acessar dados: {e}")
 
     # ================================
-    # ================================
+   # ================================
     # Nova ABA: Relatórios Caixa e Sangria (com sub-abas)
     # ================================
     

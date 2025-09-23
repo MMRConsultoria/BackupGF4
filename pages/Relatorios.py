@@ -2485,22 +2485,21 @@ with st.spinner("⏳ Processando..."):
     
     import re, math
     from io import BytesIO
+    import numpy as np
     import pandas as pd
+    import streamlit as st   # se já importou antes, pode remover esta linha
     
     # ---------------- helpers ----------------
     
-    import re
-
     def parse_valor_brl_sheets(x):
         """
-        Regras:
+        Regras do Sheets:
           - sem vírgula -> ,00
           - vírgula com 1 dígito -> ,X0
           - vírgula com 2 dígitos -> mantém
-        Também remove pontos de milhar e aceita negativos '(... )' ou '-'.
-        Retorna float (em reais).
+        Remove pontos de milhar e aceita negativos '(...)' ou '-'.
+        Retorna float (reais).
         """
-        # Já numérico? Só garante float.
         if isinstance(x, (int, float)):
             try:
                 return float(x)
@@ -2511,7 +2510,7 @@ with st.spinner("⏳ Processando..."):
         if s == "" or s.lower() in {"nan", "none"}:
             return 0.0
     
-        # sinal negativo: "(...)" ou prefixo "-"
+        # sinal negativo
         neg = False
         if s.startswith("(") and s.endswith(")"):
             neg = True
@@ -2525,21 +2524,19 @@ with st.spinner("⏳ Processando..."):
                .replace("\u00A0", "")
                .replace(" ", ""))
     
-        # sempre remove pontos de milhar antes de decidir a vírgula
-        # (ex.: "1.661,00" -> "1661,00", "13.956" -> "13956")
+        # sempre remove pontos de milhar
         s = re.sub(r"\.", "", s)
     
         if "," in s:
             inteiro, dec = s.rsplit(",", 1)
-            inteiro = re.sub(r"\D", "", inteiro)  # só dígitos
-            dec     = re.sub(r"\D", "", dec)      # só dígitos do decimal
+            inteiro = re.sub(r"\D", "", inteiro)
+            dec     = re.sub(r"\D", "", dec)
     
-            # aplica as 3 regras
             if dec == "":
                 dec = "00"
             elif len(dec) == 1:
                 dec = dec + "0"
-            else:  # 2+ dígitos -> fica com 2
+            else:
                 dec = dec[:2]
     
             num_str = f"{inteiro}.{dec}" if inteiro != "" else f"0.{dec}"
@@ -2553,7 +2550,45 @@ with st.spinner("⏳ Processando..."):
             val = float(inteiro) if inteiro != "" else 0.0
     
         return -val if neg else val
-
+    
+    
+    def _render_df(df, *, height=480):
+        df = df.copy().reset_index(drop=True)
+        # dedup de nomes de coluna (workaround de bug do Streamlit)
+        seen, new_cols = {}, []
+        for c in df.columns:
+            s = "" if c is None else str(c)
+            if s in seen:
+                seen[s] += 1
+                s = f"{s}_{seen[s]}"
+            else:
+                seen[s] = 0
+            new_cols.append(s)
+        df.columns = new_cols
+        st.dataframe(df, use_container_width=True, height=height, hide_index=True)
+        return df
+    
+    
+    def pick_valor_col(cols):
+        def norm(s):
+            return re.sub(r"[\s\u00A0]+", " ", str(s)).strip().lower()
+        nm = {c: norm(c) for c in cols}
+    
+        # preferidos (match exato)
+        prefer = ["valor(r$)", "valor (r$)", "valor", "valor r$"]
+        for want in prefer:
+            for c, n in nm.items():
+                if n == want:
+                    return c
+    
+        # fallback: contém 'valor' mas sem ruídos
+        for c, n in nm.items():
+            if ("valor" in n
+                and "valores" not in n
+                and "google"  not in n
+                and "sheet"   not in n):
+                return c
+        return None
     
     
     # ================================
@@ -2588,29 +2623,19 @@ with st.spinner("⏳ Processando..."):
     
                 col_valor = pick_valor_col(df_sangria.columns)
     
-                # ► Converte valores (uma única vez) + correção 100×, se necessário
+                # ► Converte valores (uma única vez, sem 'correção 100x')
                 if col_valor:
-                    raw_series = df_sangria[col_valor]  # para diagnóstico
-                    # aplica parser célula-a-célula
-                    parsed = raw_series.map(parse_money_cell)
-                    # se a coluna já vier numérica, map não estraga (só vira float)
-                    parsed = pd.to_numeric(parsed, errors="coerce").fillna(0.0)
-                    # auto-fix 100×
-                    parsed_fixed, did_fix = maybe_fix_centavos(parsed)
-                    df_sangria[col_valor] = parsed_fixed
+                    raw_series = df_sangria[col_valor]
+                    parsed = raw_series.map(parse_valor_brl_sheets).astype(float)
+                    df_sangria[col_valor] = parsed
     
                     # 🔎 Diagnóstico (opcional)
                     with st.expander("🔎 Diagnóstico de valores (original x parseado)", expanded=False):
                         show = pd.DataFrame({
                             "Original (texto)": raw_series.astype(str).head(30),
                             "Parseado (float)": parsed.head(30),
-                            "Após correção": parsed_fixed.head(30)
                         })
                         _render_df(show, height=360)
-                        if did_fix:
-                            st.warning("Detectei números 100× acima e corrigi dividindo por 100.")
-                        else:
-                            st.success("Nenhuma correção 100× necessária.")
     
                 # filtros
                 top1, top2, top3, top4 = st.columns([1.2, 1.2, 1.6, 1.6])
@@ -2678,6 +2703,7 @@ with st.spinner("⏳ Processando..."):
                             df_fil.groupby(["Loja", "Descrição Agrupada"], as_index=False)[col_valor].sum()
                                   .sort_values(["Loja", "Descrição Agrupada"])
                         )
+                        # exibe coluna Grupo (se existir), sem agrupar por ela
                         col_grupo = next((c for c in df_fil.columns if "grupo" in str(c).lower() and "everest" not in str(c).lower()), None)
                         if col_grupo:
                             def _pick_group(s):
@@ -2745,12 +2771,10 @@ with st.spinner("⏳ Processando..."):
                             df_ev["Fantasia Everest"] = df_ev[col_fant_ev] if col_fant_ev else ""
                             df_ev["Data"]             = pd.to_datetime(df_ev[col_dt_ev], dayfirst=True, errors="coerce").dt.normalize()
     
-                            # parse + possível correção 100× também aqui
-                            vals_ev = df_ev[col_val_ev].map(parse_money_cell)
-                            vals_ev = pd.to_numeric(vals_ev, errors="coerce").fillna(0.0)
-                            vals_ev, _ = maybe_fix_centavos(vals_ev)
-                            df_ev["Valor Lancamento"] = vals_ev
-    
+                            # parse seguindo as mesmas regras do Sheets
+                            df_ev["Valor Lancamento"] = (
+                                df_ev[col_val_ev].map(parse_valor_brl_sheets).astype(float)
+                            )
                             df_ev = df_ev[(df_ev["Data"].dt.date >= dt_inicio) & (df_ev["Data"].dt.date <= dt_fim)]
     
                             # Everest sempre POSITIVO na comparação
@@ -2817,33 +2841,35 @@ with st.spinner("⏳ Processando..."):
                             # flag para a renderização colorida
                             st.session_state.__cmp_has_red = True
     
-            # --- render e export (comum a todas as visões) ---
-            if 'df_exibe' in locals() and not df_exibe.empty:
-                if visao in ("Comparativa Everest", "Diferenças Everest"):
-                    colunas_ocultar_local = []  # NÃO ocultar "Código Everest"
-                else:
-                    colunas_ocultar_local = ["Código Grupo Everest","Duplicidade","Sistema","Mês","Ano"]
+        # --- render e export (comum a todas as visões) ---
+        if 'df_exibe' in locals() and not df_exibe.empty:
+            # Na Comparativa/Diferenças mantemos "Código Everest" visível
+            if visao in ("Comparativa Everest", "Diferenças Everest"):
+                colunas_ocultar_local = []  # NÃO ocultar "Código Everest"
+            else:
+                colunas_ocultar_local = ["Código Grupo Everest","Duplicidade","Sistema","Mês","Ano"]
     
-                df_show = df_exibe.drop(columns=colunas_ocultar_local, errors="ignore").copy()
+            df_show = df_exibe.drop(columns=colunas_ocultar_local, errors="ignore").copy()
     
-                if st.session_state.get("__cmp_has_red") and "Nao Mapeada?" in df_show.columns and "Loja" in df_show.columns:
-                    def _paint_row(row):
-                        styles = [""] * len(df_show.columns)
-                        if bool(row.get("Nao Mapeada?", False)):
-                            styles[df_show.columns.get_loc("Loja")] = "color: red; font-weight: 700"
-                        return styles
-                    st.dataframe(df_show.style.apply(_paint_row, axis=1), use_container_width=True, height=480)
-                else:
-                    _render_df(df_show, height=480)
+            # pinta a Loja em vermelho quando só veio do Everest (usou Fantasia)
+            if st.session_state.get("__cmp_has_red") and "Nao Mapeada?" in df_show.columns and "Loja" in df_show.columns:
+                def _paint_row(row):
+                    styles = [""] * len(df_show.columns)
+                    if bool(row.get("Nao Mapeada?", False)):
+                        styles[df_show.columns.get_loc("Loja")] = "color: red; font-weight: 700"
+                    return styles
+                st.dataframe(df_show.style.apply(_paint_row, axis=1), use_container_width=True, height=480)
+            else:
+                _render_df(df_show, height=480)
     
-                # Export: remove apenas a coluna técnica
-                df_exportar = df_show.drop(columns=["Nao Mapeada?"], errors="ignore")
+            # Export: remove apenas a coluna técnica
+            df_exportar = df_show.drop(columns=["Nao Mapeada?"], errors="ignore")
     
-                buf = BytesIO()
-                with pd.ExcelWriter(buf, engine="openpyxl") as w:
-                    df_exportar.to_excel(w, index=False, sheet_name="Sangria")
-                buf.seek(0)
-                st.download_button("⬇️ Baixar Excel (Sangria - Visão atual)", buf, "sangria.xlsx")
+            buf = BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as w:
+                df_exportar.to_excel(w, index=False, sheet_name="Sangria")
+            buf.seek(0)
+            st.download_button("⬇️ Baixar Excel (Sangria - Visão atual)", buf, "sangria.xlsx")
     
         # -------------------------------
         # Sub-aba: CONTROLE DE CAIXA

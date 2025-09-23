@@ -376,12 +376,27 @@ with st.spinner("⏳ Processando..."):
                         st.session_state.df_sangria = df.copy()
     
                         # Download Excel local (sem formatação especial)
+                        # --- ORDENAR por Data antes do download local (Colibri) ---
+                        df_download = df.copy()
+                        
+                        # A coluna "Data" no fluxo Colibri já está como string dd/mm/aaaa.
+                        # Vamos criar uma coluna auxiliar datetime para ordenar corretamente.
+                        df_download["_Data_dt"] = pd.to_datetime(df_download["Data"], dayfirst=True, errors="coerce")
+                        
+                        # Se quiser desempatar por loja dentro do dia, use: by=["_Data_dt","Loja"]
+                        df_download = df_download.sort_values(by=["_Data_dt"]).drop(columns=["_Data_dt"])
+                        
+                        # Gera o Excel já ordenado
                         output = BytesIO()
                         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                            df.to_excel(writer, index=False, sheet_name="Sangria")
+                            df_download.to_excel(writer, index=False, sheet_name="Sangria")
                         output.seek(0)
+                        
                         st.download_button("📥Sangria Colibri",
-                                           data=output, file_name="Sangria_estruturada.xlsx")
+                                           data=output,
+                                           file_name="Sangria_estruturada.xlsx",
+                                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
                     except KeyError as e:
                         st.error(f"❌ Coluna obrigatória ausente para o padrão Colibri: {e}")
 

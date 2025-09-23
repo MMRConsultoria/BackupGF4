@@ -2638,7 +2638,29 @@ with st.spinner("⏳ Processando..."):
                 # 🔧 conversão PT/EN robusta (sem *qualquer* /100)
                 if col_valor:
                     df_sangria[col_valor] = df_sangria[col_valor].map(parse_money_cell).astype(float)
-    
+                    # após: df_sangria[col_valor] = df_sangria[col_valor].map(parse_money_cell).astype(float)
+                    
+                    with st.expander("🔎 Diagnóstico de valores (original x parseado)"):
+                        col_sheets = next((c for c in df_sangria.columns
+                                           if str(c).strip().lower().startswith("valores da google")), None)
+                    
+                        dbg = pd.DataFrame({
+                            "Original (texto)": pd.Series(df_sangria[col_valor].map(lambda v: v) if pd.api.types.is_numeric_dtype(df_sangria[col_valor])
+                                                          else df_sangria[col_valor]),
+                            "Parseado (float)": df_sangria[col_valor].astype(float),
+                        })
+                    
+                        if col_sheets:
+                            dbg["Sheets num"] = pd.to_numeric(df_sangria[col_sheets], errors="coerce")
+                            dbg["Delta (parse - sheets)"] = (dbg["Parseado (float)"] - dbg["Sheets num"]).round(6)
+                    
+                        # heurística de erro típico (x100 ou /1000 etc.)
+                        dbg["Sinal de erro?"] = (
+                            (dbg["Parseado (float)"] >= 1000) & dbg["Original (texto)"].astype(str).str.contains(r",\d{1,3}$")
+                        )
+                    
+                        st.dataframe(dbg.head(50), use_container_width=True)
+
                 # filtros
                 top1, top2, top3, top4 = st.columns([1.2, 1.2, 1.6, 1.6])
                 with top1:

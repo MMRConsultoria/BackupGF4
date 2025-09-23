@@ -2491,15 +2491,19 @@ with st.spinner("⏳ Processando..."):
     
     # ---------------- helpers ----------------
     
+    
+    import re
+
     def parse_valor_brl_sheets(x):
         """
         Regras do Sheets:
-          - sem vírgula -> ,00
-          - vírgula com 1 dígito -> ,X0
-          - vírgula com 2 dígitos -> mantém
-        Remove pontos de milhar e aceita negativos '(...)' ou '-'.
-        Retorna float (reais).
+          1) Sem vírgula -> coloca ,00 (mas se for 'centavos sem vírgula' tipo 54800 -> 548,00)
+          2) Vírgula com 1 dígito -> ,X0
+          3) Vírgula com 2+ dígitos -> mantém 2 (corta o resto)
+        Também remove pontos de milhar e aceita negativos '(...)' ou '-'.
+        Retorna float (em reais).
         """
+        # já numérico: preserva
         if isinstance(x, (int, float)):
             try:
                 return float(x)
@@ -2510,7 +2514,7 @@ with st.spinner("⏳ Processando..."):
         if s == "" or s.lower() in {"nan", "none"}:
             return 0.0
     
-        # sinal negativo
+        # negativo '(...)' ou '-'
         neg = False
         if s.startswith("(") and s.endswith(")"):
             neg = True
@@ -2519,37 +2523,42 @@ with st.spinner("⏳ Processando..."):
             neg = True
             s = s[1:].strip()
     
-        # remove rótulos e espaços
+        # remove rótulos/espaços e pontos de milhar
         s = (s.replace("R$", "")
                .replace("\u00A0", "")
                .replace(" ", ""))
-    
-        # sempre remove pontos de milhar
-        s = re.sub(r"\.", "", s)
+        s = s.replace(".", "")
     
         if "," in s:
+            # tem vírgula: aplica as 3 regras de casas decimais
             inteiro, dec = s.rsplit(",", 1)
             inteiro = re.sub(r"\D", "", inteiro)
             dec     = re.sub(r"\D", "", dec)
-    
             if dec == "":
                 dec = "00"
             elif len(dec) == 1:
                 dec = dec + "0"
             else:
                 dec = dec[:2]
-    
             num_str = f"{inteiro}.{dec}" if inteiro != "" else f"0.{dec}"
             try:
                 val = float(num_str)
             except Exception:
                 val = 0.0
         else:
-            # sem vírgula -> inteiro com ,00
+            # sem vírgula: pode ser inteiro em reais OU inteiro em centavos (ex.: '54800' -> 548,00)
             inteiro = re.sub(r"\D", "", s)
-            val = float(inteiro) if inteiro != "" else 0.0
+            if inteiro == "":
+                val = 0.0
+            else:
+                # heurística de centavos: >=4 dígitos e termina com '00' => divide por 100
+                if len(inteiro) >= 4 and inteiro.endswith("00"):
+                    val = float(inteiro) / 100.0
+                else:
+                    val = float(inteiro)
     
         return -val if neg else val
+
     
     
     def _render_df(df, *, height=480):

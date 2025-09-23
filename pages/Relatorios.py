@@ -2482,86 +2482,11 @@ with st.spinner("⏳ Processando..."):
     # Nova ABA: Relatórios Caixa e Sangria (com sub-abas)
     # ================================
     
-    import math
+    import re, math
     from io import BytesIO
-    import pandas as pd
-    import numpy as np
-    import re
-    import streamlit as st
     
+    # ------------ helpers ------------
     
-    # -------------------- parser de valores --------------------
-    
-    import re
-
-    # padrões
-    _BR_DEC_THOUS   = re.compile(r"^\d{1,3}(?:\.\d{3})+,\d{1,3}$")   # 1.234,56
-    _BR_DEC         = re.compile(r"^\d+,\d{1,3}$")                   # 15,00 / 37,8
-    _EN_DEC_THOUS   = re.compile(r"^\d{1,3}(?:,\d{3})+\.\d{1,3}$")   # 1,234.56
-    _EN_DEC         = re.compile(r"^\d+\.\d{1,3}$")                  # 1234.56
-    _BR_THOUS_ONLY  = re.compile(r"^\d{1,3}(?:\.\d{3})+$")           # 13.956
-    _EN_THOUS_ONLY  = re.compile(r"^\d{1,3}(?:,\d{3})+$")            # 13,956
-    _DIGITS_ONLY    = re.compile(r"^\d+$")                           # 13956
-    
-    def parse_money_cell(x):
-        """
-        Converte valores monetários sem NUNCA dividir/multiplicar por 100.
-        Cobre BR (vírgula decimal), EN (ponto decimal) e negativos com () ou -.
-        """
-        # já numérico → devolve como float
-        if isinstance(x, (int, float)):
-            try:
-                return float(x)
-            except Exception:
-                return 0.0
-    
-        s = str(x).strip()
-        if s == "" or s.lower() in {"nan", "none"}:
-            return 0.0
-    
-        # negativo por parênteses ou hífen
-        neg = False
-        if s.startswith("(") and s.endswith(")"):
-            neg = True
-            s = s[1:-1].strip()
-        if s.startswith("-"):
-            neg = True
-            s = s[1:].strip()
-    
-        # remove rótulos/espacos
-        s = (s.replace("R$", "")
-               .replace("\u00A0", "")
-               .replace(" ", ""))
-    
-        try:
-            if _BR_DEC_THOUS.match(s):      # 1.234,56
-                val = float(s.replace(".", "").replace(",", "."))
-            elif _BR_DEC.match(s):          # 15,00 / 37,8
-                val = float(s.replace(",", "."))
-            elif _EN_DEC_THOUS.match(s):    # 1,234.56
-                val = float(s.replace(",", ""))
-            elif _EN_DEC.match(s):          # 1234.56
-                val = float(s)
-            elif _BR_THOUS_ONLY.match(s):   # 13.956 → 13956
-                val = float(s.replace(".", ""))
-            elif _EN_THOUS_ONLY.match(s):   # 13,956 → 13956
-                val = float(s.replace(",", ""))
-            elif _DIGITS_ONLY.match(s):     # 13956
-                val = float(s)
-            else:
-                # fallback defensivo: tenta BR e depois EN
-                val = float(s.replace(".", "").replace(",", "."))
-        except Exception:
-            try:
-                val = float(s.replace(",", ""))  # tenta EN duro
-            except Exception:
-                val = 0.0
-    
-        return -val if neg else val
-
-    
-    
-    # -------------------- helpers de UI --------------------
     def _render_df(df, *, height=480):
         df = df.copy().reset_index(drop=True)
         # dedup de nomes de coluna (workaround de bug do Streamlit)
@@ -2578,27 +2503,82 @@ with st.spinner("⏳ Processando..."):
         st.dataframe(df, use_container_width=True, height=height, hide_index=True)
         return df
     
-    
     def pick_valor_col(cols):
-        def norm(s):
-            return re.sub(r"[\s\u00A0]+", " ", str(s)).strip().lower()
-        nm = {c: norm(c) for c in cols}
-    
-        # 1) preferidos (match exato, sem confundir com 'valores')
-        prefer = ["valor(r$)", "valor (r$)", "valor", "valor r$"]
-        for want in prefer:
-            for c, n in nm.items():
-                if n == want:
-                    return c
-    
-        # 2) fallback: contém 'valor' mas NÃO contém ruídos
-        for c, n in nm.items():
-            if ("valor" in n
-                and "valores" not in n
-                and "google" not in n
-                and "sheet"  not in n):
+        for c in cols:
+            if "valor" in str(c).lower().replace(" ", ""):
                 return c
         return None
+    
+    # parser PT-BR linha-a-linha (cobre "13.956", "13.956,00", "13956", "13956.0", "139,56")
+    def parse_brl_str(x):
+        # já numérico?
+        if isinstance(x, (int, float)):
+            if isinstance(x, float) and (x != x):  # NaN
+                return 0.0
+            v = float(x)
+            # inteiro grande típico de centavos (ex.: 13956.0) -> 139,56
+            if abs(v - round(v)) < 1e-9 and 1000 <= abs(v) < 1000000:
+                return v / 100.0
+            return v
+    
+        s = str(x).strip()
+        if s == "" or s.lower() in ("nan", "none"):
+            return 0.0
+    
+        s = (s.replace("R$", "").replace("\u00A0", "").replace(" ", ""))
+        neg = False
+        if s.startswith("(") and s.endswith(")"):
+            neg = True
+            s = s[1:-1]
+        if s.startswith("-"):
+            neg = True
+            s = s[1:]
+    
+        has_comma = "," in s
+        has_dot   = "." in s
+    
+        # A) tem vírgula (BR): "1.234,56" / "13.956,00" / "139,56"
+        if has_comma:
+            try:
+                val = float(s.replace(".", "").replace(",", "."))
+            except:
+                val = 0.0
+            # "13.956,00" (milhar + ,00) → 139,56
+            if re.fullmatch(r"\d{1,3}(?:\.\d{3})+,\d{2}", s) and s.endswith(",00"):
+                val = val / 100.0
+            return -val if neg else val
+    
+        # B) só ponto e padrão milhar: "13.956" → 139,56
+        if has_dot:
+            if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", s):
+                val = float(s.replace(".", "")) / 100.0
+                return -val if neg else val
+            # caso especial "13956.0" → 139,56
+            m = re.fullmatch(r"(\d+)\.0{1,2}", s)
+            if m and len(m.group(1)) >= 4:
+                val = float(m.group(1)) / 100.0
+                return -val if neg else val
+            # decimal com ponto ("12.34")
+            try:
+                val = float(s)
+            except:
+                val = 0.0
+            return -val if neg else val
+    
+        # C) só dígitos: "13956" → 139,56
+        if s.isdigit():
+            val = float(s)
+            if abs(val) >= 1000:
+                val = val / 100.0
+            return -val if neg else val
+    
+        # fallback
+        s_norm = re.sub(r"[^\d\.-]", "", s)
+        try:
+            val = float(s_norm)
+        except:
+            val = 0.0
+        return -val if neg else val
     
     
     # ================================
@@ -2615,6 +2595,9 @@ with st.spinner("⏳ Processando..."):
             df_sangria.columns = [c.strip() for c in df_sangria.columns]
             if "Data" in df_sangria.columns:
                 df_sangria["Data"] = pd.to_datetime(df_sangria["Data"], dayfirst=True, errors="coerce")
+    
+            # ⚠️ não faça conversão de moeda aqui para evitar conversão dupla
+            # (deixamos tudo para a sub-aba SANGRIA com parse_brl_str)
     
         except Exception as e:
             st.warning(f"⚠️ Não foi possível carregar a aba 'Sangria': {e}")
@@ -2635,32 +2618,10 @@ with st.spinner("⏳ Processando..."):
                 if "Data" in df_sangria.columns:
                     df_sangria["Data"] = pd.to_datetime(df_sangria["Data"], dayfirst=True, errors="coerce")
     
-                # 🔧 conversão PT/EN robusta (sem *qualquer* /100)
+                # 🔧 conversão PT-BR robusta (corrige todos os casos)
                 if col_valor:
-                    df_sangria[col_valor] = df_sangria[col_valor].map(parse_money_cell).astype(float)
-                    # após: df_sangria[col_valor] = df_sangria[col_valor].map(parse_money_cell).astype(float)
-                    
-                    with st.expander("🔎 Diagnóstico de valores (original x parseado)"):
-                        col_sheets = next((c for c in df_sangria.columns
-                                           if str(c).strip().lower().startswith("valores da google")), None)
-                    
-                        dbg = pd.DataFrame({
-                            "Original (texto)": pd.Series(df_sangria[col_valor].map(lambda v: v) if pd.api.types.is_numeric_dtype(df_sangria[col_valor])
-                                                          else df_sangria[col_valor]),
-                            "Parseado (float)": df_sangria[col_valor].astype(float),
-                        })
-                    
-                        if col_sheets:
-                            dbg["Sheets num"] = pd.to_numeric(df_sangria[col_sheets], errors="coerce")
-                            dbg["Delta (parse - sheets)"] = (dbg["Parseado (float)"] - dbg["Sheets num"]).round(6)
-                    
-                        # heurística de erro típico (x100 ou /1000 etc.)
-                        dbg["Sinal de erro?"] = (
-                            (dbg["Parseado (float)"] >= 1000) & dbg["Original (texto)"].astype(str).str.contains(r",\d{1,3}$")
-                        )
-                    
-                        st.dataframe(dbg.head(50), use_container_width=True)
-
+                    df_sangria[col_valor] = pd.Series(df_sangria[col_valor]).apply(parse_brl_str).astype(float)
+    
                 # filtros
                 top1, top2, top3, top4 = st.columns([1.2, 1.2, 1.6, 1.6])
                 with top1:
@@ -2753,145 +2714,44 @@ with st.spinner("⏳ Processando..."):
                         df_exibe = formata_valor_col(df_exibe, col_valor)
     
                 elif visao in ("Comparativa Everest", "Diferenças Everest"):
-                    # -------- base SANGRIA (Sistema) --------
-                    base = df_sangria.copy()
-                    if "Data" not in base.columns or "Código Everest" not in base.columns or not col_valor:
-                        st.error("❌ Preciso de 'Data', 'Código Everest' e coluna de valor na aba Sangria.")
-                        df_exibe = pd.DataFrame()
-                    else:
-                        base["Data"] = pd.to_datetime(base["Data"], dayfirst=True, errors="coerce").dt.normalize()
-                        base = base[(base["Data"].dt.date >= dt_inicio) & (base["Data"].dt.date <= dt_fim)]
-                        base[col_valor] = base[col_valor].map(parse_money_cell).astype(float)
-                        base["Código Everest"] = base["Código Everest"].astype(str).str.extract(r"(\d+)")
-                        df_sys = (
-                            base.groupby(["Código Everest","Data"], as_index=False)[col_valor]
-                                .sum()
-                                .rename(columns={col_valor:"Sangria (Sistema)"})
-                        )
+                    st.info("Esta visão está **desativada** no momento.")
+                    df_exibe = pd.DataFrame()
     
-                        # -------- base SANGRIA EVEREST --------
-                        ws_ev = planilha_empresa.worksheet("Sangria Everest")
-                        df_ev = pd.DataFrame(ws_ev.get_all_records())
-                        df_ev.columns = [c.strip() for c in df_ev.columns]
+                # render e export
+                if not df_exibe.empty:
+                    colunas_ocultar = [
+                        "Código Everest", "Código Grupo Everest",
+                        "Duplicidade", "duplicidade",
+                        "Sistema", "sistema",
+                        "Mês", "Mes", "MES",
+                        "Ano", "ANO"
+                    ]
+                    df_show = df_exibe.drop(columns=colunas_ocultar, errors="ignore").copy()
+                    _render_df(df_show, height=480)
     
-                        def _norm(s): return re.sub(r"[^a-z0-9]", "", str(s).lower())
-                        cmap = {_norm(c): c for c in df_ev.columns}
-    
-                        col_emp     = cmap.get("empresa")  # <- código Everest vem daqui
-                        col_dt_ev   = next((orig for norm, orig in cmap.items()
-                                            if norm in ("dlancamento","dlancament","dlanamento","datadelancamento","data")), None)
-                        col_val_ev  = next((orig for norm, orig in cmap.items()
-                                            if norm in ("valorlancamento","valorlancament","valorlcto","valor")), None)
-                        col_fant_ev = next((orig for norm, orig in cmap.items()
-                                            if norm in ("fantasiaempresa","fantasia")), None)
-    
-                        if not all([col_emp, col_dt_ev, col_val_ev]):
-                            st.error("❌ Na 'Sangria Everest' preciso de 'Empresa', 'D. Lançamento' e 'Valor Lancamento'.")
-                            df_exibe = pd.DataFrame()
-                        else:
-                            df_ev = df_ev.copy()
-                            df_ev["Código Everest"]   = df_ev[col_emp].astype(str).str.extract(r"(\d+)")
-                            df_ev["Fantasia Everest"] = df_ev[col_fant_ev] if col_fant_ev else ""
-                            df_ev["Data"]             = pd.to_datetime(df_ev[col_dt_ev], dayfirst=True, errors="coerce").dt.normalize()
-                            df_ev["Valor Lancamento"] = df_ev[col_val_ev].map(parse_money_cell).astype(float)
-                            df_ev = df_ev[(df_ev["Data"].dt.date >= dt_inicio) & (df_ev["Data"].dt.date <= dt_fim)]
-    
-                            # Everest sempre POSITIVO na comparação
-                            df_ev["Sangria Everest"] = df_ev["Valor Lancamento"].abs()
-    
-                            # agrega por Código + Data e traz uma Fantasia (primeira não vazia)
-                            def _pick_first(s):
-                                s = s.dropna().astype(str).str.strip()
-                                s = s[s != ""]
-                                return s.iloc[0] if not s.empty else ""
-                            df_ev_agg = (
-                                df_ev.groupby(["Código Everest","Data"], as_index=False)
-                                     .agg({"Sangria Everest":"sum", "Fantasia Everest": _pick_first})
-                            )
-    
-                            # -------- merge + diferença --------
-                            df_cmp = df_sys.merge(df_ev_agg, on=["Código Everest","Data"], how="outer", indicator=True)
-                            df_cmp["Sangria (Sistema)"] = df_cmp["Sangria (Sistema)"].fillna(0.0)
-                            df_cmp["Sangria Everest"]   = df_cmp["Sangria Everest"].fillna(0.0)
-    
-                            # Loja/Grupo via Tabela Empresa (mapa por Código Everest)
-                            mapa_emp = df_empresa.copy()
-                            mapa_emp.columns = [str(c).strip() for c in mapa_emp.columns]
-                            if "Código Everest" in mapa_emp.columns:
-                                mapa_emp["Código Everest"] = mapa_emp["Código Everest"].astype(str).str.extract(r"(\d+)")
-                                df_cmp = df_cmp.merge(
-                                    mapa_emp[["Código Everest","Loja","Grupo"]].drop_duplicates(),
-                                    on="Código Everest", how="left"
-                                )
-    
-                            # fallback LOJA = Fantasia (linhas que só existem no Everest)
-                            df_cmp["Loja"] = df_cmp["Loja"].astype(str)
-                            so_everest = (df_cmp["_merge"] == "right_only") & (df_cmp["Loja"].isin(["", "nan"]))
-                            df_cmp.loc[so_everest, "Loja"] = df_cmp.loc[so_everest, "Fantasia Everest"]
-                            df_cmp["Nao Mapeada?"] = so_everest  # marca para pintar em vermelho
-    
-                            df_cmp["Diferença"] = df_cmp["Sangria (Sistema)"] - df_cmp["Sangria Everest"]
-    
-                            if visao == "Diferenças Everest":
-                                df_cmp = df_cmp[np.isclose(df_cmp["Diferença"], 0.0) == False]
-    
-                            # ordena e prepara para exibição
-                            df_cmp = df_cmp[[
-                                "Grupo","Loja","Código Everest","Data",
-                                "Sangria (Sistema)","Sangria Everest","Diferença","Nao Mapeada?"
-                            ]].sort_values(["Grupo","Loja","Código Everest","Data"])
-    
-                            total = {
-                                "Grupo":"TOTAL","Loja":"","Código Everest":"","Data":pd.NaT,
-                                "Sangria (Sistema)": df_cmp["Sangria (Sistema)"].sum(),
-                                "Sangria Everest":   df_cmp["Sangria Everest"].sum(),
-                                "Diferença":         df_cmp["Diferença"].sum(),
-                                "Nao Mapeada?": False
-                            }
-                            df_exibe = pd.concat([pd.DataFrame([total]), df_cmp], ignore_index=True)
-    
-                            # formatação textual de Data e valores (para tela/export)
-                            df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
-                            for c in ["Sangria (Sistema)","Sangria Everest","Diferença"]:
-                                df_exibe[c] = df_exibe[c].apply(
-                                    lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X",".")
-                                    if isinstance(v,(int,float)) else v
-                                )
-    
-                            # flag para a renderização colorida
-                            st.session_state.__cmp_has_red = True
-    
-    
-        # --- render e export (comum a todas as visões) ---
-        if 'df_exibe' in locals() and not df_exibe.empty:
-            # Na Comparativa/Diferenças mantemos "Código Everest" visível
-            if visao in ("Comparativa Everest", "Diferenças Everest"):
-                colunas_ocultar_local = []  # NÃO ocultar "Código Everest"
-            else:
-                colunas_ocultar_local = ["Código Grupo Everest","Duplicidade","Sistema","Mês","Ano"]
-    
-            df_show = df_exibe.drop(columns=colunas_ocultar_local, errors="ignore").copy()
-    
-            # pinta a Loja em vermelho quando só veio do Everest (usou Fantasia)
-            if st.session_state.get("__cmp_has_red") and "Nao Mapeada?" in df_show.columns and "Loja" in df_show.columns:
-                def _paint_row(row):
-                    styles = [""] * len(df_show.columns)
-                    if bool(row.get("Nao Mapeada?", False)):
-                        styles[df_show.columns.get_loc("Loja")] = "color: red; font-weight: 700"
-                    return styles
-                st.dataframe(df_show.style.apply(_paint_row, axis=1), use_container_width=True, height=480)
-            else:
-                _render_df(df_show, height=480)
-    
-            # Export: remove apenas a coluna técnica
-            df_exportar = df_show.drop(columns=["Nao Mapeada?"], errors="ignore")
-    
-            buf = BytesIO()
-            with pd.ExcelWriter(buf, engine="openpyxl") as w:
-                df_exportar.to_excel(w, index=False, sheet_name="Sangria")
-            buf.seek(0)
-            st.download_button("⬇️ Baixar Excel (Sangria - Visão atual)", buf, "sangria.xlsx")
-    
+                    buf = BytesIO()
+                    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+                        df_show.to_excel(w, index=False, sheet_name="Sangria")
+                        try:
+                            ws = w.book["Sangria"]
+                            header = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+                            if "Data" in header:
+                                col_dt = header.index("Data") + 1
+                                for cell in ws.iter_cols(min_col=col_dt, max_col=col_dt, min_row=3)[0]:
+                                    cell.number_format = "dd/mm/yyyy"
+                            if col_valor and col_valor in header:
+                                col_idx = header.index(col_valor) + 1
+                                for i, cell in enumerate(ws.iter_cols(min_col=col_idx, max_col=col_idx, min_row=2)[0], start=2):
+                                    cell.number_format = 'R$ #,##0.00'
+                                    if i == 2:  # TOTAL
+                                        cell.font = cell.font.copy(bold=True)
+                            for c in ws[2]:
+                                c.font = c.font.copy(bold=True)
+                                c.fill = c.fill.__class__(fgColor="FFF7E6", fill_type="solid")
+                        except Exception:
+                            pass
+                    buf.seek(0)
+                    st.download_button("⬇️ Baixar Excel (Sangria - Visão atual)", buf, "sangria.xlsx")
     
         # -------------------------------
         # Sub-aba: CONTROLE DE CAIXA
@@ -2934,4 +2794,4 @@ with st.spinner("⏳ Processando..."):
                     buf2.seek(0)
                     st.download_button("⬇️ Baixar Excel (Everest x Sangria)", buf2, "everest_x_sangria.xlsx")
                 else:
-                    st.info("Para esta comparação, é preciso ter **Código Everest** e a coluna de valor (ex.: 'Valor(R$]').")
+                    st.info("Para esta comparação, é preciso ter **Código Everest** e a coluna de valor (ex.: 'Valor(R$)').")

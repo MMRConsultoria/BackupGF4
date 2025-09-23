@@ -7,6 +7,14 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from gspread_formatting import format_cell_range, CellFormat, NumberFormat
 
+
+# Formato contábil: positivo; negativo entre parênteses; zero como “-”; texto
+ACCOUNTING_FMT = CellFormat(
+    numberFormat=NumberFormat(type="NUMBER", pattern="#,##0.00_);(#,##0.00);-;@")
+)
+
+
+
 st.set_page_config(page_title="Relatório de Sangria", layout="wide")
 # 🔥 CSS para estilizar as abas
 st.markdown("""
@@ -890,19 +898,22 @@ with st.spinner("⏳ Processando..."):
                                 col_valor_letter = None
                 
                             inicio = len(valores_existentes) + 1
+                           
                             fim = inicio + len(novos_dados) - 1
-                
+                            
                             if fim >= inicio:
                                 if col_data_letter:
                                     format_cell_range(
                                         aba_destino, f"{col_data_letter}{inicio}:{col_data_letter}{fim}",
                                         CellFormat(numberFormat=NumberFormat(type="DATE", pattern="dd/mm/yyyy"))
                                     )
+                                # 👉 Agora “Valor(R$)” em formato CONTÁBIL
                                 if col_valor_letter:
                                     format_cell_range(
                                         aba_destino, f"{col_valor_letter}{inicio}:{col_valor_letter}{fim}",
-                                        CellFormat(numberFormat=NumberFormat(type="NUMBER", pattern="#,##0.00"))
+                                        ACCOUNTING_FMT
                                     )
+
                 
                             st.success(f"✅ {len(novos_dados)} registros enviados!")
                         if duplicados_sheet:

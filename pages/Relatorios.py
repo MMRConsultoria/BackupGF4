@@ -2702,7 +2702,6 @@ with st.spinner("⏳ Processando..."):
                         df_exibe = formata_valor_col(df_exibe, col_valor)
     
                 elif visao == "Sintético":
-
                     if not col_valor or "Loja" not in df_fil.columns or "Data" not in df_fil.columns:
                         st.warning("Para 'Sintético', preciso de 'Data', 'Loja' e da coluna de valor.")
                     else:
@@ -2734,23 +2733,42 @@ with st.spinner("⏳ Processando..."):
                         group_cols = [c for c in [col_grupo, "Loja", "Data"] if c]
                         df_agg = (tmp.groupby(group_cols, as_index=False)[col_valor].sum())
                 
-                        # renomeia e ordena (primeiro por Data para ficar 01, 02, 03…)
+                        # renomeia
                         ren = {col_valor: "Sangria"}
                         if col_grupo and col_grupo != "Grupo":
                             ren[col_grupo] = "Grupo"
                         df_agg = df_agg.rename(columns=ren)
                 
+                        # ordena pelos dias (01, 02, 03…) e, dentro do dia, Grupo/Loja
                         df_agg = df_agg.sort_values(["Data", "Grupo", "Loja"], na_position="last")
                 
-                        # formata para exibição
-                        df_agg["Data"] = pd.to_datetime(df_agg["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
-                        df_agg["Sangria"] = df_agg["Sangria"].apply(
+                        # ===== Linha TOTAL como PRIMEIRA linha (antes de formatar) =====
+                        total_sangria = df_agg["Sangria"].sum(min_count=1)
+                        linha_total = pd.DataFrame({
+                            "Grupo":   ["TOTAL"],
+                            "Loja":    [""],
+                            "Data":    [pd.NaT],       # fica em branco na exibição
+                            "Sangria": [total_sangria]
+                        })
+                        df_agg_total = pd.concat([linha_total, df_agg], ignore_index=True)
+                
+                        # ===== Formatação para exibição (Data dd/mm/aaaa; moeda BRL) =====
+                        df_exibe = df_agg_total.copy()
+                        # Data em dd/mm/aaaa, mantendo a do TOTAL vazia
+                        df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce")
+                        df_exibe["Data"] = df_exibe["Data"].dt.strftime("%d/%m/%Y").fillna("")
+                
+                        # moeda BRL
+                        df_exibe["Sangria"] = df_exibe["Sangria"].apply(
                             lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                         )
                 
                         # mantém somente as 4 colunas pedidas
                         colunas_final = ["Grupo", "Loja", "Data", "Sangria"]
-                        df_exibe = df_agg[colunas_final]
+                        df_exibe = df_exibe[colunas_final]
+                
+                        # exibe
+                        st.dataframe(df_exibe, use_container_width=True, hide_index=True)
 
     
                 elif visao in ("Comparativa Everest", "Diferenças Everest"):

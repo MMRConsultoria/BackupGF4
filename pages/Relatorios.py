@@ -2489,16 +2489,18 @@ with st.spinner("⏳ Processando..."):
     
     # ---------------- helpers ----------------
     
-    def parse_money_cell(x):
+    import re
+
+    def parse_valor_brl_sheets(x):
         """
-        Converte por célula:
-          '15,00' -> 15.0
-          '1.661,00' -> 1661.0
-          '1,661.00' -> 1661.0
-          '13.956' -> 13956.0
-          '(1.234,56)' -> -1234.56
-        Não divide/multiplica por 100 em hipótese alguma.
+        Regras:
+          - sem vírgula -> ,00
+          - vírgula com 1 dígito -> ,X0
+          - vírgula com 2 dígitos -> mantém
+        Também remove pontos de milhar e aceita negativos '(... )' ou '-'.
+        Retorna float (em reais).
         """
+        # Já numérico? Só garante float.
         if isinstance(x, (int, float)):
             try:
                 return float(x)
@@ -2509,7 +2511,7 @@ with st.spinner("⏳ Processando..."):
         if s == "" or s.lower() in {"nan", "none"}:
             return 0.0
     
-        # negativos: "(...)" ou "-"
+        # sinal negativo: "(...)" ou prefixo "-"
         neg = False
         if s.startswith("(") and s.endswith(")"):
             neg = True
@@ -2518,111 +2520,40 @@ with st.spinner("⏳ Processando..."):
             neg = True
             s = s[1:].strip()
     
-        # remove rótulos/espaços
+        # remove rótulos e espaços
         s = (s.replace("R$", "")
                .replace("\u00A0", "")
                .replace(" ", ""))
     
-        has_comma = "," in s
-        has_dot   = "." in s
+        # sempre remove pontos de milhar antes de decidir a vírgula
+        # (ex.: "1.661,00" -> "1661,00", "13.956" -> "13956")
+        s = re.sub(r"\.", "", s)
     
-        try:
-            if has_comma and has_dot:
-                # decide pelo último separador como decimal
-                if s.rfind(",") > s.rfind("."):
-                    # "1.234,56" (BR)
-                    val = float(s.replace(".", "").replace(",", "."))
-                else:
-                    # "1,234.56" (EN)
-                    val = float(s.replace(",", ""))
-            elif has_comma:
-                # "123,45" (decimal BR) ou "1,234" (milhar EN)
-                if re.fullmatch(r"\d+,\d{1,2}", s):
-                    val = float(s.replace(",", "."))
-                elif re.fullmatch(r"\d{1,3}(?:,\d{3})+", s):
-                    val = float(s.replace(",", ""))
-                else:
-                    val = float(s.replace(",", "."))
-            elif has_dot:
-                # "1234.56" (decimal EN) ou "1.234" (milhar BR)
-                if re.fullmatch(r"\d+\.\d{1,2}", s):
-                    val = float(s)
-                elif re.fullmatch(r"\d{1,3}(?:\.\d{3})+", s):
-                    val = float(s.replace(".", ""))
-                else:
-                    val = float(s)
-            else:
-                # só dígitos
-                val = float(s)
-        except Exception:
-            # fallback defensivo
-            s2 = re.sub(r"[^\d,.\-]", "", s)
+        if "," in s:
+            inteiro, dec = s.rsplit(",", 1)
+            inteiro = re.sub(r"\D", "", inteiro)  # só dígitos
+            dec     = re.sub(r"\D", "", dec)      # só dígitos do decimal
+    
+            # aplica as 3 regras
+            if dec == "":
+                dec = "00"
+            elif len(dec) == 1:
+                dec = dec + "0"
+            else:  # 2+ dígitos -> fica com 2
+                dec = dec[:2]
+    
+            num_str = f"{inteiro}.{dec}" if inteiro != "" else f"0.{dec}"
             try:
-                val = float(s2.replace(".", "").replace(",", "."))
+                val = float(num_str)
             except Exception:
-                try:
-                    val = float(s2.replace(",", ""))
-                except Exception:
-                    val = 0.0
+                val = 0.0
+        else:
+            # sem vírgula -> inteiro com ,00
+            inteiro = re.sub(r"\D", "", s)
+            val = float(inteiro) if inteiro != "" else 0.0
     
-        if neg:
-            val = -val
-        return val
-    
-    
-    def maybe_fix_centavos(vals: pd.Series):
-        """
-        Se a maioria dos valores é inteira, >=1000 e múltipla de 100,
-        provavelmente vieram 100× maiores (centavos colados).
-        Neste caso divide tudo por 100.
-        Retorna (serie_corrigida, aplicou_correcao_bool).
-        """
-        ser = pd.to_numeric(vals, errors="coerce").fillna(0.0).abs()
-        if len(ser) == 0:
-            return ser, False
-        # considera apenas valores não-zero
-        nz = ser[ser > 0]
-        if len(nz) < 5:
-            return ser, False
-        # inteiro e múltiplo de 100, e "grande"
-        mask = ((nz % 1 == 0) & ((nz.astype("int64") % 100) == 0) & (nz >= 1000))
-        if mask.mean() > 0.6:
-            return (ser / 100.0), True
-        return ser, False
-    
-    
-    def _render_df(df, *, height=480):
-        df = df.copy().reset_index(drop=True)
-        # dedup de nomes de coluna (workaround de bug do Streamlit)
-        seen, new_cols = {}, []
-        for c in df.columns:
-            s = "" if c is None else str(c)
-            if s in seen:
-                seen[s] += 1
-                s = f"{s}_{seen[s]}"
-            else:
-                seen[s] = 0
-            new_cols.append(s)
-        df.columns = new_cols
-        st.dataframe(df, use_container_width=True, height=height, hide_index=True)
-        return df
-    
-    
-    def pick_valor_col(cols):
-        def norm(s):
-            return re.sub(r"[\s\u00A0]+", " ", str(s)).strip().lower()
-        nm = {c: norm(c) for c in cols}
-        # 1) preferidos (match exato, sem confundir com 'valores' etc.)
-        prefer = ["valor(r$)", "valor (r$)", "valor", "valor r$"]
-        for want in prefer:
-            for c, n in nm.items():
-                if n == want:
-                    return c
-        # 2) fallback: contém 'valor' mas NÃO contém ruídos
-        for c, n in nm.items():
-            if ("valor" in n and "valores" not in n and "google" not in n and "sheet" not in n):
-                return c
-        return None
+        return -val if neg else val
+
     
     
     # ================================

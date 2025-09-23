@@ -2479,13 +2479,117 @@ with st.spinner("⏳ Processando..."):
             st.error(f"❌ Erro ao acessar dados: {e}")
 
     # ================================
+    # ================================
     # Nova ABA: Relatórios Caixa e Sangria (com sub-abas)
     # ================================
     
     import re, math
     from io import BytesIO
+    import pandas as pd
     
-    # ------------ helpers ------------
+    # ---------------- helpers ----------------
+    
+    def parse_money_cell(x):
+        """
+        Converte por célula:
+          '15,00' -> 15.0
+          '1.661,00' -> 1661.0
+          '1,661.00' -> 1661.0
+          '13.956' -> 13956.0
+          '(1.234,56)' -> -1234.56
+        Não divide/multiplica por 100 em hipótese alguma.
+        """
+        if isinstance(x, (int, float)):
+            try:
+                return float(x)
+            except Exception:
+                return 0.0
+    
+        s = str(x).strip()
+        if s == "" or s.lower() in {"nan", "none"}:
+            return 0.0
+    
+        # negativos: "(...)" ou "-"
+        neg = False
+        if s.startswith("(") and s.endswith(")"):
+            neg = True
+            s = s[1:-1].strip()
+        if s.startswith("-"):
+            neg = True
+            s = s[1:].strip()
+    
+        # remove rótulos/espaços
+        s = (s.replace("R$", "")
+               .replace("\u00A0", "")
+               .replace(" ", ""))
+    
+        has_comma = "," in s
+        has_dot   = "." in s
+    
+        try:
+            if has_comma and has_dot:
+                # decide pelo último separador como decimal
+                if s.rfind(",") > s.rfind("."):
+                    # "1.234,56" (BR)
+                    val = float(s.replace(".", "").replace(",", "."))
+                else:
+                    # "1,234.56" (EN)
+                    val = float(s.replace(",", ""))
+            elif has_comma:
+                # "123,45" (decimal BR) ou "1,234" (milhar EN)
+                if re.fullmatch(r"\d+,\d{1,2}", s):
+                    val = float(s.replace(",", "."))
+                elif re.fullmatch(r"\d{1,3}(?:,\d{3})+", s):
+                    val = float(s.replace(",", ""))
+                else:
+                    val = float(s.replace(",", "."))
+            elif has_dot:
+                # "1234.56" (decimal EN) ou "1.234" (milhar BR)
+                if re.fullmatch(r"\d+\.\d{1,2}", s):
+                    val = float(s)
+                elif re.fullmatch(r"\d{1,3}(?:\.\d{3})+", s):
+                    val = float(s.replace(".", ""))
+                else:
+                    val = float(s)
+            else:
+                # só dígitos
+                val = float(s)
+        except Exception:
+            # fallback defensivo
+            s2 = re.sub(r"[^\d,.\-]", "", s)
+            try:
+                val = float(s2.replace(".", "").replace(",", "."))
+            except Exception:
+                try:
+                    val = float(s2.replace(",", ""))
+                except Exception:
+                    val = 0.0
+    
+        if neg:
+            val = -val
+        return val
+    
+    
+    def maybe_fix_centavos(vals: pd.Series):
+        """
+        Se a maioria dos valores é inteira, >=1000 e múltipla de 100,
+        provavelmente vieram 100× maiores (centavos colados).
+        Neste caso divide tudo por 100.
+        Retorna (serie_corrigida, aplicou_correcao_bool).
+        """
+        ser = pd.to_numeric(vals, errors="coerce").fillna(0.0).abs()
+        if len(ser) == 0:
+            return ser, False
+        # considera apenas valores não-zero
+        nz = ser[ser > 0]
+        if len(nz) < 5:
+            return ser, False
+        # inteiro e múltiplo de 100, e "grande"
+        mask = ((nz % 1 == 0) & ((nz.astype("int64") % 100) == 0) & (nz >= 1000))
+        if mask.mean() > 0.6:
+            return (ser / 100.0), True
+        return ser, False
+    
     
     def _render_df(df, *, height=480):
         df = df.copy().reset_index(drop=True)
@@ -2503,82 +2607,22 @@ with st.spinner("⏳ Processando..."):
         st.dataframe(df, use_container_width=True, height=height, hide_index=True)
         return df
     
+    
     def pick_valor_col(cols):
-        for c in cols:
-            if "valor" in str(c).lower().replace(" ", ""):
+        def norm(s):
+            return re.sub(r"[\s\u00A0]+", " ", str(s)).strip().lower()
+        nm = {c: norm(c) for c in cols}
+        # 1) preferidos (match exato, sem confundir com 'valores' etc.)
+        prefer = ["valor(r$)", "valor (r$)", "valor", "valor r$"]
+        for want in prefer:
+            for c, n in nm.items():
+                if n == want:
+                    return c
+        # 2) fallback: contém 'valor' mas NÃO contém ruídos
+        for c, n in nm.items():
+            if ("valor" in n and "valores" not in n and "google" not in n and "sheet" not in n):
                 return c
         return None
-    
-    # parser PT-BR linha-a-linha (cobre "13.956", "13.956,00", "13956", "13956.0", "139,56")
-    def parse_brl_str(x):
-        # já numérico?
-        if isinstance(x, (int, float)):
-            if isinstance(x, float) and (x != x):  # NaN
-                return 0.0
-            v = float(x)
-            # inteiro grande típico de centavos (ex.: 13956.0) -> 139,56
-            if abs(v - round(v)) < 1e-9 and 1000 <= abs(v) < 1000000:
-                return v / 100.0
-            return v
-    
-        s = str(x).strip()
-        if s == "" or s.lower() in ("nan", "none"):
-            return 0.0
-    
-        s = (s.replace("R$", "").replace("\u00A0", "").replace(" ", ""))
-        neg = False
-        if s.startswith("(") and s.endswith(")"):
-            neg = True
-            s = s[1:-1]
-        if s.startswith("-"):
-            neg = True
-            s = s[1:]
-    
-        has_comma = "," in s
-        has_dot   = "." in s
-    
-        # A) tem vírgula (BR): "1.234,56" / "13.956,00" / "139,56"
-        if has_comma:
-            try:
-                val = float(s.replace(".", "").replace(",", "."))
-            except:
-                val = 0.0
-            # "13.956,00" (milhar + ,00) → 139,56
-            if re.fullmatch(r"\d{1,3}(?:\.\d{3})+,\d{2}", s) and s.endswith(",00"):
-                val = val / 100.0
-            return -val if neg else val
-    
-        # B) só ponto e padrão milhar: "13.956" → 139,56
-        if has_dot:
-            if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", s):
-                val = float(s.replace(".", "")) / 100.0
-                return -val if neg else val
-            # caso especial "13956.0" → 139,56
-            m = re.fullmatch(r"(\d+)\.0{1,2}", s)
-            if m and len(m.group(1)) >= 4:
-                val = float(m.group(1)) / 100.0
-                return -val if neg else val
-            # decimal com ponto ("12.34")
-            try:
-                val = float(s)
-            except:
-                val = 0.0
-            return -val if neg else val
-    
-        # C) só dígitos: "13956" → 139,56
-        if s.isdigit():
-            val = float(s)
-            if abs(val) >= 1000:
-                val = val / 100.0
-            return -val if neg else val
-    
-        # fallback
-        s_norm = re.sub(r"[^\d\.-]", "", s)
-        try:
-            val = float(s_norm)
-        except:
-            val = 0.0
-        return -val if neg else val
     
     
     # ================================
@@ -2596,9 +2640,6 @@ with st.spinner("⏳ Processando..."):
             if "Data" in df_sangria.columns:
                 df_sangria["Data"] = pd.to_datetime(df_sangria["Data"], dayfirst=True, errors="coerce")
     
-            # ⚠️ não faça conversão de moeda aqui para evitar conversão dupla
-            # (deixamos tudo para a sub-aba SANGRIA com parse_brl_str)
-    
         except Exception as e:
             st.warning(f"⚠️ Não foi possível carregar a aba 'Sangria': {e}")
     
@@ -2615,12 +2656,30 @@ with st.spinner("⏳ Processando..."):
                 df_sangria.columns = [str(c).strip() for c in df_sangria.columns]
     
                 col_valor = pick_valor_col(df_sangria.columns)
-                if "Data" in df_sangria.columns:
-                    df_sangria["Data"] = pd.to_datetime(df_sangria["Data"], dayfirst=True, errors="coerce")
     
-                # 🔧 conversão PT-BR robusta (corrige todos os casos)
+                # ► Converte valores (uma única vez) + correção 100×, se necessário
                 if col_valor:
-                    df_sangria[col_valor] = pd.Series(df_sangria[col_valor]).apply(parse_brl_str).astype(float)
+                    raw_series = df_sangria[col_valor]  # para diagnóstico
+                    # aplica parser célula-a-célula
+                    parsed = raw_series.map(parse_money_cell)
+                    # se a coluna já vier numérica, map não estraga (só vira float)
+                    parsed = pd.to_numeric(parsed, errors="coerce").fillna(0.0)
+                    # auto-fix 100×
+                    parsed_fixed, did_fix = maybe_fix_centavos(parsed)
+                    df_sangria[col_valor] = parsed_fixed
+    
+                    # 🔎 Diagnóstico (opcional)
+                    with st.expander("🔎 Diagnóstico de valores (original x parseado)", expanded=False):
+                        show = pd.DataFrame({
+                            "Original (texto)": raw_series.astype(str).head(30),
+                            "Parseado (float)": parsed.head(30),
+                            "Após correção": parsed_fixed.head(30)
+                        })
+                        _render_df(show, height=360)
+                        if did_fix:
+                            st.warning("Detectei números 100× acima e corrigi dividindo por 100.")
+                        else:
+                            st.success("Nenhuma correção 100× necessária.")
     
                 # filtros
                 top1, top2, top3, top4 = st.columns([1.2, 1.2, 1.6, 1.6])
@@ -2684,12 +2743,10 @@ with st.spinner("⏳ Processando..."):
                     if not col_valor or "Loja" not in df_fil.columns or "Descrição Agrupada" not in df_fil.columns:
                         st.warning("Para 'Sintético', preciso de 'Loja', 'Descrição Agrupada' e valor.")
                     else:
-                        # soma por Loja + Descrição Agrupada
                         df_agg = (
                             df_fil.groupby(["Loja", "Descrição Agrupada"], as_index=False)[col_valor].sum()
                                   .sort_values(["Loja", "Descrição Agrupada"])
                         )
-                        # exibe coluna Grupo (se existir), sem agrupar por ela
                         col_grupo = next((c for c in df_fil.columns if "grupo" in str(c).lower() and "everest" not in str(c).lower()), None)
                         if col_grupo:
                             def _pick_group(s):
@@ -2714,44 +2771,148 @@ with st.spinner("⏳ Processando..."):
                         df_exibe = formata_valor_col(df_exibe, col_valor)
     
                 elif visao in ("Comparativa Everest", "Diferenças Everest"):
-                    st.info("Esta visão está **desativada** no momento.")
-                    df_exibe = pd.DataFrame()
     
-                # render e export
-                if not df_exibe.empty:
-                    colunas_ocultar = [
-                        "Código Everest", "Código Grupo Everest",
-                        "Duplicidade", "duplicidade",
-                        "Sistema", "sistema",
-                        "Mês", "Mes", "MES",
-                        "Ano", "ANO"
-                    ]
-                    df_show = df_exibe.drop(columns=colunas_ocultar, errors="ignore").copy()
+                    # -------- base SANGRIA (Sistema) --------
+                    base = df_sangria.copy()
+                    if "Data" not in base.columns or "Código Everest" not in base.columns or not col_valor:
+                        st.error("❌ Preciso de 'Data', 'Código Everest' e coluna de valor na aba Sangria.")
+                        df_exibe = pd.DataFrame()
+                    else:
+                        base["Data"] = pd.to_datetime(base["Data"], dayfirst=True, errors="coerce").dt.normalize()
+                        base = base[(base["Data"].dt.date >= dt_inicio) & (base["Data"].dt.date <= dt_fim)]
+                        # já está convertido acima; só garante numérico
+                        base[col_valor] = pd.to_numeric(base[col_valor], errors="coerce").fillna(0.0)
+                        base["Código Everest"] = base["Código Everest"].astype(str).str.extract(r"(\d+)")
+                        df_sys = (
+                            base.groupby(["Código Everest","Data"], as_index=False)[col_valor]
+                                .sum()
+                                .rename(columns={col_valor:"Sangria (Sistema)"})
+                        )
+    
+                        # -------- base SANGRIA EVEREST --------
+                        ws_ev = planilha_empresa.worksheet("Sangria Everest")
+                        df_ev = pd.DataFrame(ws_ev.get_all_records())
+                        df_ev.columns = [c.strip() for c in df_ev.columns]
+    
+                        def _norm(s): return re.sub(r"[^a-z0-9]", "", str(s).lower())
+                        cmap = {_norm(c): c for c in df_ev.columns}
+    
+                        col_emp     = cmap.get("empresa")
+                        col_dt_ev   = next((orig for norm, orig in cmap.items()
+                                            if norm in ("dlancamento","dlancament","dlanamento","datadelancamento","data")), None)
+                        col_val_ev  = next((orig for norm, orig in cmap.items()
+                                            if norm in ("valorlancamento","valorlancament","valorlcto","valor")), None)
+                        col_fant_ev = next((orig for norm, orig in cmap.items()
+                                            if norm in ("fantasiaempresa","fantasia")), None)
+    
+                        if not all([col_emp, col_dt_ev, col_val_ev]):
+                            st.error("❌ Na 'Sangria Everest' preciso de 'Empresa', 'D. Lançamento' e 'Valor Lancamento'.")
+                            df_exibe = pd.DataFrame()
+                        else:
+                            df_ev = df_ev.copy()
+                            df_ev["Código Everest"]   = df_ev[col_emp].astype(str).str.extract(r"(\d+)")
+                            df_ev["Fantasia Everest"] = df_ev[col_fant_ev] if col_fant_ev else ""
+                            df_ev["Data"]             = pd.to_datetime(df_ev[col_dt_ev], dayfirst=True, errors="coerce").dt.normalize()
+    
+                            # parse + possível correção 100× também aqui
+                            vals_ev = df_ev[col_val_ev].map(parse_money_cell)
+                            vals_ev = pd.to_numeric(vals_ev, errors="coerce").fillna(0.0)
+                            vals_ev, _ = maybe_fix_centavos(vals_ev)
+                            df_ev["Valor Lancamento"] = vals_ev
+    
+                            df_ev = df_ev[(df_ev["Data"].dt.date >= dt_inicio) & (df_ev["Data"].dt.date <= dt_fim)]
+    
+                            # Everest sempre POSITIVO na comparação
+                            df_ev["Sangria Everest"] = df_ev["Valor Lancamento"].abs()
+    
+                            def _pick_first(s):
+                                s = s.dropna().astype(str).str.strip()
+                                s = s[s != ""]
+                                return s.iloc[0] if not s.empty else ""
+                            df_ev_agg = (
+                                df_ev.groupby(["Código Everest","Data"], as_index=False)
+                                     .agg({"Sangria Everest":"sum", "Fantasia Everest": _pick_first})
+                            )
+    
+                            # -------- merge + diferença --------
+                            df_cmp = df_sys.merge(df_ev_agg, on=["Código Everest","Data"], how="outer", indicator=True)
+                            df_cmp["Sangria (Sistema)"] = df_cmp["Sangria (Sistema)"].fillna(0.0)
+                            df_cmp["Sangria Everest"]   = df_cmp["Sangria Everest"].fillna(0.0)
+    
+                            # Loja/Grupo via Tabela Empresa (mapa por Código Everest)
+                            mapa_emp = df_empresa.copy()
+                            mapa_emp.columns = [str(c).strip() for c in mapa_emp.columns]
+                            if "Código Everest" in mapa_emp.columns:
+                                mapa_emp["Código Everest"] = mapa_emp["Código Everest"].astype(str).str.extract(r"(\d+)")
+                                df_cmp = df_cmp.merge(
+                                    mapa_emp[["Código Everest","Loja","Grupo"]].drop_duplicates(),
+                                    on="Código Everest", how="left"
+                                )
+    
+                            # fallback LOJA = Fantasia (linhas que só existem no Everest)
+                            df_cmp["Loja"] = df_cmp["Loja"].astype(str)
+                            so_everest = (df_cmp["_merge"] == "right_only") & (df_cmp["Loja"].isin(["", "nan"]))
+                            df_cmp.loc[so_everest, "Loja"] = df_cmp.loc[so_everest, "Fantasia Everest"]
+                            df_cmp["Nao Mapeada?"] = so_everest  # marca para pintar em vermelho
+    
+                            df_cmp["Diferença"] = df_cmp["Sangria (Sistema)"] - df_cmp["Sangria Everest"]
+    
+                            if visao == "Diferenças Everest":
+                                df_cmp = df_cmp[np.isclose(df_cmp["Diferença"], 0.0) == False]
+    
+                            # ordena e prepara para exibição
+                            df_cmp = df_cmp[[
+                                "Grupo","Loja","Código Everest","Data",
+                                "Sangria (Sistema)","Sangria Everest","Diferença","Nao Mapeada?"
+                            ]].sort_values(["Grupo","Loja","Código Everest","Data"])
+    
+                            total = {
+                                "Grupo":"TOTAL","Loja":"","Código Everest":"","Data":pd.NaT,
+                                "Sangria (Sistema)": df_cmp["Sangria (Sistema)"].sum(),
+                                "Sangria Everest":   df_cmp["Sangria Everest"].sum(),
+                                "Diferença":         df_cmp["Diferença"].sum(),
+                                "Nao Mapeada?": False
+                            }
+                            df_exibe = pd.concat([pd.DataFrame([total]), df_cmp], ignore_index=True)
+    
+                            # formatação textual de Data e valores (para tela/export)
+                            df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
+                            for c in ["Sangria (Sistema)","Sangria Everest","Diferença"]:
+                                df_exibe[c] = df_exibe[c].apply(
+                                    lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X",".")
+                                    if isinstance(v,(int,float)) else v
+                                )
+    
+                            # flag para a renderização colorida
+                            st.session_state.__cmp_has_red = True
+    
+            # --- render e export (comum a todas as visões) ---
+            if 'df_exibe' in locals() and not df_exibe.empty:
+                if visao in ("Comparativa Everest", "Diferenças Everest"):
+                    colunas_ocultar_local = []  # NÃO ocultar "Código Everest"
+                else:
+                    colunas_ocultar_local = ["Código Grupo Everest","Duplicidade","Sistema","Mês","Ano"]
+    
+                df_show = df_exibe.drop(columns=colunas_ocultar_local, errors="ignore").copy()
+    
+                if st.session_state.get("__cmp_has_red") and "Nao Mapeada?" in df_show.columns and "Loja" in df_show.columns:
+                    def _paint_row(row):
+                        styles = [""] * len(df_show.columns)
+                        if bool(row.get("Nao Mapeada?", False)):
+                            styles[df_show.columns.get_loc("Loja")] = "color: red; font-weight: 700"
+                        return styles
+                    st.dataframe(df_show.style.apply(_paint_row, axis=1), use_container_width=True, height=480)
+                else:
                     _render_df(df_show, height=480)
     
-                    buf = BytesIO()
-                    with pd.ExcelWriter(buf, engine="openpyxl") as w:
-                        df_show.to_excel(w, index=False, sheet_name="Sangria")
-                        try:
-                            ws = w.book["Sangria"]
-                            header = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
-                            if "Data" in header:
-                                col_dt = header.index("Data") + 1
-                                for cell in ws.iter_cols(min_col=col_dt, max_col=col_dt, min_row=3)[0]:
-                                    cell.number_format = "dd/mm/yyyy"
-                            if col_valor and col_valor in header:
-                                col_idx = header.index(col_valor) + 1
-                                for i, cell in enumerate(ws.iter_cols(min_col=col_idx, max_col=col_idx, min_row=2)[0], start=2):
-                                    cell.number_format = 'R$ #,##0.00'
-                                    if i == 2:  # TOTAL
-                                        cell.font = cell.font.copy(bold=True)
-                            for c in ws[2]:
-                                c.font = c.font.copy(bold=True)
-                                c.fill = c.fill.__class__(fgColor="FFF7E6", fill_type="solid")
-                        except Exception:
-                            pass
-                    buf.seek(0)
-                    st.download_button("⬇️ Baixar Excel (Sangria - Visão atual)", buf, "sangria.xlsx")
+                # Export: remove apenas a coluna técnica
+                df_exportar = df_show.drop(columns=["Nao Mapeada?"], errors="ignore")
+    
+                buf = BytesIO()
+                with pd.ExcelWriter(buf, engine="openpyxl") as w:
+                    df_exportar.to_excel(w, index=False, sheet_name="Sangria")
+                buf.seek(0)
+                st.download_button("⬇️ Baixar Excel (Sangria - Visão atual)", buf, "sangria.xlsx")
     
         # -------------------------------
         # Sub-aba: CONTROLE DE CAIXA
@@ -2772,7 +2933,6 @@ with st.spinner("⏳ Processando..."):
             if df_sangria is None or df_sangria.empty:
                 st.info("Sem dados para comparação.")
             else:
-                # re-detecta coluna de valor (não depende da sub-aba anterior)
                 col_valor_evx = pick_valor_col(df_sangria.columns)
                 if ("Código Everest" in df_sangria.columns) and col_valor_evx:
                     df_top = (

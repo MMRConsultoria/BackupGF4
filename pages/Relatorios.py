@@ -2687,17 +2687,17 @@ with st.spinner("⏳ Processando..."):
                 # -------- visões --------
 
                 if visao == "Analítico":
-          
-                    grid = st.empty()  # <- placeholder: tudo que for render de tabela nesta visão usa este cara
+   
+                    grid = st.empty()  # placeholder para garantir um único render
                 
                     df_base = df_fil.copy()
                 
-                    # Ordena por Data (crescente)
+                    # 1) Ordena por Data (crescente)
                     if "Data" in df_base.columns:
                         df_base["Data"] = pd.to_datetime(df_base["Data"], errors="coerce", dayfirst=True).dt.normalize()
                         df_base = df_base.sort_values(["Data"], na_position="last")
                 
-                    # Monta a linha TOTAL (primeira linha)
+                    # 2) Monta a linha TOTAL (primeira linha)
                     total_val = df_base[col_valor].sum(min_count=1) if col_valor and col_valor in df_base.columns else 0.0
                     total_row = {c: "" for c in df_base.columns}
                     if "Loja" in total_row: total_row["Loja"] = "TOTAL"
@@ -2707,19 +2707,31 @@ with st.spinner("⏳ Processando..."):
                 
                     df_exibe = pd.concat([pd.DataFrame([total_row]), df_base], ignore_index=True)
                 
-                    # Formatação de Data para exibição (TOTAL vazio)
+                    # 3) Formatação de Data para exibição (TOTAL vazio)
                     if "Data" in df_exibe.columns:
                         df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
                         df_exibe.loc[df_exibe.index == 0, "Data"] = ""
                 
-                    # Formatação do valor (apenas visual)
+                    # 4) Formatação do valor (apenas visual)
                     if col_valor and col_valor in df_exibe.columns:
                         df_exibe = formata_valor_col(df_exibe, col_valor)
                 
-                    # <<< ÚNICO render da visão Analítico >>>
+                    # 5) REMOVER colunas indesejadas (com variações de nomes)
+                    aliases_remover = [
+                        "Código Everest", "Codigo Everest", "Cod Everest",
+                        "Código grupo Everest", "Codigo grupo Everest", "Cod Grupo Everest", "Código Grupo Everest",
+                        "Mês", "Mes",
+                        "Ano",
+                        "Duplicidade", "Possível Duplicidade", "Duplicado"
+                    ]
+                    to_drop = [c for c in aliases_remover if c in df_exibe.columns]
+                    if to_drop:
+                        df_exibe = df_exibe.drop(columns=to_drop)
+                
+                    # 6) Render ÚNICO
                     grid.dataframe(df_exibe, use_container_width=True, hide_index=True)
                 
-                    # Evita qualquer outro dataframe genérico renderizado abaixo
+                    # Evita qualquer outro dataframe aparecer abaixo
                     st.stop()
 
     

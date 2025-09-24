@@ -175,12 +175,12 @@ with st.spinner("⏳ Carregando dados..."):
         st.warning(f"⚠️ Não foi possível carregar a aba 'Sangria': {e}")
 
 # ============ Cabeçalho ============
-st.markdown("""
-<div style='display:flex;align-items:center;gap:10px;margin-bottom:12px;'>
-  <img src='https://img.icons8.com/color/48/cash-register.png' width='36'/>
-  <h1 style='margin:0;font-size:1.8rem;'>Relatórios Caixa & Sangria</h1>
-</div>
-""", unsafe_allow_html=True)
+#st.markdown("""
+#<div style='display:flex;align-items:center;gap:10px;margin-bottom:12px;'>
+#  <img src='https://img.icons8.com/color/48/cash-register.png' width='36'/>
+#  <h1 style='margin:0;font-size:1.8rem;'>Relatórios Caixa & Sangria</h1>
+#</div>
+#""", unsafe_allow_html=True)
 
 # ============ Sub-Abas ============
 sub_sangria, sub_caixa, sub_evx = st.tabs([

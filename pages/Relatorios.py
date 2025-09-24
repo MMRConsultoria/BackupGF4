@@ -2618,7 +2618,7 @@ with st.spinner("⏳ Processando..."):
         sub_sangria, sub_caixa, sub_evx = st.tabs(["💸 Movimentação de Caixa", "🧰 Controle de Sangria", "🗂️ Everest x Sangria"])
     
         # -------------------------------
-        # Sub-aba: 💸 SANGRIA
+        # Sub-aba: 💸  Movimentação de Caixa
         # -------------------------------
         with sub_sangria:
             if df_sangria is None or df_sangria.empty:
@@ -3080,13 +3080,193 @@ with st.spinner("⏳ Processando..."):
         # Sub-aba: 🧰 CONTROLE DE CAIXA
         # -------------------------------
         with sub_caixa:
-            try:
-                ws_cc = planilha_empresa.worksheet("Controle Caixa")
-                df_cc = pd.DataFrame(ws_cc.get_all_records())
-                st.success("✅ Dados de 'Controle Caixa' carregados.")
-                _render_df(df_cc, height=480)
-            except Exception:
-                st.info("📌 A aba **'Controle Caixa'** não foi encontrada na planilha. Podemos configurar depois.")
+            if df_sangria is None or df_sangria.empty:
+                st.info("Sem dados de **sangria** disponíveis.")
+            else:
+                df_sangria = df_sangria.copy()
+                df_sangria.columns = [str(c).strip() for c in df_sangria.columns]
+    
+                col_valor = pick_valor_col(df_sangria.columns)
+    
+                # conversão (apenas 1x) pelas regras validadas
+                if col_valor:
+                    raw_series = df_sangria[col_valor]
+                    parsed = raw_series.map(parse_valor_brl_sheets).astype(float)
+                    df_sangria[col_valor] = parsed
+    
+                   
+    
+                # filtros
+                top1, top2, top3, top4 = st.columns([1.2, 1.2, 1.6, 1.6])
+                with top1:
+                    data_min = pd.to_datetime(df_sangria["Data"].min())
+                    data_max = pd.to_datetime(df_sangria["Data"].max())
+                    dt_inicio, dt_fim = st.date_input(
+                        "Período",
+                        value=(data_max.date(), data_max.date()),
+                        min_value=data_min.date() if pd.notnull(data_min) else None,
+                        max_value=data_max.date() if pd.notnull(data_max) else None
+                    )
+                with top2:
+                    lojas = sorted(df_sangria.get("Loja", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
+                    lojas_sel = st.multiselect("Lojas", options=lojas, default=[])
+                with top3:
+                    descrs = sorted(df_sangria.get("Descrição Agrupada", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
+                    descrs_sel = st.multiselect("Descrição Agrupada", options=descrs, default=[])
+                with top4:
+                    visao = st.selectbox(
+                        "Visão do Relatório",
+                        options=["Analítico", "Sintético", "Comparativa Everest", "Diferenças Everest"],
+                        index=0
+                    )
+    
+                # aplica filtros
+                df_fil = df_sangria.copy()
+                if "Data" in df_fil.columns:
+                    df_fil = df_fil[(df_fil["Data"].dt.date >= dt_inicio) & (df_fil["Data"].dt.date <= dt_fim)]
+                if lojas_sel:
+                    df_fil = df_fil[df_fil["Loja"].astype(str).isin(lojas_sel)]
+                if descrs_sel:
+                    df_fil = df_fil[df_fil["Descrição Agrupada"].astype(str).isin(descrs_sel)]
+    
+                def formata_valor_col(df, col):
+                    df[col] = df[col].apply(
+                        lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                        if isinstance(v, (int, float)) else v
+                    )
+                    return df
+    
+                df_exibe = pd.DataFrame()
+    
+                # -------- visões --------
+
+               
+
+    
+                elif visao in ("Comparativa Everest", "Diferenças Everest"):
+                    base = df_sangria.copy()
+                    if "Data" not in base.columns or "Código Everest" not in base.columns or not col_valor:
+                        st.error("❌ Preciso de 'Data', 'Código Everest' e coluna de valor na aba Sangria.")
+                        df_exibe = pd.DataFrame()
+                    else:
+                        base["Data"] = pd.to_datetime(base["Data"], dayfirst=True, errors="coerce").dt.normalize()
+                        base = base[(base["Data"].dt.date >= dt_inicio) & (base["Data"].dt.date <= dt_fim)]
+                        base[col_valor] = pd.to_numeric(base[col_valor], errors="coerce").fillna(0.0)
+                        base["Código Everest"] = base["Código Everest"].astype(str).str.extract(r"(\d+)")
+                        df_sys = (
+                            base.groupby(["Código Everest","Data"], as_index=False)[col_valor]
+                                .sum()
+                                .rename(columns={col_valor:"Sangria (Sistema)"})
+                        )
+    
+                        # ---- Everest ----
+                        ws_ev = planilha_empresa.worksheet("Sangria Everest")
+                        df_ev = pd.DataFrame(ws_ev.get_all_records())
+                        df_ev.columns = [c.strip() for c in df_ev.columns]
+    
+                        def _norm(s): return re.sub(r"[^a-z0-9]", "", str(s).lower())
+                        cmap = {_norm(c): c for c in df_ev.columns}
+                        col_emp     = cmap.get("empresa")
+                        col_dt_ev   = next((orig for norm, orig in cmap.items()
+                                            if norm in ("dlancamento","dlancament","dlanamento","datadelancamento","data")), None)
+                        col_val_ev  = next((orig for norm, orig in cmap.items()
+                                            if norm in ("valorlancamento","valorlancament","valorlcto","valor")), None)
+                        col_fant_ev = next((orig for norm, orig in cmap.items()
+                                            if norm in ("fantasiaempresa","fantasia")), None)
+    
+                        if not all([col_emp, col_dt_ev, col_val_ev]):
+                            st.error("❌ Na 'Sangria Everest' preciso de 'Empresa', 'D. Lançamento' e 'Valor Lancamento'.")
+                            df_exibe = pd.DataFrame()
+                        else:
+                            df_ev = df_ev.copy()
+                            df_ev["Código Everest"]   = df_ev[col_emp].astype(str).str.extract(r"(\d+)")
+                            df_ev["Fantasia Everest"] = df_ev[col_fant_ev] if col_fant_ev else ""
+                            df_ev["Data"]             = pd.to_datetime(df_ev[col_dt_ev], dayfirst=True, errors="coerce").dt.normalize()
+                            df_ev["Valor Lancamento"] = df_ev[col_val_ev].map(parse_valor_brl_sheets).astype(float)
+                            df_ev = df_ev[(df_ev["Data"].dt.date >= dt_inicio) & (df_ev["Data"].dt.date <= dt_fim)]
+                            df_ev["Sangria Everest"]  = df_ev["Valor Lancamento"].abs()
+    
+                            def _pick_first(s):
+                                s = s.dropna().astype(str).str.strip()
+                                s = s[s != ""]
+                                return s.iloc[0] if not s.empty else ""
+                            df_ev_agg = (
+                                df_ev.groupby(["Código Everest","Data"], as_index=False)
+                                     .agg({"Sangria Everest":"sum", "Fantasia Everest": _pick_first})
+                            )
+    
+                            df_cmp = df_sys.merge(df_ev_agg, on=["Código Everest","Data"], how="outer", indicator=True)
+                            df_cmp["Sangria (Sistema)"] = df_cmp["Sangria (Sistema)"].fillna(0.0)
+                            df_cmp["Sangria Everest"]   = df_cmp["Sangria Everest"].fillna(0.0)
+    
+                            # mapeia Loja/Grupo via Tabela Empresa
+                            mapa_emp = df_empresa.copy()
+                            mapa_emp.columns = [str(c).strip() for c in mapa_emp.columns]
+                            if "Código Everest" in mapa_emp.columns:
+                                mapa_emp["Código Everest"] = mapa_emp["Código Everest"].astype(str).str.extract(r"(\d+)")
+                                df_cmp = df_cmp.merge(
+                                    mapa_emp[["Código Everest","Loja","Grupo"]].drop_duplicates(),
+                                    on="Código Everest", how="left"
+                                )
+    
+                            # fallback LOJA = Fantasia (linhas apenas do Everest)
+                            df_cmp["Loja"] = df_cmp["Loja"].astype(str)
+                            so_everest = (df_cmp["_merge"] == "right_only") & (df_cmp["Loja"].isin(["", "nan"]))
+                            df_cmp.loc[so_everest, "Loja"] = df_cmp.loc[so_everest, "Fantasia Everest"]
+                            df_cmp["Nao Mapeada?"] = so_everest
+    
+                            df_cmp["Diferença"] = df_cmp["Sangria (Sistema)"] - df_cmp["Sangria Everest"]
+                            if visao == "Diferenças Everest":
+                                df_cmp = df_cmp[np.isclose(df_cmp["Diferença"], 0.0) == False]
+    
+                            df_cmp = df_cmp[[
+                                "Grupo","Loja","Código Everest","Data",
+                                "Sangria (Sistema)","Sangria Everest","Diferença","Nao Mapeada?"
+                            ]].sort_values(["Grupo","Loja","Código Everest","Data"])
+    
+                            total = {
+                                "Grupo":"TOTAL","Loja":"","Código Everest":"","Data":pd.NaT,
+                                "Sangria (Sistema)": df_cmp["Sangria (Sistema)"].sum(),
+                                "Sangria Everest":   df_cmp["Sangria Everest"].sum(),
+                                "Diferença":         df_cmp["Diferença"].sum(),
+                                "Nao Mapeada?": False
+                            }
+                            df_exibe = pd.concat([pd.DataFrame([total]), df_cmp], ignore_index=True)
+    
+                            df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
+                            for c in ["Sangria (Sistema)","Sangria Everest","Diferença"]:
+                                df_exibe[c] = df_exibe[c].apply(
+                                    lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X",".")
+                                    if isinstance(v,(int,float)) else v
+                                )
+                            st.session_state.__cmp_has_red = True
+    
+                # --- render e export ---
+                if not df_exibe.empty:
+                    if visao in ("Comparativa Everest", "Diferenças Everest"):
+                        colunas_ocultar_local = []  # mantém Código Everest
+                    else:
+                        colunas_ocultar_local = ["Código Grupo Everest","Duplicidade","Sistema","Mês","Ano"]
+    
+                    df_show = df_exibe.drop(columns=colunas_ocultar_local, errors="ignore").copy()
+    
+                    if st.session_state.get("__cmp_has_red") and "Nao Mapeada?" in df_show.columns and "Loja" in df_show.columns:
+                        def _paint_row(row):
+                            styles = [""] * len(df_show.columns)
+                            if bool(row.get("Nao Mapeada?", False)):
+                                styles[df_show.columns.get_loc("Loja")] = "color: red; font-weight: 700"
+                            return styles
+                        st.dataframe(df_show.style.apply(_paint_row, axis=1), use_container_width=True, height=480)
+                    else:
+                        _render_df(df_show, height=480)
+    
+                    # exporta (remove coluna técnica)
+                    df_exportar = df_show.drop(columns=["Nao Mapeada?"], errors="ignore")
+                    buf = BytesIO()
+                    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+                        df_exportar.to_excel(w, index=False, sheet_name="Sangria")
+                    buf.seek(0)
+                    st.download_button("⬇️ Baixar Excel (Sangria - Visão atual)", buf, "sangria.xlsx")
     
         # -------------------------------
         # Sub-aba: 🗂️ EVEREST x SANGRIA

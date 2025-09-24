@@ -453,10 +453,10 @@ with sub_sangria:
                 buf.seek(0)
                 st.download_button(
                     label="⬇️ Baixar Excel",
-                    data=buf,  # ou buf.getvalue()
-                    file_name="Relatorio_Analitico_Sangria.xlsx",
+                    data=buf,
+                    file_name="Relatorio_Sintetico_Sangria.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="dl_sangria_analitico"
+                    key="dl_sangria_sintetico"
                 )
 
 # -------------------------------
@@ -730,11 +730,12 @@ with sub_caixa:
                     buf.seek(0)
                     st.download_button(
                         label="⬇️ Baixar Excel",
-                        data=buf,  # ou buf.getvalue()
-                        file_name="Relatorio_Analitico_Sangria.xlsx",
+                        data=buf,
+                        file_name=f"Sangria_{visao.replace(' ','_')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="dl_sangria_analitico"
+                        key=f"dl_caixa_{'comparativa' if visao=='Comparativa Everest' else 'diferencas'}"
                     )
+
 
 
 # -------------------------------

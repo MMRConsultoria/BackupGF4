@@ -2615,7 +2615,7 @@ with st.spinner("⏳ Processando..."):
         except Exception as e:
             st.warning(f"⚠️ Não foi possível carregar a aba 'Sangria': {e}")
     
-        sub_sangria, sub_caixa, sub_evx = st.tabs(["💸 Sangria", "🧰 Controle de Caixa", "🗂️ Everest x Sangria"])
+        sub_sangria, sub_caixa, sub_evx = st.tabs(["💸 Movimentação de Caixa", "🧰 Controle de Caixa", "🗂️ Everest x Sangria"])
     
         # -------------------------------
         # Sub-aba: 💸 SANGRIA

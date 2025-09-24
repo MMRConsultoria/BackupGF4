@@ -371,11 +371,13 @@ with sub_sangria:
                     ws.write_string(1, list(df_export.columns).index("Loja"), "TOTAL", tot)
                 ws.freeze_panes(1, 0)
 
-            st.download_button("⬇️ Baixar Excel (Analítico)",
-                               buf.getvalue(),
-                               "Relatorio_Analitico_Sangria.xlsx",
-                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                               use_container_width=True)
+            buf.seek(0)
+            st.download_button(
+                label="⬇️ Baixar Excel",
+                data=buf,  # pode ser buf.getvalue(), mas assim fica igual ao modelo
+                file_name="Baixar Excel.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
         # ====== Sintético ======
         elif visao == "Sintético":
@@ -446,12 +448,13 @@ with sub_sangria:
                     ws.write_string(1, 0, "TOTAL", tot)
                     ws.freeze_panes(1, 0)
 
-                st.download_button("⬇️ Baixar Excel (Sintético)",
-                                   buf.getvalue(),
-                                   "Relatorio_Sintetico_Sangria.xlsx",
-                                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                   use_container_width=True)
-
+                buf.seek(0)
+                st.download_button(
+                    label="⬇️ Baixar Excel",
+                    data=buf,  # pode ser buf.getvalue(), mas assim fica igual ao modelo
+                    file_name="Baixar Excel.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 # -------------------------------
 # Sub-aba: 🧰 CONTROLE DE SANGRIA (Comparativa Everest / Diferenças)
 # -------------------------------
@@ -720,13 +723,13 @@ with sub_caixa:
 
                         ws.freeze_panes(1, 0)
 
+                    buf.seek(0)
                     st.download_button(
-                        f"⬇️ Baixar Excel ({visao})",
-                        data=buf.getvalue(),
-                        file_name=f"Sangria_{visao.replace(' ','_')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
+                        label="⬇️ Baixar Excel",
+                        data=buf,  # pode ser buf.getvalue(), mas assim fica igual ao modelo
+                        file_name="Baixar Excel.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
 
 # -------------------------------

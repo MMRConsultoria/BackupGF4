@@ -65,6 +65,50 @@ with st.spinner("⏳ Carregando dados..."):
         </div>
     """, unsafe_allow_html=True)
     # ============ Helpers ============
+
+
+
+    import unicodedata
+    import re
+    
+    def _norm_txt(s: str) -> str:
+        s = str(s or "").strip().lower()
+        s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("utf-8")
+        return s
+    
+    def eh_deposito_mask(df, cols_texto=None):
+        """
+        Retorna uma Series booleana marcando linhas de depósito.
+        Critérios por texto em colunas comuns (ajuste a lista se quiser).
+        """
+        if cols_texto is None:
+            cols_texto = [
+                "Descrição Agrupada", "Descrição", "Historico", "Histórico",
+                "Categoria", "Obs", "Observação", "Tipo", "Tipo Movimento"
+            ]
+        cols_texto = [c for c in cols_texto if c in df.columns]
+        if not cols_texto:
+            return pd.Series(False, index=df.index)
+    
+        txt = df[cols_texto].astype(str).agg(" ".join, axis=1).map(_norm_txt)
+    
+        padrao = r"""
+            \bdeposito\b        |   # 'deposito'/'depósito'
+            \bdepsito\b         |   # variações sem acento
+            \bdep\b             |   # abreviação comum
+            credito\s+em\s+conta|
+            transf(erencia)?\s*(p/?\s*banco|banco) |
+            envio\s*para\s*banco|
+            remessa\s* banco
+        """
+        return txt.str.contains(padrao, flags=re.IGNORECASE | re.VERBOSE, regex=True, na=False)
+    
+    def brl(v):
+        try:
+            return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        except Exception:
+            return "R$ 0,00"
+
     def parse_valor_brl_sheets(x):
         """
         Normaliza valores vindos do Sheets para float (BRL):
@@ -416,6 +460,37 @@ with sub_caixa:
         st.info("Sem dados de **sangria** disponíveis.")
     else:
         from io import BytesIO
+        import unicodedata
+        import re
+
+        # ===== helpers locais (caso não existam no arquivo) =====
+        def _norm_txt(s: str) -> str:
+            s = str(s or "").strip().lower()
+            s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("utf-8")
+            return s
+
+        def eh_deposito_mask(df, cols_texto=None):
+            if cols_texto is None:
+                cols_texto = [
+                    "Descrição Agrupada","Descrição","Historico","Histórico",
+                    "Categoria","Obs","Observação","Tipo","Tipo Movimento"
+                ]
+            cols_texto = [c for c in cols_texto if c in df.columns]
+            if not cols_texto:
+                return pd.Series(False, index=df.index)
+            txt = df[cols_texto].astype(str).agg(" ".join, axis=1).map(_norm_txt)
+            padrao = r"""
+                \bdeposito\b | \bdepsito\b | \bdep\b |
+                credito\s+em\s+conta | envio\s*para\s*banco |
+                transf(erencia)?\s*(p/?\s*banco|banco)
+            """
+            return txt.str.contains(padrao, flags=re.IGNORECASE | re.VERBOSE, regex=True, na=False)
+
+        def brl(v):
+            try:
+                return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            except Exception:
+                return "R$ 0,00"
 
         # ===== base =====
         df = df_sangria.copy()
@@ -472,21 +547,47 @@ with sub_caixa:
 
         # ======= Comparativa / Diferenças =======
         if visao in ("Comparativa Everest", "Diferenças Everest"):
-            base = df_fil.copy()
+            base = df_fil.copy()  # <- agora 'base' existe
+
             if "Data" not in base.columns or "Código Everest" not in base.columns or not col_valor:
                 st.error("❌ Preciso de 'Data', 'Código Everest' e coluna de valor na aba Sangria.")
             else:
+                # normalização
                 base["Data"] = pd.to_datetime(base["Data"], dayfirst=True, errors="coerce").dt.normalize()
                 base[col_valor] = pd.to_numeric(base[col_valor], errors="coerce").fillna(0.0)
                 base["Código Everest"] = base["Código Everest"].astype(str).str.extract(r"(\d+)")
 
+                # --- EXCLUI DEPÓSITOS (somente lado Sistema) ---
+                mask_dep_sys = eh_deposito_mask(base)
+                qtd_dep_sys  = int(mask_dep_sys.sum())
+                vlr_dep_sys  = base.loc[mask_dep_sys, col_valor].sum()
+
+                if qtd_dep_sys:
+                    st.markdown(
+                        f"""
+<div style="background:#fff3cd; border-left:6px solid #ffecb5; padding:.6rem .9rem; border-radius:6px; font-size:14px;">
+<strong>Regra aplicada (Controle de Sangria):</strong> depósitos <u>foram EXCLUÍDOS</u> do lado <b>Sistema</b> desta comparativa.<br>
+Removidas <b>{qtd_dep_sys}</b> linha(s) | Total excluído: <b>{brl(vlr_dep_sys)}</b>.
+</div>
+""",
+                        unsafe_allow_html=True
+                    )
+                    with st.expander("🔎 Ver depósitos removidos (Sistema)"):
+                        audit = base.loc[mask_dep_sys, :].copy()
+                        if col_valor in audit.columns:
+                            audit[col_valor] = audit[col_valor].map(brl)
+                        st.dataframe(audit, use_container_width=True, hide_index=True)
+
+                base = base.loc[~mask_dep_sys].copy()
+
+                # agrega Sistema (já sem depósitos)
                 df_sys = (
                     base.groupby(["Código Everest","Data"], as_index=False)[col_valor]
                         .sum()
                         .rename(columns={col_valor:"Sangria (Sistema)"})
                 )
 
-                # Everest
+                # --- Everest ---
                 ws_ev = planilha_empresa.worksheet("Sangria Everest")
                 df_ev = pd.DataFrame(ws_ev.get_all_records())
                 df_ev.columns = [c.strip() for c in df_ev.columns]
@@ -509,9 +610,12 @@ with sub_caixa:
                     de["Fantasia Everest"] = de[col_fant] if col_fant else ""
                     de["Data"]             = pd.to_datetime(de[col_dt_ev], dayfirst=True, errors="coerce").dt.normalize()
                     de["Valor Lancamento"] = de[col_val_ev].map(parse_valor_brl_sheets).astype(float)
-                    # restringe por período do filtro
                     de = de[(de["Data"].dt.date >= dt_inicio) & (de["Data"].dt.date <= dt_fim)]
                     de["Sangria Everest"]  = de["Valor Lancamento"].abs()
+
+                    # (opcional) se existir coluna textual no Everest para identificar depósitos, descomente e ajuste:
+                    # mask_dep_ev = eh_deposito_mask(de, cols_texto=["<coluna_textual_no_Everest>"])
+                    # de = de.loc[~mask_dep_ev].copy()
 
                     def _pick_first(s):
                         s = s.dropna().astype(str).str.strip()
@@ -526,7 +630,7 @@ with sub_caixa:
                     cmp["Sangria (Sistema)"] = cmp["Sangria (Sistema)"].fillna(0.0)
                     cmp["Sangria Everest"]   = cmp["Sangria Everest"].fillna(0.0)
 
-                    # mapeia Loja/Grupo via Tabela Empresa
+                    # mapeamento Loja/Grupo
                     mapa = df_empresa.copy()
                     mapa.columns = [str(c).strip() for c in mapa.columns]
                     if "Código Everest" in mapa.columns:
@@ -534,7 +638,7 @@ with sub_caixa:
                         cmp = cmp.merge(mapa[["Código Everest","Loja","Grupo"]].drop_duplicates(),
                                         on="Código Everest", how="left")
 
-                    # fallback LOJA = Fantasia (linhas só do Everest)
+                    # fallback LOJA = Fantasia (linhas apenas do Everest)
                     cmp["Loja"] = cmp["Loja"].astype(str)
                     so_everest = (cmp["_merge"] == "right_only") & (cmp["Loja"].isin(["", "nan"]))
                     cmp.loc[so_everest, "Loja"] = cmp.loc[so_everest, "Fantasia Everest"]
@@ -566,26 +670,16 @@ with sub_caixa:
                             if isinstance(v,(int,float)) else v
                         )
 
-                    # pinta Loja em vermelho quando não mapeada
                     if "Nao Mapeada?" in df_show.columns and "Loja" in df_show.columns:
-                        def _paint_row(row):
-                            styles = [""] * len(df_show.columns)
-                            if bool(row.get("Nao Mapeada?", False)):
-                                styles[df_show.columns.get_loc("Loja")] = "color: red; font-weight: 700"
-                            return styles
-                        # --- render seguro (mantém "Nao Mapeada?" fora da visualização, mas usa para pintar) ---
+                        # estiliza 'Loja' em vermelho quando não mapeada
                         view = df_show.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
-                        
-                        # máscara booleana por linha, baseada no df_show original
                         mask_nm = (
                             df_show["Nao Mapeada?"].astype(bool)
                             if "Nao Mapeada?" in df_show.columns
                             else pd.Series(False, index=df_show.index)
                         )
-                        
                         def _paint_row(row: pd.Series):
-                            # 'row' já vem da 'view' (sem a coluna "Nao Mapeada?")
-                            styles = [""] * len(row.index)  # compatível com o shape da tabela exibida
+                            styles = [""] * len(row.index)
                             try:
                                 if mask_nm.loc[row.name] and "Loja" in row.index:
                                     idx = list(row.index).index("Loja")
@@ -593,13 +687,7 @@ with sub_caixa:
                             except Exception:
                                 pass
                             return styles
-                        
-                        st.dataframe(
-                            view.style.apply(_paint_row, axis=1),
-                            use_container_width=True,
-                            height=520
-                        )
-
+                        st.dataframe(view.style.apply(_paint_row, axis=1), use_container_width=True, height=520)
                     else:
                         st.dataframe(df_show.drop(columns=["Nao Mapeada?"], errors="ignore"),
                                      use_container_width=True, height=520)
@@ -631,12 +719,13 @@ with sub_caixa:
 
                         # destaca TOTAL (linha 1)
                         ws.set_row(1, None, tot)
-                        if pd.notna(df_exportar.iloc[0]["Sangria (Sistema)"]):
+                        if pd.notna(df_exportar.iloc[0].get("Sangria (Sistema)", None)):
                             ws.write_number(1, list(df_exportar.columns).index("Sangria (Sistema)"), float(df_exportar.iloc[0]["Sangria (Sistema)"]), totm)
-                        if pd.notna(df_exportar.iloc[0]["Sangria Everest"]):
+                        if pd.notna(df_exportar.iloc[0].get("Sangria Everest", None)):
                             ws.write_number(1, list(df_exportar.columns).index("Sangria Everest"), float(df_exportar.iloc[0]["Sangria Everest"]), totm)
-                        if pd.notna(df_exportar.iloc[0]["Diferença"]):
+                        if pd.notna(df_exportar.iloc[0].get("Diferença", None)):
                             ws.write_number(1, list(df_exportar.columns).index("Diferença"), float(df_exportar.iloc[0]["Diferença"]), totm)
+
                         if "Loja" in df_exportar.columns:
                             ws.write_string(1, list(df_exportar.columns).index("Loja"), "TOTAL", tot)
 
@@ -649,6 +738,7 @@ with sub_caixa:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True
                     )
+
 
 # -------------------------------
 # Sub-aba: 🗂️ EVEREST x SANGRIA (placeholder)

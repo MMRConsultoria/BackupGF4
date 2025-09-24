@@ -543,9 +543,33 @@ with sub_caixa:
                             if bool(row.get("Nao Mapeada?", False)):
                                 styles[df_show.columns.get_loc("Loja")] = "color: red; font-weight: 700"
                             return styles
-                        st.dataframe(df_show.drop(columns=["Nao Mapeada?"], errors="ignore")
-                                     .style.apply(_paint_row, axis=1),
-                                     use_container_width=True, height=520)
+                        # --- render seguro (mantém "Nao Mapeada?" fora da visualização, mas usa para pintar) ---
+                        view = df_show.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
+                        
+                        # máscara booleana por linha, baseada no df_show original
+                        mask_nm = (
+                            df_show["Nao Mapeada?"].astype(bool)
+                            if "Nao Mapeada?" in df_show.columns
+                            else pd.Series(False, index=df_show.index)
+                        )
+                        
+                        def _paint_row(row: pd.Series):
+                            # 'row' já vem da 'view' (sem a coluna "Nao Mapeada?")
+                            styles = [""] * len(row.index)  # compatível com o shape da tabela exibida
+                            try:
+                                if mask_nm.loc[row.name] and "Loja" in row.index:
+                                    idx = list(row.index).index("Loja")
+                                    styles[idx] = "color: red; font-weight: 700"
+                            except Exception:
+                                pass
+                            return styles
+                        
+                        st.dataframe(
+                            view.style.apply(_paint_row, axis=1),
+                            use_container_width=True,
+                            height=520
+                        )
+
                     else:
                         st.dataframe(df_show.drop(columns=["Nao Mapeada?"], errors="ignore"),
                                      use_container_width=True, height=520)

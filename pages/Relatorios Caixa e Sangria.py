@@ -689,175 +689,114 @@ with sub_caixa:
                                      use_container_width=True, height=520)
 
                     # Exporta Excel
+                    # ===== EXPORTAR EXCEL: Dados + Tabela + Dashboard na mesma aba =====
                     from io import BytesIO
-                    import pandas as pd
                     import numpy as np
-                    import xlsxwriter
                     
-                    # ====== BASE PARA EXPORTAÇÃO ======
-                    df_exportar = df_exibe.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
-                    df_exportar["Data"] = pd.to_datetime(df_exportar["Data"], errors="coerce")
+                    # 1) Base crua (numérica) para o Excel
+                    df_dados = cmp.copy()  # <— use o 'cmp' ANTES de formatar para mostrar
+                    df_dados["Data"] = pd.to_datetime(df_dados["Data"], errors="coerce")
+                    df_dados["Mês"]  = df_dados["Data"].dt.month
+                    df_dados["Ano"]  = df_dados["Data"].dt.year
                     
+                    # garanta tipos numéricos
                     for c in ["Sangria (Sistema)", "Sangria Everest", "Diferença"]:
-                        if c in df_exportar.columns:
-                            df_exportar[c] = pd.to_numeric(df_exportar[c], errors="coerce")
+                        df_dados[c] = pd.to_numeric(df_dados[c], errors="coerce").fillna(0.0)
                     
-                    # Linhas de detalhe (sem TOTAL) e com Data válida
-                    base = df_exportar.loc[(df_exportar["Grupo"] != "TOTAL") & (df_exportar["Data"].notna())].copy()
+                    # renomear o nome do sistema, como você pediu
+                    df_dados = df_dados.rename(columns={
+                        "Sangria (Sistema)": "Sangria (Colibri/CISS)"
+                    })
                     
-                    # Enriquecimento p/ “Dados”
-                    base["Ano"] = base["Data"].dt.year.astype("Int64")
-                    base["Mês"] = base["Data"].dt.month.astype("Int64")
-                    if "Diferença" not in base.columns:
-                        base["Diferença"] = base.get("Sangria (Sistema)", 0.0) - base.get("Sangria Everest", 0.0)
-                    base["Sangria (Colibri/CISS)"] = base.get("Sangria (Sistema)", 0.0)
-                    
-                    df_dados = base[[
-                        "Data", "Grupo", "Loja", "Mês", "Ano",
-                        "Sangria (Colibri/CISS)", "Sangria Everest", "Diferença"
-                    ]].copy()
-                    
-                    # Chave Mes/Ano p/ resumos e tabela dinâmica manual
-                    base["MesAno"] = base["Mês"].astype(int).map("{:02d}".format) + "/" + base["Ano"].astype(int).astype(str)
-                    
-                    def _mesano_key(s):
-                        try:
-                            m, a = s.split("/")
-                            return (int(a), int(m))
-                        except Exception:
-                            return (0, 0)
-                    
-                    # Resumo por Mes/Ano (para gráfico)
-                    resumo = (base.groupby("MesAno", as_index=False)["Diferença"].sum()
-                                   .sort_values("MesAno", key=lambda s: s.map(_mesano_key)))
-                    
-                    # “Pivot manual” (Grupo/Loja x MesAno) com TOTAL
-                    dash = (base.groupby(["Grupo", "Loja", "MesAno"], as_index=False)["Diferença"]
-                                .sum()
-                                .pivot(index=["Grupo","Loja"], columns="MesAno", values="Diferença")
-                                .fillna(0.0))
-                    dash = dash.reindex(sorted(dash.columns, key=_mesano_key), axis=1)
-                    dash["TOTAL"] = dash.sum(axis=1)
-                    dash = dash.reset_index()
-                    
-                    # ====== EXCEL: tudo na aba "Dados" ======
+                    # 2) Gera o arquivo Excel com xlsxwriter
                     buf = BytesIO()
                     with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+                        sheet = "Dados"
+                        df_dados.to_excel(writer, index=False, sheet_name=sheet, startrow=0, startcol=0)
+                    
                         wb  = writer.book
-                        ws  = wb.add_worksheet("Dados")
-                        writer.sheets["Dados"] = ws
+                        ws  = writer.sheets[sheet]
                     
-                        # Formatos
-                        header = wb.add_format({"bold": True, "align": "center", "valign": "vcenter",
-                                                "bg_color": "#F2F2F2", "border": 1})
-                        money   = wb.add_format({"num_format": "R$ #,##0.00"})
-                        datefmt = wb.add_format({"num_format": "dd/mm/yyyy"})
-                        intl    = wb.add_format({"num_format": "0"})
-                        text    = wb.add_format({})
+                        # formatos
+                        fmt_header = wb.add_format({"bold": True, "align":"center", "valign":"vcenter", "bg_color":"#F2F2F2", "border":1})
+                        fmt_text   = wb.add_format({"border":1})
+                        fmt_date   = wb.add_format({"num_format": "dd/mm/yyyy", "border":1})
+                        fmt_money  = wb.add_format({"num_format": 'R$ #,##0.00', "border":1})
                     
-                        # 1) TABELA “DADOS” (A1 …)
-                        start_r, start_c = 0, 0
-                        cols = list(df_dados.columns)
-                    
-                        # Escreve cabeçalho
-                        for j, col in enumerate(cols):
-                            ws.write(start_r, start_c + j, col, header)
-                    
-                        # Escreve linhas
-                        for i, row in df_dados.iterrows():
-                            r = start_r + 1 + i
-                            for j, col in enumerate(cols):
-                                v = row[col]
-                                if col == "Data" and pd.notnull(v):
-                                    ws.write_datetime(r, start_c + j, pd.to_datetime(v), datefmt)
-                                elif col in ("Mês", "Ano") and pd.notnull(v):
-                                    ws.write_number(r, start_c + j, int(v), intl)
-                                elif col in ("Sangria (Colibri/CISS)", "Sangria Everest", "Diferença") and pd.notnull(v):
-                                    ws.write_number(r, start_c + j, float(v), money)
-                                else:
-                                    ws.write(r, start_c + j, v if v is not None else "", text)
-                    
-                        # Converte bloco em Tabela
+                        # 3) Converte o range em Tabela do Excel
                         nrows, ncols = df_dados.shape
-                        ws.add_table(start_r, start_c, start_r + nrows, start_c + ncols - 1, {
-                            "name": "tbl_sangria",
-                            "style": "Table Style Medium 2",
-                            "columns": [{"header": c} for c in cols]
+                        headers = [{"header": col} for col in df_dados.columns]
+                        ws.add_table(0, 0, nrows, ncols-1, {
+                            "name": "tbl_dados",
+                            "columns": headers,
+                            "style": "TableStyleMedium9"
                         })
                     
-                        # Larguras
-                        widths = {"Data":12, "Grupo":22, "Loja":28, "Mês":6, "Ano":8,
-                                  "Sangria (Colibri/CISS)":18, "Sangria Everest":18, "Diferença":16}
-                        for j, col in enumerate(cols):
-                            base_fmt = datefmt if col=="Data" else (intl if col in ("Mês","Ano")
-                                        else (money if col in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença") else text))
-                            ws.set_column(start_c + j, start_c + j, widths.get(col, 14), base_fmt)
-                        ws.freeze_panes(start_r + 1, start_c)
+                        # larguras e formatos por coluna
+                        idx = {c:i for i,c in enumerate(df_dados.columns)}
+                        ws.set_column(idx["Grupo"], idx["Grupo"], 14, fmt_text)
+                        ws.set_column(idx["Loja"], idx["Loja"], 28, fmt_text)
+                        if "Código Everest" in idx:
+                            ws.set_column(idx["Código Everest"], idx["Código Everest"], 12, fmt_text)
+                        ws.set_column(idx["Data"], idx["Data"], 12, fmt_date)
+                        ws.set_column(idx["Mês"], idx["Mês"], 6, fmt_text)
+                        ws.set_column(idx["Ano"], idx["Ano"], 8, fmt_text)
+                        for c in ["Sangria (Colibri/CISS)", "Sangria Everest", "Diferença"]:
+                            ws.set_column(idx[c], idx[c], 16, fmt_money)
                     
-                        # 2) BLOCO “Resumo Mes/Ano” (logo abaixo da tabela de Dados)
-                        dash_r0 = start_r + nrows + 3
-                        ws.write(dash_r0, 0, "Resumo Mes/Ano (Diferença)", wb.add_format({"bold": True}))
-                        rsum_r0 = dash_r0 + 1
+                        # 4) “Dashboard” simples na MESMA aba (somas por Mês e por Grupo)
+                        # --- bloco de somas por Mês (com fórmulas SUMIFS na tabela) ---
+                        start_col = ncols + 2  # coloca ao lado da tabela, na mesma aba
+                        ws.write(0, start_col,     "Mês", fmt_header)
+                        ws.write(0, start_col + 1, "Colibri", fmt_header)
+                        ws.write(0, start_col + 2, "Everest", fmt_header)
+                        for i in range(1, 13):
+                            ws.write(i, start_col, i, fmt_text)
+                            ws.write_formula(i, start_col + 1, f'=SUMIFS(tbl_dados[{"Sangria (Colibri/CISS)"}], tbl_dados[Mês], {i})', fmt_money)
+                            ws.write_formula(i, start_col + 2, f'=SUMIFS(tbl_dados[{"Sangria Everest"}], tbl_dados[Mês], {i})', fmt_money)
                     
-                        ws.write(rsum_r0, 0, "MesAno", header)
-                        ws.write(rsum_r0, 1, "Diferença", header)
-                    
-                        for i, (mesano, val) in enumerate(zip(resumo["MesAno"], resumo["Diferença"])):
-                            ws.write(rsum_r0 + 1 + i, 0, mesano, text)
-                            ws.write_number(rsum_r0 + 1 + i, 1, float(val), money)
-                    
-                        # Tabela do resumo
-                        rsum_last = rsum_r0 + 1 + max(len(resumo), 1)
-                        ws.add_table(rsum_r0, 0, rsum_last, 1, {
-                            "name": "tb_resumo_mes",
-                            "style": "Table Style Light 11",
-                            "columns": [{"header":"MesAno"}, {"header":"Diferença"}]
+                        # gráfico por Mês
+                        chart_mes = wb.add_chart({"type": "column"})
+                        chart_mes.add_series({
+                            "name":       "Colibri",
+                            "categories": [sheet, 1, start_col, 12, start_col],
+                            "values":     [sheet, 1, start_col+1, 12, start_col+1],
                         })
+                        chart_mes.add_series({
+                            "name":       "Everest",
+                            "categories": [sheet, 1, start_col, 12, start_col],
+                            "values":     [sheet, 1, start_col+2, 12, start_col+2],
+                        })
+                        chart_mes.set_title({"name": "Soma por Mês"})
+                        chart_mes.set_y_axis({"num_format": 'R$ #,##0.00'})
+                        ws.insert_chart(2, start_col + 4, chart_mes, {"x_scale": 1.1, "y_scale": 1.0})
                     
-                        # 3) “Pivot manual” Grupo/Loja x Mes/Ano (abaixo do resumo)
-                        pv_r0 = rsum_last + 2
-                        ws.write(pv_r0, 0, "Grupo/Loja x Mes/Ano (Diferença)", wb.add_format({"bold": True}))
-                        pv_rh = pv_r0 + 1
+                        # --- bloco de somas por Grupo (pandas → escreve como números) ---
+                        grp = (df_dados.groupby("Grupo", dropna=False)[["Sangria (Colibri/CISS)", "Sangria Everest", "Diferença"]]
+                               .sum().reset_index())
+                        grp_row0 = 16
+                        ws.write(grp_row0, start_col,     "Grupo", fmt_header)
+                        ws.write(grp_row0, start_col + 1, "Diferença", fmt_header)
+                        for r, (_, row) in enumerate(grp.iterrows(), start=grp_row0+1):
+                            ws.write(r, start_col,     str(row["Grupo"]), fmt_text)
+                            ws.write_number(r, start_col + 1, float(row["Diferença"]), fmt_money)
                     
-                        dash_cols = list(dash.columns)  # ["Grupo","Loja", ...MesAno..., "TOTAL"]
-                        for j, col in enumerate(dash_cols):
-                            ws.write(pv_rh, j, col, header)
-                        for i, row in dash.iterrows():
-                            for j, col in enumerate(dash_cols):
-                                v = row[col]
-                                if isinstance(v, (int, float, np.number)):
-                                    ws.write_number(pv_rh + 1 + i, j, float(v), money)
-                                else:
-                                    ws.write(pv_rh + 1 + i, j, v, text)
+                        # gráfico de Diferença por Grupo
+                        chart_grp = wb.add_chart({"type": "bar"})
+                        chart_grp.add_series({
+                            "name":       "Diferença",
+                            "categories": [sheet, grp_row0+1, start_col,     grp_row0+len(grp), start_col],
+                            "values":     [sheet, grp_row0+1, start_col + 1, grp_row0+len(grp), start_col + 1],
+                        })
+                        chart_grp.set_title({"name": "Diferença por Grupo"})
+                        chart_grp.set_y_axis({"num_format": 'R$ #,##0.00'})
+                        ws.insert_chart(grp_row0, start_col + 4, chart_grp, {"x_scale": 1.1, "y_scale": 1.0})
                     
-                        # 4) Gráfico (colunas) da Diferença por Mes/Ano — ainda na aba Dados
-                        if len(resumo) > 0:
-                            chart = wb.add_chart({"type": "column"})
-                            # categorias = Dados![MesAno]; valores = Dados![Diferença]
-                            cat_first = (rsum_r0 + 1, 0)                 # linha do 1º dado, coluna MesAno
-                            val_first = (rsum_r0 + 1, 1)                 # linha do 1º dado, coluna Diferença
-                            cat_last  = (rsum_r0 + len(resumo), 0)
-                            val_last  = (rsum_r0 + len(resumo), 1)
-                    
-                            chart.add_series({
-                                "name": "Diferença por Mes/Ano",
-                                "categories": ["Dados", cat_first[0], cat_first[1], cat_last[0], cat_last[1]],
-                                "values":     ["Dados", val_first[0], val_first[1], val_last[0], val_last[1]],
-                                "data_labels": {"value": True},
-                            })
-                            chart.set_title({"name": "Diferença (Sistema - Everest) por Mes/Ano"})
-                            chart.set_y_axis({"num_format": "R$ #,##0.00"})
-                            chart.set_legend({"none": True})
-                    
-                            # Insere o gráfico ao lado do resumo
-                            ws.insert_chart(dash_r0, 4, chart, {"x_scale": 1.15, "y_scale": 1.0})
-                    
-                    # Botão (com key única por visão)
-                    buf.seek(0)
+                    # 5) Botão padrão (com chave única para não colidir com outros)
                     st.download_button(
                         label="⬇️ Baixar Excel",
-                        data=buf,
-                        file_name=f"Sangria_{visao.replace(' ','_')}.xlsx",
+                        data=buf.getvalue(),
+                        file_name="Sangria_Controle.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key=f"dl_caixa_{'comparativa' if visao=='Comparativa Everest' else 'diferencas'}_xlsx"
+                        key="dl_sangria_controle_excel"
                     )

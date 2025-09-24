@@ -599,7 +599,7 @@ with sub_caixa:
                                   if norm in ("fantasiaempresa","fantasia")), None)
 
                 if not all([col_emp, col_dt_ev, col_val_ev]):
-                    st.error("❌ Na 'Sangria Everest' preciso de 'Empresa', 'D. Lançamento' e 'Valor Lancamento'.")
+                    st.error("❌ Na 'Sangria Everest' preciso de 'Empresa', '' e 'Valor Lancamento'.")
                 else:
                     de = df_ev.copy()
                     de["Código Everest"]   = de[col_emp].astype(str).str.extract(r"(\d+)")
@@ -689,91 +689,108 @@ with sub_caixa:
                                      use_container_width=True, height=520)
 
                     # Exporta Excel
+                    # ===== Excel "Dados" com Data sem hora + Tabela + (tenta) Slicers =====
                     from io import BytesIO
-
-                    # ---------- monta a base "Dados" para o Excel ----------
+                    import pandas as pd
+                    
+                    # --- base para o Excel (partindo do DataFrame 'cmp' já montado) ---
                     df_dados = cmp.copy()
                     
-                    # 1) Data só data (sem hora) e dtypes corretos
+                    # Data somente data (dtype datetime) e derivados
                     df_dados["Data"] = pd.to_datetime(df_dados["Data"], errors="coerce").dt.normalize()
+                    df_dados["Mês"]  = df_dados["Data"].dt.month
+                    df_dados["Ano"]  = df_dados["Data"].dt.year
                     
-                    # 2) Derivados p/ filtros
-                    df_dados["Mês"] = df_dados["Data"].dt.month
-                    df_dados["Ano"] = df_dados["Data"].dt.year
-                    
-                    # 3) Números garantidos
-                    for c in ["Sangria (Sistema)", "Sangria Everest", "Diferença"]:
-                        if c in df_dados.columns:
-                            df_dados[c] = pd.to_numeric(df_dados[c], errors="coerce").fillna(0.0)
-                    
-                    # 4) Renomeia a coluna do sistema e remove a booleana
+                    # Ajusta nomes/colunas
                     if "Sangria (Sistema)" in df_dados.columns:
                         df_dados.rename(columns={"Sangria (Sistema)": "Sangria (Colibri/CISS)"}, inplace=True)
                     if "Nao Mapeada?" in df_dados.columns:
                         df_dados.drop(columns=["Nao Mapeada?"], inplace=True)
                     
-                    # 5) Ordena colunas (Data primeiro)
-                    ordem = ["Data","Grupo","Loja","Código Everest",
-                             "Sangria (Colibri/CISS)","Sangria Everest","Diferença",
-                             "Mês","Ano"]
-                    ordem = [c for c in ordem if c in df_dados.columns]
-                    df_dados = df_dados[ordem]
+                    # Garante numéricos
+                    for c in ["Sangria (Colibri/CISS)", "Sangria Everest", "Diferença"]:
+                        if c in df_dados.columns:
+                            df_dados[c] = pd.to_numeric(df_dados[c], errors="coerce").fillna(0.0)
                     
-                    # ---------- escreve o Excel com TABELA + (tenta) SLICERS ----------
+                    # Ordem das colunas (Data em 1º)
+                    ordem = ["Data","Grupo","Loja","Código Everest",
+                             "Sangria (Colibri/CISS)","Sangria Everest","Diferença","Mês","Ano"]
+                    df_dados = df_dados[[c for c in ordem if c in df_dados.columns]].copy()
+                    
+                    # --- gravação manual para garantir tipos/formatos no Excel ---
                     buf = BytesIO()
-                    with pd.ExcelWriter(
-                        buf,
-                        engine="xlsxwriter",
-                        datetime_format="dd/mm/yyyy",
-                        date_format="dd/mm/yyyy",
-                    ) as writer:
-                        sh_name = "Dados"
-                        df_dados.to_excel(writer, index=False, sheet_name=sh_name, startrow=0, startcol=0)
+                    with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                         wb = writer.book
-                        ws = writer.sheets[sh_name]
+                        ws = wb.add_worksheet("Dados")
+                        writer.sheets["Dados"] = ws
                     
                         # formatos
-                        fmt_header = wb.add_format({"bold": True, "align": "center", "valign":"vcenter", "bg_color":"#F2F2F2", "border":1})
+                        fmt_header = wb.add_format({"bold": True, "align":"center", "valign":"vcenter",
+                                                    "bg_color":"#F2F2F2", "border":1})
                         fmt_text   = wb.add_format({"border":1})
-                        fmt_date   = wb.add_format({"num_format":"dd/mm/yyyy", "border":1})
-                        fmt_money  = wb.add_format({"num_format":"R$ #,##0.00", "border":1})
+                        fmt_int    = wb.add_format({"border":1, "num_format":"0"})
+                        fmt_date   = wb.add_format({"border":1, "num_format":"dd/mm/yyyy"})
+                        fmt_money  = wb.add_format({"border":1, "num_format":"R$ #,##0.00"})
+                    
+                        cols = list(df_dados.columns)
+                    
+                        # cabeçalho
+                        for j, col in enumerate(cols):
+                            ws.write(0, j, col, fmt_header)
+                    
+                        # dados (linha a linha)
+                        for i, row in df_dados.iterrows():
+                            r = i + 1  # 1-based por causa do header
+                            for j, col in enumerate(cols):
+                                val = row[col]
+                                if col == "Data":
+                                    if pd.isna(val):
+                                        ws.write_blank(r, j, None, fmt_date)
+                                    else:
+                                        ws.write_datetime(r, j, pd.to_datetime(val).to_pydatetime(), fmt_date)
+                                elif col in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença"):
+                                    ws.write_number(r, j, float(val) if pd.notna(val) else 0.0, fmt_money)
+                                elif col in ("Mês","Ano","Código Everest"):
+                                    # escreve como inteiro
+                                    v = 0 if pd.isna(val) else int(val)
+                                    ws.write_number(r, j, v, fmt_int)
+                                else:
+                                    ws.write(r, j, "" if pd.isna(val) else val, fmt_text)
                     
                         nrows, ncols = df_dados.shape
                     
-                        # cria a tabela (TableStyleMedium9)
+                        # tabela envolvendo todo o range
                         ws.add_table(0, 0, nrows, ncols-1, {
                             "name": "tbl_dados",
                             "style": "TableStyleMedium9",
-                            "columns": [{"header": c} for c in df_dados.columns]
+                            "columns": [{"header": c} for c in cols],
                         })
                     
-                        # larguras + formatos por coluna (garante Data SEM hora no Excel)
-                        col_index = {c:i for i,c in enumerate(df_dados.columns)}
-                        if "Data" in col_index:                    ws.set_column(col_index["Data"],                    col_index["Data"],                    12, fmt_date)
-                        if "Grupo" in col_index:                   ws.set_column(col_index["Grupo"],                   col_index["Grupo"],                   8,  fmt_text)
-                        if "Loja" in col_index:                    ws.set_column(col_index["Loja"],                    col_index["Loja"],                    28, fmt_text)
-                        if "Código Everest" in col_index:          ws.set_column(col_index["Código Everest"],          col_index["Código Everest"],          14, fmt_text)
+                        # larguras
+                        col_idx = {c:i for i,c in enumerate(cols)}
+                        if "Data" in col_idx:                   ws.set_column(col_idx["Data"], col_idx["Data"], 12, fmt_date)
+                        if "Grupo" in col_idx:                  ws.set_column(col_idx["Grupo"], col_idx["Grupo"], 8,  fmt_text)
+                        if "Loja" in col_idx:                   ws.set_column(col_idx["Loja"],  col_idx["Loja"],  28, fmt_text)
+                        if "Código Everest" in col_idx:         ws.set_column(col_idx["Código Everest"], col_idx["Código Everest"], 14, fmt_int)
                         for c in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença"):
-                            if c in col_index:                     ws.set_column(col_index[c],                         col_index[c],                         18, fmt_money)
-                        if "Mês" in col_index:                     ws.set_column(col_index["Mês"],                     col_index["Mês"],                     6,  fmt_text)
-                        if "Ano" in col_index:                     ws.set_column(col_index["Ano"],                     col_index["Ano"],                     8,  fmt_text)
+                            if c in col_idx:                    ws.set_column(col_idx[c], col_idx[c], 18, fmt_money)
+                        if "Mês" in col_idx:                    ws.set_column(col_idx["Mês"], col_idx["Mês"], 6,  fmt_int)
+                        if "Ano" in col_idx:                    ws.set_column(col_idx["Ano"], col_idx["Ano"], 8,  fmt_int)
                     
                         # congela cabeçalho
                         ws.freeze_panes(1, 0)
                     
-                        # tenta adicionar slicers (Excel 2013+; requer XlsxWriter com suporte)
+                        # tenta criar os slicers (se a sua versão do XlsxWriter suportar)
                         try:
-                            # posiciona ao lado da tabela (coluna L em diante)
                             if hasattr(wb, "add_slicer"):
                                 wb.add_slicer({"table":"tbl_dados", "column":"Ano",   "cell":"L1"})
                                 wb.add_slicer({"table":"tbl_dados", "column":"Mês",   "cell":"L5"})
                                 wb.add_slicer({"table":"tbl_dados", "column":"Grupo", "cell":"L9"})
                                 wb.add_slicer({"table":"tbl_dados", "column":"Loja",  "cell":"L15", "width":220, "height":260})
                         except Exception:
-                            # sem suporte a slicer: segue sem travar
                             pass
                     
-                    # botão
+                    # botão de download (um key único por página)
                     st.download_button(
                         label="⬇️ Baixar Excel",
                         data=buf.getvalue(),

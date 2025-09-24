@@ -682,14 +682,13 @@ with sub_caixa:
 
                     # ========= EXPORTAÇÃO (com slicers quando possível) =========
                     from io import BytesIO
-                    import pandas as pd
+                    import zipfile
                     
                     def exportar_xlsxwriter(cmp: pd.DataFrame, criar_slicers: bool = False) -> BytesIO:
                         df = cmp.copy()
                     
                         # limpeza / nomes
-                        if "Nao Mapeada?" in df.columns:
-                            df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
+                        df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
                         if "Sangria (Sistema)" in df.columns:
                             df = df.rename(columns={"Sangria (Sistema)": "Sangria (Colibri/CISS)"})
                     
@@ -741,9 +740,10 @@ with sub_caixa:
                                     else:
                                         ws.write(r, j, "" if pd.isna(val) else val, fmt_text)
                     
-                            # ===== Tabela (range correto) =====
-                            last_row = len(df)           # inclui header em 0 e dados até last_row
-                            last_col = len(df.columns)-1
+                            last_row = len(df)  # header é linha 0, dados vão até 'len(df)'
+                            last_col = len(df.columns) - 1
+                    
+                            # tabela
                             ws.add_table(0, 0, last_row, last_col, {
                                 "name": "tbl_dados",
                                 "style": "TableStyleMedium9",
@@ -752,35 +752,50 @@ with sub_caixa:
                     
                             # larguras + freeze
                             col_idx = {c:i for i,c in enumerate(df.columns)}
-                            if "Data" in col_idx:           ws.set_column(col_idx["Data"], col_idx["Data"], 12, fmt_date)
-                            if "Grupo" in col_idx:          ws.set_column(col_idx["Grupo"], col_idx["Grupo"], 10, fmt_text)
-                            if "Loja" in col_idx:           ws.set_column(col_idx["Loja"],  col_idx["Loja"],  28, fmt_text)
-                            if "Código Everest" in col_idx: ws.set_column(col_idx["Código Everest"], col_idx["Código Everest"], 14, fmt_int)
+                            if "Data" in col_idx:              ws.set_column(col_idx["Data"], col_idx["Data"], 12, fmt_date)
+                            if "Grupo" in col_idx:             ws.set_column(col_idx["Grupo"], col_idx["Grupo"], 10, fmt_text)
+                            if "Loja" in col_idx:              ws.set_column(col_idx["Loja"],  col_idx["Loja"],  28, fmt_text)
+                            if "Código Everest" in col_idx:    ws.set_column(col_idx["Código Everest"], col_idx["Código Everest"], 14, fmt_int)
                             for c in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença"):
-                                if c in col_idx:            ws.set_column(col_idx[c], col_idx[c], 18, fmt_money)
-                            if "Mês" in col_idx:            ws.set_column(col_idx["Mês"],   col_idx["Mês"],   6, fmt_int)
-                            if "Ano" in col_idx:            ws.set_column(col_idx["Ano"],   col_idx["Ano"],   8, fmt_int)
+                                if c in col_idx:               ws.set_column(col_idx[c], col_idx[c], 18, fmt_money)
+                            if "Mês" in col_idx:               ws.set_column(col_idx["Mês"],   col_idx["Mês"],   6, fmt_int)
+                            if "Ano" in col_idx:               ws.set_column(col_idx["Ano"],   col_idx["Ano"],   8, fmt_int)
                             ws.freeze_panes(1, 0)
                     
-                            # ===== Slicers (passando o worksheet explicitamente) =====
-                            if criar_slicers and hasattr(wb, "add_slicer"):
-                                try:
-                                    # “Mês” pode estar como “Mês” ou “Mes” dependendo do header. Vamos resolver:
-                                    col_mes = "Mês" if "Mês" in df.columns else ("Mes" if "Mes" in df.columns else None)
+                            # ===== Tentativa de criar SLICERS =====
+                            slicers_tentados = False
+                            try:
+                                import xlsxwriter as xw
+                                ver_tuple = tuple(int(p) for p in xw.__version__.split(".")[:3])
+                                st.caption(f"XlsxWriter em runtime: {xw.__version__}")
+                                if criar_slicers and ver_tuple >= (3, 2, 0) and hasattr(wb, "add_slicer"):
+                                    slicers_tentados = True
+                                    # Evite acentos se houver algum problema: "Mês" costuma funcionar, mas teste "Mes" se necessário.
+                                    wb.add_slicer({"table": "tbl_dados", "column": "Ano",   "cell": "E2",  "width": 140, "height": 100})
+                                    wb.add_slicer({"table": "tbl_dados", "column": "Mês",   "cell": "E10", "width": 140, "height": 140})
+                                    wb.add_slicer({"table": "tbl_dados", "column": "Grupo", "cell": "H2",  "width": 180, "height": 160})
+                                    wb.add_slicer({"table": "tbl_dados", "column": "Loja",  "cell": "K2",  "width": 260, "height": 300})
+                                elif criar_slicers and ver_tuple < (3, 2, 0):
+                                    st.warning("XlsxWriter < 3.2.0 no runtime — sem suporte a segmentação.")
+                            except Exception as e:
+                                st.warning(f"Falha ao inserir segmentações: {type(e).__name__}: {e}")
                     
-                                    wb.add_slicer({"worksheet": ws, "table": "tbl_dados", "column": "Ano",  "cell": "J2",  "width": 140, "height": 100})
-                                    if col_mes:
-                                        wb.add_slicer({"worksheet": ws, "table": "tbl_dados", "column": col_mes, "cell": "J9", "width": 140, "height": 140})
-                                    if "Grupo" in df.columns:
-                                        wb.add_slicer({"worksheet": ws, "table": "tbl_dados", "column": "Grupo", "cell": "L2", "width": 180, "height": 160})
-                                    if "Loja" in df.columns:
-                                        wb.add_slicer({"worksheet": ws, "table": "tbl_dados", "column": "Loja",  "cell": "O2", "width": 260, "height": 300})
-                                except Exception as e:
-                                    st.warning(f"Não foi possível criar as segmentações automaticamente ({type(e).__name__}).")
+                        # ---- verificação: o arquivo em memória tem slicers?
+                        buf.seek(0)
+                        try:
+                            with zipfile.ZipFile(buf, "r") as z:
+                                tem_slicers = any(n.startswith("xl/slicerCaches/") for n in z.namelist())
+                            if criar_slicers and slicers_tentados and not tem_slicers:
+                                st.warning(
+                                    "As segmentações **não** foram gravadas no .xlsx final. "
+                                    "Causa mais provável: a versão do XlsxWriter usada pelo **servidor** ainda é antiga "
+                                    "(mesmo com `xlsxwriter>=3.2.0` no requirements)."
+                                )
+                        except Exception:
+                            pass
                     
                         buf.seek(0)
                         return buf
-
                     
                     
                     def preencher_template_openpyxl(cmp: pd.DataFrame, caminho_template: str) -> BytesIO:
@@ -871,30 +886,34 @@ with sub_caixa:
                     # --- escolha automática: XlsxWriter com slicers OU template ---
                     # --- escolha automática: XlsxWriter com slicers OU template ---
                     # --- escolha: forçar XlsxWriter com slicers para testar ---
-                    usar_template = False  # <<< force sem template, com slicers por código
+                    # --- escolha automática: XlsxWriter com slicers OU template ---
+                    usar_template = False
                     caminho_template = "modelo_segmentacao_sangria.xlsx"
                     
                     # Mostra a versão do XlsxWriter (ajuda no diagnóstico)
                     try:
                         import xlsxwriter as xw
-                        st.caption(f"XlsxWriter versão detectada: {xw.__version__}")
+                        st.caption(f"XlsxWriter em runtime: {xw.__version__}")
                         has_slicers = tuple(int(p) for p in xw.__version__.split(".")[:3]) >= (3, 2, 0)
                     except Exception:
                         has_slicers = False
                         st.caption("XlsxWriter não encontrado.")
                     
+                    # Decisão de como gerar o arquivo
                     if usar_template and os.path.exists(caminho_template):
                         arquivo = preencher_template_openpyxl(cmp, caminho_template)
                     elif has_slicers:
-                        # chama com criar_slicers=True
+                        # tenta gerar com segmentações por código
                         arquivo = exportar_xlsxwriter(cmp, criar_slicers=True)
                     else:
                         st.warning(
                             "Segmentação automática indisponível. "
                             "Instale **xlsxwriter>=3.2.0** ou forneça um template com a Tabela 'tbl_dados' e slicers."
                         )
+                        # fallback: gera sem slicers
                         arquivo = exportar_xlsxwriter(cmp, criar_slicers=False)
                     
+                    # --- Botão de download: SEMPRE fora do if/elif/else ---
                     st.download_button(
                         label="⬇️ Baixar Excel",
                         data=arquivo,

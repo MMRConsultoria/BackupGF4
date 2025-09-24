@@ -559,13 +559,13 @@ with sub_caixa:
 
                 # --- EXCLUI DEPÓSITOS (somente lado Sistema) ---
                 mask_dep_sys = eh_deposito_mask(base)
-                base = base.loc[~mask_dep_sys].copy()
+                
                
-                    with st.expander("🔎 Ver depósitos removidos (Sistema)"):
-                        audit = base.loc[mask_dep_sys, :].copy()
-                        if col_valor in audit.columns:
-                            audit[col_valor] = audit[col_valor].map(brl)
-                        st.dataframe(audit, use_container_width=True, hide_index=True)
+                with st.expander("🔎 Ver depósitos removidos (Sistema)"):
+                    audit = base.loc[mask_dep_sys, :].copy()
+                    if col_valor in audit.columns:
+                        audit[col_valor] = audit[col_valor].map(brl)
+                    st.dataframe(audit, use_container_width=True, hide_index=True)
 
                 base = base.loc[~mask_dep_sys].copy()
 

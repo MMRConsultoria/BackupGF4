@@ -682,7 +682,7 @@ with sub_caixa:
 
                     # ========= EXPORTAÇÃO (com slicers quando possível) =========
                     from io import BytesIO
-                    import os
+                    import pandas as pd
                     
                     def exportar_xlsxwriter(cmp: pd.DataFrame, criar_slicers: bool = False) -> BytesIO:
                         df = cmp.copy()
@@ -741,11 +741,10 @@ with sub_caixa:
                                     else:
                                         ws.write(r, j, "" if pd.isna(val) else val, fmt_text)
                     
-                            nrows = len(df) + 1
-                            ncols = len(df.columns) - 1
-                    
-                            # tabela
-                            ws.add_table(0, 0, nrows, ncols, {
+                            # ===== Tabela (range correto) =====
+                            last_row = len(df)           # inclui header em 0 e dados até last_row
+                            last_col = len(df.columns)-1
+                            ws.add_table(0, 0, last_row, last_col, {
                                 "name": "tbl_dados",
                                 "style": "TableStyleMedium9",
                                 "columns": [{"header": c} for c in df.columns],
@@ -753,40 +752,35 @@ with sub_caixa:
                     
                             # larguras + freeze
                             col_idx = {c:i for i,c in enumerate(df.columns)}
-                            if "Data" in col_idx:
-                                ws.set_column(col_idx["Data"], col_idx["Data"], 12, fmt_date)
-                            if "Grupo" in col_idx:
-                                ws.set_column(col_idx["Grupo"], col_idx["Grupo"], 10, fmt_text)
-                            if "Loja" in col_idx:
-                                ws.set_column(col_idx["Loja"],  col_idx["Loja"],  28, fmt_text)
-                            if "Código Everest" in col_idx:
-                                ws.set_column(col_idx["Código Everest"], col_idx["Código Everest"], 14, fmt_int)
+                            if "Data" in col_idx:           ws.set_column(col_idx["Data"], col_idx["Data"], 12, fmt_date)
+                            if "Grupo" in col_idx:          ws.set_column(col_idx["Grupo"], col_idx["Grupo"], 10, fmt_text)
+                            if "Loja" in col_idx:           ws.set_column(col_idx["Loja"],  col_idx["Loja"],  28, fmt_text)
+                            if "Código Everest" in col_idx: ws.set_column(col_idx["Código Everest"], col_idx["Código Everest"], 14, fmt_int)
                             for c in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença"):
-                                if c in col_idx:
-                                    ws.set_column(col_idx[c], col_idx[c], 18, fmt_money)
-                            if "Mês" in col_idx:
-                                ws.set_column(col_idx["Mês"], col_idx["Mês"], 6, fmt_int)
-                            if "Ano" in col_idx:
-                                ws.set_column(col_idx["Ano"], col_idx["Ano"], 8, fmt_int)
-                    
+                                if c in col_idx:            ws.set_column(col_idx[c], col_idx[c], 18, fmt_money)
+                            if "Mês" in col_idx:            ws.set_column(col_idx["Mês"],   col_idx["Mês"],   6, fmt_int)
+                            if "Ano" in col_idx:            ws.set_column(col_idx["Ano"],   col_idx["Ano"],   8, fmt_int)
                             ws.freeze_panes(1, 0)
                     
-                            # ===== Slicers (opcional e 100% seguro) =====
-                            # ===== Slicers (opcional) =====
+                            # ===== Slicers (passando o worksheet explicitamente) =====
                             if criar_slicers and hasattr(wb, "add_slicer"):
                                 try:
-                                    # Posições mais próximas do canto superior esquerdo
-                                    wb.add_slicer({"table": "tbl_dados", "column": "Ano",   "cell": "E2",  "width": 140, "height": 100})
-                                    wb.add_slicer({"table": "tbl_dados", "column": "Mês",   "cell": "E10", "width": 140, "height": 140})
-                                    wb.add_slicer({"table": "tbl_dados", "column": "Grupo", "cell": "H2",  "width": 180, "height": 160})
-                                    wb.add_slicer({"table": "tbl_dados", "column": "Loja",  "cell": "K2",  "width": 260, "height": 300})
+                                    # “Mês” pode estar como “Mês” ou “Mes” dependendo do header. Vamos resolver:
+                                    col_mes = "Mês" if "Mês" in df.columns else ("Mes" if "Mes" in df.columns else None)
+                    
+                                    wb.add_slicer({"worksheet": ws, "table": "tbl_dados", "column": "Ano",  "cell": "J2",  "width": 140, "height": 100})
+                                    if col_mes:
+                                        wb.add_slicer({"worksheet": ws, "table": "tbl_dados", "column": col_mes, "cell": "J9", "width": 140, "height": 140})
+                                    if "Grupo" in df.columns:
+                                        wb.add_slicer({"worksheet": ws, "table": "tbl_dados", "column": "Grupo", "cell": "L2", "width": 180, "height": 160})
+                                    if "Loja" in df.columns:
+                                        wb.add_slicer({"worksheet": ws, "table": "tbl_dados", "column": "Loja",  "cell": "O2", "width": 260, "height": 300})
                                 except Exception as e:
                                     st.warning(f"Não foi possível criar as segmentações automaticamente ({type(e).__name__}).")
                     
-                            # se não tiver suporte, apenas segue sem slicers
-                    
                         buf.seek(0)
                         return buf
+
                     
                     
                     def preencher_template_openpyxl(cmp: pd.DataFrame, caminho_template: str) -> BytesIO:

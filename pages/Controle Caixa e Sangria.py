@@ -425,7 +425,15 @@ with st.spinner("⏳ Processando..."):
 
         # ✅ defina o mode ANTES de usá-lo
         mode = st.session_state.get("mode", None)
-    
+        def _excel_col_letter(idx_zero_based: int) -> str:
+            """Converte índice 0-based em letra de coluna (A..Z, AA..)."""
+            n = idx_zero_based + 1
+            s = ""
+            while n:
+                n, r = divmod(n - 1, 26)
+                s = chr(65 + r) + s
+            return s
+
         # --- modo Everest: substituir apenas as datas presentes no arquivo e enviar valor com vírgula ---
         # --- MODO EVEREST: remover só as datas do arquivo; inserir novas; formatar valores com vírgula/2 casas ---
         if mode == "everest" and "df_everest" in st.session_state:
@@ -552,7 +560,40 @@ with st.spinner("⏳ Processando..."):
         
                 values = [header_sheet] + df_insert.fillna("").astype(str).values.tolist()
                 ws.clear()
+
                 ws.update("A1", values, value_input_option="USER_ENTERED")
+                
+                # ⬇️ ADICIONE ESTE TRECHO
+                # Descobre as colunas "Valor Lançamento" e "V. Rateio" pelo cabeçalho
+                valor_sheet_col  = None
+                rateio_sheet_col = None
+                for c in header_sheet:
+                    if _norm(c) in {"valor lancamento", "valor lançamento",
+                                    "valor do lancamento", "valor de lancamento",
+                                    "valor do lançamento", "valor de lançamento"}:
+                        valor_sheet_col = c
+                    if _norm(c) in {"v rateio", "v. rateio", "valor rateio"}:
+                        rateio_sheet_col = c
+                
+                last_row = 1 + len(df_insert)  # 1 (cabeçalho) + linhas de dados
+                if valor_sheet_col:
+                    col_letter = _excel_col_letter(header_sheet.index(valor_sheet_col))
+                    format_cell_range(ws, f"{col_letter}2:{col_letter}{last_row}", ACCOUNTING_RS)
+                if rateio_sheet_col:
+                    col_letter = _excel_col_letter(header_sheet.index(rateio_sheet_col))
+                    format_cell_range(ws, f"{col_letter}2:{col_letter}{last_row}", ACCOUNTING_RS)
+                # ⬆️ FIM DO TRECHO
+                
+                # (já existente)
+                st.success(f"✅ 'Sangria Everest' criada com {len(df_insert)} linhas.")
+                st.balloons()
+                st.stop()
+
+                
+                
+                
+                
+                
                 st.success(f"✅ 'Sangria Everest' criada com {len(df_insert)} linhas.")
                 st.balloons()
                 st.stop()
@@ -688,9 +729,24 @@ with st.spinner("⏳ Processando..."):
             
                     # 4) Append ÚNICO das novas linhas (sem limpar o sheet)
                     novas_linhas = df_insert.fillna("").astype(str).values.tolist()
+
                     if novas_linhas:
                         ws.append_rows(novas_linhas, value_input_option="USER_ENTERED")
-            
+                    
+                        # ⬇️ ADICIONE ESTE TRECHO
+                        # Linhas novas começam após header + linhas mantidas
+                        inicio = len(kept) + 2                # primeira linha nova (1=header)
+                        fim    = inicio + len(novas_linhas) - 1
+                    
+                        # Usa os nomes reais no header_sheet detectados antes
+                        if valor_sheet_col:
+                            col_letter = _excel_col_letter(header_sheet.index(valor_sheet_col))
+                            format_cell_range(ws, f"{col_letter}{inicio}:{col_letter}{fim}", ACCOUNTING_RS)
+                        if rateio_sheet_col:
+                            col_letter = _excel_col_letter(header_sheet.index(rateio_sheet_col))
+                            format_cell_range(ws, f"{col_letter}{inicio}:{col_letter}{fim}", ACCOUNTING_RS)
+                        # ⬆️ FIM DO TRECHO
+
                     st.success(
                         f"✅Atualização Concluida"
                     )

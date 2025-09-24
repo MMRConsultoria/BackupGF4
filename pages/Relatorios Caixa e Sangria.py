@@ -374,10 +374,12 @@ with sub_sangria:
             buf.seek(0)
             st.download_button(
                 label="⬇️ Baixar Excel",
-                data=buf,  # pode ser buf.getvalue(), mas assim fica igual ao modelo
-                file_name="Baixar Excel.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                data=buf,  # ou buf.getvalue()
+                file_name="Relatorio_Analitico_Sangria.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_sangria_analitico"
             )
+
 
         # ====== Sintético ======
         elif visao == "Sintético":
@@ -451,10 +453,12 @@ with sub_sangria:
                 buf.seek(0)
                 st.download_button(
                     label="⬇️ Baixar Excel",
-                    data=buf,  # pode ser buf.getvalue(), mas assim fica igual ao modelo
-                    file_name="Baixar Excel.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+                    data=buf,  # ou buf.getvalue()
+                    file_name="Relatorio_Analitico_Sangria.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_sangria_analitico"
+                )
+
 # -------------------------------
 # Sub-aba: 🧰 CONTROLE DE SANGRIA (Comparativa Everest / Diferenças)
 # -------------------------------
@@ -726,10 +730,11 @@ with sub_caixa:
                     buf.seek(0)
                     st.download_button(
                         label="⬇️ Baixar Excel",
-                        data=buf,  # pode ser buf.getvalue(), mas assim fica igual ao modelo
-                        file_name="Baixar Excel.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                        data=buf,  # ou buf.getvalue()
+                        file_name="Relatorio_Analitico_Sangria.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_sangria_analitico"
+                    )
 
 
 # -------------------------------

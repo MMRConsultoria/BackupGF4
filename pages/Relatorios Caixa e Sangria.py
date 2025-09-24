@@ -727,13 +727,124 @@ with sub_caixa:
 
                         ws.freeze_panes(1, 0)
 
+                    from io import BytesIO
+                    from xlsxwriter.utility import xl_range, xl_rowcol_to_cell
+                    
+                    # ---------- prepara base p/ Excel (usa df_exibe que você já montou) ----------
+                    df_exportar = df_exibe.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
+                    # garante datetime e numéricos
+                    df_exportar["Data"] = pd.to_datetime(df_exportar["Data"], errors="coerce")
+                    for c in ["Sangria (Sistema)", "Sangria Everest", "Diferença"]:
+                        if c in df_exportar.columns:
+                            df_exportar[c] = pd.to_numeric(df_exportar[c], errors="coerce")
+                    
+                    # tira a linha TOTAL da base do pivot
+                    base_pivot = df_exportar.loc[df_exportar["Grupo"] != "TOTAL"].copy()
+                    
+                    # adiciona colunas Ano/Mês (Mês numérico para ordenar no Excel)
+                    base_pivot["Ano"] = base_pivot["Data"].dt.year
+                    base_pivot["Mês"] = base_pivot["Data"].dt.month
+                    
+                    # mantém só as colunas pedidas
+                    colunas_pivot = ["Grupo", "Loja", "Ano", "Mês", "Diferença"]
+                    # (se "Diferença" não existir ainda — por segurança)
+                    if "Diferença" not in base_pivot.columns:
+                        base_pivot["Diferença"] = base_pivot["Sangria (Sistema)"] - base_pivot["Sangria Everest"]
+                    
+                    df_dados = base_pivot[colunas_pivot].copy()
+                    
+                    # ---------- escreve Excel com Tabela + Pivot + Gráfico ----------
+                    buf = BytesIO()
+                    with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+                        # 1) Aba Dados + Tabela
+                        df_dados.to_excel(writer, sheet_name="Dados", index=False)
+                        wb  = writer.book
+                        wsD = writer.sheets["Dados"]
+                    
+                        # formata números
+                        money_fmt = wb.add_format({"num_format": "R$ #,##0.00"})
+                        int_fmt   = wb.add_format({"num_format": "0"})
+                        text_fmt  = wb.add_format({})
+                    
+                        # auto width simples
+                        for j, col in enumerate(df_dados.columns):
+                            width = max(len(str(col)), min(40, int(df_dados[col].astype(str).map(len).max() if not df_dados.empty else 12)))
+                            wsD.set_column(j, j, width)
+                    
+                        # aplica formatos nas colunas conhecidas
+                        colmap = {name: idx for idx, name in enumerate(df_dados.columns)}
+                        if "Ano" in colmap: wsD.set_column(colmap["Ano"], colmap["Ano"], None, int_fmt)
+                        if "Mês" in colmap: wsD.set_column(colmap["Mês"], colmap["Mês"], None, int_fmt)
+                        if "Diferença" in colmap: wsD.set_column(colmap["Diferença"], colmap["Diferença"], None, money_fmt)
+                    
+                        # cria Tabela (ListObject)
+                        nrows, ncols = df_dados.shape
+                        tbl_range = xl_range(0, 0, nrows, ncols-1)  # inclui header
+                        wsD.add_table(tbl_range, {
+                            "name": "tbl_sangria",
+                            "columns": [{"header": c} for c in df_dados.columns]
+                        })
+                        wsD.freeze_panes(1, 0)
+                    
+                        # 2) Aba Dashboard + Pivot
+                        wsDash = wb.add_worksheet("Dashboard")
+                        title_fmt = wb.add_format({"bold": True, "font_size": 14})
+                        wsDash.write("A1", "Sangria x Everest — Diferenças (Pivot)", title_fmt)
+                    
+                        # intervalo de dados para o Pivot
+                        data_range = f"Dados!{xl_range(0, 0, nrows, ncols-1)}"
+                    
+                        # cria a tabela dinâmica
+                        wb.add_pivot_table({
+                            "data": data_range,
+                            "name": "PivotSangria",
+                            "worksheet": wsDash,
+                            "location": "A3",
+                            "row_fields":     [{"name": "Grupo"}, {"name": "Loja"}],
+                            "column_fields":  [{"name": "Ano"}, {"name": "Mês"}],
+                            "data_fields":    [{"name": "Diferença", "function": "sum", "num_format": "R$ #,##0.00"}],
+                        })
+                    
+                        # 3) Pequeno dashboard: Diferença por Mês/Ano (sum)
+                        resumo = (df_dados
+                                  .assign(MesAno=lambda x: x["Mês"].astype(int).map("{:02d}".format) + "/" + x["Ano"].astype(int).astype(str))
+                                  .groupby("MesAno", as_index=False)["Diferença"].sum()
+                                  .sort_values("MesAno"))
+                    
+                        # escreve base do gráfico em área auxiliar
+                        start_row = 2
+                        start_col = 12  # coluna M (fora do pivot)
+                        wsDash.write(start_row-1, start_col, "MesAno")
+                        wsDash.write(start_row-1, start_col+1, "Diferença")
+                        for i, (mesano, val) in enumerate(zip(resumo["MesAno"], resumo["Diferença"])):
+                            wsDash.write(start_row+i, start_col, mesano)
+                            wsDash.write_number(start_row+i, start_col+1, float(val), money_fmt)
+                    
+                        # adiciona gráfico de colunas
+                        chart = wb.add_chart({"type": "column"})
+                        last_r = start_row + len(resumo) - 1
+                        cats = ["Dashboard", start_row, start_col, last_r, start_col]         # categorias = MesAno
+                        vals = ["Dashboard", start_row, start_col+1, last_r, start_col+1]     # valores   = Diferença
+                        chart.add_series({
+                            "name":       "Diferença por Mês/Ano",
+                            "categories": cats,
+                            "values":     vals,
+                            "data_labels": {"value": True},
+                        })
+                        chart.set_title({"name": "Diferença (Sistema - Everest)"})
+                        chart.set_y_axis({"num_format": "R$ #,##0.00"})
+                        chart.set_legend({"none": True})
+                        wsDash.insert_chart("A18", chart, {"x_scale": 1.15, "y_scale": 1.0})
+                    
+                    # botão de download (mesmo label, key única aqui)
                     buf.seek(0)
                     st.download_button(
                         label="⬇️ Baixar Excel",
                         data=buf,
                         file_name=f"Sangria_{visao.replace(' ','_')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key=f"dl_caixa_{'comparativa' if visao=='Comparativa Everest' else 'diferencas'}"
+                        key=f"dl_caixa_{'comparativa' if visao=='Comparativa Everest' else 'diferencas'}_pivot"
                     )
+
 
 

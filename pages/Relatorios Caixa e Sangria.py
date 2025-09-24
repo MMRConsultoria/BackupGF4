@@ -466,17 +466,18 @@ with sub_caixa:
     if df_sangria is None or df_sangria.empty:
         st.info("Sem dados de **sangria** disponíveis.")
     else:
-        import unicodedata, re
         from io import BytesIO
+        import unicodedata, re, os
+        import pandas as pd
+        from datetime import datetime
 
-        # ===== helpers locais =====
+        # ===== helpers =====
         def _norm_txt(s: str) -> str:
             s = str(s or "").strip().lower()
             s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("utf-8")
             return s
 
         def eh_deposito_mask(df, cols_texto=None):
-            """Marca linhas que aparentam ser 'depósito/transferência' usando colunas textuais."""
             if cols_texto is None:
                 cols_texto = [
                     "Descrição Agrupada","Descrição","Historico","Histórico",
@@ -514,7 +515,7 @@ with sub_caixa:
             st.stop()
         df[col_valor] = df[col_valor].map(parse_valor_brl_sheets).astype(float)
 
-        # ===== Filtros =====
+        # Filtros
         c1, c2, c3, c4 = st.columns([1.2, 1.2, 1.6, 1.6])
         with c1:
             dmin = pd.to_datetime(df["Data"].min(), errors="coerce")
@@ -538,7 +539,7 @@ with sub_caixa:
         with c4:
             visao = st.selectbox(
                 "Visão do Relatório",
-                options=["Comparativa Everest", "Diferenças Everest"],
+                options=["Comparativa Everest"],  # foquei na comparativa
                 index=0,
                 key="caixa_visao_cmp",
             )
@@ -550,8 +551,10 @@ with sub_caixa:
         if descrs_sel:
             df_fil = df_fil[df_fil["Descrição Agrupada"].astype(str).isin(descrs_sel)]
 
-        # ===================== Comparativa / Diferenças =====================
-        if visao in ("Comparativa Everest", "Diferenças Everest"):
+        df_exibe = pd.DataFrame()
+
+        # ======= Comparativa =======
+        if visao == "Comparativa Everest":
             base = df_fil.copy()
 
             if "Data" not in base.columns or "Código Everest" not in base.columns or not col_valor:
@@ -562,20 +565,21 @@ with sub_caixa:
                 base[col_valor] = pd.to_numeric(base[col_valor], errors="coerce").fillna(0.0)
                 base["Código Everest"] = base["Código Everest"].astype(str).str.extract(r"(\d+)")
 
-                # --- EXCLUI DEPÓSITOS (somente lado Sistema) ---
+                # --- EXCLUI DEPÓSITOS (somente lado Sistema/Colibri) ---
                 mask_dep_sys = eh_deposito_mask(base)
                 with st.expander("🔎 Ver depósitos removidos (Colibri/CISS)"):
                     audit = base.loc[mask_dep_sys, :].copy()
                     if col_valor in audit.columns:
                         audit[col_valor] = audit[col_valor].map(brl)
                     st.dataframe(audit, use_container_width=True, hide_index=True)
+
                 base = base.loc[~mask_dep_sys].copy()
 
                 # agrega Sistema (já sem depósitos)
                 df_sys = (
                     base.groupby(["Código Everest","Data"], as_index=False)[col_valor]
                         .sum()
-                        .rename(columns={col_valor: "Sangria (Colibri/CISS)"})
+                        .rename(columns={col_valor:"Sangria (Colibri/CISS)"})
                 )
 
                 # --- Everest ---
@@ -604,17 +608,15 @@ with sub_caixa:
                     de = de[(de["Data"].dt.date >= dt_inicio) & (de["Data"].dt.date <= dt_fim)]
                     de["Sangria Everest"]  = de["Valor Lancamento"].abs()
 
-                    # agrega Everest
                     def _pick_first(s):
                         s = s.dropna().astype(str).str.strip()
                         s = s[s != ""]
                         return s.iloc[0] if not s.empty else ""
                     de_agg = (
                         de.groupby(["Código Everest","Data"], as_index=False)
-                          .agg({"Sangria Everest": "sum", "Fantasia Everest": _pick_first})
+                          .agg({"Sangria Everest":"sum","Fantasia Everest": _pick_first})
                     )
 
-                    # comparativa
                     cmp = df_sys.merge(de_agg, on=["Código Everest","Data"], how="outer", indicator=True)
                     cmp["Sangria (Colibri/CISS)"] = cmp["Sangria (Colibri/CISS)"].fillna(0.0)
                     cmp["Sangria Everest"]        = cmp["Sangria Everest"].fillna(0.0)
@@ -624,29 +626,21 @@ with sub_caixa:
                     mapa.columns = [str(c).strip() for c in mapa.columns]
                     if "Código Everest" in mapa.columns:
                         mapa["Código Everest"] = mapa["Código Everest"].astype(str).str.extract(r"(\d+)")
-                        cmp = cmp.merge(
-                            mapa[["Código Everest","Loja","Grupo"]].drop_duplicates(),
-                            on="Código Everest", how="left"
-                        )
+                        cmp = cmp.merge(mapa[["Código Everest","Loja","Grupo"]].drop_duplicates(),
+                                        on="Código Everest", how="left")
 
-                    # fallback LOJA = Fantasia (linhas só do Everest)
+                    # fallback LOJA = Fantasia (linhas apenas do Everest)
                     cmp["Loja"] = cmp["Loja"].astype(str)
                     so_everest = (cmp["_merge"] == "right_only") & (cmp["Loja"].isin(["", "nan"]))
                     cmp.loc[so_everest, "Loja"] = cmp.loc[so_everest, "Fantasia Everest"]
                     cmp["Nao Mapeada?"] = so_everest
 
-                    # diferença
                     cmp["Diferença"] = cmp["Sangria (Colibri/CISS)"] - cmp["Sangria Everest"]
-                    if visao == "Diferenças Everest":
-                        cmp = cmp[np.isclose(cmp["Diferença"], 0.0) == False]
 
-                    # ordena/seleciona
-                    cmp = cmp[[
-                        "Grupo","Loja","Código Everest","Data",
-                        "Sangria (Colibri/CISS)","Sangria Everest","Diferença","Nao Mapeada?"
-                    ]].sort_values(["Grupo","Loja","Código Everest","Data"])
+                    cmp = cmp[["Grupo","Loja","Código Everest","Data",
+                               "Sangria (Colibri/CISS)","Sangria Everest","Diferença","Nao Mapeada?"]
+                             ].sort_values(["Grupo","Loja","Código Everest","Data"])
 
-                    # total + exibição amigável
                     total = {
                         "Grupo":"TOTAL","Loja":"","Código Everest":"","Data":pd.NaT,
                         "Sangria (Colibri/CISS)": cmp["Sangria (Colibri/CISS)"].sum(),
@@ -656,6 +650,7 @@ with sub_caixa:
                     }
                     df_exibe = pd.concat([pd.DataFrame([total]), cmp], ignore_index=True)
 
+                    # ---- render no app
                     df_show = df_exibe.copy()
                     df_show["Data"] = pd.to_datetime(df_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
                     for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
@@ -664,22 +659,36 @@ with sub_caixa:
                             if isinstance(v,(int,float)) else v
                         )
 
-                    st.dataframe(
-                        df_show.drop(columns=["Nao Mapeada?"], errors="ignore"),
-                        use_container_width=True,
-                        height=520
-                    )
+                    if "Nao Mapeada?" in df_show.columns and "Loja" in df_show.columns:
+                        view = df_show.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
+                        mask_nm = (
+                            df_show["Nao Mapeada?"].astype(bool)
+                            if "Nao Mapeada?" in df_show.columns
+                            else pd.Series(False, index=df_show.index)
+                        )
+                        def _paint_row(row: pd.Series):
+                            styles = [""] * len(row.index)
+                            try:
+                                if mask_nm.loc[row.name] and "Loja" in row.index:
+                                    idx = list(row.index).index("Loja")
+                                    styles[idx] = "color: red; font-weight: 700"
+                            except Exception:
+                                pass
+                            return styles
+                        st.dataframe(view.style.apply(_paint_row, axis=1), use_container_width=True, height=520)
+                    else:
+                        st.dataframe(df_show.drop(columns=["Nao Mapeada?"], errors="ignore"),
+                                     use_container_width=True, height=520)
 
-                    # =============== Exporta Excel (Dados + Tabela + Slicers) ===============
-                    def exportar_excel_com_slicers(cmp_df: pd.DataFrame) -> BytesIO:
-                        df = cmp_df.copy()
-
-                        # padroniza nomes / remove técnico
+                    # ========= EXPORTAÇÃO (com slicers quando possível) =========
+                    def exportar_com_xlsxwriter_slicers(cmp: pd.DataFrame) -> BytesIO:
+                        df = cmp.copy()
+                        if "Nao Mapeada?" in df.columns:
+                            df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
+                        # renomeia se vier com 'Sangria (Sistema)'
                         if "Sangria (Sistema)" in df.columns:
                             df = df.rename(columns={"Sangria (Sistema)": "Sangria (Colibri/CISS)"})
-                        df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
 
-                        # tipos/derivados
                         df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.normalize()
                         df["Ano"]  = df["Data"].dt.year
                         df["Mês"]  = df["Data"].dt.month
@@ -688,22 +697,17 @@ with sub_caixa:
                             if c in df.columns:
                                 df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
 
-                        # ordem
-                        ordem = [
-                            "Data","Grupo","Loja","Código Everest",
-                            "Sangria (Colibri/CISS)","Sangria Everest","Diferença",
-                            "Mês","Ano"
-                        ]
+                        ordem = ["Data","Grupo","Loja","Código Everest",
+                                 "Sangria (Colibri/CISS)","Sangria Everest","Diferença",
+                                 "Mês","Ano"]
                         df = df[[c for c in ordem if c in df.columns]].copy()
 
-                        # escrever
                         buf = BytesIO()
                         with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                             wb = writer.book
                             ws = wb.add_worksheet("Dados")
                             writer.sheets["Dados"] = ws
 
-                            # formatos
                             fmt_header = wb.add_format({"bold": True, "align":"center", "valign":"vcenter",
                                                         "bg_color":"#F2F2F2", "border":1})
                             fmt_text   = wb.add_format({"border":1})
@@ -715,7 +719,7 @@ with sub_caixa:
                             for j, col in enumerate(df.columns):
                                 ws.write(0, j, col, fmt_header)
 
-                            # dados
+                            # linhas
                             for i, row in df.iterrows():
                                 r = i + 1
                                 for j, col in enumerate(df.columns):
@@ -729,11 +733,11 @@ with sub_caixa:
                                     else:
                                         ws.write(r, j, "" if pd.isna(val) else val, fmt_text)
 
-                            last_row = len(df)   # inclui cabeçalho em 0, dados 1..len(df)
-                            last_col = len(df.columns) - 1
+                            nrows = len(df) + 1
+                            ncols = len(df.columns) - 1
 
                             # tabela
-                            ws.add_table(0, 0, last_row, last_col, {
+                            ws.add_table(0, 0, nrows, ncols, {
                                 "name": "tbl_dados",
                                 "style": "TableStyleMedium9",
                                 "columns": [{"header": c} for c in df.columns],
@@ -751,30 +755,130 @@ with sub_caixa:
                             if "Ano" in col_idx:    ws.set_column(col_idx["Ano"],   col_idx["Ano"],   8, fmt_int)
                             ws.freeze_panes(1, 0)
 
-                            # SLICERS (XlsxWriter >= 3.2.0)
-                            try:
+                            # SLICERS (requer XlsxWriter >= 3.2.0)
+                            import xlsxwriter as xw
+                            vers = tuple(int(p) for p in xw.__version__.split(".")[:3])
+                            if vers >= (3,2,0):
                                 wb.add_slicer({"table": "tbl_dados", "column": "Ano",   "cell": "L1"})
                                 wb.add_slicer({"table": "tbl_dados", "column": "Mês",   "cell": "L6"})
                                 wb.add_slicer({"table": "tbl_dados", "column": "Grupo", "cell": "N1",  "width": 180, "height": 180})
                                 wb.add_slicer({"table": "tbl_dados", "column": "Loja",  "cell": "N10", "width": 260, "height": 300})
-                            except Exception as e:
-                                st.warning(
-                                    "As segmentações do Excel exigem **XlsxWriter ≥ 3.2.0** e Excel recente. "
-                                    f"Não foi possível criar os slicers automaticamente ({type(e).__name__})."
-                                )
+                            else:
+                                st.warning(f"Slicers exigem XlsxWriter ≥ 3.2.0 (instalado: {xw.__version__}). Exportando sem slicers.")
 
                         buf.seek(0)
                         return buf
 
-                    # --- botão de download (fora da função) ---
-                    if not cmp.empty:
-                        arquivo = exportar_excel_com_slicers(cmp)
-                        st.download_button(
-                            label="⬇️ Baixar Excel",
-                            data=arquivo,
-                            file_name="Sangria_Controle.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_sangria_controle_excel"   # chave única para evitar duplicidade
-                        )
+                    def preencher_template_openpyxl(cmp: pd.DataFrame, caminho_template: str) -> BytesIO:
+                        """Preenche o template com a tabela `tbl_dados` e mantém as segmentações do Excel."""
+                        from openpyxl import load_workbook
+                        from openpyxl.utils import get_column_letter, column_index_from_string
+
+                        df = cmp.copy()
+                        if "Nao Mapeada?" in df.columns:
+                            df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
+                        if "Sangria (Sistema)" in df.columns:
+                            df = df.rename(columns={"Sangria (Sistema)": "Sangria (Colibri/CISS)"})
+
+                        # derivadas
+                        df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.normalize()
+                        df["Ano"]  = df["Data"].dt.year
+                        df["Mês"]  = df["Data"].dt.month
+
+                        for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
+                            if c in df.columns:
+                                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+
+                        ordem = ["Data","Grupo","Loja","Código Everest",
+                                 "Sangria (Colibri/CISS)","Sangria Everest","Diferença",
+                                 "Mês","Ano"]
+                        df = df[[c for c in ordem if c in df.columns]].copy()
+
+                        wb = load_workbook(caminho_template)
+                        ws = wb["Dados"]
+
+                        # pega a tabela existente
+                        tbl = ws.tables.get("tbl_dados", None)
+                        if tbl is None:
+                            raise RuntimeError("O template não tem a Tabela 'tbl_dados' na aba 'Dados'.")
+
+                        # célula inicial da tabela
+                        ref_ini, ref_fim = tbl.ref.split(":")
+                        # linha/col do início
+                        m = re.match(r"([A-Z]+)(\d+)", ref_ini)
+                        col_ini_letters, row_ini = m.group(1), int(m.group(2))
+                        col_ini = column_index_from_string(col_ini_letters)
+
+                        # sobrescreve cabeçalhos
+                        for j, col in enumerate(df.columns, start=col_ini):
+                            ws.cell(row=row_ini, column=j, value=col)
+
+                        # limpa dados antigos (deixa só o header)
+                        # apaga quaisquer linhas antigas abaixo do header até o fim da tabela atual
+                        old_end_row = int(re.match(r"[A-Z]+(\d+)", ref_fim).group(1))
+                        if old_end_row > row_ini:
+                            ws.delete_rows(row_ini+1, old_end_row - row_ini)
+
+                        # escreve os dados
+                        date_fmt = "dd/mm/yyyy"
+                        money_fmt = '"R$" #,##0.00'
+                        int_fmt = "0"
+
+                        for i, (_, row) in enumerate(df.iterrows(), start=row_ini+1):
+                            for j, col in enumerate(df.columns, start=col_ini):
+                                val = row[col]
+                                cell = ws.cell(row=i, column=j)
+                                if col == "Data" and pd.notna(val):
+                                    cell.value = pd.to_datetime(val).date()
+                                    cell.number_format = date_fmt
+                                elif col in ("Ano", "Mês", "Código Everest"):
+                                    cell.value = int(val) if pd.notna(val) else None
+                                    cell.number_format = int_fmt
+                                elif col in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença"):
+                                    cell.value = float(val)
+                                    cell.number_format = money_fmt
+                                else:
+                                    cell.value = "" if pd.isna(val) else val
+
+                        # ajusta a referência da tabela para o novo tamanho
+                        end_row = row_ini + len(df)
+                        end_col = col_ini + len(df.columns) - 1
+                        new_ref = f"{get_column_letter(col_ini)}{row_ini}:{get_column_letter(end_col)}{end_row}"
+                        tbl.ref = new_ref
+
+                        # salva em memória
+                        out = BytesIO()
+                        wb.save(out)
+                        out.seek(0)
+                        return out
+
+                    # --- escolha automática: XlsxWriter com slicers OU template ---
+                    usar_template = True  # mude para False se quiser forçar o modo XlsxWriter
+                    caminho_template = "modelo_segmentacao_sangria.xlsx"  # coloque o arquivo no mesmo diretório do app
+
+                    try:
+                        import xlsxwriter as xw
+                        vers = tuple(int(p) for p in xw.__version__.split(".")[:3])
+                        has_slicers = vers >= (3,2,0)
+                    except Exception:
+                        has_slicers = False
+
+                    if has_slicers and not usar_template:
+                        arquivo = exportar_com_xlsxwriter_slicers(cmp)
+                    elif usar_template and os.path.exists(caminho_template):
+                        arquivo = preencher_template_openpyxl(cmp, caminho_template)
                     else:
-                        st.info("Sem dados para exportar.")
+                        # fallback: sem slicers
+                        st.warning(
+                            "Segmentação automática indisponível. "
+                            "Instale **xlsxwriter>=3.2.0** ou forneça um template com a Tabela 'tbl_dados' e slicers."
+                        )
+                        arquivo = exportar_com_xlsxwriter_slicers(cmp)  # gera sem slicers se versão for antiga
+
+                    st.download_button(
+                        label="⬇️ Baixar Excel",
+                        data=arquivo,
+                        file_name="Sangria_Controle.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_sangria_controle_excel"
+                    )

@@ -681,44 +681,48 @@ with sub_caixa:
                                      use_container_width=True, height=520)
 
                     # ========= EXPORTAÇÃO (com slicers quando possível) =========
-                    def exportar_com_xlsxwriter_slicers(cmp: pd.DataFrame) -> BytesIO:
+                    from io import BytesIO
+
+                    def exportar_xlsxwriter(cmp: pd.DataFrame, criar_slicers: bool = False) -> BytesIO:
                         df = cmp.copy()
+                        # limpeza / nomes
                         if "Nao Mapeada?" in df.columns:
                             df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
-                        # renomeia se vier com 'Sangria (Sistema)'
                         if "Sangria (Sistema)" in df.columns:
                             df = df.rename(columns={"Sangria (Sistema)": "Sangria (Colibri/CISS)"})
-
+                    
+                        # derivados
                         df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.normalize()
                         df["Ano"]  = df["Data"].dt.year
                         df["Mês"]  = df["Data"].dt.month
-
+                    
                         for c in ["Sangria (Colibri/CISS)", "Sangria Everest", "Diferença"]:
                             if c in df.columns:
                                 df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
-
+                    
                         ordem = ["Data","Grupo","Loja","Código Everest",
                                  "Sangria (Colibri/CISS)","Sangria Everest","Diferença",
                                  "Mês","Ano"]
                         df = df[[c for c in ordem if c in df.columns]].copy()
-
+                    
                         buf = BytesIO()
                         with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                             wb = writer.book
                             ws = wb.add_worksheet("Dados")
                             writer.sheets["Dados"] = ws
-
+                    
+                            # formatos
                             fmt_header = wb.add_format({"bold": True, "align":"center", "valign":"vcenter",
                                                         "bg_color":"#F2F2F2", "border":1})
                             fmt_text   = wb.add_format({"border":1})
                             fmt_int    = wb.add_format({"border":1, "num_format":"0"})
                             fmt_date   = wb.add_format({"border":1, "num_format":"dd/mm/yyyy"})
                             fmt_money  = wb.add_format({"border":1, "num_format":"R$ #,##0.00"})
-
+                    
                             # cabeçalho
                             for j, col in enumerate(df.columns):
                                 ws.write(0, j, col, fmt_header)
-
+                    
                             # linhas
                             for i, row in df.iterrows():
                                 r = i + 1
@@ -732,42 +736,44 @@ with sub_caixa:
                                         ws.write_number(r, j, float(val), fmt_money)
                                     else:
                                         ws.write(r, j, "" if pd.isna(val) else val, fmt_text)
-
+                    
                             nrows = len(df) + 1
                             ncols = len(df.columns) - 1
-
+                    
                             # tabela
                             ws.add_table(0, 0, nrows, ncols, {
                                 "name": "tbl_dados",
                                 "style": "TableStyleMedium9",
                                 "columns": [{"header": c} for c in df.columns],
                             })
-
+                    
                             # larguras + freeze
                             col_idx = {c:i for i,c in enumerate(df.columns)}
-                            ws.set_column(col_idx["Data"], col_idx["Data"], 12, fmt_date)
-                            if "Grupo" in col_idx:  ws.set_column(col_idx["Grupo"], col_idx["Grupo"], 10, fmt_text)
-                            if "Loja" in col_idx:   ws.set_column(col_idx["Loja"],  col_idx["Loja"],  28, fmt_text)
-                            if "Código Everest" in col_idx: ws.set_column(col_idx["Código Everest"], col_idx["Código Everest"], 14, fmt_int)
+                            if "Data" in col_idx:              ws.set_column(col_idx["Data"], col_idx["Data"], 12, fmt_date)
+                            if "Grupo" in col_idx:             ws.set_column(col_idx["Grupo"], col_idx["Grupo"], 10, fmt_text)
+                            if "Loja" in col_idx:              ws.set_column(col_idx["Loja"],  col_idx["Loja"],  28, fmt_text)
+                            if "Código Everest" in col_idx:    ws.set_column(col_idx["Código Everest"], col_idx["Código Everest"], 14, fmt_int)
                             for c in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença"):
-                                if c in col_idx: ws.set_column(col_idx[c], col_idx[c], 18, fmt_money)
-                            if "Mês" in col_idx:    ws.set_column(col_idx["Mês"],   col_idx["Mês"],   6, fmt_int)
-                            if "Ano" in col_idx:    ws.set_column(col_idx["Ano"],   col_idx["Ano"],   8, fmt_int)
+                                if c in col_idx:               ws.set_column(col_idx[c], col_idx[c], 18, fmt_money)
+                            if "Mês" in col_idx:               ws.set_column(col_idx["Mês"],   col_idx["Mês"],   6, fmt_int)
+                            if "Ano" in col_idx:               ws.set_column(col_idx["Ano"],   col_idx["Ano"],   8, fmt_int)
                             ws.freeze_panes(1, 0)
-
-                            # SLICERS (requer XlsxWriter >= 3.2.0)
-                            import xlsxwriter as xw
-                            vers = tuple(int(p) for p in xw.__version__.split(".")[:3])
-                            if vers >= (3,2,0):
-                                wb.add_slicer({"table": "tbl_dados", "column": "Ano",   "cell": "L1"})
-                                wb.add_slicer({"table": "tbl_dados", "column": "Mês",   "cell": "L6"})
-                                wb.add_slicer({"table": "tbl_dados", "column": "Grupo", "cell": "N1",  "width": 180, "height": 180})
-                                wb.add_slicer({"table": "tbl_dados", "column": "Loja",  "cell": "N10", "width": 260, "height": 300})
-                            else:
-                                st.warning(f"Slicers exigem XlsxWriter ≥ 3.2.0 (instalado: {xw.__version__}). Exportando sem slicers.")
-
+                    
+                            # ===== Slicers (opcional e 100% seguro) =====
+                            if criar_slicers and hasattr(wb, "add_slicer"):
+                                try:
+                                    wb.add_slicer({"table": "tbl_dados", "column": "Ano",   "cell": "L1"})
+                                    wb.add_slicer({"table": "tbl_dados", "column": "Mês",   "cell": "L6"})
+                                    wb.add_slicer({"table": "tbl_dados", "column": "Grupo", "cell": "N1",  "width": 180, "height": 180})
+                                    wb.add_slicer({"table": "tbl_dados", "column": "Loja",  "cell": "N10", "width": 260, "height": 300})
+                                except Exception as e:
+                                    # não deixa estourar AttributeError/NotImplementedError etc
+                                    st.warning(f"Não foi possível criar as segmentações automaticamente ({type(e).__name__}).")
+                            # se não tiver suporte, apenas segue sem slicers
+                    
                         buf.seek(0)
                         return buf
+
 
                     def preencher_template_openpyxl(cmp: pd.DataFrame, caminho_template: str) -> BytesIO:
                         """Preenche o template com a tabela `tbl_dados` e mantém as segmentações do Excel."""

@@ -227,10 +227,10 @@ with st.spinner("⏳ Carregando dados..."):
 #""", unsafe_allow_html=True)
 
 # ============ Sub-Abas ============
-sub_sangria, sub_caixa, sub_evx = st.tabs([
+sub_sangria, sub_caixa = st.tabs([
     "💸 Movimentação de Caixa",   # Analítico/Sintético da Sangria
-    "🧰 Controle de Sangria",     # Comparativa Everest / Diferenças
-    "🗂️ Everest x Sangria"        # Placeholder / futuras visões
+    "🧰 Controle de Sangria"      # Comparativa Everest / Diferenças
+   
 ])
 
 # -------------------------------
@@ -538,7 +538,7 @@ with sub_caixa:
         with c4:
             visao = st.selectbox(
                 "Visão do Relatório",
-                options=["Comparativa Everest", "Diferenças Everest"],
+                options=["Comparativa Everest"],
                 index=0,
                 key="caixa_visao_cmp",
             )
@@ -737,9 +737,3 @@ with sub_caixa:
                     )
 
 
-
-# -------------------------------
-# Sub-aba: 🗂️ EVEREST x SANGRIA (placeholder)
-# -------------------------------
-with sub_evx:
-    st.info("📌 Espaço reservado para visões adicionais (ex.: conciliações detalhadas, auditorias, etc.).")

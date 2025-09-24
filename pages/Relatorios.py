@@ -2616,7 +2616,7 @@ with st.spinner("⏳ Processando..."):
             st.warning(f"⚠️ Não foi possível carregar a aba 'Sangria': {e}")
     
         sub_sangria, sub_caixa, sub_evx = st.tabs(["💸 Movimentação de Caixa", "🧰 Controle de Sangria", "🗂️ Everest x Sangria"])
-    
+
         # -------------------------------
         # Sub-aba: 💸  Movimentação de Caixa
         # -------------------------------
@@ -2624,331 +2624,245 @@ with st.spinner("⏳ Processando..."):
             if df_sangria is None or df_sangria.empty:
                 st.info("Sem dados de **sangria** disponíveis.")
             else:
+                from io import BytesIO
+        
+                # Base e colunas
                 df_sangria = df_sangria.copy()
                 df_sangria.columns = [str(c).strip() for c in df_sangria.columns]
-    
+        
+                # Data obrigatória e normalizada
+                if "Data" not in df_sangria.columns:
+                    st.error("A aba 'Sangria' precisa da coluna **Data**.")
+                    st.stop()
+                df_sangria["Data"] = pd.to_datetime(df_sangria["Data"], errors="coerce", dayfirst=True)
+        
+                # Coluna de valor e parsing BRL -> float
                 col_valor = pick_valor_col(df_sangria.columns)
-    
-                # conversão (apenas 1x) pelas regras validadas
-                if col_valor:
-                    raw_series = df_sangria[col_valor]
-                    parsed = raw_series.map(parse_valor_brl_sheets).astype(float)
-                    df_sangria[col_valor] = parsed
-    
-                   # with st.expander("🔎 Diagnóstico de valores (original x parseado)", expanded=False):
-                   #     show = pd.DataFrame({
-                   #         "Original (texto)": raw_series.astype(str).head(30),
-                   #         "Parseado (float)": parsed.head(30),
-                   #     })
-                   #     _render_df(show, height=360)
-    
-                # filtros
+                if not col_valor:
+                    st.error("Não encontrei a coluna de **valor** (ex.: 'Valor(R$)').")
+                    st.stop()
+                df_sangria[col_valor] = df_sangria[col_valor].map(parse_valor_brl_sheets).astype(float)
+        
+                # ------------- Filtros robustos -------------
                 top1, top2, top3, top4 = st.columns([1.2, 1.2, 1.6, 1.6])
                 with top1:
-                    data_min = pd.to_datetime(df_sangria["Data"].min())
-                    data_max = pd.to_datetime(df_sangria["Data"].max())
+                    dmin = pd.to_datetime(df_sangria["Data"].min(), errors="coerce")
+                    dmax = pd.to_datetime(df_sangria["Data"].max(), errors="coerce")
+                    today = pd.Timestamp.today().normalize()
+                    if pd.isna(dmin): dmin = today
+                    if pd.isna(dmax): dmax = today
                     dt_inicio, dt_fim = st.date_input(
                         "Período",
-                        value=(data_max.date(), data_max.date()),
-                        min_value=data_min.date() if pd.notnull(data_min) else None,
-                        max_value=data_max.date() if pd.notnull(data_max) else None
+                        value=(dmax.date(), dmax.date()),
+                        min_value=dmin.date(),
+                        max_value=(dmax.date() if dmax >= dmin else dmin.date()),
+                        key="periodo_sangria"
                     )
                 with top2:
                     lojas = sorted(df_sangria.get("Loja", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
-                    lojas_sel = st.multiselect("Lojas", options=lojas, default=[])
+                    lojas_sel = st.multiselect("Lojas", options=lojas, default=[], key="lojas_sangria")
                 with top3:
                     descrs = sorted(df_sangria.get("Descrição Agrupada", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
-                    descrs_sel = st.multiselect("Descrição Agrupada", options=descrs, default=[])
+                    descrs_sel = st.multiselect("Descrição Agrupada", options=descrs, default=[], key="descr_sangria")
                 with top4:
                     visao = st.selectbox(
                         "Visão do Relatório",
-                        options=["Analítico", "Sintético", "Comparativa Everest", "Diferenças Everest"],
-                        index=0
+                        options=["Analítico", "Sintético"],  # mantemos só essas duas aqui
+                        index=0,
+                        key="visao_sangria"
                     )
-    
-                # aplica filtros
+        
+                # Aplica filtros
                 df_fil = df_sangria.copy()
-                if "Data" in df_fil.columns:
-                    df_fil = df_fil[(df_fil["Data"].dt.date >= dt_inicio) & (df_fil["Data"].dt.date <= dt_fim)]
+                df_fil = df_fil[(df_fil["Data"].dt.date >= dt_inicio) & (df_fil["Data"].dt.date <= dt_fim)]
                 if lojas_sel:
                     df_fil = df_fil[df_fil["Loja"].astype(str).isin(lojas_sel)]
                 if descrs_sel:
                     df_fil = df_fil[df_fil["Descrição Agrupada"].astype(str).isin(descrs_sel)]
-    
-                def formata_valor_col(df, col):
+        
+                # Helper de formatação apenas visual
+                def _fmt_brl_df(df, col):
                     df[col] = df[col].apply(
                         lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                         if isinstance(v, (int, float)) else v
                     )
                     return df
-    
+        
+                # ===================== Visões =====================
                 df_exibe = pd.DataFrame()
-    
-                # -------- visões --------
-
+        
                 if visao == "Analítico":
-
-                    from io import BytesIO
-                    import pandas as pd
-                
-                    grid = st.empty()  # placeholder para garantir um único render
-                
+                    grid = st.empty()
+        
                     df_base = df_fil.copy()
-                
-                    # 1) Ordena por Data (crescente)
-                    if "Data" in df_base.columns:
-                        df_base["Data"] = pd.to_datetime(df_base["Data"], errors="coerce", dayfirst=True).dt.normalize()
-                        df_base = df_base.sort_values(["Data"], na_position="last")
-                
-                    # 2) Monta a linha TOTAL (primeira linha)
-                    total_val = df_base[col_valor].sum(min_count=1) if col_valor and col_valor in df_base.columns else 0.0
+                    df_base["Data"] = pd.to_datetime(df_base["Data"], errors="coerce").dt.normalize()
+                    df_base = df_base.sort_values(["Data"], na_position="last")
+        
+                    total_val = df_base[col_valor].sum(min_count=1)
                     total_row = {c: "" for c in df_base.columns}
                     if "Loja" in total_row: total_row["Loja"] = "TOTAL"
                     if "Data" in total_row: total_row["Data"] = pd.NaT
                     if "Descrição Agrupada" in total_row: total_row["Descrição Agrupada"] = ""
-                    if col_valor and col_valor in df_base.columns: total_row[col_valor] = total_val
-                
+                    total_row[col_valor] = total_val
+        
                     df_exibe = pd.concat([pd.DataFrame([total_row]), df_base], ignore_index=True)
-                
-                    # 3) Formatação de Data para exibição (TOTAL vazio)
-                    if "Data" in df_exibe.columns:
-                        df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
-                        df_exibe.loc[df_exibe.index == 0, "Data"] = ""
-                
-                    # 4) Formatação do valor (apenas visual)
-                    if col_valor and col_valor in df_exibe.columns:
-                        df_exibe = formata_valor_col(df_exibe, col_valor)
-                
-                    # 5) REMOVER colunas indesejadas (com variações de nomes)
+        
+                    # Datas p/ exibição (TOTAL vazio)
+                    df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
+                    df_exibe.loc[df_exibe.index == 0, "Data"] = ""
+        
+                    # Valor p/ exibição
+                    df_exibe = _fmt_brl_df(df_exibe, col_valor)
+        
+                    # Remove colunas “técnicas”/ruído
                     aliases_remover = [
                         "Código Everest", "Codigo Everest", "Cod Everest",
                         "Código grupo Everest", "Codigo grupo Everest", "Cod Grupo Everest", "Código Grupo Everest",
-                        "Mês", "Mes",
-                        "Ano",
-                        "Duplicidade", "Possível Duplicidade", "Duplicado"
+                        "Mês", "Mes", "Ano", "Duplicidade", "Possível Duplicidade", "Duplicado", "Sistema"
                     ]
-                    to_drop = [c for c in aliases_remover if c in df_exibe.columns]
-                    if to_drop:
-                        df_exibe = df_exibe.drop(columns=to_drop)
-                
-                    # ---------- Render único na tela ----------
+                    df_exibe = df_exibe.drop(columns=[c for c in aliases_remover if c in df_exibe.columns], errors="ignore")
+        
                     grid.dataframe(df_exibe, use_container_width=True, hide_index=True)
-                
-                    # ---------- Exportação Excel (xlsxwriter) ----------
-                    # Monta base para export com tipos corretos ANTES de formatar
+        
+                    # Export Excel mantendo tipos
                     df_export = pd.concat([pd.DataFrame([total_row]), df_base], ignore_index=True)
-                
-                    # Remove as mesmas colunas proibidas também no Excel
-                    to_drop_exp = [c for c in aliases_remover if c in df_export.columns]
-                    if to_drop_exp:
-                        df_export = df_export.drop(columns=to_drop_exp)
-                
-                    # Tipos
-                    if "Data" in df_export.columns:
-                        df_export["Data"] = pd.to_datetime(df_export["Data"], errors="coerce")
-                    if col_valor and col_valor in df_export.columns:
-                        df_export[col_valor] = pd.to_numeric(df_export[col_valor], errors="coerce")
-                
-                    buffer = BytesIO()
-                    with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+                    df_export = df_export.drop(columns=[c for c in aliases_remover if c in df_export.columns], errors="ignore")
+                    df_export["Data"] = pd.to_datetime(df_export["Data"], errors="coerce")
+                    df_export[col_valor] = pd.to_numeric(df_export[col_valor], errors="coerce")
+        
+                    buf = BytesIO()
+                    with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                         sheet_name = "Analítico"
                         df_export.to_excel(writer, sheet_name=sheet_name, index=False)
-                        wb = writer.book
-                        ws = writer.sheets[sheet_name]
-                
-                        # Estilos
-                        header_fmt = wb.add_format({
-                            "bold": True, "align": "center", "valign": "vcenter",
-                            "bg_color": "#F2F2F2", "border": 1
-                        })
-                        date_fmt = wb.add_format({"num_format": "dd/mm/yyyy", "border": 1})
-                        money_fmt = wb.add_format({"num_format": "R$ #,##0.00", "border": 1})
-                        text_fmt = wb.add_format({"border": 1})
-                        total_row_fmt = wb.add_format({"bold": True, "bg_color": "#FCE5CD", "border": 1})
-                        total_money_fmt = wb.add_format({
-                            "bold": True, "bg_color": "#FCE5CD", "border": 1,
-                            "num_format": "R$ #,##0.00"
-                        })
-                
-                        # Cabeçalho estilizado
-                        for col_idx, col_name in enumerate(df_export.columns):
-                            ws.write(0, col_idx, col_name, header_fmt)
-                
-                        # Larguras e formatos por coluna
-                        for col_idx, col_name in enumerate(df_export.columns):
-                            # largura padrão por heurística
-                            largura = 18
-                            fmt = text_fmt
-                            if col_name.lower() == "data":
+                        wb, ws = writer.book, writer.sheets[sheet_name]
+                        header_fmt = wb.add_format({"bold": True, "align": "center", "valign": "vcenter", "bg_color": "#F2F2F2", "border": 1})
+                        date_fmt   = wb.add_format({"num_format": "dd/mm/yyyy", "border": 1})
+                        money_fmt  = wb.add_format({"num_format": "R$ #,##0.00", "border": 1})
+                        text_fmt   = wb.add_format({"border": 1})
+                        total_row_fmt   = wb.add_format({"bold": True, "bg_color": "#FCE5CD", "border": 1})
+                        total_money_fmt = wb.add_format({"bold": True, "bg_color": "#FCE5CD", "border": 1, "num_format": "R$ #,##0.00"})
+        
+                        # Cabeçalho
+                        for j, name in enumerate(df_export.columns):
+                            ws.write(0, j, name, header_fmt)
+        
+                        # Larguras e formatos
+                        for j, name in enumerate(df_export.columns):
+                            largura, fmt = 18, text_fmt
+                            if name.lower() == "data":
                                 largura, fmt = 12, date_fmt
-                            elif col_valor and col_name == col_valor:
+                            elif name == col_valor:
                                 largura, fmt = 16, money_fmt
-                            elif "loja" in col_name.lower():
+                            elif "loja" in name.lower():
                                 largura = 28
-                            elif "grupo" in col_name.lower():
+                            elif "grupo" in name.lower():
                                 largura = 22
-                            ws.set_column(col_idx, col_idx, largura, fmt)
-                
-                        # Destaca a linha TOTAL (primeira linha de dados → linha 1 no Excel)
+                            ws.set_column(j, j, largura, fmt)
+        
+                        # Destaca TOTAL (linha 1 de dados no Excel)
                         ws.set_row(1, None, total_row_fmt)
-                        # Se houver coluna de valor, reescreve com formato de moeda destacado
-                        if col_valor and col_valor in df_export.columns:
-                            total_val_num = df_export.iloc[0][col_valor]
-                            if pd.notna(total_val_num):
-                                ws.write_number(1, list(df_export.columns).index(col_valor), float(total_val_num), total_money_fmt)
-                        # Se houver coluna "Loja", reescreve "TOTAL" com destaque (texto)
+                        if pd.notna(df_export.iloc[0][col_valor]):
+                            ws.write_number(1, list(df_export.columns).index(col_valor), float(df_export.iloc[0][col_valor]), total_money_fmt)
                         if "Loja" in df_export.columns:
                             ws.write_string(1, list(df_export.columns).index("Loja"), "TOTAL", total_row_fmt)
-                
-                        # Congela cabeçalho
+        
                         ws.freeze_panes(1, 0)
-                
+        
                     st.download_button(
-                        label="⬇️ Baixar Excel (Analítico)",
-                        data=buffer.getvalue(),
+                        "⬇️ Baixar Excel (Analítico)",
+                        data=buf.getvalue(),
                         file_name="Relatorio_Analitico.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True
                     )
-                
-                    # Evita qualquer outro dataframe aparecer abaixo
-                    st.stop()
-
-
-    
+        
                 elif visao == "Sintético":
-             
-                    if not col_valor or "Loja" not in df_fil.columns or "Data" not in df_fil.columns:
-                        st.warning("Para 'Sintético', preciso de 'Data', 'Loja' e da coluna de valor.")
+                    if "Loja" not in df_fil.columns:
+                        st.warning("Para 'Sintético', preciso da coluna **Loja**.")
                     else:
-                        from io import BytesIO
-                        import pandas as pd
-                
                         tmp = df_fil.copy()
-                
-                        # garante datetime para ordenação correta
                         tmp["Data"] = pd.to_datetime(tmp["Data"], errors="coerce").dt.normalize()
-                
-                        # acha a coluna de Grupo (preferência para 'Grupo'; senão, tenta outra que contenha 'grupo')
+        
+                        # Encontra/garante 'Grupo'
                         col_grupo = None
                         for c in tmp.columns:
-                            cl = str(c).strip().lower()
-                            if cl == "grupo":
-                                col_grupo = c
-                                break
+                            if str(c).strip().lower() == "grupo":
+                                col_grupo = c; break
                         if not col_grupo:
-                            col_grupo = next(
-                                (c for c in tmp.columns
-                                 if "grupo" in str(c).lower() and "everest" not in str(c).lower()),
-                                None
-                            )
-                        # se ainda não tiver Grupo, busca da Tabela Empresa
+                            col_grupo = next((c for c in tmp.columns if "grupo" in str(c).lower() and "everest" not in str(c).lower()), None)
                         if not col_grupo and "Loja" in tmp.columns:
                             mapa = df_empresa[["Loja", "Grupo"]].drop_duplicates()
                             tmp = tmp.merge(mapa, on="Loja", how="left")
                             col_grupo = "Grupo"
-                
-                        # agrega por Grupo/Loja/Dia
+        
                         group_cols = [c for c in [col_grupo, "Loja", "Data"] if c]
-                        df_agg = (tmp.groupby(group_cols, as_index=False)[col_valor].sum())
-                
-                        # renomeia
+                        df_agg = tmp.groupby(group_cols, as_index=False)[col_valor].sum()
+        
                         ren = {col_valor: "Sangria"}
-                        if col_grupo and col_grupo != "Grupo":
-                            ren[col_grupo] = "Grupo"
+                        if col_grupo and col_grupo != "Grupo": ren[col_grupo] = "Grupo"
                         df_agg = df_agg.rename(columns=ren)
-                
-                        # ordena pelos dias (01, 02, 03…) e, dentro do dia, Grupo/Loja
+        
                         df_agg = df_agg.sort_values(["Data", "Grupo", "Loja"], na_position="last")
-                
-                        # ===== Linha TOTAL como PRIMEIRA linha (mantendo tipos corretos) =====
+        
                         total_sangria = df_agg["Sangria"].sum(min_count=1)
-                        linha_total = pd.DataFrame({
-                            "Grupo":   ["TOTAL"],
-                            "Loja":    [""],
-                            "Data":    [pd.NaT],       # NaT para ficar em branco na exibição e Excel
-                            "Sangria": [total_sangria]
-                        })
-                        df_agg_total = pd.concat([linha_total, df_agg], ignore_index=True)
-                
-                        # ===== Exibição (sem quebrar tipos para o Excel) =====
-                        df_exibe = df_agg_total.copy()
-                        # Data em dd/mm/aaaa, mantendo a do TOTAL vazia
-                        df_exibe["Data"] = pd.to_datetime(df_exibe["Data"], errors="coerce")
-                        df_exibe["Data"] = df_exibe["Data"].dt.strftime("%d/%m/%Y").fillna("")
-                        # moeda BRL (apenas para exibição)
-                        df_exibe["Sangria"] = df_exibe["Sangria"].apply(
-                            lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                        )
-                        # mantém somente as 4 colunas pedidas
-                        colunas_final = ["Grupo", "Loja", "Data", "Sangria"]
-                        df_exibe = df_exibe[colunas_final]
-                
-                        st.dataframe(df_exibe, use_container_width=True, hide_index=True)
-                
-                        # ===== Exportação Excel (xlsxwriter) =====
-                        # Usamos o df_agg_total (com tipos corretos) para o arquivo
-                        df_export = df_agg_total[["Grupo", "Loja", "Data", "Sangria"]].copy()
-                        # garante tipos
+                        linha_total = pd.DataFrame({"Grupo":["TOTAL"], "Loja":[""], "Data":[pd.NaT], "Sangria":[total_sangria]})
+                        df_exibe = pd.concat([linha_total, df_agg], ignore_index=True)
+        
+                        # Exibição bonita
+                        df_show = df_exibe.copy()
+                        df_show["Data"] = pd.to_datetime(df_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
+                        df_show["Sangria"] = df_show["Sangria"].apply(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        
+                        st.dataframe(df_show[["Grupo","Loja","Data","Sangria"]], use_container_width=True, hide_index=True)
+        
+                        # Excel com tipos corretos
+                        df_export = df_exibe[["Grupo","Loja","Data","Sangria"]].copy()
                         df_export["Data"] = pd.to_datetime(df_export["Data"], errors="coerce")
                         df_export["Sangria"] = pd.to_numeric(df_export["Sangria"], errors="coerce")
-                
-                        buffer = BytesIO()
-                        with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
+        
+                        buf = BytesIO()
+                        with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                             sheet_name = "Sintético"
                             df_export.to_excel(writer, sheet_name=sheet_name, index=False)
-                            wb  = writer.book
-                            ws  = writer.sheets[sheet_name]
-                
-                            # formatos
-                            header_fmt = wb.add_format({
-                                "bold": True, "align": "center", "valign": "vcenter",
-                                "bg_color": "#F2F2F2", "border": 1
-                            })
-                            date_fmt = wb.add_format({"num_format": "dd/mm/yyyy", "border": 1})
-                            money_fmt = wb.add_format({"num_format": "R$ #,##0.00", "border": 1})
-                            text_fmt = wb.add_format({"border": 1})
-                            total_row_fmt = wb.add_format({"bold": True, "bg_color": "#FCE5CD", "border": 1})
-                            total_money_fmt = wb.add_format({
-                                "bold": True, "bg_color": "#FCE5CD", "border": 1,
-                                "num_format": "R$ #,##0.00"
-                            })
-                
-                            # cabeçalho com estilo
-                            for col_idx, col_name in enumerate(colunas_final):
-                                ws.write(0, col_idx, col_name, header_fmt)
-                
-                            nrows, ncols = df_export.shape
-                
-                            # larguras de coluna
-                            ws.set_column("A:A", 20, text_fmt)    # Grupo
-                            ws.set_column("B:B", 28, text_fmt)    # Loja
-                            ws.set_column("C:C", 12, date_fmt)    # Data
-                            ws.set_column("D:D", 14, money_fmt)   # Sangria
-                
-                            # destaca TOTAL (primeira linha de dados = linha 1 no Excel)
-                            # aplica fundo/bolo na linha inteira
+                            wb, ws = writer.book, writer.sheets[sheet_name]
+                            header_fmt = wb.add_format({"bold": True, "align": "center", "valign": "vcenter", "bg_color": "#F2F2F2", "border": 1})
+                            date_fmt   = wb.add_format({"num_format": "dd/mm/yyyy", "border": 1})
+                            money_fmt  = wb.add_format({"num_format": "R$ #,##0.00", "border": 1})
+                            text_fmt   = wb.add_format({"border": 1})
+                            total_row_fmt   = wb.add_format({"bold": True, "bg_color": "#FCE5CD", "border": 1})
+                            total_money_fmt = wb.add_format({"bold": True, "bg_color": "#FCE5CD", "border": 1, "num_format": "R$ #,##0.00"})
+        
+                            # Cabeçalho
+                            for j, name in enumerate(["Grupo","Loja","Data","Sangria"]):
+                                ws.write(0, j, name, header_fmt)
+        
+                            ws.set_column("A:A", 20, text_fmt)
+                            ws.set_column("B:B", 28, text_fmt)
+                            ws.set_column("C:C", 12, date_fmt)
+                            ws.set_column("D:D", 14, money_fmt)
+        
+                            # TOTAL destacado (linha 1 no Excel)
                             ws.set_row(1, None, total_row_fmt)
-                            # reescreve célula da Sangria do TOTAL com formato moeda + destaque
-                            total_val = df_export.iloc[0]["Sangria"]
-                            if pd.notna(total_val):
-                                ws.write_number(1, 3, float(total_val), total_money_fmt)
-                            # e a célula "TOTAL" (texto) com o mesmo fundo
+                            if pd.notna(df_export.iloc[0]["Sangria"]):
+                                ws.write_number(1, 3, float(df_export.iloc[0]["Sangria"]), total_money_fmt)
                             ws.write_string(1, 0, "TOTAL", total_row_fmt)
-                
-                            # congelar cabeçalho
+        
                             ws.freeze_panes(1, 0)
-                
+        
                         st.download_button(
-                            label="⬇️ Baixar Excel (Sintético)",
-                            data=buffer.getvalue(),
+                            "⬇️ Baixar Excel (Sintético)",
+                            data=buf.getvalue(),
                             file_name="Relatorio_Sintetico.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             use_container_width=True
                         )
-                
-                        # impede que outra parte da página gere grid duplicado
-                        st.stop()
+        
+                # Oculta colunas técnicas se montamos df_exibe (apenas Analítico usa esse bloco comum)
+                if not df_exibe.empty and visao == "Analítico":
+                    ocultar = ["Código Grupo Everest","Duplicidade","Sistema","Mês","Mes","Ano"]
+                    df_show = df_exibe.drop(columns=ocultar, errors="ignore")
+                    # (já exibimos acima no grid; export feito também)
+
 
     
                 

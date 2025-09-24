@@ -879,12 +879,12 @@ with sub_caixa:
                             "Segmentação automática indisponível. "
                             "Instale **xlsxwriter>=3.2.0** ou forneça um template com a Tabela 'tbl_dados' e slicers."
                         )
-                        arquivo = exportar_com_xlsxwriter_slicers(cmp)  # gera sem slicers se versão for antiga
+                        arquivo = exportar_xlsxwriter(cmp, criar_slicers=False)
 
-                    st.download_button(
-                        label="⬇️ Baixar Excel",
-                        data=arquivo,
-                        file_name="Sangria_Controle.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="dl_sangria_controle_excel"
-                    )
+                        st.download_button(
+                            label="⬇️ Baixar Excel",
+                            data=arquivo,
+                            file_name="Sangria_Controle.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_sangria_controle_excel"  # chave única
+                        )

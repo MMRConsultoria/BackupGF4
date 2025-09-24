@@ -681,12 +681,15 @@ with sub_caixa:
                                      use_container_width=True, height=520)
 
                     # ========= EXPORTAÇÃO (com slicers quando possível) =========
+                    # ========= EXPORTAÇÃO (com fallback para template com segmentação) =========
                     from io import BytesIO
-                    import zipfile
+                    import os, zipfile
+                    import pandas as pd
+                    import streamlit as st
                     
-                    def exportar_xlsxwriter(cmp: pd.DataFrame, criar_slicers: bool = False) -> BytesIO:
+                    # --- 1) normalizador para o DataFrame final que vai ao Excel ---
+                    def _prep_dados_excel(cmp: pd.DataFrame) -> pd.DataFrame:
                         df = cmp.copy()
-                    
                         # limpeza / nomes
                         df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
                         if "Sangria (Sistema)" in df.columns:
@@ -707,7 +710,11 @@ with sub_caixa:
                             "Mês","Ano"
                         ]
                         df = df[[c for c in ordem if c in df.columns]].copy()
+                        return df
                     
+                    
+                    # --- 2) tenta gerar com XlsxWriter + slicers ---
+                    def _exportar_com_xlsxwriter_slicers(df: pd.DataFrame, forcar_slicers: bool = True) -> BytesIO:
                         buf = BytesIO()
                         with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                             wb = writer.book
@@ -740,8 +747,8 @@ with sub_caixa:
                                     else:
                                         ws.write(r, j, "" if pd.isna(val) else val, fmt_text)
                     
-                            last_row = len(df)  # header é linha 0, dados vão até 'len(df)'
-                            last_col = len(df.columns) - 1
+                            last_row = len(df)          # 0 = header, 1..len(df) = dados
+                            last_col = len(df.columns)-1
                     
                             # tabela
                             ws.add_table(0, 0, last_row, last_col, {
@@ -750,7 +757,7 @@ with sub_caixa:
                                 "columns": [{"header": c} for c in df.columns],
                             })
                     
-                            # larguras + freeze
+                            # larguras / freeze
                             col_idx = {c:i for i,c in enumerate(df.columns)}
                             if "Data" in col_idx:              ws.set_column(col_idx["Data"], col_idx["Data"], 12, fmt_date)
                             if "Grupo" in col_idx:             ws.set_column(col_idx["Grupo"], col_idx["Grupo"], 10, fmt_text)
@@ -762,80 +769,51 @@ with sub_caixa:
                             if "Ano" in col_idx:               ws.set_column(col_idx["Ano"],   col_idx["Ano"],   8, fmt_int)
                             ws.freeze_panes(1, 0)
                     
-                            # ===== Tentativa de criar SLICERS =====
-                            slicers_tentados = False
-                            try:
-                                import xlsxwriter as xw
-                                ver_tuple = tuple(int(p) for p in xw.__version__.split(".")[:3])
-                                st.caption(f"XlsxWriter em runtime: {xw.__version__}")
-                                if criar_slicers and ver_tuple >= (3, 2, 0) and hasattr(wb, "add_slicer"):
-                                    slicers_tentados = True
-                                    # Evite acentos se houver algum problema: "Mês" costuma funcionar, mas teste "Mes" se necessário.
+                            # tenta criar segmentações
+                            if forcar_slicers and hasattr(wb, "add_slicer"):
+                                try:
                                     wb.add_slicer({"table": "tbl_dados", "column": "Ano",   "cell": "E2",  "width": 140, "height": 100})
                                     wb.add_slicer({"table": "tbl_dados", "column": "Mês",   "cell": "E10", "width": 140, "height": 140})
                                     wb.add_slicer({"table": "tbl_dados", "column": "Grupo", "cell": "H2",  "width": 180, "height": 160})
                                     wb.add_slicer({"table": "tbl_dados", "column": "Loja",  "cell": "K2",  "width": 260, "height": 300})
-                                elif criar_slicers and ver_tuple < (3, 2, 0):
-                                    st.warning("XlsxWriter < 3.2.0 no runtime — sem suporte a segmentação.")
-                            except Exception as e:
-                                st.warning(f"Falha ao inserir segmentações: {type(e).__name__}: {e}")
-                    
-                        # ---- verificação: o arquivo em memória tem slicers?
-                        buf.seek(0)
-                        try:
-                            with zipfile.ZipFile(buf, "r") as z:
-                                tem_slicers = any(n.startswith("xl/slicerCaches/") for n in z.namelist())
-                            if criar_slicers and slicers_tentados and not tem_slicers:
-                                st.warning(
-                                    "As segmentações **não** foram gravadas no .xlsx final. "
-                                    "Causa mais provável: a versão do XlsxWriter usada pelo **servidor** ainda é antiga "
-                                    "(mesmo com `xlsxwriter>=3.2.0` no requirements)."
-                                )
-                        except Exception:
-                            pass
+                                except Exception as e:
+                                    # silencioso: se não der, vamos cair para o template
+                                    pass
                     
                         buf.seek(0)
                         return buf
                     
                     
-                    def preencher_template_openpyxl(cmp: pd.DataFrame, caminho_template: str) -> BytesIO:
-                        """Preenche o template com a tabela tbl_dados e mantém as segmentações do Excel."""
+                    # --- 3) detecta se o .xlsx resultante tem, de fato, slicers ---
+                    def _xlsx_tem_slicers(xlsx_bytes: BytesIO) -> bool:
+                        pos = xlsx_bytes.tell()
+                        xlsx_bytes.seek(0)
+                        ok = False
+                        try:
+                            with zipfile.ZipFile(xlsx_bytes, "r") as z:
+                                ok = any(n.startswith("xl/slicerCaches/") for n in z.namelist())
+                        except Exception:
+                            ok = False
+                        xlsx_bytes.seek(pos)
+                        return ok
+                    
+                    
+                    # --- 4) preenche template com slicers existentes (openpyxl) ---
+                    def _preencher_template_openpyxl(df: pd.DataFrame, caminho_template: str = "modelo_segmentacao_sangria.xlsx") -> BytesIO:
                         from openpyxl import load_workbook
                         from openpyxl.utils import get_column_letter, column_index_from_string
-                    
-                        df = cmp.copy()
-                        if "Nao Mapeada?" in df.columns:
-                            df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
-                        if "Sangria (Sistema)" in df.columns:
-                            df = df.rename(columns={"Sangria (Sistema)": "Sangria (Colibri/CISS)"})
-                    
-                        # derivadas
-                        df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.normalize()
-                        df["Ano"]  = df["Data"].dt.year
-                        df["Mês"]  = df["Data"].dt.month
-                    
-                        for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
-                            if c in df.columns:
-                                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
-                    
-                        ordem = [
-                            "Data","Grupo","Loja","Código Everest",
-                            "Sangria (Colibri/CISS)","Sangria Everest","Diferença",
-                            "Mês","Ano"
-                        ]
-                        df = df[[c for c in ordem if c in df.columns]].copy()
+                        if not os.path.exists(caminho_template):
+                            raise FileNotFoundError(f"Template não encontrado: {caminho_template}")
                     
                         wb = load_workbook(caminho_template)
                         ws = wb["Dados"]
                     
-                        # pega a tabela existente
                         tbl = ws.tables.get("tbl_dados", None)
                         if tbl is None:
-                            raise RuntimeError("O template não tem a Tabela 'tbl_dados' na aba 'Dados'.")
+                            raise RuntimeError("O template precisa ter a Tabela 'tbl_dados' na aba 'Dados'.")
                     
-                        # célula inicial da tabela
+                        # início da tabela (A1, etc.)
                         ref_ini, ref_fim = tbl.ref.split(":")
-                        # linha/col do início
                         m = re.match(r"([A-Z]+)(\d+)", ref_ini)
                         col_ini_letters, row_ini = m.group(1), int(m.group(2))
                         col_ini = column_index_from_string(col_ini_letters)
@@ -844,16 +822,15 @@ with sub_caixa:
                         for j, col in enumerate(df.columns, start=col_ini):
                             ws.cell(row=row_ini, column=j, value=col)
                     
-                        # limpa dados antigos (deixa só o header)
-                        # apaga quaisquer linhas antigas abaixo do header até o fim da tabela atual
+                        # remove dados antigos
                         old_end_row = int(re.match(r"[A-Z]+(\d+)", ref_fim).group(1))
                         if old_end_row > row_ini:
                             ws.delete_rows(row_ini+1, old_end_row - row_ini)
                     
-                        # escreve os dados
-                        date_fmt = "dd/mm/yyyy"
+                        # escreve dados
+                        date_fmt  = "dd/mm/yyyy"
                         money_fmt = '"R$" #,##0.00'
-                        int_fmt = "0"
+                        int_fmt   = "0"
                     
                         for i, (_, row) in enumerate(df.iterrows(), start=row_ini+1):
                             for j, col in enumerate(df.columns, start=col_ini):
@@ -871,49 +848,38 @@ with sub_caixa:
                                 else:
                                     cell.value = "" if pd.isna(val) else val
                     
-                        # ajusta a referência da tabela para o novo tamanho
+                        # ajusta o range da tabela
                         end_row = row_ini + len(df)
                         end_col = col_ini + len(df.columns) - 1
-                        new_ref = f"{get_column_letter(col_ini)}{row_ini}:{get_column_letter(end_col)}{end_row}"
-                        tbl.ref = new_ref
+                        tbl.ref = f"{get_column_letter(col_ini)}{row_ini}:{get_column_letter(end_col)}{end_row}"
                     
-                        # salva em memória
                         out = BytesIO()
                         wb.save(out)
                         out.seek(0)
                         return out
                     
-                    # --- escolha automática: XlsxWriter com slicers OU template ---
-                    # --- escolha automática: XlsxWriter com slicers OU template ---
-                    # --- escolha: forçar XlsxWriter com slicers para testar ---
-                    # --- escolha automática: XlsxWriter com slicers OU template ---
-                    usar_template = False
-                    caminho_template = "modelo_segmentacao_sangria.xlsx"
                     
-                    # Mostra a versão do XlsxWriter (ajuda no diagnóstico)
-                    try:
-                        import xlsxwriter as xw
-                        st.caption(f"XlsxWriter em runtime: {xw.__version__}")
-                        has_slicers = tuple(int(p) for p in xw.__version__.split(".")[:3]) >= (3, 2, 0)
-                    except Exception:
-                        has_slicers = False
-                        st.caption("XlsxWriter não encontrado.")
+                    # --- 5) gerador único, multiusuário ---
+                    def gerar_excel_controle_sangria(cmp: pd.DataFrame) -> BytesIO:
+                        df = _prep_dados_excel(cmp)
                     
-                    # Decisão de como gerar o arquivo
-                    if usar_template and os.path.exists(caminho_template):
-                        arquivo = preencher_template_openpyxl(cmp, caminho_template)
-                    elif has_slicers:
-                        # tenta gerar com segmentações por código
-                        arquivo = exportar_xlsxwriter(cmp, criar_slicers=True)
-                    else:
-                        st.warning(
-                            "Segmentação automática indisponível. "
-                            "Instale **xlsxwriter>=3.2.0** ou forneça um template com a Tabela 'tbl_dados' e slicers."
-                        )
-                        # fallback: gera sem slicers
-                        arquivo = exportar_xlsxwriter(cmp, criar_slicers=False)
+                        # 5.1 tenta com XlsxWriter + slicers
+                        xlsx1 = _exportar_com_xlsxwriter_slicers(df, forcar_slicers=True)
+                        if _xlsx_tem_slicers(xlsx1):
+                            return xlsx1
                     
-                    # --- Botão de download: SEMPRE fora do if/elif/else ---
+                        # 5.2 fallback para template (que fica no repositório, uma vez só)
+                        try:
+                            return _preencher_template_openpyxl(df, "modelo_segmentacao_sangria.xlsx")
+                        except Exception as e:
+                            # 5.3 fallback final: sem slicers
+                            st.warning("Segmentação automática indisponível no runtime e template ausente. "
+                                       "Exportando sem segmentações.")
+                            return _exportar_com_xlsxwriter_slicers(df, forcar_slicers=False)
+                    
+                    
+                    # --- 6) chamar no seu fluxo ---
+                    arquivo = gerar_excel_controle_sangria(cmp)
                     st.download_button(
                         label="⬇️ Baixar Excel",
                         data=arquivo,

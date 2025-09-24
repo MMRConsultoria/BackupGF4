@@ -859,32 +859,40 @@ with sub_caixa:
                         return out
 
                     # --- escolha automática: XlsxWriter com slicers OU template ---
-                    usar_template = True  # mude para False se quiser forçar o modo XlsxWriter
-                    caminho_template = "modelo_segmentacao_sangria.xlsx"  # coloque o arquivo no mesmo diretório do app
-
+                    # --- escolha automática: XlsxWriter com slicers OU template ---
+                    usar_template = True  # coloque False se quiser forçar gerar via XlsxWriter
+                    caminho_template = "modelo_segmentacao_sangria.xlsx"  # deixe esse arquivo ao lado do app
+                    
+                    # Detecta versão do XlsxWriter (slicers só a partir da 3.2.0)
                     try:
                         import xlsxwriter as xw
                         vers = tuple(int(p) for p in xw.__version__.split(".")[:3])
-                        has_slicers = vers >= (3,2,0)
+                        has_slicers = vers >= (3, 2, 0)
                     except Exception:
                         has_slicers = False
-
-                    if has_slicers and not usar_template:
-                        arquivo = exportar_com_xlsxwriter_slicers(cmp)
-                    elif usar_template and os.path.exists(caminho_template):
+                    
+                    # Decide como gerar o arquivo
+                    if usar_template and os.path.exists(caminho_template):
+                        # usa um modelo do Excel que já tenha a Tabela 'tbl_dados' e as segmentações prontas
                         arquivo = preencher_template_openpyxl(cmp, caminho_template)
+                    
+                    elif has_slicers:
+                        # gera tudo por código e tenta criar segmentações (requer XlsxWriter >= 3.2.0 e Excel recente)
+                        arquivo = exportar_xlsxwriter(cmp, criar_slicers=True)
+                    
                     else:
-                        # fallback: sem slicers
+                        # fallback: sem segmentações
                         st.warning(
                             "Segmentação automática indisponível. "
                             "Instale **xlsxwriter>=3.2.0** ou forneça um template com a Tabela 'tbl_dados' e slicers."
                         )
                         arquivo = exportar_xlsxwriter(cmp, criar_slicers=False)
-
-                        st.download_button(
-                            label="⬇️ Baixar Excel",
-                            data=arquivo,
-                            file_name="Sangria_Controle.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_sangria_controle_excel"  # chave única
-                        )
+                    
+                    # Botão de download (fora do if/elif/else, assim sempre aparece)
+                    st.download_button(
+                        label="⬇️ Baixar Excel",
+                        data=arquivo,
+                        file_name="Sangria_Controle.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_sangria_controle_excel"  # chave única para evitar conflito
+                    )

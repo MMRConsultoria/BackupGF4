@@ -68,10 +68,14 @@ with st.spinner("⏳ Processando..."):
     planilha = gc.open("Vendas diarias")
 
     df_empresa = pd.DataFrame(planilha.worksheet("Tabela Empresa").get_all_records())
-    df_descricoes = pd.DataFrame(
-        planilha.worksheet("Tabela Sangria").get_all_values(),
-        columns=["Palavra-chave", "Descrição Agrupada"]
-    )
+    ws_tab = planilha.worksheet("Tabela Sangria")
+    dados = ws_tab.get_all_records()  # lê usando a primeira linha como cabeçalho
+    df_descricoes = pd.DataFrame(dados)
+    # Garante as colunas
+    df_descricoes.columns = [c.strip() for c in df_descricoes.columns]
+    if not {"Palavra-chave", "Descrição Agrupada"}.issubset(df_descricoes.columns):
+        st.error("A aba 'Tabela Sangria' precisa ter as colunas 'Palavra-chave' e 'Descrição Agrupada'.")
+        st.stop()
 
     # 🔥 Título
     st.markdown("""
@@ -917,7 +921,7 @@ with st.spinner("⏳ Processando..."):
                                 if col_valor_letter:
                                     format_cell_range(
                                         aba_destino, f"{col_valor_letter}{inicio}:{col_valor_letter}{fim}",
-                                        ACCOUNTING_R$
+                                        ACCOUNTING_RS   # ✅ use o mesmo nome definido
                                     )
 
                 

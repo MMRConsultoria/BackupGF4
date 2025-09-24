@@ -692,35 +692,31 @@ with sub_caixa:
                     from io import BytesIO
                     import pandas as pd
                     
-                    def exportar_excel_controle_sangria(cmp: pd.DataFrame):
-                        # ==== 1) Base "Dados" ====
+                    def exportar_excel_com_slicers(cmp: pd.DataFrame) -> BytesIO:
                         df = cmp.copy()
                     
-                        # Nomes padronizados p/ Excel
+                        # padroniza nomes
                         if "Sangria (Sistema)" in df.columns:
                             df = df.rename(columns={"Sangria (Sistema)": "Sangria (Colibri/CISS)"})
                         if "Nao Mapeada?" in df.columns:
-                            df = df.drop(columns=["Nao Mapeada?" ])
+                            df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
                     
-                        # Tipos
+                        # tipos/derivados
                         df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.normalize()
+                        df["Ano"]  = df["Data"].dt.year
+                        df["Mês"]  = df["Data"].dt.month
+                    
                         for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
                             if c in df.columns:
                                 df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
                     
-                        # Derivados
-                        df["Mês"] = df["Data"].dt.month
-                        df["Ano"] = df["Data"].dt.year
-                        # MesAno (1º dia do mês) – formataremos como mmm/aa no Excel
-                        df["MesAno"] = pd.to_datetime(dict(year=df["Ano"], month=df["Mês"], day=1))
-                    
-                        # Ordem (Data 1ª)
+                        # ordem (Data 1ª)
                         ordem = ["Data","Grupo","Loja","Código Everest",
                                  "Sangria (Colibri/CISS)","Sangria Everest","Diferença",
-                                 "Mês","Ano","MesAno"]
-                        df = df[[c for c in ordem if c in df.columns]]
+                                 "Mês","Ano"]
+                        df = df[[c for c in ordem if c in df.columns]].copy()
                     
-                        # ==== 2) Grava no Excel com formatos + Tabela + Slicers + Dashboards ====
+                        # ---- escrever no Excel + tabela + slicers
                         buf = BytesIO()
                         with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                             wb = writer.book
@@ -733,141 +729,71 @@ with sub_caixa:
                             fmt_text   = wb.add_format({"border":1})
                             fmt_int    = wb.add_format({"border":1, "num_format":"0"})
                             fmt_date   = wb.add_format({"border":1, "num_format":"dd/mm/yyyy"})
-                            fmt_mmyy   = wb.add_format({"border":1, "num_format":"mmm/yy"})
                             fmt_money  = wb.add_format({"border":1, "num_format":"R$ #,##0.00"})
                     
-                            cols = list(df.columns) + ["Visível"]  # Visível será coluna calculada (oculta)
-                            # Cabeçalho
-                            for j, col in enumerate(cols):
+                            # cabeçalho
+                            for j, col in enumerate(df.columns):
                                 ws.write(0, j, col, fmt_header)
                     
-                            # Dados
+                            # linhas
                             for i, row in df.iterrows():
                                 r = i + 1
                                 for j, col in enumerate(df.columns):
                                     val = row[col]
-                                    if col == "Data":
+                                    if col == "Data" and pd.notna(val):
                                         ws.write_datetime(r, j, pd.to_datetime(val).to_pydatetime(), fmt_date)
+                                    elif col in ("Ano","Mês","Código Everest"):
+                                        ws.write_number(r, j, int(val) if pd.notna(val) else 0, fmt_int)
                                     elif col in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença"):
                                         ws.write_number(r, j, float(val), fmt_money)
-                                    elif col in ("Mês","Ano","Código Everest"):
-                                        ws.write_number(r, j, int(val) if pd.notna(val) else 0, fmt_int)
-                                    elif col == "MesAno":
-                                        ws.write_datetime(r, j, pd.to_datetime(val).to_pydatetime(), fmt_mmyy)
                                     else:
                                         ws.write(r, j, "" if pd.isna(val) else val, fmt_text)
-                                # coluna "Visível" será preenchida pela tabela (fórmula), então só deixa em branco
                     
-                            nrows, ncols_base = df.shape[0] + 1, df.shape[1]  # +1 por causa do header
+                            nrows = len(df) + 1
+                            ncols = len(df.columns) - 1
                     
-                            # Tabela abrangendo também a coluna "Visível"
-                            cols_def = []
-                            for c in df.columns:
-                                cols_def.append({"header": c})
-                            # última coluna "Visível" com fórmula de linha
-                            cols_def.append({"header": "Visível", "formula": "=SUBTOTAL(103,[@Data])"})
-                    
-                            ws.add_table(0, 0, nrows, ncols_base, {  # ncols_base inclui MesAno; +1 Visível
+                            # tabela
+                            ws.add_table(0, 0, nrows, ncols, {
                                 "name": "tbl_dados",
                                 "style": "TableStyleMedium9",
-                                "columns": cols_def,
+                                "columns": [{"header": c} for c in df.columns],
                             })
                     
-                            # larguras + esconder "Visível"
-                            col_idx = {c:i for i,c in enumerate(cols)}
+                            # larguras + panes
+                            col_idx = {c:i for i,c in enumerate(df.columns)}
                             ws.set_column(col_idx["Data"], col_idx["Data"], 12, fmt_date)
-                            if "Grupo" in col_idx:  ws.set_column(col_idx["Grupo"], col_idx["Grupo"], 8,  fmt_text)
-                            if "Loja"  in col_idx:  ws.set_column(col_idx["Loja"],  col_idx["Loja"],  28, fmt_text)
+                            if "Grupo" in col_idx:  ws.set_column(col_idx["Grupo"], col_idx["Grupo"], 10, fmt_text)
+                            if "Loja" in col_idx:   ws.set_column(col_idx["Loja"],  col_idx["Loja"],  28, fmt_text)
                             if "Código Everest" in col_idx: ws.set_column(col_idx["Código Everest"], col_idx["Código Everest"], 14, fmt_int)
                             for c in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença"):
                                 if c in col_idx: ws.set_column(col_idx[c], col_idx[c], 18, fmt_money)
-                            if "Mês" in col_idx:     ws.set_column(col_idx["Mês"],   col_idx["Mês"],   6, fmt_int)
-                            if "Ano" in col_idx:     ws.set_column(col_idx["Ano"],   col_idx["Ano"],   8, fmt_int)
-                            if "MesAno" in col_idx:  ws.set_column(col_idx["MesAno"],col_idx["MesAno"],10, fmt_mmyy)
-                            ws.set_column(col_idx["Visível"], col_idx["Visível"], 2, None, {"hidden": True})
-                    
+                            if "Mês" in col_idx:    ws.set_column(col_idx["Mês"],   col_idx["Mês"],   6, fmt_int)
+                            if "Ano" in col_idx:    ws.set_column(col_idx["Ano"],   col_idx["Ano"],   8, fmt_int)
                             ws.freeze_panes(1, 0)
                     
-                            # ==== 3) Slicers (se disponíveis no seu XlsxWriter) ====
+                            # SLICERS (segmentações) — exigem XlsxWriter >= 3.2.0
                             try:
-                                if hasattr(wb, "add_slicer"):
-                                    wb.add_slicer({"table": "tbl_dados", "column": "Ano",   "cell": "L1"})
-                                    wb.add_slicer({"table": "tbl_dados", "column": "Mês",   "cell": "L5"})
-                                    wb.add_slicer({"table": "tbl_dados", "column": "Grupo", "cell": "L9"})
-                                    wb.add_slicer({"table": "tbl_dados", "column": "Loja",  "cell": "L15", "width": 220, "height": 260})
-                            except Exception:
-                                pass  # sem slicer? segue o baile – os gráficos abaixo funcionam do mesmo jeito
-                    
-                            # ==== 4) Áreas-resumo com fórmulas (respeitam filtro via 'Visível') ====
-                            # Resumo por Grupo
-                            ws.write("P1", "Resumo por Grupo", wb.add_format({"bold": True}))
-                            ws.write_row("P2", ["Grupo","Diferença","Sangria (Colibri/CISS)","Sangria Everest"], fmt_header)
-                            # lista única de grupos (dinâmica)
-                            ws.write_formula("P3", '=UNIQUE(tbl_dados[Grupo])')
-                            # linhas suficientes (opção: 500 grupos)
-                            for r in range(3, 503):
-                                row = r
-                                ws.write_formula(row-1, 16, f'=IFERROR(INDEX(UNIQUE(tbl_dados[Grupo]),ROW()-2),"")')  # Coluna P (16)
-                                # Diferença
-                                ws.write_formula(row-1, 17, f'=IF(P{row}="","",SUMIFS(tbl_dados[Diferença],tbl_dados[Grupo],P{row},tbl_dados[Visível],1))')
-                                # Colibri/CISS
-                                ws.write_formula(row-1, 18, f'=IF(P{row}="","",SUMIFS(tbl_dados[\'Sangria (Colibri/CISS)\'],tbl_dados[Grupo],P{row},tbl_dados[Visível],1))')
-                                # Everest
-                                ws.write_formula(row-1, 19, f'=IF(P{row}="","",SUMIFS(tbl_dados[\'Sangria Everest\'],tbl_dados[Grupo],P{row},tbl_dados[Visível],1))')
-                    
-                            ws.set_column("P:P", 18); ws.set_column("Q:S", 18, fmt_money)
-                    
-                            # Resumo por Mês/Ano
-                            ws.write("U1", "Resumo por Mês/Ano", wb.add_format({"bold": True}))
-                            ws.write_row("U2", ["Mês/Ano","Diferença","Sangria (Colibri/CISS)","Sangria Everest"], fmt_header)
-                            ws.write_formula("U3", '=SORT(UNIQUE(tbl_dados[MesAno]))')
-                            for r in range(3, 515):
-                                row = r
-                                ws.write_formula(row-1, 20, f'=IFERROR(INDEX(SORT(UNIQUE(tbl_dados[MesAno])),ROW()-2),"")', fmt_mmyy)  # U
-                                ws.write_formula(row-1, 21, f'=IF(U{row}="","",SUMIFS(tbl_dados[Diferença],tbl_dados[MesAno],U{row},tbl_dados[Visível],1))')
-                                ws.write_formula(row-1, 22, f'=IF(U{row}="","",SUMIFS(tbl_dados[\'Sangria (Colibri/CISS)\'],tbl_dados[MesAno],U{row},tbl_dados[Visível],1))')
-                                ws.write_formula(row-1, 23, f'=IF(U{row}="","",SUMIFS(tbl_dados[\'Sangria Everest\'],tbl_dados[MesAno],U{row},tbl_dados[Visível],1))')
-                            ws.set_column("U:U", 10, fmt_mmyy); ws.set_column("V:X", 18, fmt_money)
-                    
-                            # ==== 5) Gráficos (na mesma aba Dados) ====
-                            # Barras: Diferença por Grupo
-                            chart1 = wb.add_chart({'type': 'column'})
-                            chart1.add_series({
-                                'name':       'Diferença',
-                                'categories': '=Dados!$P$3:$P$200',
-                                'values':     '=Dados!$Q$3:$Q$200',
-                            })
-                            chart1.set_title({'name': 'Diferença por Grupo'})
-                            chart1.set_y_axis({'num_format': 'R$ #,##0'})
-                            ws.insert_chart('P30', chart1, {'x_scale': 1.2, 'y_scale': 1.2})
-                    
-                            # Linhas: Colibri/CISS vs Everest por Mes/Ano
-                            chart2 = wb.add_chart({'type': 'line'})
-                            chart2.add_series({
-                                'name':       'Sangria (Colibri/CISS)',
-                                'categories': '=Dados!$U$3:$U$200',
-                                'values':     '=Dados!$W$3:$W$200',
-                            })
-                            chart2.add_series({
-                                'name':       'Sangria Everest',
-                                'categories': '=Dados!$U$3:$U$200',
-                                'values':     '=Dados!$X$3:$X$200',
-                            })
-                            chart2.set_title({'name': 'Sangria por Mês/Ano'})
-                            chart2.set_y_axis({'num_format': 'R$ #,##0'})
-                            ws.insert_chart('U30', chart2, {'x_scale': 1.25, 'y_scale': 1.25})
+                                # você pode ajustar as células destino e tamanhos
+                                wb.add_slicer({"table": "tbl_dados", "column": "Ano",   "cell": "L1"})
+                                wb.add_slicer({"table": "tbl_dados", "column": "Mês",   "cell": "L6"})
+                                wb.add_slicer({"table": "tbl_dados", "column": "Grupo", "cell": "N1", "width": 180, "height": 180})
+                                wb.add_slicer({"table": "tbl_dados", "column": "Loja",  "cell": "N10", "width": 260, "height": 300})
+                            except Exception as e:
+                                # se não aparecerem, é versão do XlsxWriter/Excel – avise no app
+                                import streamlit as st
+                                st.warning(
+                                    "As segmentações do Excel exigem **XlsxWriter ≥ 3.2.0** e Excel recente. "
+                                    f"Não foi possível criar os slicers automaticamente ({type(e).__name__})."
+                                )
                     
                         buf.seek(0)
                         return buf
-                    
-                    # === usar no seu ponto de export ===
-                    arquivo = exportar_excel_controle_sangria(cmp)
-                    st.download_button(
-                        label="⬇️ Baixar Excel",
-                        data=arquivo,
-                        file_name="Sangria_Controle.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="dl_sangria_controle_excel"
-                    )
+                        arquivo = exportar_excel_com_slicers(cmp)
+                            st.download_button(
+                                label="⬇️ Baixar Excel",
+                                data=arquivo,
+                                file_name="Sangria_Controle.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key="dl_sangria_controle_excel"
+                            )
 
-                    

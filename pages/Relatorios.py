@@ -3143,7 +3143,7 @@ with st.spinner("⏳ Processando..."):
                
 
     
-                elif visao in ("Comparativa Everest", "Diferenças Everest"):
+                if visao in ("Comparativa Everest", "Diferenças Everest"):
                     base = df_sangria.copy()
                     if "Data" not in base.columns or "Código Everest" not in base.columns or not col_valor:
                         st.error("❌ Preciso de 'Data', 'Código Everest' e coluna de valor na aba Sangria.")

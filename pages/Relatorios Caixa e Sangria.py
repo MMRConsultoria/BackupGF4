@@ -681,14 +681,15 @@ with sub_caixa:
                                      use_container_width=True, height=520)
 
                     # ========= EXPORTAÇÃO (com slicers quando possível) =========
-                    # ========= EXPORTAÇÃO (com slicers) =========
                     from io import BytesIO
+                    import os
                     
-                    def exportar_xlsxwriter(cmp: pd.DataFrame, criar_slicers: bool = True) -> BytesIO:
+                    def exportar_xlsxwriter(cmp: pd.DataFrame, criar_slicers: bool = False) -> BytesIO:
                         df = cmp.copy()
                     
                         # limpeza / nomes
-                        df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
+                        if "Nao Mapeada?" in df.columns:
+                            df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
                         if "Sangria (Sistema)" in df.columns:
                             df = df.rename(columns={"Sangria (Sistema)": "Sangria (Colibri/CISS)"})
                     
@@ -701,7 +702,6 @@ with sub_caixa:
                             if c in df.columns:
                                 df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
                     
-                        # ordem final
                         ordem = [
                             "Data","Grupo","Loja","Código Everest",
                             "Sangria (Colibri/CISS)","Sangria Everest","Diferença",
@@ -711,12 +711,9 @@ with sub_caixa:
                     
                         buf = BytesIO()
                         with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-                            sheet_name = "Dados"
-                            # escreve dados via pandas (mais rápido) e depois cria a tabela
-                            df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=1, header=False)
-                    
-                            wb  = writer.book
-                            ws  = writer.sheets[sheet_name]
+                            wb = writer.book
+                            ws = wb.add_worksheet("Dados")
+                            writer.sheets["Dados"] = ws
                     
                             # formatos
                             fmt_header = wb.add_format({"bold": True, "align":"center", "valign":"vcenter",
@@ -726,68 +723,188 @@ with sub_caixa:
                             fmt_date   = wb.add_format({"border":1, "num_format":"dd/mm/yyyy"})
                             fmt_money  = wb.add_format({"border":1, "num_format":"R$ #,##0.00"})
                     
-                            # cabeçalho na linha 0
+                            # cabeçalho
                             for j, col in enumerate(df.columns):
                                 ws.write(0, j, col, fmt_header)
                     
-                            # dimensões (linhas de dados, colunas)
-                            max_row, max_col = df.shape
+                            # linhas
+                            for i, row in df.iterrows():
+                                r = i + 1
+                                for j, col in enumerate(df.columns):
+                                    val = row[col]
+                                    if col == "Data" and pd.notna(val):
+                                        ws.write_datetime(r, j, pd.to_datetime(val).to_pydatetime(), fmt_date)
+                                    elif col in ("Ano","Mês","Código Everest"):
+                                        ws.write_number(r, j, int(val) if pd.notna(val) else 0, fmt_int)
+                                    elif col in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença"):
+                                        ws.write_number(r, j, float(val), fmt_money)
+                                    else:
+                                        ws.write(r, j, "" if pd.isna(val) else val, fmt_text)
                     
-                            # tabela cobrindo header + dados
-                            ws.add_table(0, 0, max_row, max_col - 1, {
+                            nrows = len(df) + 1
+                            ncols = len(df.columns) - 1
+                    
+                            # tabela
+                            ws.add_table(0, 0, nrows, ncols, {
                                 "name": "tbl_dados",
                                 "style": "TableStyleMedium9",
                                 "columns": [{"header": c} for c in df.columns],
                             })
                     
-                            # larguras + formatos por coluna
-                            col_idx = {c:i for i, c in enumerate(df.columns)}
-                            if "Data" in col_idx:           ws.set_column(col_idx["Data"], col_idx["Data"], 12, fmt_date)
-                            if "Grupo" in col_idx:          ws.set_column(col_idx["Grupo"], col_idx["Grupo"], 10, fmt_text)
-                            if "Loja" in col_idx:           ws.set_column(col_idx["Loja"],  col_idx["Loja"],  28, fmt_text)
-                            if "Código Everest" in col_idx: ws.set_column(col_idx["Código Everest"], col_idx["Código Everest"], 14, fmt_int)
+                            # larguras + freeze
+                            col_idx = {c:i for i,c in enumerate(df.columns)}
+                            if "Data" in col_idx:
+                                ws.set_column(col_idx["Data"], col_idx["Data"], 12, fmt_date)
+                            if "Grupo" in col_idx:
+                                ws.set_column(col_idx["Grupo"], col_idx["Grupo"], 10, fmt_text)
+                            if "Loja" in col_idx:
+                                ws.set_column(col_idx["Loja"],  col_idx["Loja"],  28, fmt_text)
+                            if "Código Everest" in col_idx:
+                                ws.set_column(col_idx["Código Everest"], col_idx["Código Everest"], 14, fmt_int)
                             for c in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença"):
-                                if c in col_idx:            ws.set_column(col_idx[c], col_idx[c], 18, fmt_money)
-                            if "Mês" in col_idx:            ws.set_column(col_idx["Mês"], col_idx["Mês"], 6, fmt_int)
-                            if "Ano" in col_idx:            ws.set_column(col_idx["Ano"], col_idx["Ano"], 8, fmt_int)
+                                if c in col_idx:
+                                    ws.set_column(col_idx[c], col_idx[c], 18, fmt_money)
+                            if "Mês" in col_idx:
+                                ws.set_column(col_idx["Mês"], col_idx["Mês"], 6, fmt_int)
+                            if "Ano" in col_idx:
+                                ws.set_column(col_idx["Ano"], col_idx["Ano"], 8, fmt_int)
                     
                             ws.freeze_panes(1, 0)
                     
-                            # ===== Slicers (requer xlsxwriter >= 3.2.0 + Excel Desktop) =====
+                            # ===== Slicers (opcional e 100% seguro) =====
+                            # ===== Slicers (opcional) =====
                             if criar_slicers and hasattr(wb, "add_slicer"):
                                 try:
-                                    idx_ano   = df.columns.get_loc("Ano")   if "Ano"   in df.columns else None
-                                    idx_mes   = df.columns.get_loc("Mês")   if "Mês"   in df.columns else None
-                                    idx_grupo = df.columns.get_loc("Grupo") if "Grupo" in df.columns else None
-                                    idx_loja  = df.columns.get_loc("Loja")  if "Loja"  in df.columns else None
-                    
-                                    if idx_ano is not None:
-                                        wb.add_slicer({"worksheet": ws, "table": "tbl_dados", "column": idx_ano,   "cell": "E2",  "width": 140, "height": 100})
-                                    if idx_mes is not None:
-                                        wb.add_slicer({"worksheet": ws, "table": "tbl_dados", "column": idx_mes,   "cell": "E10", "width": 140, "height": 140})
-                                    if idx_grupo is not None:
-                                        wb.add_slicer({"worksheet": ws, "table": "tbl_dados", "column": idx_grupo, "cell": "H2",  "width": 180, "height": 160})
-                                    if idx_loja is not None:
-                                        wb.add_slicer({"worksheet": ws, "table": "tbl_dados", "column": idx_loja,  "cell": "K2",  "width": 260, "height": 300})
+                                    # Posições mais próximas do canto superior esquerdo
+                                    wb.add_slicer({"table": "tbl_dados", "column": "Ano",   "cell": "E2",  "width": 140, "height": 100})
+                                    wb.add_slicer({"table": "tbl_dados", "column": "Mês",   "cell": "E10", "width": 140, "height": 140})
+                                    wb.add_slicer({"table": "tbl_dados", "column": "Grupo", "cell": "H2",  "width": 180, "height": 160})
+                                    wb.add_slicer({"table": "tbl_dados", "column": "Loja",  "cell": "K2",  "width": 260, "height": 300})
                                 except Exception as e:
                                     st.warning(f"Não foi possível criar as segmentações automaticamente ({type(e).__name__}).")
+                    
+                            # se não tiver suporte, apenas segue sem slicers
                     
                         buf.seek(0)
                         return buf
                     
-                    # --- CHAMADA (depois de construir `cmp`) ---
-                    if not cmp.empty:
+                    
+                    def preencher_template_openpyxl(cmp: pd.DataFrame, caminho_template: str) -> BytesIO:
+                        """Preenche o template com a tabela tbl_dados e mantém as segmentações do Excel."""
+                        from openpyxl import load_workbook
+                        from openpyxl.utils import get_column_letter, column_index_from_string
+                    
+                        df = cmp.copy()
+                        if "Nao Mapeada?" in df.columns:
+                            df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
+                        if "Sangria (Sistema)" in df.columns:
+                            df = df.rename(columns={"Sangria (Sistema)": "Sangria (Colibri/CISS)"})
+                    
+                        # derivadas
+                        df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.normalize()
+                        df["Ano"]  = df["Data"].dt.year
+                        df["Mês"]  = df["Data"].dt.month
+                    
+                        for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
+                            if c in df.columns:
+                                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+                    
+                        ordem = [
+                            "Data","Grupo","Loja","Código Everest",
+                            "Sangria (Colibri/CISS)","Sangria Everest","Diferença",
+                            "Mês","Ano"
+                        ]
+                        df = df[[c for c in ordem if c in df.columns]].copy()
+                    
+                        wb = load_workbook(caminho_template)
+                        ws = wb["Dados"]
+                    
+                        # pega a tabela existente
+                        tbl = ws.tables.get("tbl_dados", None)
+                        if tbl is None:
+                            raise RuntimeError("O template não tem a Tabela 'tbl_dados' na aba 'Dados'.")
+                    
+                        # célula inicial da tabela
+                        ref_ini, ref_fim = tbl.ref.split(":")
+                        # linha/col do início
+                        m = re.match(r"([A-Z]+)(\d+)", ref_ini)
+                        col_ini_letters, row_ini = m.group(1), int(m.group(2))
+                        col_ini = column_index_from_string(col_ini_letters)
+                    
+                        # sobrescreve cabeçalhos
+                        for j, col in enumerate(df.columns, start=col_ini):
+                            ws.cell(row=row_ini, column=j, value=col)
+                    
+                        # limpa dados antigos (deixa só o header)
+                        # apaga quaisquer linhas antigas abaixo do header até o fim da tabela atual
+                        old_end_row = int(re.match(r"[A-Z]+(\d+)", ref_fim).group(1))
+                        if old_end_row > row_ini:
+                            ws.delete_rows(row_ini+1, old_end_row - row_ini)
+                    
+                        # escreve os dados
+                        date_fmt = "dd/mm/yyyy"
+                        money_fmt = '"R$" #,##0.00'
+                        int_fmt = "0"
+                    
+                        for i, (_, row) in enumerate(df.iterrows(), start=row_ini+1):
+                            for j, col in enumerate(df.columns, start=col_ini):
+                                val = row[col]
+                                cell = ws.cell(row=i, column=j)
+                                if col == "Data" and pd.notna(val):
+                                    cell.value = pd.to_datetime(val).date()
+                                    cell.number_format = date_fmt
+                                elif col in ("Ano", "Mês", "Código Everest"):
+                                    cell.value = int(val) if pd.notna(val) else None
+                                    cell.number_format = int_fmt
+                                elif col in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença"):
+                                    cell.value = float(val)
+                                    cell.number_format = money_fmt
+                                else:
+                                    cell.value = "" if pd.isna(val) else val
+                    
+                        # ajusta a referência da tabela para o novo tamanho
+                        end_row = row_ini + len(df)
+                        end_col = col_ini + len(df.columns) - 1
+                        new_ref = f"{get_column_letter(col_ini)}{row_ini}:{get_column_letter(end_col)}{end_row}"
+                        tbl.ref = new_ref
+                    
+                        # salva em memória
+                        out = BytesIO()
+                        wb.save(out)
+                        out.seek(0)
+                        return out
+                    
+                    # --- escolha automática: XlsxWriter com slicers OU template ---
+                    # --- escolha automática: XlsxWriter com slicers OU template ---
+                    # --- escolha: forçar XlsxWriter com slicers para testar ---
+                    usar_template = False  # <<< force sem template, com slicers por código
+                    caminho_template = "modelo_segmentacao_sangria.xlsx"
+                    
+                    # Mostra a versão do XlsxWriter (ajuda no diagnóstico)
+                    try:
                         import xlsxwriter as xw
                         st.caption(f"XlsxWriter versão detectada: {xw.__version__}")
+                        has_slicers = tuple(int(p) for p in xw.__version__.split(".")[:3]) >= (3, 2, 0)
+                    except Exception:
+                        has_slicers = False
+                        st.caption("XlsxWriter não encontrado.")
+                    
+                    if usar_template and os.path.exists(caminho_template):
+                        arquivo = preencher_template_openpyxl(cmp, caminho_template)
+                    elif has_slicers:
+                        # chama com criar_slicers=True
                         arquivo = exportar_xlsxwriter(cmp, criar_slicers=True)
-                        st.download_button(
-                            label="⬇️ Baixar Excel",
-                            data=arquivo,
-                            file_name="Sangria_Controle.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_sangria_controle_excel"
-                        )
                     else:
-                        st.info("Sem dados para exportar.")
-
-
+                        st.warning(
+                            "Segmentação automática indisponível. "
+                            "Instale **xlsxwriter>=3.2.0** ou forneça um template com a Tabela 'tbl_dados' e slicers."
+                        )
+                        arquivo = exportar_xlsxwriter(cmp, criar_slicers=False)
+                    
+                    st.download_button(
+                        label="⬇️ Baixar Excel",
+                        data=arquivo,
+                        file_name="Sangria_Controle.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_sangria_controle_excel"
+                    )

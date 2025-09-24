@@ -14,5 +14,6 @@ reportlab
 pytz
 streamlit-autorefresh
 xlrd>=2.0.1
+xlsxwriter>=3.2.0
 
 

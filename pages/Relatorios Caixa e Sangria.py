@@ -466,17 +466,17 @@ with sub_caixa:
     if df_sangria is None or df_sangria.empty:
         st.info("Sem dados de **sangria** disponíveis.")
     else:
+        import unicodedata, re
         from io import BytesIO
-        import unicodedata
-        import re
 
-        # ===== helpers locais (caso não existam no arquivo) =====
+        # ===== helpers locais =====
         def _norm_txt(s: str) -> str:
             s = str(s or "").strip().lower()
             s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("utf-8")
             return s
 
         def eh_deposito_mask(df, cols_texto=None):
+            """Marca linhas que aparentam ser 'depósito/transferência' usando colunas textuais."""
             if cols_texto is None:
                 cols_texto = [
                     "Descrição Agrupada","Descrição","Historico","Histórico",
@@ -514,7 +514,7 @@ with sub_caixa:
             st.stop()
         df[col_valor] = df[col_valor].map(parse_valor_brl_sheets).astype(float)
 
-        # Filtros
+        # ===== Filtros =====
         c1, c2, c3, c4 = st.columns([1.2, 1.2, 1.6, 1.6])
         with c1:
             dmin = pd.to_datetime(df["Data"].min(), errors="coerce")
@@ -538,7 +538,7 @@ with sub_caixa:
         with c4:
             visao = st.selectbox(
                 "Visão do Relatório",
-                options=["Comparativa Everest"],
+                options=["Comparativa Everest", "Diferenças Everest"],
                 index=0,
                 key="caixa_visao_cmp",
             )
@@ -550,11 +550,9 @@ with sub_caixa:
         if descrs_sel:
             df_fil = df_fil[df_fil["Descrição Agrupada"].astype(str).isin(descrs_sel)]
 
-        df_exibe = pd.DataFrame()
-
-        # ======= Comparativa / Diferenças =======
+        # ===================== Comparativa / Diferenças =====================
         if visao in ("Comparativa Everest", "Diferenças Everest"):
-            base = df_fil.copy()  # <- agora 'base' existe
+            base = df_fil.copy()
 
             if "Data" not in base.columns or "Código Everest" not in base.columns or not col_valor:
                 st.error("❌ Preciso de 'Data', 'Código Everest' e coluna de valor na aba Sangria.")
@@ -566,21 +564,18 @@ with sub_caixa:
 
                 # --- EXCLUI DEPÓSITOS (somente lado Sistema) ---
                 mask_dep_sys = eh_deposito_mask(base)
-                
-               
                 with st.expander("🔎 Ver depósitos removidos (Colibri/CISS)"):
                     audit = base.loc[mask_dep_sys, :].copy()
                     if col_valor in audit.columns:
                         audit[col_valor] = audit[col_valor].map(brl)
                     st.dataframe(audit, use_container_width=True, hide_index=True)
-
                 base = base.loc[~mask_dep_sys].copy()
 
                 # agrega Sistema (já sem depósitos)
                 df_sys = (
                     base.groupby(["Código Everest","Data"], as_index=False)[col_valor]
                         .sum()
-                        .rename(columns={col_valor:"Sangria (Colibri/CISS)"})
+                        .rename(columns={col_valor: "Sangria (Colibri/CISS)"})
                 )
 
                 # --- Everest ---
@@ -599,7 +594,7 @@ with sub_caixa:
                                   if norm in ("fantasiaempresa","fantasia")), None)
 
                 if not all([col_emp, col_dt_ev, col_val_ev]):
-                    st.error("❌ Na 'Sangria Everest' preciso de 'Empresa', '' e 'Valor Lancamento'.")
+                    st.error("❌ Na 'Sangria Everest' preciso de 'Empresa', 'D. Lançamento' e 'Valor Lancamento'.")
                 else:
                     de = df_ev.copy()
                     de["Código Everest"]   = de[col_emp].astype(str).str.extract(r"(\d+)")
@@ -609,55 +604,58 @@ with sub_caixa:
                     de = de[(de["Data"].dt.date >= dt_inicio) & (de["Data"].dt.date <= dt_fim)]
                     de["Sangria Everest"]  = de["Valor Lancamento"].abs()
 
-                    # (opcional) se existir coluna textual no Everest para identificar depósitos, descomente e ajuste:
-                    # mask_dep_ev = eh_deposito_mask(de, cols_texto=["<coluna_textual_no_Everest>"])
-                    # de = de.loc[~mask_dep_ev].copy()
-
+                    # agrega Everest
                     def _pick_first(s):
                         s = s.dropna().astype(str).str.strip()
                         s = s[s != ""]
                         return s.iloc[0] if not s.empty else ""
                     de_agg = (
                         de.groupby(["Código Everest","Data"], as_index=False)
-                          .agg({"Sangria Everest":"sum","Fantasia Everest": _pick_first})
+                          .agg({"Sangria Everest": "sum", "Fantasia Everest": _pick_first})
                     )
 
+                    # comparativa
                     cmp = df_sys.merge(de_agg, on=["Código Everest","Data"], how="outer", indicator=True)
                     cmp["Sangria (Colibri/CISS)"] = cmp["Sangria (Colibri/CISS)"].fillna(0.0)
-                    cmp["Sangria Everest"]   = cmp["Sangria Everest"].fillna(0.0)
+                    cmp["Sangria Everest"]        = cmp["Sangria Everest"].fillna(0.0)
 
                     # mapeamento Loja/Grupo
                     mapa = df_empresa.copy()
                     mapa.columns = [str(c).strip() for c in mapa.columns]
                     if "Código Everest" in mapa.columns:
                         mapa["Código Everest"] = mapa["Código Everest"].astype(str).str.extract(r"(\d+)")
-                        cmp = cmp.merge(mapa[["Código Everest","Loja","Grupo"]].drop_duplicates(),
-                                        on="Código Everest", how="left")
+                        cmp = cmp.merge(
+                            mapa[["Código Everest","Loja","Grupo"]].drop_duplicates(),
+                            on="Código Everest", how="left"
+                        )
 
-                    # fallback LOJA = Fantasia (linhas apenas do Everest)
+                    # fallback LOJA = Fantasia (linhas só do Everest)
                     cmp["Loja"] = cmp["Loja"].astype(str)
                     so_everest = (cmp["_merge"] == "right_only") & (cmp["Loja"].isin(["", "nan"]))
                     cmp.loc[so_everest, "Loja"] = cmp.loc[so_everest, "Fantasia Everest"]
                     cmp["Nao Mapeada?"] = so_everest
 
+                    # diferença
                     cmp["Diferença"] = cmp["Sangria (Colibri/CISS)"] - cmp["Sangria Everest"]
                     if visao == "Diferenças Everest":
                         cmp = cmp[np.isclose(cmp["Diferença"], 0.0) == False]
 
-                    cmp = cmp[["Grupo","Loja","Código Everest","Data",
-                               "Sangria (Colibri/CISS)","Sangria Everest","Diferença","Nao Mapeada?"]
-                             ].sort_values(["Grupo","Loja","Código Everest","Data"])
+                    # ordena/seleciona
+                    cmp = cmp[[
+                        "Grupo","Loja","Código Everest","Data",
+                        "Sangria (Colibri/CISS)","Sangria Everest","Diferença","Nao Mapeada?"
+                    ]].sort_values(["Grupo","Loja","Código Everest","Data"])
 
+                    # total + exibição amigável
                     total = {
                         "Grupo":"TOTAL","Loja":"","Código Everest":"","Data":pd.NaT,
                         "Sangria (Colibri/CISS)": cmp["Sangria (Colibri/CISS)"].sum(),
-                        "Sangria Everest":   cmp["Sangria Everest"].sum(),
-                        "Diferença":         cmp["Diferença"].sum(),
+                        "Sangria Everest":        cmp["Sangria Everest"].sum(),
+                        "Diferença":              cmp["Diferença"].sum(),
                         "Nao Mapeada?": False
                     }
                     df_exibe = pd.concat([pd.DataFrame([total]), cmp], ignore_index=True)
 
-                    # Exibição
                     df_show = df_exibe.copy()
                     df_show["Data"] = pd.to_datetime(df_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
                     for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
@@ -666,63 +664,45 @@ with sub_caixa:
                             if isinstance(v,(int,float)) else v
                         )
 
-                    if "Nao Mapeada?" in df_show.columns and "Loja" in df_show.columns:
-                        # estiliza 'Loja' em vermelho quando não mapeada
-                        view = df_show.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
-                        mask_nm = (
-                            df_show["Nao Mapeada?"].astype(bool)
-                            if "Nao Mapeada?" in df_show.columns
-                            else pd.Series(False, index=df_show.index)
-                        )
-                        def _paint_row(row: pd.Series):
-                            styles = [""] * len(row.index)
-                            try:
-                                if mask_nm.loc[row.name] and "Loja" in row.index:
-                                    idx = list(row.index).index("Loja")
-                                    styles[idx] = "color: red; font-weight: 700"
-                            except Exception:
-                                pass
-                            return styles
-                        st.dataframe(view.style.apply(_paint_row, axis=1), use_container_width=True, height=520)
-                    else:
-                        st.dataframe(df_show.drop(columns=["Nao Mapeada?"], errors="ignore"),
-                                     use_container_width=True, height=520)
+                    st.dataframe(
+                        df_show.drop(columns=["Nao Mapeada?"], errors="ignore"),
+                        use_container_width=True,
+                        height=520
+                    )
 
-                    # Exporta Excel
-                    from io import BytesIO
-                    import pandas as pd
-                    
-                    def exportar_excel_com_slicers(cmp: pd.DataFrame) -> BytesIO:
-                        df = cmp.copy()
-                    
-                        # padroniza nomes
+                    # =============== Exporta Excel (Dados + Tabela + Slicers) ===============
+                    def exportar_excel_com_slicers(cmp_df: pd.DataFrame) -> BytesIO:
+                        df = cmp_df.copy()
+
+                        # padroniza nomes / remove técnico
                         if "Sangria (Sistema)" in df.columns:
                             df = df.rename(columns={"Sangria (Sistema)": "Sangria (Colibri/CISS)"})
-                        if "Nao Mapeada?" in df.columns:
-                            df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
-                    
+                        df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
+
                         # tipos/derivados
                         df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.normalize()
                         df["Ano"]  = df["Data"].dt.year
                         df["Mês"]  = df["Data"].dt.month
-                    
-                        for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
+
+                        for c in ["Sangria (Colibri/CISS)", "Sangria Everest", "Diferença"]:
                             if c in df.columns:
                                 df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
-                    
-                        # ordem (Data 1ª)
-                        ordem = ["Data","Grupo","Loja","Código Everest",
-                                 "Sangria (Colibri/CISS)","Sangria Everest","Diferença",
-                                 "Mês","Ano"]
+
+                        # ordem
+                        ordem = [
+                            "Data","Grupo","Loja","Código Everest",
+                            "Sangria (Colibri/CISS)","Sangria Everest","Diferença",
+                            "Mês","Ano"
+                        ]
                         df = df[[c for c in ordem if c in df.columns]].copy()
-                    
-                        # ---- escrever no Excel + tabela + slicers
+
+                        # escrever
                         buf = BytesIO()
                         with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                             wb = writer.book
                             ws = wb.add_worksheet("Dados")
                             writer.sheets["Dados"] = ws
-                    
+
                             # formatos
                             fmt_header = wb.add_format({"bold": True, "align":"center", "valign":"vcenter",
                                                         "bg_color":"#F2F2F2", "border":1})
@@ -730,12 +710,12 @@ with sub_caixa:
                             fmt_int    = wb.add_format({"border":1, "num_format":"0"})
                             fmt_date   = wb.add_format({"border":1, "num_format":"dd/mm/yyyy"})
                             fmt_money  = wb.add_format({"border":1, "num_format":"R$ #,##0.00"})
-                    
+
                             # cabeçalho
                             for j, col in enumerate(df.columns):
                                 ws.write(0, j, col, fmt_header)
-                    
-                            # linhas
+
+                            # dados
                             for i, row in df.iterrows():
                                 r = i + 1
                                 for j, col in enumerate(df.columns):
@@ -748,18 +728,18 @@ with sub_caixa:
                                         ws.write_number(r, j, float(val), fmt_money)
                                     else:
                                         ws.write(r, j, "" if pd.isna(val) else val, fmt_text)
-                    
-                            nrows = len(df) + 1
-                            ncols = len(df.columns) - 1
-                    
+
+                            last_row = len(df)   # inclui cabeçalho em 0, dados 1..len(df)
+                            last_col = len(df.columns) - 1
+
                             # tabela
-                            ws.add_table(0, 0, nrows, ncols, {
+                            ws.add_table(0, 0, last_row, last_col, {
                                 "name": "tbl_dados",
                                 "style": "TableStyleMedium9",
                                 "columns": [{"header": c} for c in df.columns],
                             })
-                    
-                            # larguras + panes
+
+                            # larguras + freeze
                             col_idx = {c:i for i,c in enumerate(df.columns)}
                             ws.set_column(col_idx["Data"], col_idx["Data"], 12, fmt_date)
                             if "Grupo" in col_idx:  ws.set_column(col_idx["Grupo"], col_idx["Grupo"], 10, fmt_text)
@@ -770,30 +750,31 @@ with sub_caixa:
                             if "Mês" in col_idx:    ws.set_column(col_idx["Mês"],   col_idx["Mês"],   6, fmt_int)
                             if "Ano" in col_idx:    ws.set_column(col_idx["Ano"],   col_idx["Ano"],   8, fmt_int)
                             ws.freeze_panes(1, 0)
-                    
-                            # SLICERS (segmentações) — exigem XlsxWriter >= 3.2.0
+
+                            # SLICERS (XlsxWriter >= 3.2.0)
                             try:
-                                # você pode ajustar as células destino e tamanhos
                                 wb.add_slicer({"table": "tbl_dados", "column": "Ano",   "cell": "L1"})
                                 wb.add_slicer({"table": "tbl_dados", "column": "Mês",   "cell": "L6"})
-                                wb.add_slicer({"table": "tbl_dados", "column": "Grupo", "cell": "N1", "width": 180, "height": 180})
+                                wb.add_slicer({"table": "tbl_dados", "column": "Grupo", "cell": "N1",  "width": 180, "height": 180})
                                 wb.add_slicer({"table": "tbl_dados", "column": "Loja",  "cell": "N10", "width": 260, "height": 300})
                             except Exception as e:
-                                # se não aparecerem, é versão do XlsxWriter/Excel – avise no app
-                                import streamlit as st
                                 st.warning(
                                     "As segmentações do Excel exigem **XlsxWriter ≥ 3.2.0** e Excel recente. "
                                     f"Não foi possível criar os slicers automaticamente ({type(e).__name__})."
                                 )
-                    
+
                         buf.seek(0)
                         return buf
-                        arquivo = exportar_excel_com_slicers(cmp)
-                            st.download_button(
-                                label="⬇️ Baixar Excel",
-                                data=arquivo,
-                                file_name="Sangria_Controle.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                key="dl_sangria_controle_excel"
-                            )
 
+                    # --- botão de download (fora da função) ---
+                    if not cmp.empty:
+                        arquivo = exportar_excel_com_slicers(cmp)
+                        st.download_button(
+                            label="⬇️ Baixar Excel",
+                            data=arquivo,
+                            file_name="Sangria_Controle.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_sangria_controle_excel"   # chave única para evitar duplicidade
+                        )
+                    else:
+                        st.info("Sem dados para exportar.")

@@ -568,7 +568,7 @@ with sub_caixa:
                 mask_dep_sys = eh_deposito_mask(base)
                 
                
-                with st.expander("🔎 Ver depósitos removidos (Sistema)"):
+                with st.expander("🔎 Ver depósitos removidos (Colibri/CISS)"):
                     audit = base.loc[mask_dep_sys, :].copy()
                     if col_valor in audit.columns:
                         audit[col_valor] = audit[col_valor].map(brl)

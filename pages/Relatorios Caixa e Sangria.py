@@ -562,16 +562,16 @@ with sub_caixa:
                 qtd_dep_sys  = int(mask_dep_sys.sum())
                 vlr_dep_sys  = base.loc[mask_dep_sys, col_valor].sum()
 
-                #if qtd_dep_sys:
-                #    st.markdown(
-                #        f"""
-#<div style="background:#fff3cd; border-left:6px solid #ffecb5; padding:.6rem .9rem; border-radius:6px; font-size:14px;">
-#<strong>Regra aplicada (Controle de Sangria):</strong> depósitos <u>foram EXCLUÍDOS</u> do lado <b>Sistema</b> desta comparativa.<br>
-#Removidas <b>{qtd_dep_sys}</b> linha(s) | Total excluído: <b>{brl(vlr_dep_sys)}</b>.
-#</div>
-#""",
-#                        unsafe_allow_html=True
-#                    )
+                if qtd_dep_sys:
+                    st.markdown(
+                        f"""
+<div style="background:#fff3cd; border-left:6px solid #ffecb5; padding:.6rem .9rem; border-radius:6px; font-size:14px;">
+<strong>Regra aplicada (Controle de Sangria):</strong> depósitos <u>foram EXCLUÍDOS</u> do lado <b>Sistema</b> desta comparativa.<br>
+Removidas <b>{qtd_dep_sys}</b> linha(s) | Total excluído: <b>{brl(vlr_dep_sys)}</b>.
+</div>
+""",
+                        unsafe_allow_html=True
+                    )
                     with st.expander("🔎 Ver depósitos removidos (Sistema)"):
                         audit = base.loc[mask_dep_sys, :].copy()
                         if col_valor in audit.columns:

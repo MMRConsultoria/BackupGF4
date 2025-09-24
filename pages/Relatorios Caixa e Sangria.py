@@ -580,7 +580,7 @@ with sub_caixa:
                 df_sys = (
                     base.groupby(["Código Everest","Data"], as_index=False)[col_valor]
                         .sum()
-                        .rename(columns={col_valor:"Sangria (Sistema)"})
+                        .rename(columns={col_valor:"Sangria (Colibri/CISS)"})
                 )
 
                 # --- Everest ---
@@ -623,7 +623,7 @@ with sub_caixa:
                     )
 
                     cmp = df_sys.merge(de_agg, on=["Código Everest","Data"], how="outer", indicator=True)
-                    cmp["Sangria (Sistema)"] = cmp["Sangria (Sistema)"].fillna(0.0)
+                    cmp["Sangria (Colibri/CISS)"] = cmp["Sangria (Colibri/CISS)"].fillna(0.0)
                     cmp["Sangria Everest"]   = cmp["Sangria Everest"].fillna(0.0)
 
                     # mapeamento Loja/Grupo
@@ -640,17 +640,17 @@ with sub_caixa:
                     cmp.loc[so_everest, "Loja"] = cmp.loc[so_everest, "Fantasia Everest"]
                     cmp["Nao Mapeada?"] = so_everest
 
-                    cmp["Diferença"] = cmp["Sangria (Sistema)"] - cmp["Sangria Everest"]
+                    cmp["Diferença"] = cmp["Sangria (Colibri/CISS)"] - cmp["Sangria Everest"]
                     if visao == "Diferenças Everest":
                         cmp = cmp[np.isclose(cmp["Diferença"], 0.0) == False]
 
                     cmp = cmp[["Grupo","Loja","Código Everest","Data",
-                               "Sangria (Sistema)","Sangria Everest","Diferença","Nao Mapeada?"]
+                               "Sangria (Colibri/CISS)","Sangria Everest","Diferença","Nao Mapeada?"]
                              ].sort_values(["Grupo","Loja","Código Everest","Data"])
 
                     total = {
                         "Grupo":"TOTAL","Loja":"","Código Everest":"","Data":pd.NaT,
-                        "Sangria (Sistema)": cmp["Sangria (Sistema)"].sum(),
+                        "Sangria (Colibri/CISS)": cmp["Sangria (Colibri/CISS)"].sum(),
                         "Sangria Everest":   cmp["Sangria Everest"].sum(),
                         "Diferença":         cmp["Diferença"].sum(),
                         "Nao Mapeada?": False
@@ -660,7 +660,7 @@ with sub_caixa:
                     # Exibição
                     df_show = df_exibe.copy()
                     df_show["Data"] = pd.to_datetime(df_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
-                    for c in ["Sangria (Sistema)","Sangria Everest","Diferença"]:
+                    for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
                         df_show[c] = df_show[c].apply(
                             lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X",".")
                             if isinstance(v,(int,float)) else v
@@ -708,15 +708,15 @@ with sub_caixa:
                             ws.write(0, j, name, header)
                             width, fmt = 18, text
                             if name.lower() == "data": width, fmt = 12, date_f
-                            if name in ["Sangria (Sistema)", "Sangria Everest", "Diferença"]: width, fmt = 18, money
+                            if name in ["Sangria (Colibri/CISS)", "Sangria Everest", "Diferença"]: width, fmt = 18, money
                             if "loja"  in name.lower(): width = 28
                             if "grupo" in name.lower(): width = 22
                             ws.set_column(j, j, width, fmt)
 
                         # destaca TOTAL (linha 1)
                         ws.set_row(1, None, tot)
-                        if pd.notna(df_exportar.iloc[0].get("Sangria (Sistema)", None)):
-                            ws.write_number(1, list(df_exportar.columns).index("Sangria (Sistema)"), float(df_exportar.iloc[0]["Sangria (Sistema)"]), totm)
+                        if pd.notna(df_exportar.iloc[0].get("Sangria (Colibri/CISS)", None)):
+                            ws.write_number(1, list(df_exportar.columns).index("Sangria (Colibri/CISS)"), float(df_exportar.iloc[0]["Sangria (Colibri/CISS)"]), totm)
                         if pd.notna(df_exportar.iloc[0].get("Sangria Everest", None)):
                             ws.write_number(1, list(df_exportar.columns).index("Sangria Everest"), float(df_exportar.iloc[0]["Sangria Everest"]), totm)
                         if pd.notna(df_exportar.iloc[0].get("Diferença", None)):

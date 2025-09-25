@@ -517,8 +517,8 @@ with sub_caixa:
 
         # Filtros
         # Filtros
-        c1, c2, c3, c4, c5 = st.columns([1.2, 1.2, 1.6, 1.6, 1.2, 1.2])
-        with c1:
+        c1, c2, c3, c4, c5 = st.columns([1.2, 1.2, 1.2, 1.2, 1.2])
+        with c2:
             # tenta pegar grupos do df_sangria; se não houver, usa df_empresa
             try:
                 grupos_df = sorted(df.get("Grupo", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist())
@@ -532,7 +532,7 @@ with sub_caixa:
             opcoes_grupo = sorted({*grupos_df, *grupos_emp})
             grupos_sel = st.multiselect("Grupos", options=opcoes_grupo, default=[], key="caixa_grupos_cmp")
 
-        with c2:
+        with c1:
             dmin = pd.to_datetime(df["Data"].min(), errors="coerce")
             dmax = pd.to_datetime(df["Data"].max(), errors="coerce")
             today = pd.Timestamp.today().normalize()

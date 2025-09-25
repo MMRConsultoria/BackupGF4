@@ -77,31 +77,46 @@ with st.spinner("⏳ Carregando dados..."):
         return s
     
     def eh_deposito_mask(df, cols_texto=None):
-        """
-        Retorna uma Series booleana marcando linhas de depósito.
-        Critérios por texto em colunas comuns (ajuste a lista se quiser).
-        """
+        import re
+        import pandas as pd
+    
         if cols_texto is None:
             cols_texto = [
-                "Descrição Agrupada", "Descrição", "Historico", "Histórico",
-                "Categoria", "Obs", "Observação", "Tipo", "Tipo Movimento"
+                "Descrição Agrupada","Descrição","Historico","Histórico",
+                "Categoria","Obs","Observação","Tipo","Tipo Movimento"
             ]
+    
+        # mantém somente colunas existentes
         cols_texto = [c for c in cols_texto if c in df.columns]
         if not cols_texto:
+            # nenhuma coluna de texto -> ninguém é depósito
             return pd.Series(False, index=df.index)
     
-        txt = df[cols_texto].astype(str).agg(" ".join, axis=1).map(_norm_txt)
+        # junta textos de forma segura e normaliza
+        def _norm_txt(s: str) -> str:
+            s = str(s or "").strip().lower()
+            import unicodedata
+            return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("utf-8")
+    
+        # Series com o texto combinado por linha
+        txt = (
+            df[cols_texto]
+            .astype(str)                # garante string
+            .fillna("")                 # zera nulos
+            .agg(" ".join, axis=1)      # junta numa só string por linha
+            .map(_norm_txt)             # normaliza
+        )
     
         padrao = r"""
-            \bdeposito\b        |   # 'deposito'/'depósito'
-            \bdepsito\b         |   # variações sem acento
-            \bdep\b             |   # abreviação comum
-            credito\s+em\s+conta|
-            transf(erencia)?\s*(p/?\s*banco|banco) |
-            envio\s*para\s*banco|
-            remessa\s* banco
+            \bdeposito\b | \bdepsito\b | \bdep\b |
+            credito\s+em\s+conta | envio\s*para\s*banco |
+            transf(erencia)?\s*(p/?\s*banco|banco)
         """
-        return txt.str.contains(padrao, flags=re.IGNORECASE | re.VERBOSE, regex=True, na=False)
+        rx = re.compile(padrao, re.IGNORECASE | re.VERBOSE)
+    
+        # evita usar .str.contains; usa search do regex diretamente
+        return txt.apply(lambda s: bool(rx.search(s)))
+
     
     def brl(v):
         try:

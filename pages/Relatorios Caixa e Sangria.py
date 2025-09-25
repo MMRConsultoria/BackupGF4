@@ -572,8 +572,7 @@ with sub_caixa:
         df_fil = df[(df["Data"].dt.date >= dt_inicio) & (df["Data"].dt.date <= dt_fim)].copy()
         if lojas_sel:
             df_fil = df_fil[df_fil["Loja"].astype(str).isin(lojas_sel)]
-        if descrs_sel:
-            df_fil = df_fil[df_fil["Descrição Agrupada"].astype(str).isin(descrs_sel)]
+       
         # 🔎 opcional: só funciona se "Grupo" existir na aba Sangria
         if grupos_sel and "Grupo" in df_fil.columns:
             df_fil = df_fil[df_fil["Grupo"].astype(str).isin(grupos_sel)]

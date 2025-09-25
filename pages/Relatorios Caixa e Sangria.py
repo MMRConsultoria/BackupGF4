@@ -517,7 +517,7 @@ with sub_caixa:
 
         # Filtros
         # Filtros
-        c1, c2, c3, c5, c6 = st.columns([1.2, 1.2, 1.6, 1.6, 1.2, 1.2])
+        c1, c2, c3, c4, c5 = st.columns([1.2, 1.2, 1.6, 1.6, 1.2, 1.2])
         with c2:
             # tenta pegar grupos do df_sangria; se não houver, usa df_empresa
             try:
@@ -546,13 +546,13 @@ with sub_caixa:
                 key="caixa_periodo_cmp",
             )
         
-        with c3:
+        with c2:
             lojas = sorted(df.get("Loja", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
             lojas_sel = st.multiselect("Lojas", options=lojas, default=[], key="caixa_lojas_cmp")
         
        
         
-        with c5:
+        with c3:
             visao = st.selectbox(
                 "Visão do Relatório",
                 options=["Comparativa Everest"],
@@ -560,7 +560,7 @@ with sub_caixa:
                 key="caixa_visao_cmp",
             )
         
-        with c6:
+        with c4:
             # 🔎 NOVO filtro por diferença (atua depois que 'cmp' é calculado)
             filtro_dif = st.selectbox(
                 "Filtro por Diferença",

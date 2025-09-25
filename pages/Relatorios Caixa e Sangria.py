@@ -681,8 +681,7 @@ with sub_caixa:
                                      use_container_width=True, height=520)
 
                     # ========= EXPORTAÇÃO (com slicers quando possível) =========
-                    # ========= EXPORTAÇÃO (com template de segmentação) =========
-                    # ======= EXPORTAÇÃO COM SLICERS (xlsxwriter >= 3.2.0) =======
+                    # ======= EXPORTAÇÃO COM SLICERS (Excel Desktop + XlsxWriter >= 3.2.0) =======
                     from io import BytesIO
                     import zipfile
                     import pandas as pd
@@ -690,34 +689,34 @@ with sub_caixa:
                     
                     def _preparar_df_export(cmp: pd.DataFrame) -> pd.DataFrame:
                         df = cmp.copy()
-                    
-                        # limpar e padronizar
                         df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
                         if "Sangria (Sistema)" in df.columns:
                             df = df.rename(columns={"Sangria (Sistema)": "Sangria (Colibri/CISS)"})
                     
-                        # datas/derivados
                         df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.normalize()
                         df["Ano"]  = df["Data"].dt.year
                         df["Mês"]  = df["Data"].dt.month
                     
-                        # numéricos
                         for c in ["Sangria (Colibri/CISS)", "Sangria Everest", "Diferença"]:
                             if c in df.columns:
                                 df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
                     
-                        # ordem exigida
-                        ordem = [
-                            "Data","Grupo","Loja","Código Everest",
-                            "Sangria (Colibri/CISS)","Sangria Everest","Diferença",
-                            "Mês","Ano"
-                        ]
+                        ordem = ["Data","Grupo","Loja","Código Everest",
+                                 "Sangria (Colibri/CISS)","Sangria Everest","Diferença",
+                                 "Mês","Ano"]
                         df = df[[c for c in ordem if c in df.columns]].copy()
                         return df
                     
                     
                     def exportar_excel_com_slicers(cmp: pd.DataFrame) -> BytesIO:
                         df = _preparar_df_export(cmp)
+                    
+                        # 1) Headers da Tabela: padronize "Mês" -> "Mes" (sem acento) para o slicer casar 100%
+                        headers_tbl = list(df.columns)
+                        if "Mês" in headers_tbl:
+                            idx_mes = headers_tbl.index("Mês")
+                            headers_tbl[idx_mes] = "Mes"   # a Tabela terá "Mes"
+                        slicer_col_mes = "Mes" if "Mes" in headers_tbl else "Mês"
                     
                         buf = BytesIO()
                         with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
@@ -733,11 +732,11 @@ with sub_caixa:
                             fmt_date   = wb.add_format({"border":1, "num_format":"dd/mm/yyyy"})
                             fmt_money  = wb.add_format({"border":1, "num_format":"R$ #,##0.00"})
                     
-                            # cabeçalho
-                            for j, col in enumerate(df.columns):
+                            # cabeçalho (igual ao da Tabela)
+                            for j, col in enumerate(headers_tbl):
                                 ws.write(0, j, col, fmt_header)
                     
-                            # linhas (mantém tipos)
+                            # linhas (usam df original — a troca do nome foi só no header/tabela)
                             for i, row in df.iterrows():
                                 r = i + 1
                                 for j, col in enumerate(df.columns):
@@ -751,61 +750,54 @@ with sub_caixa:
                                     else:
                                         ws.write(r, j, "" if pd.isna(val) else val, fmt_text)
                     
-                            last_row = len(df)                     # header = 0
+                            last_row = len(df)               # 0 é header
                             last_col = len(df.columns) - 1
                     
-                            # tabela
+                            # 2) Cria a Tabela com headers_tbl (sem acento em "Mes")
                             ws.add_table(0, 0, last_row, last_col, {
                                 "name": "tbl_dados",
                                 "style": "TableStyleMedium9",
-                                "columns": [{"header": c} for c in df.columns],
+                                "columns": [{"header": h} for h in headers_tbl],
                             })
                     
-                            # larguras + freeze
-                            col_idx = {c:i for i,c in enumerate(df.columns)}
+                            # larguras
+                            col_idx = {c:i for i,c in enumerate(headers_tbl)}
                             if "Data" in col_idx:               ws.set_column(col_idx["Data"], col_idx["Data"], 12, fmt_date)
                             if "Grupo" in col_idx:              ws.set_column(col_idx["Grupo"], col_idx["Grupo"], 10, fmt_text)
                             if "Loja" in col_idx:               ws.set_column(col_idx["Loja"],  col_idx["Loja"],  28, fmt_text)
                             if "Código Everest" in col_idx:     ws.set_column(col_idx["Código Everest"], col_idx["Código Everest"], 14, fmt_int)
                             for c in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença"):
                                 if c in col_idx:                ws.set_column(col_idx[c], col_idx[c], 18, fmt_money)
-                            if "Mês" in col_idx:                ws.set_column(col_idx["Mês"],   col_idx["Mês"],   6, fmt_int)
+                            if slicer_col_mes in col_idx:       ws.set_column(col_idx[slicer_col_mes], col_idx[slicer_col_mes], 6, fmt_int)
                             if "Ano" in col_idx:                ws.set_column(col_idx["Ano"],   col_idx["Ano"],   8, fmt_int)
                             ws.freeze_panes(1, 0)
                     
-                            # ===== SLICERS (requer xlsxwriter >= 3.2.0 e Excel Desktop) =====
+                            # 3) Slicers — tente SEM depender de hasattr()
                             try:
                                 import xlsxwriter as xw
                                 ver_tuple = tuple(int(p) for p in xw.__version__.split(".")[:3])
                                 st.caption(f"XlsxWriter detectado: {xw.__version__}")
-                                if ver_tuple >= (3, 2, 0) and hasattr(wb, "add_slicer"):
-                                    # Ano
-                                    wb.add_slicer({"table": "tbl_dados", "column": "Ano",   "cell": "L2",  "width": 130, "height": 100})
-                                    # Mês (tenta com acento; se falhar, tenta 'Mes')
-                                    try:
-                                        wb.add_slicer({"table": "tbl_dados", "column": "Mês", "cell": "L8",  "width": 130, "height": 130})
-                                    except Exception:
-                                        # renomeia o cabeçalho na tabela só para o arquivo exportado
-                                        # (mantém os dados/posições)
-                                        idx_mes = df.columns.get_loc("Mês")
-                                        ws.write(0, idx_mes, "Mes", fmt_header)
-                                        wb.add_slicer({"table": "tbl_dados", "column": "Mes", "cell": "L8",  "width": 130, "height": 130})
-                                    # Grupo e Loja
-                                    wb.add_slicer({"table": "tbl_dados", "column": "Grupo", "cell": "N2",  "width": 180, "height": 180})
-                                    wb.add_slicer({"table": "tbl_dados", "column": "Loja",  "cell": "N12", "width": 260, "height": 320})
+                                if ver_tuple >= (3, 2, 0):
+                                    # tente criar; se a classe não tiver o método, cai no AttributeError
+                                    wb.add_slicer({"table": "tbl_dados", "column": "Ano",           "cell": "L2",  "width": 130, "height": 100})
+                                    wb.add_slicer({"table": "tbl_dados", "column": slicer_col_mes,  "cell": "L8",  "width": 130, "height": 130})
+                                    wb.add_slicer({"table": "tbl_dados", "column": "Grupo",         "cell": "N2",  "width": 180, "height": 180})
+                                    wb.add_slicer({"table": "tbl_dados", "column": "Loja",          "cell": "N12", "width": 260, "height": 320})
                                 else:
-                                    st.warning("XlsxWriter < 3.2.0 no runtime – slicers não suportados; exportei sem segmentações.")
+                                    st.warning("XlsxWriter < 3.2.0 no runtime – exportado SEM segmentações.")
+                            except AttributeError:
+                                st.warning("O Workbook do runtime não expõe 'add_slicer' (possível conflito de versões). Exportado SEM segmentações.")
                             except Exception as e:
-                                st.warning(f"Falha ao criar segmentações (xlsxwriter): {type(e).__name__}: {e}")
+                                st.warning(f"Falha ao criar segmentações: {type(e).__name__}: {e}")
                     
-                        # checagem rápida: o .xlsx final tem slicers?
+                        # 4) Verificação: o .xlsx tem slicers?
                         buf.seek(0)
                         try:
                             with zipfile.ZipFile(buf, "r") as z:
                                 tem_slicers = any(n.startswith("xl/slicerCaches/") for n in z.namelist())
                             if not tem_slicers:
-                                st.warning("O arquivo gerado não contém slicers. "
-                                           "Verifique se o Excel Desktop está atualizado e se o xlsxwriter do runtime é ≥ 3.2.0.")
+                                st.warning("O arquivo gerado não contém slicers. Abra no **Excel Desktop**. "
+                                           "Se persistir, há conflito do XlsxWriter usado pelo pandas/engine.")
                         except Exception:
                             pass
                     

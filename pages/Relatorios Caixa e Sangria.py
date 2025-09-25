@@ -517,7 +517,7 @@ with sub_caixa:
 
         # Filtros
         # Filtros
-        c1, c2, c3, c4, c5, c6 = st.columns([1.2, 1.2, 1.6, 1.6, 1.2, 1.2])
+        c1, c2, c3, c5, c6 = st.columns([1.2, 1.2, 1.6, 1.6, 1.2, 1.2])
         with c2:
             # tenta pegar grupos do df_sangria; se não houver, usa df_empresa
             try:
@@ -550,9 +550,7 @@ with sub_caixa:
             lojas = sorted(df.get("Loja", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
             lojas_sel = st.multiselect("Lojas", options=lojas, default=[], key="caixa_lojas_cmp")
         
-        with c4:
-            descrs = sorted(df.get("Descrição Agrupada", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
-            descrs_sel = st.multiselect("Descrição Agrupada", options=descrs, default=[], key="caixa_descr_cmp")
+       
         
         with c5:
             visao = st.selectbox(
@@ -570,15 +568,19 @@ with sub_caixa:
                 index=0,
                 key="caixa_filtro_diferenca",
             )
-       
-
         # aplica filtros
         df_fil = df[(df["Data"].dt.date >= dt_inicio) & (df["Data"].dt.date <= dt_fim)].copy()
         if lojas_sel:
             df_fil = df_fil[df_fil["Loja"].astype(str).isin(lojas_sel)]
         if descrs_sel:
             df_fil = df_fil[df_fil["Descrição Agrupada"].astype(str).isin(descrs_sel)]
+        # 🔎 opcional: só funciona se "Grupo" existir na aba Sangria
+        if grupos_sel and "Grupo" in df_fil.columns:
+            df_fil = df_fil[df_fil["Grupo"].astype(str).isin(grupos_sel)]
 
+
+       
+        
         df_exibe = pd.DataFrame()
 
         # ======= Comparativa =======

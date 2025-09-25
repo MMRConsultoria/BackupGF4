@@ -516,7 +516,9 @@ with sub_caixa:
         df[col_valor] = df[col_valor].map(parse_valor_brl_sheets).astype(float)
 
         # Filtros
-        c1, c2, c3, c4 = st.columns([1.2, 1.2, 1.6, 1.6])
+        # Filtros
+        c1, c2, c3, c4, c5 = st.columns([1.2, 1.2, 1.6, 1.6, 1.2])
+        
         with c1:
             dmin = pd.to_datetime(df["Data"].min(), errors="coerce")
             dmax = pd.to_datetime(df["Data"].max(), errors="coerce")
@@ -530,19 +532,32 @@ with sub_caixa:
                 max_value=(dmax.date() if dmax >= dmin else dmin.date()),
                 key="caixa_periodo_cmp",
             )
+        
         with c2:
             lojas = sorted(df.get("Loja", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
             lojas_sel = st.multiselect("Lojas", options=lojas, default=[], key="caixa_lojas_cmp")
+        
         with c3:
             descrs = sorted(df.get("Descrição Agrupada", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
             descrs_sel = st.multiselect("Descrição Agrupada", options=descrs, default=[], key="caixa_descr_cmp")
+        
         with c4:
             visao = st.selectbox(
                 "Visão do Relatório",
-                options=["Comparativa Everest"],  # foquei na comparativa
+                options=["Comparativa Everest"],
                 index=0,
                 key="caixa_visao_cmp",
             )
+        
+        with c5:
+            # 🔎 NOVO filtro por diferença (atua depois que 'cmp' é calculado)
+            filtro_dif = st.selectbox(
+                "Filtro por Diferença",
+                options=["Todas", "Diferenças", "Sem diferença"],
+                index=0,
+                key="caixa_filtro_diferenca",
+            )
+
 
         # aplica filtros
         df_fil = df[(df["Data"].dt.date >= dt_inicio) & (df["Data"].dt.date <= dt_fim)].copy()
@@ -637,10 +652,33 @@ with sub_caixa:
 
                     cmp["Diferença"] = cmp["Sangria (Colibri/CISS)"] - cmp["Sangria Everest"]
 
+
+                    # 🔎 APLICAÇÃO DO FILTRO "Todas / Diferenças / Sem diferença"
+                    import numpy as np
+                    
+                    # segurança: garante tipo numérico
+                    cmp["Diferença"] = pd.to_numeric(cmp["Diferença"], errors="coerce").fillna(0.0)
+                    
+                    # tolerância para considerar "sem diferença" (centavos, arredondamentos etc.)
+                    TOL = 0.0099
+                    eh_zero = np.isclose(cmp["Diferença"].to_numpy(dtype=float), 0.0, atol=TOL)
+                    
+                    if filtro_dif == "Diferenças":
+                        cmp = cmp[~eh_zero]
+                    elif filtro_dif == "Sem diferença":
+                        cmp = cmp[eh_zero]
+                    # (se "Todas", não faz nada)
+                    
+                    # reordena após filtrar
                     cmp = cmp[["Grupo","Loja","Código Everest","Data",
                                "Sangria (Colibri/CISS)","Sangria Everest","Diferença","Nao Mapeada?"]
                              ].sort_values(["Grupo","Loja","Código Everest","Data"])
+                    if filtro_dif == "Diferenças":
+                        st.caption("Mostrando apenas linhas com diferença (|Diferença| > R$ 0,01).")
+                    elif filtro_dif == "Sem diferença":
+                        st.caption("Mostrando apenas linhas sem diferença (|Diferença| ≤ R$ 0,01).")
 
+                    
                     total = {
                         "Grupo":"TOTAL","Loja":"","Código Everest":"","Data":pd.NaT,
                         "Sangria (Colibri/CISS)": cmp["Sangria (Colibri/CISS)"].sum(),

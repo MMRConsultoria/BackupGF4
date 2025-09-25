@@ -518,8 +518,7 @@ with sub_caixa:
         # Filtros
         # Filtros
         c1, c2, c3, c4, c5, c6 = st.columns([1.2, 1.2, 1.6, 1.6, 1.2, 1.2])
-       
-       with c1:
+        with c1:
             # tenta pegar grupos do df_sangria; se não houver, usa df_empresa
             try:
                 grupos_df = sorted(df.get("Grupo", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist())

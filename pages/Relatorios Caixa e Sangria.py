@@ -517,7 +517,7 @@ with sub_caixa:
 
         # Filtros
         # Filtros
-        c1, c2, c3, c4, c5 = st.columns([1.2, 1.2, 1.6, 1.6, 1.2])
+        c1, c2, c3, c4, c5, c6 = st.columns([1.2, 1.2, 1.6, 1.6, 1.2, 1.2])
         
         with c1:
             dmin = pd.to_datetime(df["Data"].min(), errors="coerce")
@@ -557,7 +557,19 @@ with sub_caixa:
                 index=0,
                 key="caixa_filtro_diferenca",
             )
-
+        with c6:
+            # tenta pegar grupos do df_sangria; se não houver, usa df_empresa
+            try:
+                grupos_df = sorted(df.get("Grupo", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist())
+            except Exception:
+                grupos_df = []
+            try:
+                grupos_emp = sorted(df_empresa.get("Grupo", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist())
+            except Exception:
+                grupos_emp = []
+        
+            opcoes_grupo = sorted({*grupos_df, *grupos_emp})
+            grupos_sel = st.multiselect("Grupos", options=opcoes_grupo, default=[], key="caixa_grupos_cmp")
 
         # aplica filtros
         df_fil = df[(df["Data"].dt.date >= dt_inicio) & (df["Data"].dt.date <= dt_fim)].copy()

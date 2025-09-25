@@ -518,8 +518,21 @@ with sub_caixa:
         # Filtros
         # Filtros
         c1, c2, c3, c4, c5, c6 = st.columns([1.2, 1.2, 1.6, 1.6, 1.2, 1.2])
-        
         with c1:
+            # tenta pegar grupos do df_sangria; se não houver, usa df_empresa
+            try:
+                grupos_df = sorted(df.get("Grupo", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist())
+            except Exception:
+                grupos_df = []
+            try:
+                grupos_emp = sorted(df_empresa.get("Grupo", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist())
+            except Exception:
+                grupos_emp = []
+        
+            opcoes_grupo = sorted({*grupos_df, *grupos_emp})
+            grupos_sel = st.multiselect("Grupos", options=opcoes_grupo, default=[], key="caixa_grupos_cmp")
+
+        with c2:
             dmin = pd.to_datetime(df["Data"].min(), errors="coerce")
             dmax = pd.to_datetime(df["Data"].max(), errors="coerce")
             today = pd.Timestamp.today().normalize()
@@ -533,15 +546,15 @@ with sub_caixa:
                 key="caixa_periodo_cmp",
             )
         
-        with c2:
+        with c3:
             lojas = sorted(df.get("Loja", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
             lojas_sel = st.multiselect("Lojas", options=lojas, default=[], key="caixa_lojas_cmp")
         
-        with c3:
+        with c4:
             descrs = sorted(df.get("Descrição Agrupada", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
             descrs_sel = st.multiselect("Descrição Agrupada", options=descrs, default=[], key="caixa_descr_cmp")
         
-        with c4:
+        with c5:
             visao = st.selectbox(
                 "Visão do Relatório",
                 options=["Comparativa Everest"],
@@ -549,7 +562,7 @@ with sub_caixa:
                 key="caixa_visao_cmp",
             )
         
-        with c5:
+        with c6:
             # 🔎 NOVO filtro por diferença (atua depois que 'cmp' é calculado)
             filtro_dif = st.selectbox(
                 "Filtro por Diferença",
@@ -557,19 +570,7 @@ with sub_caixa:
                 index=0,
                 key="caixa_filtro_diferenca",
             )
-        with c6:
-            # tenta pegar grupos do df_sangria; se não houver, usa df_empresa
-            try:
-                grupos_df = sorted(df.get("Grupo", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist())
-            except Exception:
-                grupos_df = []
-            try:
-                grupos_emp = sorted(df_empresa.get("Grupo", pd.Series([], dtype=str)).dropna().astype(str).unique().tolist())
-            except Exception:
-                grupos_emp = []
-        
-            opcoes_grupo = sorted({*grupos_df, *grupos_emp})
-            grupos_sel = st.multiselect("Grupos", options=opcoes_grupo, default=[], key="caixa_grupos_cmp")
+       
 
         # aplica filtros
         df_fil = df[(df["Data"].dt.date >= dt_inicio) & (df["Data"].dt.date <= dt_fim)].copy()

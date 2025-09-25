@@ -547,9 +547,51 @@ with sub_caixa:
             )
         
         with c3:
-            lojas = sorted(df.get("Loja", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
-            lojas_sel = st.multiselect("Lojas", options=lojas, default=[], key="caixa_lojas_cmp")
+            # --- opções de lojas dependentes do(s) Grupo(s) selecionado(s) ---
+            # base 1: do próprio df_sangria (se existir)
+            lojas_df = (
+                df.get("Loja", pd.Series(dtype=str))
+                  .dropna().astype(str).unique().tolist()
+            )
         
+            # base 2: do cadastro (df_empresa), garantindo mapeamento Grupo-Loja
+            try:
+                mapa_emp = (
+                    df_empresa[["Grupo","Loja"]]
+                    .dropna().astype(str).drop_duplicates()
+                )
+            except Exception:
+                # se não houver df_empresa disponível por algum motivo
+                mapa_emp = pd.DataFrame(columns=["Grupo","Loja"])
+        
+            if grupos_sel:
+                # lojas que pertencem aos grupos selecionados
+                lojas_from_df = []
+                if "Grupo" in df.columns:
+                    lojas_from_df = (
+                        df[df["Grupo"].astype(str).isin(grupos_sel)]
+                          ["Loja"].dropna().astype(str).unique().tolist()
+                    )
+                lojas_from_emp = (
+                    mapa_emp[mapa_emp["Grupo"].isin([str(g) for g in grupos_sel])]
+                            ["Loja"].unique().tolist()
+                )
+                opcoes_lojas = sorted({*lojas_from_df, *lojas_from_emp})
+            else:
+                # sem grupo selecionado: lista completa
+                opcoes_lojas = sorted({*lojas_df, *mapa_emp.get("Loja", pd.Series(dtype=str)).astype(str).unique().tolist()})
+        
+            # preserva seleção anterior, removendo lojas que saíram por causa do filtro de grupo
+            prev_sel = st.session_state.get("caixa_lojas_cmp", [])
+            default_sel = [x for x in prev_sel if x in opcoes_lojas]
+        
+            lojas_sel = st.multiselect(
+                "Lojas",
+                options=opcoes_lojas,
+                default=default_sel,
+                key="caixa_lojas_cmp",
+            )
+
         
         
         with c4:

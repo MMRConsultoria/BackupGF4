@@ -681,166 +681,257 @@ with sub_caixa:
                                      use_container_width=True, height=520)
 
                     # ========= EXPORTAÇÃO (com slicers quando possível) =========
-                    # ======= EXPORTAÇÃO COM SLICERS (Excel Desktop + XlsxWriter >= 3.2.0) =======
-                    # ========= EXPORTAÇÃO VIA TEMPLATE (mantém segmentações) =========
+                   # ========= EXPORTAÇÃO VIA TEMPLATE (preserva slicers sem openpyxl) =========
                     from io import BytesIO
-                    import os, re
+                    import os, re, zipfile
                     import pandas as pd
                     import streamlit as st
-                    from openpyxl import load_workbook
-                    from openpyxl.utils import get_column_letter, column_index_from_string
+                    import xml.etree.ElementTree as ET
                     
-                    TEMPLATE_NOME = "modelo_segmentacao_sangria.xlsx"  # coloque no mesmo diretório do .py
+                    TEMPLATE_NOME = "modelo_segmentacao_sangria.xlsx"   # deixe no mesmo diretório do .py
                     
-                    def _localizar_template(nome: str) -> str | None:
-                        candidatos = [
-                            os.path.join(os.getcwd(), nome),
-                            os.path.join(os.path.dirname(__file__), nome) if "__file__" in globals() else None,
-                            nome,
-                        ]
-                        for p in candidatos:
-                            if p and os.path.exists(p):
-                                return p
-                        return None
+                    NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+                    NS_REL  = "http://schemas.openxmlformats.org/package/2006/relationships"
+                    ET.register_namespace("", NS_MAIN)
+                    ET.register_namespace("r", NS_REL)
                     
-                    def _normalizar_campo_valor(df: pd.DataFrame):
-                        # renomeia caso venha "Sangria (Sistema)" do seu fluxo
-                        if "Sangria (Sistema)" in df.columns and "Sangria (Colibri/CISS)" not in df.columns:
-                            df = df.rename(columns={"Sangria (Sistema)": "Sangria (Colibri/CISS)"})
-                        return df
+                    def _col_letter(idx: int) -> str:
+                        # 0->A, 1->B, ...
+                        s = ""
+                        idx += 1
+                        while idx:
+                            idx, r = divmod(idx-1, 26)
+                            s = chr(65 + r) + s
+                        return s
                     
-                    def _preparar_df_para_template(cmp: pd.DataFrame, headers_template: list[str]) -> pd.DataFrame:
+                    def _find_sheet_and_table_paths(z: zipfile.ZipFile, sheet_name: str, table_name: str):
+                        # 1) workbook -> achar sheet "Dados" e arquivo sheetX.xml
+                        wb_xml = ET.fromstring(z.read("xl/workbook.xml"))
+                        # pega r:id da sheet desejada
+                        r_id = None
+                        for sh in wb_xml.findall(f".//{{{NS_MAIN}}}sheet"):
+                            if sh.get("name") == sheet_name:
+                                r_id = sh.get(f"{{{NS_REL}}}id")
+                                break
+                        if not r_id:
+                            raise RuntimeError(f"Planilha '{sheet_name}' não encontrada no template.")
+                    
+                        # 2) workbook rels -> target do r:id
+                        wb_rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
+                        sheet_target = None
+                        for rel in wb_rels.findall(f".//{{{NS_REL}}}Relationship"):
+                            if rel.get("Id") == r_id:
+                                sheet_target = rel.get("Target")
+                                break
+                        if not sheet_target:
+                            raise RuntimeError("Não foi possível resolver o arquivo da planilha de 'Dados' no template.")
+                    
+                        sheet_path = "xl/" + sheet_target.lstrip("/")
+                        # 3) sheet rels -> tabela(s) referenciadas pela aba
+                        rels_path = sheet_path.replace("worksheets/", "worksheets/_rels/") + ".rels"
+                        if rels_path not in z.namelist():
+                            raise RuntimeError("A planilha 'Dados' não possui relacionamentos para Tabelas.")
+                    
+                        sheet_rels = ET.fromstring(z.read(rels_path))
+                        table_paths = []
+                        for rel in sheet_rels.findall(f".//{{{NS_REL}}}Relationship"):
+                            if rel.get("Type", "").endswith("/table"):
+                                table_paths.append("xl/" + rel.get("Target").lstrip("/").replace("../", ""))
+                    
+                        # 4) achar qual table file tem displayName == tbl_dados
+                        table_path = None
+                        for p in table_paths:
+                            tbl_xml = ET.fromstring(z.read(p))
+                            if tbl_xml.tag.endswith("table") and tbl_xml.get("displayName") == table_name:
+                                table_path = p
+                                break
+                        if not table_path:
+                            raise RuntimeError(f"Tabela '{table_name}' não encontrada na planilha '{sheet_name}'.")
+                    
+                        return sheet_path, table_path
+                    
+                    def _headers_from_table(z: zipfile.ZipFile, table_path: str) -> list[str]:
+                        tbl = ET.fromstring(z.read(table_path))
+                        cols = []
+                        for col in tbl.findall(f".//{{{NS_MAIN}}}tableColumn"):
+                            cols.append(col.get("name"))
+                        return cols
+                    
+                    def _prep_df(cmp: pd.DataFrame, headers: list[str]) -> pd.DataFrame:
                         df = cmp.copy()
                         df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
-                        df = _normalizar_campo_valor(df)
+                        if "Sangria (Sistema)" in df.columns and "Sangria (Colibri/CISS)" not in df.columns:
+                            df = df.rename(columns={"Sangria (Sistema)": "Sangria (Colibri/CISS)"})
                     
-                        # Base temporal
                         df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.normalize()
                         df["Ano"]  = df["Data"].dt.year
                         df["Mês"]  = df["Data"].dt.month
                     
-                        # Numéricos
-                        for c in ["Sangria (Colibri/CISS)", "Sangria Everest", "Diferença"]:
+                        for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
                             if c in df.columns:
                                 df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
                     
-                        # Ajuste do cabeçalho "Mês" x "Mes" conforme o template
-                        headers = headers_template[:]  # cópia
+                        # alinhar "Mês"/"Mes" com o template
                         if "Mes" in headers and "Mês" in df.columns:
-                            df = df.rename(columns={"Mês": "Mes"})
-                        elif "Mês" in headers and "Mes" in df.columns:
-                            df = df.rename(columns={"Mes": "Mês"})
+                            df = df.rename(columns={"Mês":"Mes"})
+                        if "Mês" in headers and "Mes" in df.columns:
+                            df = df.rename(columns={"Mes":"Mês"})
                     
-                        # Reordena e mantém só o que o template pede
+                        # manter somente e na ordem dos headers da tabela
                         keep = [h for h in headers if h in df.columns]
-                        df = df[keep].copy()
-                        return df
+                        return df[keep].copy()
                     
-                    def _ler_headers_tabela(ws, nome_tabela: str) -> list[str]:
-                        tbl = ws.tables.get(nome_tabela, None)
-                        if tbl is None:
-                            raise RuntimeError(f"O template não tem a Tabela '{nome_tabela}' na planilha.")
-                        ref_ini, ref_fim = tbl.ref.split(":")
-                        m = re.match(r"([A-Z]+)(\d+)", ref_ini)
+                    def exportar_via_template_zip(cmp: pd.DataFrame, template_path: str,
+                                                  sheet_name="Dados", table_name="tbl_dados") -> BytesIO:
+                        with open(template_path, "rb") as f:
+                            tpl_bytes = f.read()
+                    
+                        zin  = zipfile.ZipFile(BytesIO(tpl_bytes), "r")
+                        zout_buffer = BytesIO()
+                        zout = zipfile.ZipFile(zout_buffer, "w", zipfile.ZIP_DEFLATED)
+                    
+                        # localizar arquivos
+                        sheet_path, table_path = _find_sheet_and_table_paths(zin, sheet_name, table_name)
+                        headers = _headers_from_table(zin, table_path)
+                        df = _prep_df(cmp, headers)
+                    
+                        # 1) atualizar sheet xml (linhas da tabela a partir da linha do cabeçalho)
+                        sheet_xml = ET.fromstring(zin.read(sheet_path))
+                        # <dimension> para A1:... (opcional)
+                        dim = sheet_xml.find(f".//{{{NS_MAIN}}}dimension")
+                        # <sheetData>
+                        sheetData = sheet_xml.find(f".//{{{NS_MAIN}}}sheetData")
+                        if sheetData is None:
+                            sheetData = ET.SubElement(sheet_xml, f"{{{NS_MAIN}}}sheetData")
+                    
+                        # descobrir linha do header da tabela olhando para o ref atual da tabela
+                        tbl_xml = ET.fromstring(zin.read(table_path))
+                        ref = tbl_xml.get("ref")  # ex: A1:I2
+                        m = re.match(r"([A-Z]+)(\d+):([A-Z]+)(\d+)", ref)
                         col_ini_letters, row_ini = m.group(1), int(m.group(2))
-                        col_ini = column_index_from_string(col_ini_letters)
                     
-                        # Lê a linha do cabeçalho da tabela (row_ini)
-                        m2 = re.match(r"[A-Z]+(\d+)", ref_fim)
-                        col_fim_letters = re.match(r"([A-Z]+)\d+", ref_fim).group(1)
-                        col_fim = column_index_from_string(col_fim_letters)
+                        # reconstruir sheetData mantendo a linha do cabeçalho (row_ini)
+                        # pega a row do header existente, se houver; senão cria uma.
+                        new_sheetData = ET.Element(f"{{{NS_MAIN}}}sheetData")
+                        header_row = None
+                        for r in sheetData.findall(f"./{{{NS_MAIN}}}row"):
+                            if int(r.get("r", "0")) == row_ini:
+                                header_row = r
+                                break
+                        if header_row is None:
+                            header_row = ET.Element(f"{{{NS_MAIN}}}row", {"r": str(row_ini)})
                     
-                        headers = []
-                        for j in range(col_ini, col_fim + 1):
-                            headers.append(ws.cell(row=row_ini, column=j).value)
-                        return headers
+                        # garante que os textos do cabeçalho batem com os headers do template
+                        # escreve valores como inlineStr
+                        for j, h in enumerate(headers):
+                            col = _col_letter(j)  # 0->A
+                            cell_ref = f"{col}{row_ini}"
+                            # checa se célula existe
+                            cell = None
+                            for c in header_row.findall(f"./{{{NS_MAIN}}}c"):
+                                if c.get("r") == cell_ref:
+                                    cell = c; break
+                            if cell is None:
+                                cell = ET.SubElement(header_row, f"{{{NS_MAIN}}}c", {"r": cell_ref, "t": "inlineStr"})
+                            else:
+                                cell.clear(); cell.attrib.update({"r": cell_ref, "t": "inlineStr"})
+                            is_ = ET.SubElement(cell, f"{{{NS_MAIN}}}is")
+                            t_  = ET.SubElement(is_,  f"{{{NS_MAIN}}}t")
+                            t_.text = h
                     
-                    def exportar_via_template(cmp: pd.DataFrame, caminho_template: str,
-                                              planilha="Dados", nome_tabela="tbl_dados") -> BytesIO:
-                        wb = load_workbook(caminho_template)
-                        if planilha not in wb.sheetnames:
-                            raise RuntimeError(f"O template não possui a planilha '{planilha}'.")
-                        ws = wb[planilha]
+                        new_sheetData.append(header_row)
                     
-                        # Lê headers REAIS da tabela no template
-                        tbl = ws.tables.get(nome_tabela, None)
-                        if tbl is None:
-                            raise RuntimeError(f"O template não tem a Tabela '{nome_tabela}' na planilha '{planilha}'.")
-                        headers_template = _ler_headers_tabela(ws, nome_tabela)
-                    
-                        # Descobre início da tabela
-                        ref_ini, ref_fim = tbl.ref.split(":")
-                        m = re.match(r"([A-Z]+)(\d+)", ref_ini)
-                        col_ini_letters, row_ini = m.group(1), int(m.group(2))
-                        col_ini = column_index_from_string(col_ini_letters)
-                    
-                        # Prepara DF nos headers do template
-                        df = _preparar_df_para_template(cmp, headers_template)
-                    
-                        # 1) sobrescreve cabeçalhos (garante match exato com tabela/slicers)
-                        for j, col in enumerate(headers_template, start=col_ini):
-                            ws.cell(row=row_ini, column=j, value=col)
-                    
-                        # 2) apaga linhas antigas abaixo do header (mantém só o cabeçalho)
-                        old_end_row = int(re.match(r"[A-Z]+(\d+)", ref_fim).group(1))
-                        if old_end_row > row_ini:
-                            ws.delete_rows(row_ini + 1, old_end_row - row_ini)
-                    
-                        # 3) escreve dados
-                        date_fmt  = "dd/mm/yyyy"
-                        money_fmt = '"R$" #,##0.00'
-                        int_fmt   = "0"
-                    
-                        for i, (_, row) in enumerate(df.iterrows(), start=row_ini + 1):
-                            for j, col in enumerate(headers_template, start=col_ini):
-                                cell = ws.cell(row=i, column=j)
-                                val  = row[col] if col in row.index else None
-                                if col == "Data" and pd.notna(val):
-                                    cell.value = pd.to_datetime(val).date()
-                                    cell.number_format = date_fmt
-                                elif col in ("Ano", "Mês", "Mes", "Código Everest"):
-                                    cell.value = int(val) if pd.notna(val) else None
-                                    cell.number_format = int_fmt
-                                elif col in ("Sangria (Colibri/CISS)", "Sangria Everest", "Diferença"):
-                                    cell.value = float(val) if pd.notna(val) else None
-                                    cell.number_format = money_fmt
+                        # agora dados: linhas a partir de row_ini+1
+                        for i, (_, row) in enumerate(df.iterrows(), start=row_ini+1):
+                            r_el = ET.Element(f"{{{NS_MAIN}}}row", {"r": str(i)})
+                            for j, h in enumerate(headers):
+                                col = _col_letter(j)
+                                cell_ref = f"{col}{i}"
+                                val = row[h]
+                                c = ET.SubElement(r_el, f"{{{NS_MAIN}}}c", {"r": cell_ref})
+                                if pd.isna(val):
+                                    continue
+                                if h in ("Ano", "Mês", "Mes", "Código Everest", "Sangria (Colibri/CISS)", "Sangria Everest", "Diferença"):
+                                    # numérico
+                                    v = ET.SubElement(c, f"{{{NS_MAIN}}}v")
+                                    v.text = str(float(val)) if isinstance(val, float) else str(int(val))
+                                elif h == "Data":
+                                    # texto (dd/mm/aaaa) para não depender de estilos
+                                    c.set("t", "inlineStr")
+                                    is_ = ET.SubElement(c, f"{{{NS_MAIN}}}is")
+                                    t_  = ET.SubElement(is_, f"{{{NS_MAIN}}}t")
+                                    try:
+                                        t_.text = pd.to_datetime(val).strftime("%d/%m/%Y")
+                                    except Exception:
+                                        t_.text = str(val)
                                 else:
-                                    cell.value = "" if pd.isna(val) else val
+                                    # texto genérico
+                                    c.set("t", "inlineStr")
+                                    is_ = ET.SubElement(c, f"{{{NS_MAIN}}}is")
+                                    t_  = ET.SubElement(is_, f"{{{NS_MAIN}}}t")
+                                    t_.text = "" if pd.isna(val) else str(val)
+                            new_sheetData.append(r_el)
                     
-                        # 4) atualiza o range da tabela para cobrir todas as linhas/colunas
-                        end_row = row_ini + len(df)
-                        end_col = col_ini + len(headers_template) - 1
-                        new_ref = f"{get_column_letter(col_ini)}{row_ini}:{get_column_letter(end_col)}{end_row}"
-                        tbl.ref = new_ref
+                        # troca o sheetData antigo pelo novo
+                        parent = sheet_xml
+                        parent.remove(sheetData)
+                        parent.append(new_sheetData)
                     
-                        # 5) salva em memória
-                        out = BytesIO()
-                        wb.save(out)
-                        out.seek(0)
-                        return out
+                        # atualiza <dimension>
+                        last_row = row_ini + len(df)
+                        last_col_letter = _col_letter(len(headers)-1)
+                        new_dim_ref = f"{col_ini_letters}{row_ini}:{last_col_letter}{last_row}"
+                        if dim is None:
+                            dim = ET.SubElement(sheet_xml, f"{{{NS_MAIN}}}dimension", {"ref": new_dim_ref})
+                        else:
+                            dim.set("ref", new_dim_ref)
+                    
+                        # 2) atualizar table xml (ref e colunas)
+                        tbl = tbl_xml  # já lido
+                        tbl.set("ref", new_dim_ref)
+                        # autoFilter
+                        af = tbl.find(f".//{{{NS_MAIN}}}autoFilter")
+                        if af is None:
+                            af = ET.SubElement(tbl, f"{{{NS_MAIN}}}autoFilter")
+                        af.set("ref", new_dim_ref)
+                        # tableColumns
+                        tcols = tbl.find(f".//{{{NS_MAIN}}}tableColumns")
+                        if tcols is not None:
+                            tbl.remove(tcols)
+                        tcols = ET.SubElement(tbl, f"{{{NS_MAIN}}}tableColumns", {"count": str(len(headers))})
+                        for idx, name in enumerate(headers, start=1):
+                            ET.SubElement(tcols, f"{{{NS_MAIN}}}tableColumn", {"id": str(idx), "name": name})
+                    
+                        # 3) reempacotar: escrevemos sheet e table alterados; o resto copia igual
+                        for name in zin.namelist():
+                            if name == sheet_path:
+                                zout.writestr(name, ET.tostring(sheet_xml, encoding="UTF-8", xml_declaration=True))
+                            elif name == table_path:
+                                zout.writestr(name, ET.tostring(tbl, encoding="UTF-8", xml_declaration=True))
+                            else:
+                                zout.writestr(name, zin.read(name))
+                    
+                        zin.close(); zout.close()
+                        zout_buffer.seek(0)
+                        return zout_buffer
                     
                     # ===== uso =====
-                    caminho_tpl = _localizar_template(TEMPLATE_NOME)
-                    if not caminho_tpl:
+                    template_path = os.path.join(os.getcwd(), TEMPLATE_NOME)
+                    if not os.path.exists(template_path):
                         st.error(
-                            f"Template **{TEMPLATE_NOME}** não encontrado.\n"
-                            f"Coloque-o no mesmo diretório do arquivo .py.\n\n"
-                            f"Requisitos do template:\n"
-                            f"• Planilha: 'Dados'\n"
-                            f"• Tabela:   'tbl_dados' iniciando em A1 (cabeçalho na linha da tabela)\n"
-                            f"• Segmentações (inseridas no Excel Desktop) para: Ano, Mês/Mes, Grupo, Loja\n"
-                            f"• Cabeçalhos da tabela exatamente como estão nas segmentações."
+                            "Template não encontrado. Coloque **modelo_segmentacao_sangria.xlsx** ao lado do seu `.py`.\n"
+                            "Requisitos: planilha 'Dados', Tabela 'tbl_dados' em A1, slicers (Ano, Mês/Mes, Grupo, Loja)."
                         )
                     else:
                         try:
-                            arquivo = exportar_via_template(cmp, caminho_tpl)
+                            arquivo = exportar_via_template_zip(cmp, template_path)
                             st.download_button(
                                 "⬇️ Baixar Excel",
                                 data=arquivo,
                                 file_name="Sangria_Controle.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                key="dl_sangria_controle_excel"
+                                key="dl_sangria_controle_excel",
                             )
-                            st.caption(f"Template usado: {os.path.basename(caminho_tpl)} — segmentações preservadas.")
+                            st.caption("Exportei preenchendo o **template ZIP** (slicers preservados). Abra no Excel Desktop.")
                         except Exception as e:
-                            st.error(f"Falha ao preencher o template: {type(e).__name__}: {e}")
+                            st.error(f"Falha ao preencher template preservando slicers: {type(e).__name__}: {e}")

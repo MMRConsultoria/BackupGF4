@@ -574,6 +574,10 @@ with sub_caixa:
         df_fil = df[(df["Data"].dt.date >= dt_inicio) & (df["Data"].dt.date <= dt_fim)].copy()
         if lojas_sel:
             df_fil = df_fil[df_fil["Loja"].astype(str).isin(lojas_sel)]
+        # 🔎 se a aba Sangria já tiver "Grupo"
+        if grupos_sel and "Grupo" in df_fil.columns:
+            df_fil = df_fil[df_fil["Grupo"].astype(str).isin(grupos_sel)]
+
        
         df_exibe = pd.DataFrame()
 
@@ -686,7 +690,9 @@ with sub_caixa:
                         st.caption("Mostrando apenas linhas com diferença (|Diferença| > R$ 0,01).")
                     elif filtro_dif == "Sem diferença":
                         st.caption("Mostrando apenas linhas sem diferença (|Diferença| ≤ R$ 0,01).")
-
+                    # após aplicar filtro_dif e antes do 'total'
+                    if grupos_sel:
+                        cmp = cmp[cmp["Grupo"].astype(str).isin(grupos_sel)]
                     
                     total = {
                         "Grupo":"TOTAL","Loja":"","Código Everest":"","Data":pd.NaT,

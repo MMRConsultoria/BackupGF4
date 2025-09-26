@@ -756,9 +756,20 @@ with sub_caixa:
                         fit_columns_on_grid_load=True
                     )
 
-                    sel = grid_resp.get("selected_rows", [])
-                    if sel:
-                        sel_row = sel[0]
+                    
+                    sel = grid_resp.get("selected_rows", None)
+
+                    has_sel = False
+                    sel_row = None
+                    
+                    if isinstance(sel, (list, tuple)) and len(sel) > 0:
+                        sel_row = sel[0]  # list of dicts
+                        has_sel = True
+                    elif isinstance(sel, pd.DataFrame) and not sel.empty:
+                        sel_row = sel.iloc[0].to_dict()  # DataFrame -> dict
+                        has_sel = True
+                    
+                    if has_sel:
                         cod_ev  = str(sel_row["Código Everest"])
                         data_sel = pd.to_datetime(sel_row["Data"], format="%d/%m/%Y", errors="coerce").normalize()
 

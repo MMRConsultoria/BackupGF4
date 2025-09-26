@@ -200,7 +200,7 @@ with st.spinner("⏳ Carregando dados..."):
                 seen[s] = 0
             new_cols.append(s)
         df.columns = new_cols
-        st.dataframe(df, use_container_width=True, height=height, hide_index=True)
+        st.dataframe(audit.reset_index(drop=True), use_container_width=True, hide_index=True, height=480)
         return df
 
     def pick_valor_col(cols):
@@ -629,28 +629,21 @@ with sub_caixa:
                 base["Código Everest"] = base["Código Everest"].astype(str).str.extract(r"(\d+)")
 
                 # --- EXCLUI DEPÓSITOS (somente lado Sistema/Colibri) ---
-                # termos exatos a excluir (palavras inteiras)
-                termos_exatos = r"\b(depósito|moeda estrangeira)\b"
                 
-                # máscara de exclusão somente na coluna "Descrição Agrupada"
-                mask_excluir_sys = (
-                    base["Descrição Agrupada"].astype(str).str.contains(termos_exatos, regex=True, na=False)
-                )
-                
-                with st.expander("🔎 Ver registros removidos (depósito/moeda estrangeira — Colibri/CISS)"):
-                    audit = base.loc[mask_excluir_sys].copy()
+                mask_dep_sys = eh_deposito_mask(base)
+                with st.expander("🔎 Ver depósitos removidos (Colibri/CISS)"):
+                    audit = base.loc[mask_dep_sys, :].copy()
                     if col_valor in audit.columns:
                         audit[col_valor] = audit[col_valor].map(brl)
                     st.dataframe(audit, use_container_width=True, hide_index=True)
-                
-                # remove do base os registros marcados
-                base = base.loc[~mask_excluir_sys].copy()
-                
-                # agrega Sistema (já sem depósito/moeda estrangeira)
+
+                base = base.loc[~mask_dep_sys].copy()
+
+                # agrega Sistema (já sem depósitos)
                 df_sys = (
-                    base.groupby(["Código Everest", "Data"], as_index=False)[col_valor]
+                    base.groupby(["Código Everest","Data"], as_index=False)[col_valor]
                         .sum()
-                        .rename(columns={col_valor: "Sangria (Colibri/CISS)"})
+                        .rename(columns={col_valor:"Sangria (Colibri/CISS)"})
                 )
 
 

@@ -528,7 +528,7 @@ with sub_caixa:
                 credito\s+em\s+conta | envio\s*para\s*banco |
                 transf(erencia)?\s*(p/?\s*banco|banco)
             """
-            return txt.str_contains(padrao, flags=re.IGNORECASE | re.VERBOSE, regex=True, na=False)
+            return txt.str.contains(padrao, flags=re.IGNORECASE | re.VERBOSE, regex=True, na=False)
 
         def brl(v):
             try:

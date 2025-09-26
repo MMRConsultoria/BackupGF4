@@ -653,15 +653,21 @@ with sub_caixa:
                 def _norm(s): return re.sub(r"[^a-z0-9]", "", str(s).lower())
                 cmap = {_norm(c): c for c in df_ev.columns}
                 col_emp   = cmap.get("empresa")
-                col_dt_ev = next((orig for norm, orig in cmap.items()
-                                  if norm in ("dlancamento","dlancament","dlanamento","datadelancamento","data")), None)
+                # ✅ PRIORIDADE: D. Competência → fallback para D. Lançamento/Data
+                pref_comp      = ["dcompetencia", "datacompetencia", "datadecompetencia", "competencia", "dtcompetencia"]
+                fallback_lcto  = ["dlancamento", "dlancament", "dlanamento", "datadelancamento", "data"]
+                
+                col_dt_ev = next((cmap[k] for k in pref_comp if k in cmap), None)
+                if col_dt_ev is None:
+                    col_dt_ev = next((cmap[k] for k in fallback_lcto if k in cmap), None)
+
                 col_val_ev= next((orig for norm, orig in cmap.items()
                                   if norm in ("valorlancamento","valorlancament","valorlcto","valor")), None)
                 col_fant  = next((orig for norm, orig in cmap.items()
                                   if norm in ("fantasiaempresa","fantasia")), None)
 
                 if not all([col_emp, col_dt_ev, col_val_ev]):
-                    st.error("❌ Na 'Sangria Everest' preciso de 'Empresa', 'D. Lançamento' e 'Valor Lancamento'.")
+                    st.error("❌ Na 'Sangria Everest' preciso de 'Empresa', 'D. Competência' (ou 'D. Lançamento') e 'Valor Lancamento'.")
                 else:
                     de = df_ev.copy()
                     de["Código Everest"]   = de[col_emp].astype(str).str.extract(r"(\d+)")

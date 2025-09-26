@@ -643,55 +643,68 @@ with sub_caixa:
                     st.dataframe(audit, use_container_width=True, hide_index=True, height=280)
 
                 # 2) INCLUÍDOS (tudo que ficou), com checkbox por linha + painel dos marcados
-                # 2) INCLUÍDOS (tudo que ficou), com checkbox por linha e toggle no rodapé p/ mostrar só selecionados
+                # 2) INCLUÍDOS (tudo que ficou), sem checkbox; mostra Descrição e Descrição Agrupada
                 inc = base_raw.loc[~mask_dep_sys, :].copy()
                 
-                # escolhe qual coluna de descrição exibir (prioriza 'Descrição')
-                col_desc = "Descrição" if "Descrição" in inc.columns else (
-                    "Descrição Agrupada" if "Descrição Agrupada" in inc.columns else None
-                )
+                # quais colunas mostrar
+                col_desc = "Descrição" if "Descrição" in inc.columns else None
+                col_desc_agr = "Descrição Agrupada" if "Descrição Agrupada" in inc.columns else None
                 
-                cols_show = ["Grupo","Loja","Código Everest","Data"]
+                cols_show = ["Grupo", "Loja", "Código Everest", "Data"]
                 if col_desc: cols_show.append(col_desc)
+                if col_desc_agr: cols_show.append(col_desc_agr)
                 if col_valor in inc.columns: cols_show.append(col_valor)
                 cols_show = [c for c in cols_show if c in inc.columns]
                 
                 # formatação visual
                 if "Data" in inc.columns:
-                    inc["Data"] = pd.to_datetime(inc["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
+                    inc["Data"] = pd.to_datetime(inc["Data"], errors="coerce", dayfirst=True).dt.strftime("%d/%m/%Y")
                 if col_valor in inc.columns:
                     inc[col_valor] = inc[col_valor].map(brl)
                 
                 inc_view = inc[cols_show].copy()
-                inc_view["✅"] = False  # coluna de seleção por linha
                 
-                with st.expander("🧾 Ver INCLUÍDOS (lado Colibri/CISS) — marque e use o filtro abaixo", expanded=False):
-                    edited = st.data_editor(
-                        inc_view,
-                        use_container_width=True,
-                        hide_index=True,
-                        num_rows="fixed",
-                        column_config={
-                            "✅": st.column_config.CheckboxColumn("Selecionar", help="Marque para filtrar as linhas abaixo.")
-                        },
-                        key="inc_editor_sangria"
-                    )
-                    # checkbox no rodapé para filtrar a própria lista
-                    only_sel = st.checkbox("Mostrar apenas selecionados", value=False, key="inc_only_sel")
+                with st.expander("🧾 INCLUÍDOS (lado Colibri/CISS)", expanded=False):
+                    st.dataframe(inc_view, use_container_width=True, hide_index=True)
                 
-                    try:
-                        df_to_show = edited.copy()
-                        if only_sel:
-                            df_to_show = df_to_show[df_to_show["✅"] == True]
-                        df_to_show = df_to_show.drop(columns=["✅"])
-                    except Exception:
-                        # fallback caso edited não exista por algum motivo
-                        df_to_show = inc_view.copy()
-                        if only_sel:
-                            df_to_show = df_to_show[df_to_show["✅"] == True]
-                        df_to_show = df_to_show.drop(columns=["✅"], errors="ignore")
+                # 2b) LISTA com checkboxes de LOJAS (embaixo). Marca as lojas que deseja ver aqui embaixo.
+                with st.expander("📋 Lista — marcar lojas para exibir", expanded=False):
+                    if "Loja" not in inc.columns:
+                        st.info("Não há coluna 'Loja' para filtrar.")
+                    else:
+                        lojas_df = pd.DataFrame(
+                            sorted(inc["Loja"].astype(str).dropna().unique()),
+                            columns=["Loja"]
+                        )
+                        lojas_df["✅"] = False
                 
-                    st.dataframe(df_to_show, use_container_width=True, hide_index=True)
+                        # editor só com as lojas + checkbox
+                        lojas_edit = st.data_editor(
+                            lojas_df,
+                            use_container_width=True,
+                            hide_index=True,
+                            num_rows="fixed",
+                            column_config={
+                                "✅": st.column_config.CheckboxColumn(
+                                    "Selecionar",
+                                    help="Marque as lojas que deseja visualizar abaixo."
+                                )
+                            },
+                            key="lista_lojas_incluidos"
+                        )
+                
+                        # filtra os incluídos pelas lojas marcadas e exibe AQUI na lista
+                        try:
+                            lojas_marcadas = lojas_edit.loc[lojas_edit["✅"] == True, "Loja"].astype(str).tolist()
+                        except Exception:
+                            lojas_marcadas = []
+                
+                        if not lojas_marcadas:
+                            st.info("Marque uma ou mais lojas na tabela acima para aparecerem aqui.")
+                        else:
+                            inc_filtrado = inc_view[inc_view["Loja"].astype(str).isin(lojas_marcadas)]
+                            st.dataframe(inc_filtrado, use_container_width=True, hide_index=True)
+
 
                 # --------------- segue fluxo original (após cortes) ---------------
                 base = base_raw.loc[~mask_dep_sys].copy()

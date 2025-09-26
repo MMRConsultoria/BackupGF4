@@ -643,43 +643,55 @@ with sub_caixa:
                     st.dataframe(audit, use_container_width=True, hide_index=True, height=280)
 
                 # 2) INCLUÍDOS (tudo que ficou), com checkbox por linha + painel dos marcados
+                # 2) INCLUÍDOS (tudo que ficou), com checkbox por linha e toggle no rodapé p/ mostrar só selecionados
                 inc = base_raw.loc[~mask_dep_sys, :].copy()
-                cols_show = ["Grupo","Loja","Código Everest","Data","Descrição Agrupada", col_valor]
+                
+                # escolhe qual coluna de descrição exibir (prioriza 'Descrição')
+                col_desc = "Descrição" if "Descrição" in inc.columns else (
+                    "Descrição Agrupada" if "Descrição Agrupada" in inc.columns else None
+                )
+                
+                cols_show = ["Grupo","Loja","Código Everest","Data"]
+                if col_desc: cols_show.append(col_desc)
+                if col_valor in inc.columns: cols_show.append(col_valor)
                 cols_show = [c for c in cols_show if c in inc.columns]
-
+                
+                # formatação visual
                 if "Data" in inc.columns:
                     inc["Data"] = pd.to_datetime(inc["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
                 if col_valor in inc.columns:
                     inc[col_valor] = inc[col_valor].map(brl)
-
+                
                 inc_view = inc[cols_show].copy()
-                inc_view["✅"] = False
-
-                with st.expander("🧾 Ver INCLUÍDOS (lado Colibri/CISS) — Marque para destacar", expanded=False):
+                inc_view["✅"] = False  # coluna de seleção por linha
+                
+                with st.expander("🧾 Ver INCLUÍDOS (lado Colibri/CISS) — marque e use o filtro abaixo", expanded=False):
                     edited = st.data_editor(
                         inc_view,
                         use_container_width=True,
                         hide_index=True,
                         num_rows="fixed",
                         column_config={
-                            "✅": st.column_config.CheckboxColumn(
-                                "Selecionar",
-                                help="Marque para aparecer no painel de selecionados."
-                            )
+                            "✅": st.column_config.CheckboxColumn("Selecionar", help="Marque para filtrar as linhas abaixo.")
                         },
                         key="inc_editor_sangria"
                     )
-
-                try:
-                    sel_incluidos = edited[edited["✅"] == True].drop(columns=["✅"]).copy()
-                except Exception:
-                    sel_incluidos = inc_view[inc_view["✅"] == True].drop(columns=["✅"]).copy()
-
-                with st.expander("⭐ INCLUÍDOS — apenas os selecionados", expanded=False):
-                    if sel_incluidos.empty:
-                        st.info("Nenhuma linha selecionada.")
-                    else:
-                        st.dataframe(sel_incluidos, use_container_width=True, hide_index=True, height=260)
+                    # checkbox no rodapé para filtrar a própria lista
+                    only_sel = st.checkbox("Mostrar apenas selecionados", value=False, key="inc_only_sel")
+                
+                    try:
+                        df_to_show = edited.copy()
+                        if only_sel:
+                            df_to_show = df_to_show[df_to_show["✅"] == True]
+                        df_to_show = df_to_show.drop(columns=["✅"])
+                    except Exception:
+                        # fallback caso edited não exista por algum motivo
+                        df_to_show = inc_view.copy()
+                        if only_sel:
+                            df_to_show = df_to_show[df_to_show["✅"] == True]
+                        df_to_show = df_to_show.drop(columns=["✅"], errors="ignore")
+                
+                    st.dataframe(df_to_show, use_container_width=True, hide_index=True)
 
                 # --------------- segue fluxo original (após cortes) ---------------
                 base = base_raw.loc[~mask_dep_sys].copy()

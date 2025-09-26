@@ -822,26 +822,43 @@ with sub_caixa:
                             if isinstance(v,(int,float)) else v
                         )
 
-                    if "Nao Mapeada?" in df_show.columns and "Loja" in df_show.columns:
-                        view = df_show.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
-                        mask_nm = (
-                            df_show["Nao Mapeada?"].astype(bool)
-                            if "Nao Mapeada?" in df_show.columns
-                            else pd.Series(False, index=df_show.index)
-                        )
-                        def _paint_row(row: pd.Series):
-                            styles = [""] * len(row.index)
-                            try:
-                                if mask_nm.loc[row.name] and "Loja" in row.index:
-                                    idx = list(row.index).index("Loja")
-                                    styles[idx] = "color: red; font-weight: 700"
-                            except Exception:
-                                pass
-                            return styles
-                        st.dataframe(view.style.apply(_paint_row, axis=1), use_container_width=True, height=520)
+
+                    # ====== RENDER ÚNICO COM CHECKBOX NA PRÓPRIA LISTA ======
+                    # tira a coluna técnica, mas vamos usá-la para pintar (opcional)
+                    df_to_show = df_show.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
+                    
+                    # separa TOTAL das demais (não queremos checkbox no TOTAL)
+                    is_total = df_to_show["Grupo"].astype(str).eq("TOTAL") if "Grupo" in df_to_show.columns else pd.Series(False, index=df_to_show.index)
+                    df_total = df_to_show[is_total].copy()
+                    df_main  = df_to_show[~is_total].copy()
+                    
+                    # adiciona coluna de seleção
+                    df_main["✅"] = False
+                    
+                    # editor com checkbox na própria lista
+                    edited = st.data_editor(
+                        df_main,
+                        use_container_width=True,
+                        hide_index=True,
+                        num_rows="fixed",
+                        column_config={
+                            "✅": st.column_config.CheckboxColumn("Selecionar", help="Marque para manter na visualização.")
+                        },
+                        key="cmp_editor_checks",
+                    )
+                    
+                    # se houver selecionados, mostramos só eles; senão, mostramos tudo
+                    has_selected = isinstance(edited, pd.DataFrame) and ("✅" in edited.columns) and (edited["✅"].any())
+                    if has_selected:
+                        filtered = edited[edited["✅"] == True].drop(columns=["✅"]).copy()
                     else:
-                        st.dataframe(df_show.drop(columns=["Nao Mapeada?"], errors="ignore"),
-                                     use_container_width=True, height=520)
+                        filtered = edited.drop(columns=["✅"]).copy()
+                    
+                    # remonta com a linha TOTAL no topo
+                    out = pd.concat([df_total, filtered], ignore_index=True)
+                    
+                    st.dataframe(out, use_container_width=True, height=520)
+
 
                     # ========= EXPORTAÇÃO (com slicers quando possível) =========
                     def _prep_df_export(cmp: pd.DataFrame, usar_mes_sem_acento: bool = False) -> pd.DataFrame:

@@ -630,7 +630,7 @@ with sub_caixa:
 
                 # --- EXCLUI DEPÓSITOS (somente lado Sistema/Colibri) ---
                 
-                mask_dep_sys = eh_deposito_mask(base)
+                mask_dep_sys = eh_deposito_mask(base) | base["Descrição Agrupada"].astype(str).str.contains(r"\b(maionese|Moeda Estrangeira)\b", regex=True, na=False)
                 with st.expander("🔎 Ver depósitos removidos (Colibri/CISS)"):
                     audit = base.loc[mask_dep_sys, :].copy()
                     if col_valor in audit.columns:

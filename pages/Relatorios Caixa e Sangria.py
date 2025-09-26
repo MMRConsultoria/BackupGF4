@@ -873,7 +873,6 @@ with sub_caixa:
                             except Exception:
                                 st.warning("Sem suporte a wb.add_slicer neste runtime; exportando sem segmentações.")
                                 slicers_ok = False
-
                         wb.close()
                         buf.seek(0)
                         return buf, slicers_ok

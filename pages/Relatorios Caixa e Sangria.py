@@ -487,10 +487,9 @@ with sub_caixa:
         import pandas as pd
         import numpy as np
         from datetime import datetime
-        from gspread.utils import rowcol_to_a1
-        from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+        from gspread.utils import rowcol_to_a1  # (usado em outras ações caso precise)
 
-        # === [A] Carregar a aba 'Sangria' preservando o nº da linha (_row) para poder atualizar no Sheets ===
+        # === Carregar a aba 'Sangria' preservando o nº da linha (_row) (útil para futuras edições) ===
         def carregar_sangria_com_row(ws):
             all_vals = ws.get_all_values()
             if not all_vals:
@@ -528,6 +527,7 @@ with sub_caixa:
                 credito\s+em\s+conta | envio\s*para\s*banco |
                 transf(erencia)?\s*(p/?\s*banco|banco)
             """
+            # >>> correção: é str.contains (não str_contains)
             return txt.str.contains(padrao, flags=re.IGNORECASE | re.VERBOSE, regex=True, na=False)
 
         def brl(v):
@@ -623,17 +623,66 @@ with sub_caixa:
                 base[col_valor] = pd.to_numeric(base[col_valor], errors="coerce").fillna(0.0)
                 base["Código Everest"] = base["Código Everest"].astype(str).str.extract(r"(\d+)")
 
-                # --- EXCLUI DEPÓSITOS + termos adicionais (somente lado Sistema/Colibri) ---
-                mask_dep_sys = eh_deposito_mask(base) | base["Descrição Agrupada"].astype(str).str.contains(
-                    r"\b(maionese|Moeda Estrangeira)\b", regex=True, na=False
+                # ---------------- NOVAS LISTAS (Excluídos/Incluídos) ----------------
+                base_raw = base.copy()
+
+                # máscara de exclusão: depósitos + termos adicionais
+                mask_extra = (
+                    base["Descrição Agrupada"].astype(str).str.contains(r"\b(maionese|Moeda Estrangeira)\b", regex=True, na=False)
+                    if "Descrição Agrupada" in base.columns else pd.Series(False, index=base.index)
                 )
+                mask_dep_sys = eh_deposito_mask(base) | mask_extra
+
+                # 1) EXCLUÍDOS (como já existia)
                 with st.expander("🔎 Ver depósitos/termos removidos (Colibri/CISS)"):
                     audit = base.loc[mask_dep_sys, :].copy()
+                    if "Data" in audit.columns:
+                        audit["Data"] = pd.to_datetime(audit["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
                     if col_valor in audit.columns:
                         audit[col_valor] = audit[col_valor].map(brl)
-                    st.dataframe(audit, use_container_width=True, hide_index=True, height=320)
+                    st.dataframe(audit, use_container_width=True, hide_index=True, height=280)
 
-                base = base.loc[~mask_dep_sys].copy()
+                # 2) INCLUÍDOS (tudo que ficou), com checkbox por linha + painel dos marcados
+                inc = base_raw.loc[~mask_dep_sys, :].copy()
+                cols_show = ["Grupo","Loja","Código Everest","Data","Descrição Agrupada", col_valor]
+                cols_show = [c for c in cols_show if c in inc.columns]
+
+                if "Data" in inc.columns:
+                    inc["Data"] = pd.to_datetime(inc["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
+                if col_valor in inc.columns:
+                    inc[col_valor] = inc[col_valor].map(brl)
+
+                inc_view = inc[cols_show].copy()
+                inc_view["✅"] = False
+
+                with st.expander("🧾 Ver INCLUÍDOS (lado Colibri/CISS) — Marque para destacar", expanded=False):
+                    edited = st.data_editor(
+                        inc_view,
+                        use_container_width=True,
+                        hide_index=True,
+                        num_rows="fixed",
+                        column_config={
+                            "✅": st.column_config.CheckboxColumn(
+                                "Selecionar",
+                                help="Marque para aparecer no painel de selecionados."
+                            )
+                        },
+                        key="inc_editor_sangria"
+                    )
+
+                try:
+                    sel_incluidos = edited[edited["✅"] == True].drop(columns=["✅"]).copy()
+                except Exception:
+                    sel_incluidos = inc_view[inc_view["✅"] == True].drop(columns=["✅"]).copy()
+
+                with st.expander("⭐ INCLUÍDOS — apenas os selecionados", expanded=False):
+                    if sel_incluidos.empty:
+                        st.info("Nenhuma linha selecionada.")
+                    else:
+                        st.dataframe(sel_incluidos, use_container_width=True, hide_index=True, height=260)
+
+                # --------------- segue fluxo original (após cortes) ---------------
+                base = base_raw.loc[~mask_dep_sys].copy()
 
                 # agrega Sistema (já sem depósitos)
                 df_sys = (
@@ -725,123 +774,11 @@ with sub_caixa:
                     if grupos_sel:
                         cmp = cmp[cmp["Grupo"].astype(str).isin(grupos_sel)]
 
+                    # ===== linha TOTAL + exibição principal =====
                     cmp = cmp[["Grupo","Loja","Código Everest","Data",
                                "Sangria (Colibri/CISS)","Sangria Everest","Diferença","Nao Mapeada?"]
                              ].sort_values(["Grupo","Loja","Código Everest","Data"])
 
-                    # === [B] Grid interativo: clicar em uma linha p/ abrir lançamentos (lado Colibri/CISS) ===
-                    cmp_grid_view = cmp[["Grupo","Loja","Código Everest","Data",
-                                         "Sangria (Colibri/CISS)","Sangria Everest","Diferença"]].copy()
-                    cmp_grid_view["Data"] = pd.to_datetime(cmp_grid_view["Data"], errors="coerce").dt.strftime("%d/%m/%Y")
-
-                    gbo = GridOptionsBuilder.from_dataframe(cmp_grid_view)
-                    gbo.configure_selection("single")
-                    gbo.configure_grid_options(domLayout="normal")
-                    gbo.configure_column("Sangria (Colibri/CISS)", type=["numericColumn"],
-                                         valueFormatter="value.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})")
-                    gbo.configure_column("Sangria Everest", type=["numericColumn"],
-                                         valueFormatter="value.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})")
-                    gbo.configure_column("Diferença", type=["numericColumn"],
-                                         valueFormatter="value.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})")
-                    grid_opts = gbo.build()
-
-                    st.caption("Clique em uma linha para ver/editar os lançamentos (lado Colibri/CISS).")
-                    grid_resp = AgGrid(
-                        cmp_grid_view,
-                        gridOptions=grid_opts,
-                        update_mode=GridUpdateMode.SELECTION_CHANGED,
-                        allow_unsafe_jscode=True,
-                        theme="balham",
-                        height=380,
-                        fit_columns_on_grid_load=True
-                    )
-
-                    
-                    sel = grid_resp.get("selected_rows", None)
-
-                    has_sel = False
-                    sel_row = None
-                    
-                    if isinstance(sel, (list, tuple)) and len(sel) > 0:
-                        sel_row = sel[0]  # list of dicts
-                        has_sel = True
-                    elif isinstance(sel, pd.DataFrame) and not sel.empty:
-                        sel_row = sel.iloc[0].to_dict()  # DataFrame -> dict
-                        has_sel = True
-                    
-                    if has_sel:
-                        cod_ev  = str(sel_row["Código Everest"])
-                        data_sel = pd.to_datetime(sel_row["Data"], format="%d/%m/%Y", errors="coerce").normalize()
-
-                        # Filtra lançamentos (mesma Data + Código Everest) na aba Sangria com _row
-                        col_data  = "Data"
-                        col_code  = "Código Everest"
-                        col_descr = "Descrição Agrupada" if "Descrição Agrupada" in df_sangria_rows.columns else "Descrição"
-
-                        base_det = df_sangria_rows.copy()
-                        base_det[col_code] = base_det[col_code].astype(str).str.extract(r"(\d+)")
-                        det = base_det[
-                            (pd.to_datetime(base_det[col_data], errors="coerce", dayfirst=True).dt.normalize() == data_sel) &
-                            (base_det[col_code] == cod_ev)
-                        ].copy()
-
-                        if det.empty:
-                            st.info("Nenhum lançamento do lado Colibri/CISS para essa Data + Código Everest.")
-                        else:
-                            # tenta achar a coluna de valor
-                            col_valor_sangria = next(
-                                (c for c in ["Valor(R$)", "Valor (R$)", "Valor"] if c in det.columns),
-                                next((c for c in det.columns if "valor" in c.lower()), None)
-                            )
-
-                            cols_modal = [col_data, "Loja", col_descr, "_row"]
-                            if col_valor_sangria:
-                                cols_modal.insert(3, col_valor_sangria)
-
-                            with st.modal(f"Editar Descrição Agrupada — Everest {cod_ev} | {data_sel.strftime('%d/%m/%Y')}"):
-                                det_show = det[cols_modal].rename(columns={
-                                    col_data: "Data",
-                                    col_descr: "Descrição Agrupada",
-                                    **({col_valor_sangria: "Valor (R$)"} if col_valor_sangria else {})
-                                })
-                                st.dataframe(det_show, use_container_width=True, hide_index=True, height=260)
-
-                                existentes = sorted(x for x in det[col_descr].dropna().astype(str).unique() if x.strip() != "")
-                                nova_desc = st.selectbox("Nova Descrição Agrupada (para TODOS os lançamentos listados):",
-                                                         options=["(digitar abaixo)"] + existentes)
-                                if nova_desc == "(digitar abaixo)":
-                                    nova_desc = st.text_input("Digite a nova descrição agrupada").strip()
-
-                                aplicar = st.button("💾 Aplicar e atualizar Google Sheets")
-                                if aplicar:
-                                    if not nova_desc:
-                                        st.error("Informe a nova descrição.")
-                                    else:
-                                        # localizar índice (1-based) da coluna no Sheets
-                                        header_vals = ws_sangria.row_values(1)
-                                        try:
-                                            col_idx = next(i for i, name in enumerate(header_vals, start=1) if name.strip() == col_descr)
-                                        except StopIteration:
-                                            st.error(f"Coluna '{col_descr}' não encontrada na aba Sangria.")
-                                            col_idx = None
-
-                                        if col_idx:
-                                            reqs = []
-                                            for r in det["_row"].tolist():
-                                                a1 = rowcol_to_a1(r, col_idx)
-                                                reqs.append({"range": f"Sangria!{a1}", "values": [[nova_desc]]})
-                                            try:
-                                                # compatível com ambientes onde Worksheet.batch_update não está disponível
-                                                planilha_empresa.batch_update({
-                                                    "valueInputOption": "USER_ENTERED",
-                                                    "data": reqs
-                                                })
-                                                st.success(f"Atualizado '{col_descr}' em {len(reqs)} lançamento(s).")
-                                                st.experimental_rerun()
-                                            except Exception as e:
-                                                st.error(f"Falha ao atualizar: {e}")
-
-                    # ===== linha TOTAL + exibição principal =====
                     total = {
                         "Grupo":"TOTAL","Loja":"","Código Everest":"","Data":pd.NaT,
                         "Sangria (Colibri/CISS)": cmp["Sangria (Colibri/CISS)"].sum(),
@@ -978,7 +915,6 @@ with sub_caixa:
                         buf.seek(0)
                         return buf, slicers_ok
 
-                    # 1) tenta XlsxWriter com slicers; 2) se não der, exporta sem slicers
                     xlsx_out, _ = exportar_xlsxwriter_tentando_slicers(cmp, usar_mes_sem_acento=True)
 
                     st.download_button(

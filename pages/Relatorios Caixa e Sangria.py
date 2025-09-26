@@ -693,12 +693,27 @@ with sub_caixa:
                     cmp["Sangria Everest"]        = cmp["Sangria Everest"].fillna(0.0)
 
                     # mapeamento Loja/Grupo
+                    # mapeamento Loja/Grupo (garante 1 loja por Código Everest)
                     mapa = df_empresa.copy()
                     mapa.columns = [str(c).strip() for c in mapa.columns]
+                    
                     if "Código Everest" in mapa.columns:
+                        # normaliza como no cmp
                         mapa["Código Everest"] = mapa["Código Everest"].astype(str).str.extract(r"(\d+)")
-                        cmp = cmp.merge(mapa[["Código Everest","Loja","Grupo"]].drop_duplicates(),
-                                        on="Código Everest", how="left")
+                    
+                        # prioridade: evitar nomes com "Embarque" ou "Checkin"
+                        mapa["__prio__"] = mapa["Loja"].astype(str).str.contains(r"(embarque|checkin)", case=False, na=False).astype(int)
+                    
+                        # escolhe 1 linha por Código Everest (a de menor prioridade e, em empate, menor ordem alfabética)
+                        mapa_unico = (
+                            mapa.sort_values(["Código Everest", "__prio__", "Loja"])
+                                .drop_duplicates(subset=["Código Everest"], keep="first")
+                                [["Código Everest", "Loja", "Grupo"]]
+                        )
+                    
+                        # merge sem duplicar
+                        cmp = cmp.merge(mapa_unico, on="Código Everest", how="left")
+
 
                     # fallback LOJA = Fantasia (linhas apenas do Everest)
                     cmp["Loja"] = cmp["Loja"].astype(str)

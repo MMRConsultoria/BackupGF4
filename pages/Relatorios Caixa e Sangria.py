@@ -788,8 +788,22 @@ with sub_caixa:
                             return styles
                         st.dataframe(view.style.apply(_paint_row, axis=1), use_container_width=True, height=520)
                     else:
-                        st.dataframe(df_show.drop(columns=["Nao Mapeada?"], errors="ignore"),
-                                     use_container_width=True, height=520)
+                        _view = df_show.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
+
+                        # === ADICIONA a coluna "Selecionado" no FINAL, sem alterar layout ===
+                        if "Selecionado" not in _view.columns:
+                            _view["Selecionado"] = False
+                        
+                        try:
+                            is_total = _view["Grupo"].astype(str).str.upper().eq("TOTAL")
+                            _view.loc[is_total, "Selecionado"] = ""
+                        except Exception:
+                            pass
+                        
+                        cols = [c for c in _view.columns if c != "Selecionado"] + ["Selecionado"]
+                        _view = _view[cols]
+                        
+                        st.dataframe(_view, use_container_width=True, height=520)
 
                     # ========= EXPORTAÇÃO (com slicers quando possível) =========
                     # ===== Helpers comuns =====

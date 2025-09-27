@@ -492,8 +492,8 @@ with sub_caixa:
             s = str(s or "").strip().lower()
             return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("utf-8")
 
+
         def eh_deposito_mask(df, cols_texto=None):
-            # Mantém a detecção geral de "depósito"/transferência em várias colunas
             if cols_texto is None:
                 cols_texto = [
                     "Descrição Agrupada","Descrição","Historico","Histórico",
@@ -502,14 +502,15 @@ with sub_caixa:
             cols_texto = [c for c in cols_texto if c in df.columns]
             if not cols_texto:
                 return pd.Series(False, index=df.index)
+        
             txt = df[cols_texto].astype(str).agg(" ".join, axis=1).map(_norm_txt)
             padrao = r"""
                 \bdeposito\b | \bdepsito\b | \bdep\b |
                 credito\s+em\s+conta | envio\s*para\s*banco |
                 transf(erencia)?\s*(p/?\s*banco|banco)
             """
-            return txt.str_contains(padrao, flags=re.IGNORECASE | re.VERBOSE, regex=True, na=False)
-
+            return txt.str.contains(padrao, flags=re.IGNORECASE | re.VERBOSE, regex=True, na=False)
+        
         def brl(v):
             try:
                 return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")

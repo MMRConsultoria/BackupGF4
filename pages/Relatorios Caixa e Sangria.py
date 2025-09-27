@@ -350,7 +350,32 @@ with sub_sangria:
             ]
             df_exibe = df_exibe.drop(columns=[c for c in aliases_remover if c in df_exibe.columns], errors="ignore")
 
-            grid.dataframe(df_exibe, use_container_width=True, hide_index=True)
+            # === adicionar coluna "Selecionado" (checkbox) no fim ===
+            df_view = df_exibe.copy()
+            
+            # cria coluna; por padrão False, e a linha TOTAL fica vazia (sem checkbox)
+            if "Selecionado" not in df_view.columns:
+                df_view["Selecionado"] = False
+            
+            # identifica a linha TOTAL (é a primeira, índice 0, conforme seu código)
+            is_total = df_view.index == 0
+            df_view.loc[is_total, "Selecionado"] = ""   # sem checkbox no TOTAL
+            
+            # garante que a coluna "Selecionado" fique no FINAL
+            cols = list(df_view.columns)
+            if "Selecionado" in cols:
+                cols = [c for c in cols if c != "Selecionado"] + ["Selecionado"]
+            
+            st.data_editor(
+                df_view[cols],
+                use_container_width=True,
+                hide_index=True,
+                num_rows="fixed",
+                column_config={
+                    "Selecionado": st.column_config.CheckboxColumn("Selecionado")
+                },
+                key="editor_sangria_analitico",
+            )
 
             # Export Excel mantendo tipos
             df_export = pd.concat([pd.DataFrame([total_row]), df_base], ignore_index=True)
@@ -433,7 +458,28 @@ with sub_sangria:
                 df_show["Data"] = pd.to_datetime(df_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
                 df_show["Sangria"] = df_show["Sangria"].apply(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
-                st.dataframe(df_show[["Grupo","Loja","Data","Sangria"]], use_container_width=True, hide_index=True)
+                # === adicionar coluna "Selecionado" (checkbox) no fim ===
+                view_cols = ["Grupo","Loja","Data","Sangria"]
+                df_view = df_show[view_cols].copy()
+                
+                # cria coluna; por padrão False, e a linha TOTAL (primeira linha) fica sem checkbox
+                df_view["Selecionado"] = False
+                is_total = df_view["Grupo"].astype(str).str.upper().eq("TOTAL")
+                df_view.loc[is_total, "Selecionado"] = ""   # sem checkbox na linha TOTAL
+                
+                # garante coluna "Selecionado" no FINAL
+                cols = view_cols + ["Selecionado"]
+                
+                st.data_editor(
+                    df_view[cols],
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="fixed",
+                    column_config={
+                        "Selecionado": st.column_config.CheckboxColumn("Selecionado")
+                    },
+                    key="editor_sangria_sintetico",
+                )
 
                 # Export Excel
                 df_exp = df_exibe[["Grupo","Loja","Data","Sangria"]].copy()

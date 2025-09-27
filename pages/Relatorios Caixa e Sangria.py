@@ -493,6 +493,7 @@ with sub_caixa:
             return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("utf-8")
 
         def eh_deposito_mask(df, cols_texto=None):
+            # Mantém a detecção geral de "depósito"/transferência em várias colunas
             if cols_texto is None:
                 cols_texto = [
                     "Descrição Agrupada","Descrição","Historico","Histórico",
@@ -507,7 +508,7 @@ with sub_caixa:
                 credito\s+em\s+conta | envio\s*para\s*banco |
                 transf(erencia)?\s*(p/?\s*banco|banco)
             """
-            return txt.str.contains(padrao, flags=re.IGNORECASE | re.VERBOSE, regex=True, na=False)
+            return txt.str_contains(padrao, flags=re.IGNORECASE | re.VERBOSE, regex=True, na=False)
 
         def brl(v):
             try:
@@ -596,10 +597,14 @@ with sub_caixa:
                 # --- EXCLUI DEPÓSITOS (somente lado Sistema/Colibri) ---
                 base_raw = base.copy()  # preserva para INCLUÍDOS
 
-                mask_extra = (
-                    base["Descrição Agrupada"].astype(str).str.contains(r"\b(maionese|Moeda Estrangeira)\b", regex=True, na=False)
-                    if "Descrição Agrupada" in base.columns else pd.Series(False, index=base.index)
-                )
+                # Observação: aqui, a Moeda Estrangeira é filtrada SOMENTE pela coluna "Descrição Agrupada"
+                # (conforme sua solicitação "Somente da coluna descrição agrupada").
+                if "Descrição Agrupada" in base.columns:
+                    col_txt = base["Descrição Agrupada"].astype(str).map(_norm_txt)
+                    mask_extra = col_txt.str.contains(r"\bmoeda\s+estrangeira\b", regex=True, na=False)
+                else:
+                    mask_extra = pd.Series(False, index=base.index)
+
                 mask_dep_sys = eh_deposito_mask(base) | mask_extra
 
                 with st.expander("🔎 Ver depósitos/termos removidos (Colibri/CISS)"):
@@ -624,7 +629,7 @@ with sub_caixa:
                 with st.expander("🧾 INCLUÍDOS (lado Colibri/CISS)"):
                     st.dataframe(inc[cols_inc], use_container_width=True, hide_index=True)
 
-                # ===== agrega Sistema (já sem depósitos) =====
+                # ===== agrega Sistema (já sem depósitos / moeda estrangeira) =====
                 base = base_raw.loc[~mask_dep_sys].copy()
                 df_sys = (
                     base.groupby(["Código Everest","Data"], as_index=False)[col_valor]
@@ -632,24 +637,23 @@ with sub_caixa:
                         .rename(columns={col_valor:"Sangria (Colibri/CISS)"})
                 )
 
-                # --- Everest ---
                 # --- Everest (robusto) ---
                 ws_ev = planilha_empresa.worksheet("Sangria Everest")
                 df_ev = pd.DataFrame(ws_ev.get_all_records())
                 df_ev.columns = [c.strip() for c in df_ev.columns]
-                
+
                 def _norm(s):  # normaliza removendo acentos/esp. e minúsculas
                     return re.sub(r"[^a-z0-9]", "", str(s).lower())
-                
+
                 norm_map = {_norm(c): c for c in df_ev.columns}
-                
+
                 def _pick_col(*keys):
                     """retorna o nome ORIGINAL da primeira key normalizada que existir"""
                     for k in keys:
                         if k in norm_map:
                             return norm_map[k]
                     return None
-                
+
                 # possíveis nomes (normalizados) para cada coluna necessária
                 emp_keys = [
                     "codigoeverest","codigoev","empresa","codempresa","codigoempresa",
@@ -659,14 +663,14 @@ with sub_caixa:
                 dt_lcto_keys = ["dlancamento","datadelancamento","datalancamento","data","data_lancamento"]
                 val_keys = ["valorlancamento","valorlcto","valorlancto","valor_lancamento","vllancamento","vl_lancamento","valor","vlr"]
                 fant_keys = ["fantasiaempresa","fantasia","nomefantasia"]
-                
+
                 # tenta achar cada coluna por sinônimos
                 col_emp   = next((_pick_col(k) for k in emp_keys if _pick_col(k)), None)
                 col_dt_ev = (next((_pick_col(k) for k in dt_comp_keys if _pick_col(k)), None)
                              or next((_pick_col(k) for k in dt_lcto_keys if _pick_col(k)), None))
                 col_val_ev = next((_pick_col(k) for k in val_keys if _pick_col(k)), None)
                 col_fant   = next((_pick_col(k) for k in fant_keys if _pick_col(k)), None)
-                
+
                 if not all([col_emp, col_dt_ev, col_val_ev]):
                     # DEBUG amigável para você ver o que o Google Sheets está entregando
                     with st.expander("🔧 Debug 'Sangria Everest' – cabeçalhos encontrados"):
@@ -679,7 +683,7 @@ with sub_caixa:
                         "(aceito vários sinônimos). Verifique os cabeçalhos no expander de debug acima."
                     )
                     st.stop()
-                
+
                 # normaliza e prepara a base Everest
                 de = df_ev.copy()
                 de["Código Everest"]   = de[col_emp].astype(str).str.extract(r"(\d+)")
@@ -688,147 +692,147 @@ with sub_caixa:
                 de["Valor Lancamento"] = de[col_val_ev].map(parse_valor_brl_sheets).astype(float)
                 de = de[(de["Data"].dt.date >= dt_inicio) & (de["Data"].dt.date <= dt_fim)]
                 de["Sangria Everest"]  = de["Valor Lancamento"].abs()
-                
+
                 def _pick_first(s: pd.Series):
                     s = s.dropna().astype(str).str.strip()
                     s = s[s != ""]
                     return s.iloc[0] if not s.empty else ""
-                
+
                 de_agg = (
                     de.groupby(["Código Everest","Data"], as_index=False)
                       .agg({"Sangria Everest":"sum","Fantasia Everest": _pick_first})
                 )
 
+                # ======= DAQUI PRA BAIXO ESTAVA COM INDENTAÇÃO A MAIS NO SEU CÓDIGO =======
+                cmp = df_sys.merge(de_agg, on=["Código Everest","Data"], how="outer", indicator=True)
+                cmp["Sangria (Colibri/CISS)"] = cmp["Sangria (Colibri/CISS)"].fillna(0.0)
+                cmp["Sangria Everest"]        = cmp["Sangria Everest"].fillna(0.0)
 
-                    cmp = df_sys.merge(de_agg, on=["Código Everest","Data"], how="outer", indicator=True)
-                    cmp["Sangria (Colibri/CISS)"] = cmp["Sangria (Colibri/CISS)"].fillna(0.0)
-                    cmp["Sangria Everest"]        = cmp["Sangria Everest"].fillna(0.0)
+                # mapeamento Loja/Grupo (1 loja por Código Everest)
+                mapa = df_empresa.copy()
+                mapa.columns = [str(c).strip() for c in mapa.columns]
+                if "Código Everest" in mapa.columns:
+                    mapa["Código Everest"] = mapa["Código Everest"].astype(str).str.extract(r"(\d+)")
+                    mapa["__prio__"] = mapa["Loja"].astype(str).str.contains(r"(embarque|checkin)", case=False, na=False).astype(int)
+                    mapa_unico = (
+                        mapa.sort_values(["Código Everest","__prio__","Loja"])
+                            .drop_duplicates(subset=["Código Everest"], keep="first")
+                            [["Código Everest","Loja","Grupo"]]
+                    )
+                    cmp = cmp.merge(mapa_unico, on="Código Everest", how="left")
 
-                    # mapeamento Loja/Grupo (1 loja por Código Everest)
-                    mapa = df_empresa.copy()
-                    mapa.columns = [str(c).strip() for c in mapa.columns]
-                    if "Código Everest" in mapa.columns:
-                        mapa["Código Everest"] = mapa["Código Everest"].astype(str).str.extract(r"(\d+)")
-                        mapa["__prio__"] = mapa["Loja"].astype(str).str.contains(r"(embarque|checkin)", case=False, na=False).astype(int)
-                        mapa_unico = (
-                            mapa.sort_values(["Código Everest","__prio__","Loja"])
-                                .drop_duplicates(subset=["Código Everest"], keep="first")
-                                [["Código Everest","Loja","Grupo"]]
-                        )
-                        cmp = cmp.merge(mapa_unico, on="Código Everest", how="left")
+                # fallback LOJA = Fantasia (linhas só do Everest)
+                cmp["Loja"] = cmp["Loja"].astype(str)
+                so_everest = (cmp["_merge"] == "right_only") & (cmp["Loja"].isin(["", "nan"]))
+                cmp.loc[so_everest, "Loja"] = cmp.loc[so_everest, "Fantasia Everest"]
+                cmp["Nao Mapeada?"] = so_everest
 
-                    # fallback LOJA = Fantasia (linhas só do Everest)
-                    cmp["Loja"] = cmp["Loja"].astype(str)
-                    so_everest = (cmp["_merge"] == "right_only") & (cmp["Loja"].isin(["", "nan"]))
-                    cmp.loc[so_everest, "Loja"] = cmp.loc[so_everest, "Fantasia Everest"]
-                    cmp["Nao Mapeada?"] = so_everest
+                # diferença + filtro
+                cmp["Diferença"] = pd.to_numeric(cmp["Sangria (Colibri/CISS)"] - cmp["Sangria Everest"], errors="coerce").fillna(0.0)
+                TOL = 0.0099
+                eh_zero = np.isclose(cmp["Diferença"].to_numpy(dtype=float), 0.0, atol=TOL)
+                if filtro_dif == "Diferenças":
+                    cmp = cmp[~eh_zero]
+                    st.caption("Mostrando apenas linhas com diferença (|Diferença| > R$ 0,01).")
+                elif filtro_dif == "Sem diferença":
+                    cmp = cmp[eh_zero]
+                    st.caption("Mostrando apenas linhas sem diferença (|Diferença| ≤ R$ 0,01).")
+                if grupos_sel:
+                    cmp = cmp[cmp["Grupo"].astype(str).isin(grupos_sel)]
 
-                    # diferença + filtro
-                    cmp["Diferença"] = pd.to_numeric(cmp["Sangria (Colibri/CISS)"] - cmp["Sangria Everest"], errors="coerce").fillna(0.0)
-                    TOL = 0.0099
-                    eh_zero = np.isclose(cmp["Diferença"].to_numpy(dtype=float), 0.0, atol=TOL)
-                    if filtro_dif == "Diferenças":
-                        cmp = cmp[~eh_zero]
-                        st.caption("Mostrando apenas linhas com diferença (|Diferença| > R$ 0,01).")
-                    elif filtro_dif == "Sem diferença":
-                        cmp = cmp[eh_zero]
-                        st.caption("Mostrando apenas linhas sem diferença (|Diferença| ≤ R$ 0,01).")
-                    if grupos_sel:
-                        cmp = cmp[cmp["Grupo"].astype(str).isin(grupos_sel)]
+                # ordenação + TOTAL
+                cmp = cmp[["Grupo","Loja","Código Everest","Data",
+                           "Sangria (Colibri/CISS)","Sangria Everest","Diferença","Nao Mapeada?"]
+                         ].sort_values(["Grupo","Loja","Código Everest","Data"])
 
-                    # ordenação + TOTAL
-                    cmp = cmp[["Grupo","Loja","Código Everest","Data",
-                               "Sangria (Colibri/CISS)","Sangria Everest","Diferença","Nao Mapeada?"]
-                             ].sort_values(["Grupo","Loja","Código Everest","Data"])
+                total = {
+                    "Grupo":"TOTAL","Loja":"","Código Everest":"","Data":pd.NaT,
+                    "Sangria (Colibri/CISS)": cmp["Sangria (Colibri/CISS)"].sum(),
+                    "Sangria Everest":        cmp["Sangria Everest"].sum(),
+                    "Diferença":              cmp["Diferença"].sum(),
+                    "Nao Mapeada?": False
+                }
+                df_exibe = pd.concat([pd.DataFrame([total]), cmp], ignore_index=True)
 
-                    total = {
-                        "Grupo":"TOTAL","Loja":"","Código Everest":"","Data":pd.NaT,
-                        "Sangria (Colibri/CISS)": cmp["Sangria (Colibri/CISS)"].sum(),
-                        "Sangria Everest":        cmp["Sangria Everest"].sum(),
-                        "Diferença":              cmp["Diferença"].sum(),
-                        "Nao Mapeada?": False
-                    }
-                    df_exibe = pd.concat([pd.DataFrame([total]), cmp], ignore_index=True)
+                # ---- render no app (coluna Selecionado à direita de Diferença) ----
+                df_show = df_exibe.copy()
+                df_show["Data"] = pd.to_datetime(df_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
+                for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
+                    df_show[c] = df_show[c].apply(
+                        lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X",".")
+                        if isinstance(v,(int,float)) else v
+                    )
 
-                    # ---- render no app (coluna Selecionado à direita de Diferença) ----
-                    df_show = df_exibe.copy()
-                    df_show["Data"] = pd.to_datetime(df_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
+                df_view = df_show.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
+                is_total = df_view["Grupo"].astype(str).str.upper().eq("TOTAL") if "Grupo" in df_view.columns else pd.Series(False, index=df_view.index)
+                df_view.loc[~is_total, "Selecionado"] = False
+                df_view.loc[ is_total, "Selecionado"] = ""  # TOTAL sem checkbox
+
+                # posiciona após Diferença
+                cols = list(df_view.columns)
+                if "Selecionado" in cols and "Diferença" in cols:
+                    cols.remove("Selecionado")
+                    pos = cols.index("Diferença") + 1
+                    cols = cols[:pos] + ["Selecionado"] + cols[pos:]
+
+                st.data_editor(
+                    df_view[cols],
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="fixed",
+                    column_config={"Selecionado": st.column_config.CheckboxColumn("Selecionado")},
+                    height=520,
+                    key="cmp_editor_selecionado",
+                )
+
+                # ========= EXPORTAÇÃO básica =========
+                def _prep_df_export(cmp_df: pd.DataFrame) -> pd.DataFrame:
+                    d = cmp_df.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
+                    d["Data"] = pd.to_datetime(d["Data"], errors="coerce").dt.normalize()
                     for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
-                        df_show[c] = df_show[c].apply(
-                            lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X",".")
-                            if isinstance(v,(int,float)) else v
-                        )
+                        if c in d.columns:
+                            d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0.0)
+                    return d[["Data","Grupo","Loja","Código Everest",
+                              "Sangria (Colibri/CISS)","Sangria Everest","Diferença"]]
 
-                    df_view = df_show.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
-                    is_total = df_view["Grupo"].astype(str).str.upper().eq("TOTAL") if "Grupo" in df_view.columns else pd.Series(False, index=df_view.index)
-                    df_view.loc[~is_total, "Selecionado"] = False
-                    df_view.loc[ is_total, "Selecionado"] = ""  # TOTAL sem checkbox
+                def exportar_xlsxwriter(cmp_df: pd.DataFrame) -> BytesIO:
+                    from xlsxwriter import Workbook
+                    d = _prep_df_export(cmp_df)
+                    buf = BytesIO()
+                    wb = Workbook(buf, {"in_memory": True})
+                    ws = wb.add_worksheet("Dados")
+                    fmt_header = wb.add_format({"bold": True, "align": "center", "valign": "vcenter",
+                                                "bg_color": "#F2F2F2", "border": 1})
+                    fmt_text = wb.add_format({"border": 1})
+                    fmt_date = wb.add_format({"border": 1, "num_format": "dd/mm/yyyy"})
+                    fmt_money = wb.add_format({"border": 1, "num_format": "R$ #,##0.00"})
 
-                    # posiciona após Diferença
-                    cols = list(df_view.columns)
-                    if "Selecionado" in cols and "Diferença" in cols:
-                        cols.remove("Selecionado")
-                        pos = cols.index("Diferença") + 1
-                        cols = cols[:pos] + ["Selecionado"] + cols[pos:]
-
-                    st.data_editor(
-                        df_view[cols],
-                        use_container_width=True,
-                        hide_index=True,
-                        num_rows="fixed",
-                        column_config={"Selecionado": st.column_config.CheckboxColumn("Selecionado")},
-                        height=520,
-                        key="cmp_editor_selecionado",
-                    )
-
-                    # ========= EXPORTAÇÃO básica =========
-                    def _prep_df_export(cmp_df: pd.DataFrame) -> pd.DataFrame:
-                        d = cmp_df.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
-                        d["Data"] = pd.to_datetime(d["Data"], errors="coerce").dt.normalize()
-                        for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
-                            if c in d.columns:
-                                d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0.0)
-                        return d[["Data","Grupo","Loja","Código Everest",
-                                  "Sangria (Colibri/CISS)","Sangria Everest","Diferença"]]
-
-                    def exportar_xlsxwriter(cmp_df: pd.DataFrame) -> BytesIO:
-                        from xlsxwriter import Workbook
-                        d = _prep_df_export(cmp_df)
-                        buf = BytesIO()
-                        wb = Workbook(buf, {"in_memory": True})
-                        ws = wb.add_worksheet("Dados")
-                        fmt_header = wb.add_format({"bold": True, "align": "center", "valign": "vcenter",
-                                                    "bg_color": "#F2F2F2", "border": 1})
-                        fmt_text = wb.add_format({"border": 1})
-                        fmt_date = wb.add_format({"border": 1, "num_format": "dd/mm/yyyy"})
-                        fmt_money = wb.add_format({"border": 1, "num_format": "R$ #,##0.00"})
-
-                        headers = list(d.columns)
+                    headers = list(d.columns)
+                    for j, c in enumerate(headers):
+                        ws.write(0, j, c, fmt_header)
+                    for i, row in d.iterrows():
+                        r = i + 1
                         for j, c in enumerate(headers):
-                            ws.write(0, j, c, fmt_header)
-                        for i, row in d.iterrows():
-                            r = i + 1
-                            for j, c in enumerate(headers):
-                                v = row[c]
-                                if c == "Data" and pd.notna(v):
-                                    ws.write_datetime(r, j, pd.to_datetime(v).to_pydatetime(), fmt_date)
-                                elif c in ("Sangria (Colibri/CISS)", "Sangria Everest", "Diferença"):
-                                    ws.write_number(r, j, float(v), fmt_money)
-                                else:
-                                    ws.write(r, j, "" if pd.isna(v) else v, fmt_text)
-                        ws.add_table(0, 0, len(d), len(headers) - 1, {
-                            "name": "tbl_dados",
-                            "style": "TableStyleMedium9",
-                            "columns": [{"header": h} for h in headers],
-                        })
-                        wb.close()
-                        buf.seek(0)
-                        return buf
+                            v = row[c]
+                            if c == "Data" and pd.notna(v):
+                                ws.write_datetime(r, j, pd.to_datetime(v).to_pydatetime(), fmt_date)
+                            elif c in ("Sangria (Colibri/CISS)", "Sangria Everest", "Diferença"):
+                                ws.write_number(r, j, float(v), fmt_money)
+                            else:
+                                ws.write(r, j, "" if pd.isna(v) else v, fmt_text)
+                    ws.add_table(0, 0, len(d), len(headers) - 1, {
+                        "name": "tbl_dados",
+                        "style": "TableStyleMedium9",
+                        "columns": [{"header": h} for h in headers],
+                    })
+                    wb.close()
+                    buf.seek(0)
+                    return buf
 
-                    st.download_button(
-                        label="⬇️ Baixar Excel",
-                        data=exportar_xlsxwriter(cmp),
-                        file_name="Sangria_Controle.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="dl_sangria_controle_excel",
-                    )
+                st.download_button(
+                    label="⬇️ Baixar Excel",
+                    data=exportar_xlsxwriter(cmp),
+                    file_name="Sangria_Controle.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_sangria_controle_excel",
+                )

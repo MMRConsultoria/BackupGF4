@@ -633,38 +633,72 @@ with sub_caixa:
                 )
 
                 # --- Everest ---
+                # --- Everest (robusto) ---
                 ws_ev = planilha_empresa.worksheet("Sangria Everest")
                 df_ev = pd.DataFrame(ws_ev.get_all_records())
                 df_ev.columns = [c.strip() for c in df_ev.columns]
-
-                def _norm(s): return re.sub(r"[^a-z0-9]", "", str(s).lower())
-                cmap = {_norm(c): c for c in df_ev.columns}
-                col_emp   = cmap.get("empresa")
-                pref_comp      = ["dcompetencia","datacompetencia","datadecompetencia","competencia","dtcompetencia"]
-                fallback_lcto  = ["dlancamento","datadelancamento","data"]
-                col_dt_ev = next((cmap[k] for k in pref_comp if k in cmap), next((cmap[k] for k in fallback_lcto if k in cmap), None))
-                col_val_ev= next((orig for norm, orig in cmap.items() if norm in ("valorlancamento","valorlcto","valor")), None)
-                col_fant  = next((orig for norm, orig in cmap.items() if norm in ("fantasiaempresa","fantasia")), None)
-
+                
+                def _norm(s):  # normaliza removendo acentos/esp. e minúsculas
+                    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+                
+                norm_map = {_norm(c): c for c in df_ev.columns}
+                
+                def _pick_col(*keys):
+                    """retorna o nome ORIGINAL da primeira key normalizada que existir"""
+                    for k in keys:
+                        if k in norm_map:
+                            return norm_map[k]
+                    return None
+                
+                # possíveis nomes (normalizados) para cada coluna necessária
+                emp_keys = [
+                    "codigoeverest","codigoev","empresa","codempresa","codigoempresa",
+                    "codigodaempresa","idempresa","empresacodigo","empresaid","codemp"
+                ]
+                dt_comp_keys = ["dcompetencia","datacompetencia","datadecompetencia","competencia","dtcompetencia"]
+                dt_lcto_keys = ["dlancamento","datadelancamento","datalancamento","data","data_lancamento"]
+                val_keys = ["valorlancamento","valorlcto","valorlancto","valor_lancamento","vllancamento","vl_lancamento","valor","vlr"]
+                fant_keys = ["fantasiaempresa","fantasia","nomefantasia"]
+                
+                # tenta achar cada coluna por sinônimos
+                col_emp   = next((_pick_col(k) for k in emp_keys if _pick_col(k)), None)
+                col_dt_ev = (next((_pick_col(k) for k in dt_comp_keys if _pick_col(k)), None)
+                             or next((_pick_col(k) for k in dt_lcto_keys if _pick_col(k)), None))
+                col_val_ev = next((_pick_col(k) for k in val_keys if _pick_col(k)), None)
+                col_fant   = next((_pick_col(k) for k in fant_keys if _pick_col(k)), None)
+                
                 if not all([col_emp, col_dt_ev, col_val_ev]):
-                    st.error("❌ Na 'Sangria Everest' preciso de 'Empresa', 'D. Competência' (ou 'D. Lançamento') e 'Valor Lancamento'.")
-                else:
-                    de = df_ev.copy()
-                    de["Código Everest"]   = de[col_emp].astype(str).str.extract(r"(\d+)")
-                    de["Fantasia Everest"] = de[col_fant] if col_fant else ""
-                    de["Data"]             = pd.to_datetime(de[col_dt_ev], dayfirst=True, errors="coerce").dt.normalize()
-                    de["Valor Lancamento"] = de[col_val_ev].map(parse_valor_brl_sheets).astype(float)
-                    de = de[(de["Data"].dt.date >= dt_inicio) & (de["Data"].dt.date <= dt_fim)]
-                    de["Sangria Everest"]  = de["Valor Lancamento"].abs()
-
-                    def _pick_first(s):
-                        s = s.dropna().astype(str).str.strip()
-                        s = s[s != ""]
-                        return s.iloc[0] if not s.empty else ""
-                    de_agg = (
-                        de.groupby(["Código Everest","Data"], as_index=False)
-                          .agg({"Sangria Everest":"sum","Fantasia Everest": _pick_first})
+                    # DEBUG amigável para você ver o que o Google Sheets está entregando
+                    with st.expander("🔧 Debug 'Sangria Everest' – cabeçalhos encontrados"):
+                        st.write("Cabeçalhos originais:", list(df_ev.columns))
+                        st.write("Cabeçalhos normalizados:", list(norm_map.keys()))
+                        st.write({"Empresa/Código": col_emp, "Data (Comp/Lcto)": col_dt_ev, "Valor Lançamento": col_val_ev})
+                    st.error(
+                        "❌ Na aba **'Sangria Everest'** não encontrei as colunas necessárias.\n\n"
+                        "Procuro por **Empresa/Código Everest**, **D. Competência/D. Lançamento** e **Valor Lançamento** "
+                        "(aceito vários sinônimos). Verifique os cabeçalhos no expander de debug acima."
                     )
+                    st.stop()
+                
+                # normaliza e prepara a base Everest
+                de = df_ev.copy()
+                de["Código Everest"]   = de[col_emp].astype(str).str.extract(r"(\d+)")
+                de["Fantasia Everest"] = de[col_fant] if col_fant else ""
+                de["Data"]             = pd.to_datetime(de[col_dt_ev], dayfirst=True, errors="coerce").dt.normalize()
+                de["Valor Lancamento"] = de[col_val_ev].map(parse_valor_brl_sheets).astype(float)
+                de = de[(de["Data"].dt.date >= dt_inicio) & (de["Data"].dt.date <= dt_fim)]
+                de["Sangria Everest"]  = de["Valor Lancamento"].abs()
+                
+                def _pick_first(s: pd.Series):
+                    s = s.dropna().astype(str).str.strip()
+                    s = s[s != ""]
+                    return s.iloc[0] if not s.empty else ""
+                
+                de_agg = (
+                    de.groupby(["Código Everest","Data"], as_index=False)
+                      .agg({"Sangria Everest":"sum","Fantasia Everest": _pick_first})
+                )
+
 
                     cmp = df_sys.merge(de_agg, on=["Código Everest","Data"], how="outer", indicator=True)
                     cmp["Sangria (Colibri/CISS)"] = cmp["Sangria (Colibri/CISS)"].fillna(0.0)

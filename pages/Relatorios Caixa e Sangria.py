@@ -631,6 +631,7 @@ with sub_caixa:
                 # --- EXCLUI DEPÓSITOS (somente lado Sistema/Colibri) ---
                 
                 # --- EXCLUI DEPÓSITOS (somente lado Sistema/Colibri) ---
+
                 mask_dep_sys = (
                     eh_deposito_mask(base)
                     | base["Descrição Agrupada"].astype(str).str.contains(r"\b(maionese|Moeda Estrangeira)\b", regex=True, na=False)
@@ -639,20 +640,32 @@ with sub_caixa:
                 # Colunas que NÃO queremos exibir nos expanders
                 _cols_hide = ["Mês", "Mes", "Ano", "Duplicidade", "Sistema"]
                 
+                # 🔗 Lojas marcadas (se já houver seleção salva em sessão)
+                lojas_selecionadas = st.session_state.get("cmp_lojas_selecionadas", set())
+                tem_filtro_loja = bool(lojas_selecionadas)
+                
                 # 🧾 Itens incluídos (tudo que NÃO foi removido)
                 with st.expander("🧾 Ver itens incluídos (Colibri/CISS)"):
                     audit_in = base.loc[~mask_dep_sys, :].copy()
+                    if tem_filtro_loja and "Loja" in audit_in.columns:
+                        audit_in = audit_in[audit_in["Loja"].astype(str).isin(lojas_selecionadas)]
                     if col_valor in audit_in.columns:
                         audit_in[col_valor] = audit_in[col_valor].map(brl)
                     audit_in = audit_in.drop(columns=_cols_hide, errors="ignore")
+                    if tem_filtro_loja:
+                        st.caption(f"Filtrando por {len(lojas_selecionadas)} loja(s) selecionada(s).")
                     st.dataframe(audit_in, use_container_width=True, hide_index=True)
                 
                 # 🔎 Depósitos/itens removidos
                 with st.expander("🔎 Ver depósitos removidos (Colibri/CISS)"):
                     audit_out = base.loc[mask_dep_sys, :].copy()
+                    if tem_filtro_loja and "Loja" in audit_out.columns:
+                        audit_out = audit_out[audit_out["Loja"].astype(str).isin(lojas_selecionadas)]
                     if col_valor in audit_out.columns:
                         audit_out[col_valor] = audit_out[col_valor].map(brl)
                     audit_out = audit_out.drop(columns=_cols_hide, errors="ignore")
+                    if tem_filtro_loja:
+                        st.caption(f"Filtrando por {len(lojas_selecionadas)} loja(s) selecionada(s).")
                     st.dataframe(audit_out, use_container_width=True, hide_index=True)
                 
                 # segue o fluxo normal usando apenas os incluídos
@@ -838,7 +851,30 @@ with sub_caixa:
                         column_config=col_cfg,
                         key="cmp_editor_com_checkbox",
                     )
-                    
+                    # Botão para limpar a seleção rapidamente (não muda layout)
+                    col_limp, _ = st.columns([1, 6])
+                    with col_limp:
+                        if st.button("🧹 Limpar seleção de lojas", key="btn_limpar_sel_lojas"):
+                            st.session_state["cmp_lojas_selecionadas"] = set()
+                            # opcional: também desmarca visualmente a coluna "Selecionado" no dataframe exibido
+                            try:
+                                edited_view["Selecionado"] = False
+                            except Exception:
+                                pass
+                            st.rerun()
+
+                    # --- Salvar as lojas selecionadas para filtrar os expanders ---
+                    try:
+                        sel = edited_view.loc[
+                            (edited_view["Selecionado"] == True)
+                            & (edited_view["Grupo"].astype(str).str.upper() != "TOTAL"),
+                            "Loja"
+                        ].dropna().astype(str).unique().tolist()
+                        st.session_state["cmp_lojas_selecionadas"] = set(sel)
+                    except Exception:
+                        # se algo der errado, não quebra a página
+                        st.session_state["cmp_lojas_selecionadas"] = set()
+
                     # (opcional) exemplo de como capturar as linhas marcadas — não muda o layout
                     # Ignora a linha TOTAL se marcada
                     try:

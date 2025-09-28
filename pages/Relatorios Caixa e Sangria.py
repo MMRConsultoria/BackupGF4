@@ -630,27 +630,34 @@ with sub_caixa:
 
                 # --- EXCLUI DEPÓSITOS (somente lado Sistema/Colibri) ---
                 
+                # --- EXCLUI DEPÓSITOS (somente lado Sistema/Colibri) ---
                 mask_dep_sys = (
                     eh_deposito_mask(base)
                     | base["Descrição Agrupada"].astype(str).str.contains(r"\b(maionese|Moeda Estrangeira)\b", regex=True, na=False)
                 )
                 
-                # 🔎 NOVO: Itens incluídos (tudo que NÃO foi removido)
+                # Colunas que NÃO queremos exibir nos expanders
+                _cols_hide = ["Mês", "Mes", "Ano", "Duplicidade", "Sistema"]
+                
+                # 🧾 Itens incluídos (tudo que NÃO foi removido)
                 with st.expander("🧾 Ver itens incluídos (Colibri/CISS)"):
                     audit_in = base.loc[~mask_dep_sys, :].copy()
                     if col_valor in audit_in.columns:
                         audit_in[col_valor] = audit_in[col_valor].map(brl)
+                    audit_in = audit_in.drop(columns=_cols_hide, errors="ignore")
                     st.dataframe(audit_in, use_container_width=True, hide_index=True)
                 
-                # 🔎 Já existente: Itens removidos (depósitos, moeda estrangeira, etc.)
+                # 🔎 Depósitos/itens removidos
                 with st.expander("🔎 Ver depósitos removidos (Colibri/CISS)"):
                     audit_out = base.loc[mask_dep_sys, :].copy()
                     if col_valor in audit_out.columns:
                         audit_out[col_valor] = audit_out[col_valor].map(brl)
+                    audit_out = audit_out.drop(columns=_cols_hide, errors="ignore")
                     st.dataframe(audit_out, use_container_width=True, hide_index=True)
                 
                 # segue o fluxo normal usando apenas os incluídos
                 base = base.loc[~mask_dep_sys].copy()
+
 
 
                 # agrega Sistema (já sem depósitos)

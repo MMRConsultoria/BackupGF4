@@ -618,6 +618,7 @@ with sub_caixa:
 
         # ======= Comparativa =======
         # ======= Comparativa =======
+        # ======= Comparativa =======
         if visao == "Comparativa Everest":
             base = df_fil.copy()
         
@@ -631,54 +632,66 @@ with sub_caixa:
                 base["Código Everest"] = base["Código Everest"].astype(str).str.extract(r"(\d+)")
         
                 # ====================== filtros/removidos/incluídos ======================
-                # --- EXCLUI DEPÓSITOS (somente lado Sistema/Colibri) ---
                 mask_dep_sys = (
                     eh_deposito_mask(base)
                     | base["Descrição Agrupada"].astype(str).str.contains(r"\b(maionese|Moeda Estrangeira)\b", regex=True, na=False)
                 )
         
-                # Colunas que NÃO queremos exibir nos expanders
                 _cols_hide = ["Mês", "Mes", "Ano", "Duplicidade", "Sistema"]
         
-                # 🔗 Códigos selecionados em sessão (para filtrar expanders)
-                codigos_selecionados = st.session_state.get("cmp_codigos_selecionados", set())
+                # --- conjuntos (Aplicado x Provisório) ---
                 def _only_digits(x):
                     x = "" if x is None else str(x)
                     return re.sub(r"\D+", "", x)
-                codigos_selecionados = set(filter(None, (_only_digits(x) for x in codigos_selecionados)))
-                tem_filtro_codigo = bool(codigos_selecionados)
         
-                # 🧾 Itens incluídos (tudo que NÃO foi removido)
+                codigos_aplicados = set(map(_only_digits, st.session_state.get("cmp_codigos_selecionados", set())))
+                codigos_aplicados = set(filter(None, codigos_aplicados))
+                tem_filtro_codigo = bool(codigos_aplicados)
+        
+                # ====================== EXPANDERS (filtram pelo APLICADO) ======================
                 with st.expander("🧾 Ver itens incluídos (Colibri/CISS)"):
                     audit_in = base.loc[~mask_dep_sys, :].copy()
                     if tem_filtro_codigo and "Código Everest" in audit_in.columns:
                         audit_in["_cod"] = audit_in["Código Everest"].astype(str).str.extract(r"(\d+)")
-                        audit_in = audit_in[audit_in["_cod"].isin(codigos_selecionados)].drop(columns=["_cod"])
+                        audit_in = audit_in[audit_in["_cod"].isin(codigos_aplicados)].drop(columns=["_cod"])
                     if col_valor in audit_in.columns:
                         audit_in[col_valor] = audit_in[col_valor].map(brl)
                     audit_in = audit_in.drop(columns=_cols_hide, errors="ignore")
                     if tem_filtro_codigo:
-                        st.caption(f"Filtrando por {len(codigos_selecionados)} código(s) selecionado(s).")
+                        st.caption(f"Filtrando por {len(codigos_aplicados)} código(s) selecionado(s).")
                     if tem_filtro_codigo and audit_in.empty:
                         st.info("Nenhum item incluído para os códigos selecionados.")
                     st.dataframe(audit_in, use_container_width=True, hide_index=True)
         
-                # 🔎 Depósitos/itens removidos
                 with st.expander("🔎 Ver depósitos removidos (Colibri/CISS)"):
                     audit_out = base.loc[mask_dep_sys, :].copy()
                     if tem_filtro_codigo and "Código Everest" in audit_out.columns:
                         audit_out["_cod"] = audit_out["Código Everest"].astype(str).str.extract(r"(\d+)")
-                        audit_out = audit_out[audit_out["_cod"].isin(codigos_selecionados)].drop(columns=["_cod"])
+                        audit_out = audit_out[audit_out["_cod"].isin(codigos_aplicados)].drop(columns=["_cod"])
                     if col_valor in audit_out.columns:
                         audit_out[col_valor] = audit_out[col_valor].map(brl)
                     audit_out = audit_out.drop(columns=_cols_hide, errors="ignore")
                     if tem_filtro_codigo:
-                        st.caption(f"Filtrando por {len(codigos_selecionados)} código(s) selecionado(s).")
+                        st.caption(f"Filtrando por {len(codigos_aplicados)} código(s) selecionado(s).")
                     if tem_filtro_codigo and audit_out.empty:
                         st.info("Nenhum depósito/remoção para os códigos selecionados.")
                     st.dataframe(audit_out, use_container_width=True, hide_index=True)
         
-                # segue o fluxo normal usando apenas os incluídos
+                # ====================== BOTÕES (aplicar/limpar) após os depósitos ======================
+                c_sel, c_limpar, _ = st.columns([1, 1, 6])
+                with c_sel:
+                    if st.button("✅ Selecionar", help="Aplicar os códigos marcados na tabela abaixo", key="btn_aplicar_cod"):
+                        st.session_state["cmp_codigos_selecionados"] = set(
+                            map(_only_digits, st.session_state.get("cmp_codigos_provisorios", set()))
+                        )
+                        st.rerun()
+                with c_limpar:
+                    if st.button("🧹 Limpar", help="Limpar seleção aplicada e provisória", key="btn_limpar_cod"):
+                        st.session_state["cmp_codigos_selecionados"] = set()
+                        st.session_state["cmp_codigos_provisorios"] = set()
+                        st.rerun()
+        
+                # ====================== segue o fluxo normal usando apenas os incluídos ======================
                 base = base.loc[~mask_dep_sys].copy()
         
                 # ====================== agrega Sistema (sem depósitos) ======================
@@ -696,7 +709,6 @@ with sub_caixa:
                 def _norm(s): return re.sub(r"[^a-z0-9]", "", str(s).lower())
                 cmap = {_norm(c): c for c in df_ev.columns}
                 col_emp   = cmap.get("empresa")
-                # ✅ PRIORIDADE: D. Competência → fallback para D. Lançamento/Data
                 pref_comp      = ["dcompetencia", "datacompetencia", "datadecompetencia", "competencia", "dtcompetencia"]
                 fallback_lcto  = ["dlancamento", "dlancament", "dlanamento", "datadelancamento", "data"]
         
@@ -739,9 +751,7 @@ with sub_caixa:
         
                     if "Código Everest" in mapa.columns:
                         mapa["Código Everest"] = mapa["Código Everest"].astype(str).str.extract(r"(\d+)")
-                        # prioridade: evitar nomes com "Embarque" ou "Checkin"
                         mapa["__prio__"] = mapa["Loja"].astype(str).str.contains(r"(embarque|checkin)", case=False, na=False).astype(int)
-                        # escolhe 1 linha por Código Everest (menor prioridade e, em empate, menor ordem alfabética)
                         mapa_unico = (
                             mapa.sort_values(["Código Everest", "__prio__", "Loja"])
                                 .drop_duplicates(subset=["Código Everest"], keep="first")
@@ -769,11 +779,9 @@ with sub_caixa:
                     elif filtro_dif == "Sem diferença":
                         cmp = cmp[eh_zero]
         
-                    # filtro por grupos (se houver)
                     if grupos_sel:
                         cmp = cmp[cmp["Grupo"].astype(str).isin(grupos_sel)]
         
-                    # ordena e prepara TOTAL
                     cmp = cmp[["Grupo","Loja","Código Everest","Data",
                                "Sangria (Colibri/CISS)","Sangria Everest","Diferença","Nao Mapeada?"]
                              ].sort_values(["Grupo","Loja","Código Everest","Data"])
@@ -807,11 +815,15 @@ with sub_caixa:
                     insert_pos = (list(view.columns).index("Diferença") + 1) if "Diferença" in view.columns else len(view.columns)
                     view.insert(insert_pos, "Selecionado", False)
         
-                    # pré-marcar checkboxes conforme códigos salvos (exceto TOTAL)
-                    if tem_filtro_codigo and {"Código Everest","Grupo"}.issubset(set(view.columns)):
+                    # Pré-marcar: usa PROVISÓRIO se existir, senão APLICADO
+                    codigos_provisorios = set(map(_only_digits, st.session_state.get("cmp_codigos_provisorios", set())))
+                    codigos_provisorios = set(filter(None, codigos_provisorios))
+                    base_para_premarcar = codigos_provisorios if len(codigos_provisorios) > 0 else codigos_aplicados
+        
+                    if {"Código Everest","Grupo"}.issubset(set(view.columns)) and len(base_para_premarcar) > 0:
                         cod_series = view["Código Everest"].astype(str).str.extract(r"(\d+)")[0]
                         mask_normais = view["Grupo"].astype(str).str.upper() != "TOTAL"
-                        view.loc[mask_normais, "Selecionado"] = cod_series[mask_normais].isin(codigos_selecionados).values
+                        view.loc[mask_normais, "Selecionado"] = cod_series[mask_normais].isin(base_para_premarcar).values
         
                     from streamlit import column_config as cc
                     col_cfg = {}
@@ -819,7 +831,7 @@ with sub_caixa:
                         if col == "Selecionado":
                             col_cfg[col] = cc.CheckboxColumn(
                                 label="Selecionado",
-                                help="Marque para selecionar esta linha.",
+                                help="Marque para selecionar esta linha (provisório).",
                                 default=False
                             )
                         elif col == "Data":
@@ -838,36 +850,17 @@ with sub_caixa:
                         key="cmp_editor_com_checkbox",
                     )
         
-                    # Botão limpar seleção (zera códigos salvos)
-                    col_limp, _ = st.columns([1, 6])
-                    with col_limp:
-                        if st.button("🧹 Limpar seleção", key="btn_limpar_sel_cod"):
-                            st.session_state["cmp_codigos_selecionados"] = set()
-                            try:
-                                edited_view["Selecionado"] = False
-                            except Exception:
-                                pass
-                            st.rerun()
-        
-                    # --- Salvar os CÓDIGOS selecionados (para filtrar expanders) ---
+                    # --- Salvar PROVISÓRIO (NÃO aplica nos expanders até clicar "Selecionar") ---
                     try:
                         sel_mask = (edited_view["Selecionado"] == True) & (edited_view["Grupo"].astype(str).str.upper() != "TOTAL")
-                        sel_codigos = (
+                        sel_codigos_prov = (
                             edited_view.loc[sel_mask, "Código Everest"]
                             .astype(str).str.extract(r"(\d+)")[0]
                             .dropna().tolist()
                         )
-                        st.session_state["cmp_codigos_selecionados"] = set(sel_codigos)
+                        st.session_state["cmp_codigos_provisorios"] = set(sel_codigos_prov)
                     except Exception:
-                        st.session_state["cmp_codigos_selecionados"] = set()
-        
-                    # (opcional) coletar linhas selecionadas
-                    try:
-                        linhas_selecionadas = edited_view[
-                            (edited_view["Selecionado"] == True) & (edited_view["Grupo"].astype(str) != "TOTAL")
-                        ].copy()
-                    except Exception:
-                        pass
+                        st.session_state["cmp_codigos_provisorios"] = set()
         
                     # ====================== EXPORTAÇÃO (com slicers quando possível) ======================
                     from io import BytesIO
@@ -981,7 +974,6 @@ with sub_caixa:
                         buf.seek(0)
                         return buf, slicers_ok
         
-                    # 1) tenta XlsxWriter com slicers; 2) fallback template; 3) sem segmentações
                     xlsx_out, ok = exportar_xlsxwriter_tentando_slicers(cmp, usar_mes_sem_acento=True)
                     if not ok:
                         try:

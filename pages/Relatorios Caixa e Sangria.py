@@ -762,48 +762,72 @@ with sub_caixa:
                     df_exibe = pd.concat([pd.DataFrame([total]), cmp], ignore_index=True)
 
                     # ---- render no app
+                    # ---- render no app  (SUBSTITUA ESTE BLOCO PELO CÓDIGO ABAIXO)
                     df_show = df_exibe.copy()
+                    
+                    # formatações de exibição (iguais às anteriores)
                     df_show["Data"] = pd.to_datetime(df_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
                     for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
                         df_show[c] = df_show[c].apply(
                             lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X",".")
                             if isinstance(v,(int,float)) else v
                         )
-
-                    if "Nao Mapeada?" in df_show.columns and "Loja" in df_show.columns:
-                        view = df_show.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
-                        mask_nm = (
-                            df_show["Nao Mapeada?"].astype(bool)
-                            if "Nao Mapeada?" in df_show.columns
-                            else pd.Series(False, index=df_show.index)
-                        )
-                        def _paint_row(row: pd.Series):
-                            styles = [""] * len(row.index)
-                            try:
-                                if mask_nm.loc[row.name] and "Loja" in row.index:
-                                    idx = list(row.index).index("Loja")
-                                    styles[idx] = "color: red; font-weight: 700"
-                            except Exception:
-                                pass
-                            return styles
-                        st.dataframe(view.style.apply(_paint_row, axis=1), use_container_width=True, height=520)
+                    
+                    # remove a coluna técnica da visão, mas mantém mesma “cara”
+                    view = df_show.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
+                    
+                    # === NOVO: adiciona a coluna de checkbox após "Diferença" ===
+                    if "Diferença" in view.columns:
+                        insert_pos = list(view.columns).index("Diferença") + 1
                     else:
-                        _view = df_show.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
-
-                        # === ADICIONA a coluna "Selecionado" no FINAL, sem alterar layout ===
-                        if "Selecionado" not in _view.columns:
-                            _view["Selecionado"] = False
-                        
-                        try:
-                            is_total = _view["Grupo"].astype(str).str.upper().eq("TOTAL")
-                            _view.loc[is_total, "Selecionado"] = ""
-                        except Exception:
-                            pass
-                        
-                        cols = [c for c in _view.columns if c != "Selecionado"] + ["Selecionado"]
-                        _view = _view[cols]
-                        
-                        st.dataframe(_view, use_container_width=True, height=520)
+                        insert_pos = len(view.columns)
+                    
+                    # cria a coluna booleana (desmarcada por padrão)
+                    view.insert(insert_pos, "Selecionado", False)
+                    
+                    # Mantém o mesmo visual, largura e altura
+                    # Usamos data_editor só para habilitar o checkbox;
+                    # todas as outras colunas ficam bloqueadas (não editáveis).
+                    from streamlit import column_config as cc
+                    
+                    # monta configs de coluna para travar todas, exceto o checkbox
+                    col_cfg = {}
+                    for col in view.columns:
+                        if col == "Selecionado":
+                            col_cfg[col] = cc.CheckboxColumn(
+                                label="Selecionado",
+                                help="Marque para selecionar esta linha.",
+                                default=False
+                            )
+                        elif col == "Data":
+                            # já está como texto dd/mm/aaaa; travamos a edição
+                            col_cfg[col] = cc.TextColumn(label="Data", disabled=True)
+                        elif col in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença"):
+                            # estão como texto formatado 'R$ ...'; travamos a edição
+                            col_cfg[col] = cc.TextColumn(label=col, disabled=True)
+                        else:
+                            col_cfg[col] = cc.TextColumn(label=col, disabled=True)
+                    
+                    # Renderização com checkbox, mantendo layout (largura/altura)
+                    edited_view = st.data_editor(
+                        view,
+                        use_container_width=True,
+                        hide_index=True,
+                        height=520,
+                        column_config=col_cfg,
+                        key="cmp_editor_com_checkbox",
+                    )
+                    
+                    # (opcional) exemplo de como capturar as linhas marcadas — não muda o layout
+                    # Ignora a linha TOTAL se marcada
+                    try:
+                        linhas_selecionadas = edited_view[
+                            (edited_view["Selecionado"] == True) & (edited_view["Grupo"].astype(str) != "TOTAL")
+                        ].copy()
+                        # Você pode usar `linhas_selecionadas` depois (exportar, acionar ação, etc.)
+                    except Exception:
+                        pass
+                    
 
                     # ========= EXPORTAÇÃO (com slicers quando possível) =========
                     # ===== Helpers comuns =====

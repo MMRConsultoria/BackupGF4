@@ -617,7 +617,6 @@ with sub_caixa:
         df_exibe = pd.DataFrame()
 
         # ======= Comparativa =======
-        # ======= Comparativa =======
         if visao == "Comparativa Everest":
             base = df_fil.copy()
         
@@ -788,46 +787,50 @@ with sub_caixa:
                     }
                     df_exibe = pd.concat([pd.DataFrame([total]), cmp], ignore_index=True)
         
-                    # ====================== render no app (com checkbox) EM FORM ======================
-                    df_show = df_exibe.copy()
-                    df_show["Data"] = pd.to_datetime(df_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
-                    for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
-                        df_show[c] = df_show[c].apply(
-                            lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X",".")
-                            if isinstance(v,(int,float)) else v
-                        )
-        
-                    view = df_show.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
-        
-                    # adiciona a coluna de checkbox após "Diferença"
-                    insert_pos = (list(view.columns).index("Diferença") + 1) if "Diferença" in view.columns else len(view.columns)
-                    if "Selecionado" not in view.columns:
-                        view.insert(insert_pos, "Selecionado", False)
-        
-                    from streamlit import column_config as cc
-                    col_cfg = {}
-                    for col in view.columns:
-                        if col == "Selecionado":
-                            col_cfg[col] = cc.CheckboxColumn(
-                                label="Selecionado",
-                                help="Marque as linhas e depois clique em ✅ Selecionar.",
-                                default=False
-                            )
-                        elif col == "Data":
-                            col_cfg[col] = cc.TextColumn(label="Data", disabled=True)
-                        elif col in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença"):
-                            col_cfg[col] = cc.TextColumn(label=col, disabled=True)
-                        else:
-                            col_cfg[col] = cc.TextColumn(label=col, disabled=True)
-        
-                    # Pré-marcar pelos códigos APLICADOS (sem recarregar ao clicar)
-                    if tem_filtro_codigo and {"Código Everest","Grupo"}.issubset(set(view.columns)):
-                        cod_series = view["Código Everest"].astype(str).str.extract(r"(\d+)")[0]
-                        mask_normais = view["Grupo"].astype(str).str.upper() != "TOTAL"
-                        view.loc[mask_normais, "Selecionado"] = cod_series[mask_normais].isin(codigos_aplicados).values
-        
-                    # ---------- FORM: não recarrega ao marcar; só ao enviar ----------
+                    # ====================== BOTÕES + TABELA EM FORM ======================
+                    # Ordem visual: (1) Expanders acima, (2) Botões aqui, (3) Tabela abaixo
                     with st.form("form_selecao_codigos", clear_on_submit=False):
+                        # ---- Botões lado a lado (apenas submetem o form) ----
+                        c_sel, c_limpar, _ = st.columns([1, 1, 6])
+                        aplicar = c_sel.form_submit_button("✅ Selecionar", help="Aplicar o filtro pelos códigos marcados na tabela")
+                        limpar  = c_limpar.form_submit_button("🧹 Limpar", help="Remover o filtro aplicado e desmarcar tudo")
+        
+                        # ---- Tabela com checkbox (marcar/desmarcar NÃO recarrega) ----
+                        df_show = df_exibe.copy()
+                        df_show["Data"] = pd.to_datetime(df_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
+                        for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
+                            df_show[c] = df_show[c].apply(
+                                lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X",".")
+                                if isinstance(v,(int,float)) else v
+                            )
+        
+                        view = df_show.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
+                        insert_pos = (list(view.columns).index("Diferença") + 1) if "Diferença" in view.columns else len(view.columns)
+                        if "Selecionado" not in view.columns:
+                            view.insert(insert_pos, "Selecionado", False)
+        
+                        from streamlit import column_config as cc
+                        col_cfg = {}
+                        for col in view.columns:
+                            if col == "Selecionado":
+                                col_cfg[col] = cc.CheckboxColumn(
+                                    label="Selecionado",
+                                    help="Marque as linhas e depois clique em ✅ Selecionar.",
+                                    default=False
+                                )
+                            elif col == "Data":
+                                col_cfg[col] = cc.TextColumn(label="Data", disabled=True)
+                            elif col in ("Sangria (Colibri/CISS)","Sangria Everest","Diferença"):
+                                col_cfg[col] = cc.TextColumn(label=col, disabled=True)
+                            else:
+                                col_cfg[col] = cc.TextColumn(label=col, disabled=True)
+        
+                        # Pré-marcar pelos códigos APLICADOS (opcional, não força recarregar)
+                        if tem_filtro_codigo and {"Código Everest","Grupo"}.issubset(set(view.columns)):
+                            cod_series = view["Código Everest"].astype(str).str.extract(r"(\d+)")[0]
+                            mask_normais = view["Grupo"].astype(str).str.upper() != "TOTAL"
+                            view.loc[mask_normais, "Selecionado"] = cod_series[mask_normais].isin(codigos_aplicados).values
+        
                         edited_view = st.data_editor(
                             view,
                             use_container_width=True,
@@ -836,11 +839,6 @@ with sub_caixa:
                             column_config=col_cfg,
                             key="cmp_editor_com_checkbox",
                         )
-        
-                        # Botões lado a lado (SUBMIT DO FORM) — ficam logo após os depósitos (acima no fluxo)
-                        c_sel, c_limpar, _ = st.columns([1, 1, 6])
-                        aplicar = c_sel.form_submit_button("✅ Selecionar", help="Aplicar o filtro pelos códigos marcados acima")
-                        limpar  = c_limpar.form_submit_button("🧹 Limpar", help="Remover o filtro aplicado e desmarcar tudo")
         
                     # ===== AÇÃO PÓS-SUBMIT =====
                     if aplicar:
@@ -858,10 +856,6 @@ with sub_caixa:
         
                     if limpar:
                         st.session_state["cmp_codigos_selecionados"] = set()
-                        try:
-                            view["Selecionado"] = False
-                        except Exception:
-                            pass
                         st.rerun()
         
                     # ====================== EXPORTAÇÃO (com slicers quando possível) ======================

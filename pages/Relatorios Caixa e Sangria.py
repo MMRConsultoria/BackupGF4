@@ -618,7 +618,6 @@ with sub_caixa:
 
         # ======= Comparativa =======
         # ======= Comparativa =======
-        # ======= Comparativa =======
         if visao == "Comparativa Everest":
             base = df_fil.copy()
         
@@ -639,7 +638,7 @@ with sub_caixa:
         
                 _cols_hide = ["Mês", "Mes", "Ano", "Duplicidade", "Sistema"]
         
-                # --- conjuntos (Aplicado x Provisório) ---
+                # --- estado (CÓDIGOS) APLICADO para filtrar os expanders ---
                 def _only_digits(x):
                     x = "" if x is None else str(x)
                     return re.sub(r"\D+", "", x)
@@ -677,20 +676,6 @@ with sub_caixa:
                         st.info("Nenhum depósito/remoção para os códigos selecionados.")
                     st.dataframe(audit_out, use_container_width=True, hide_index=True)
         
-                # ====================== BOTÕES (aplicar/limpar) após os depósitos ======================
-                c_sel, c_limpar, _ = st.columns([1, 1, 6])
-                with c_sel:
-                    if st.button("✅ Selecionar", help="Aplicar os códigos marcados na tabela abaixo", key="btn_aplicar_cod"):
-                        st.session_state["cmp_codigos_selecionados"] = set(
-                            map(_only_digits, st.session_state.get("cmp_codigos_provisorios", set()))
-                        )
-                        st.rerun()
-                with c_limpar:
-                    if st.button("🧹 Limpar", help="Limpar seleção aplicada e provisória", key="btn_limpar_cod"):
-                        st.session_state["cmp_codigos_selecionados"] = set()
-                        st.session_state["cmp_codigos_provisorios"] = set()
-                        st.rerun()
-        
                 # ====================== segue o fluxo normal usando apenas os incluídos ======================
                 base = base.loc[~mask_dep_sys].copy()
         
@@ -709,6 +694,7 @@ with sub_caixa:
                 def _norm(s): return re.sub(r"[^a-z0-9]", "", str(s).lower())
                 cmap = {_norm(c): c for c in df_ev.columns}
                 col_emp   = cmap.get("empresa")
+                # ✅ PRIORIDADE: D. Competência → fallback para D. Lançamento/Data
                 pref_comp      = ["dcompetencia", "datacompetencia", "datadecompetencia", "competencia", "dtcompetencia"]
                 fallback_lcto  = ["dlancamento", "dlancament", "dlanamento", "datadelancamento", "data"]
         
@@ -751,7 +737,9 @@ with sub_caixa:
         
                     if "Código Everest" in mapa.columns:
                         mapa["Código Everest"] = mapa["Código Everest"].astype(str).str.extract(r"(\d+)")
+                        # prioridade: evitar nomes com "Embarque" ou "Checkin"
                         mapa["__prio__"] = mapa["Loja"].astype(str).str.contains(r"(embarque|checkin)", case=False, na=False).astype(int)
+                        # escolhe 1 linha por Código Everest (menor prioridade e, em empate, menor ordem alfabética)
                         mapa_unico = (
                             mapa.sort_values(["Código Everest", "__prio__", "Loja"])
                                 .drop_duplicates(subset=["Código Everest"], keep="first")
@@ -800,7 +788,7 @@ with sub_caixa:
                     }
                     df_exibe = pd.concat([pd.DataFrame([total]), cmp], ignore_index=True)
         
-                    # ====================== render no app (com checkbox) ======================
+                    # ====================== render no app (com checkbox) EM FORM ======================
                     df_show = df_exibe.copy()
                     df_show["Data"] = pd.to_datetime(df_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
                     for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
@@ -813,17 +801,8 @@ with sub_caixa:
         
                     # adiciona a coluna de checkbox após "Diferença"
                     insert_pos = (list(view.columns).index("Diferença") + 1) if "Diferença" in view.columns else len(view.columns)
-                    view.insert(insert_pos, "Selecionado", False)
-        
-                    # Pré-marcar: usa PROVISÓRIO se existir, senão APLICADO
-                    codigos_provisorios = set(map(_only_digits, st.session_state.get("cmp_codigos_provisorios", set())))
-                    codigos_provisorios = set(filter(None, codigos_provisorios))
-                    base_para_premarcar = codigos_provisorios if len(codigos_provisorios) > 0 else codigos_aplicados
-        
-                    if {"Código Everest","Grupo"}.issubset(set(view.columns)) and len(base_para_premarcar) > 0:
-                        cod_series = view["Código Everest"].astype(str).str.extract(r"(\d+)")[0]
-                        mask_normais = view["Grupo"].astype(str).str.upper() != "TOTAL"
-                        view.loc[mask_normais, "Selecionado"] = cod_series[mask_normais].isin(base_para_premarcar).values
+                    if "Selecionado" not in view.columns:
+                        view.insert(insert_pos, "Selecionado", False)
         
                     from streamlit import column_config as cc
                     col_cfg = {}
@@ -831,7 +810,7 @@ with sub_caixa:
                         if col == "Selecionado":
                             col_cfg[col] = cc.CheckboxColumn(
                                 label="Selecionado",
-                                help="Marque para selecionar esta linha (provisório).",
+                                help="Marque as linhas e depois clique em ✅ Selecionar.",
                                 default=False
                             )
                         elif col == "Data":
@@ -841,26 +820,49 @@ with sub_caixa:
                         else:
                             col_cfg[col] = cc.TextColumn(label=col, disabled=True)
         
-                    edited_view = st.data_editor(
-                        view,
-                        use_container_width=True,
-                        hide_index=True,
-                        height=520,
-                        column_config=col_cfg,
-                        key="cmp_editor_com_checkbox",
-                    )
+                    # Pré-marcar pelos códigos APLICADOS (sem recarregar ao clicar)
+                    if tem_filtro_codigo and {"Código Everest","Grupo"}.issubset(set(view.columns)):
+                        cod_series = view["Código Everest"].astype(str).str.extract(r"(\d+)")[0]
+                        mask_normais = view["Grupo"].astype(str).str.upper() != "TOTAL"
+                        view.loc[mask_normais, "Selecionado"] = cod_series[mask_normais].isin(codigos_aplicados).values
         
-                    # --- Salvar PROVISÓRIO (NÃO aplica nos expanders até clicar "Selecionar") ---
-                    try:
-                        sel_mask = (edited_view["Selecionado"] == True) & (edited_view["Grupo"].astype(str).str.upper() != "TOTAL")
-                        sel_codigos_prov = (
-                            edited_view.loc[sel_mask, "Código Everest"]
-                            .astype(str).str.extract(r"(\d+)")[0]
-                            .dropna().tolist()
+                    # ---------- FORM: não recarrega ao marcar; só ao enviar ----------
+                    with st.form("form_selecao_codigos", clear_on_submit=False):
+                        edited_view = st.data_editor(
+                            view,
+                            use_container_width=True,
+                            hide_index=True,
+                            height=520,
+                            column_config=col_cfg,
+                            key="cmp_editor_com_checkbox",
                         )
-                        st.session_state["cmp_codigos_provisorios"] = set(sel_codigos_prov)
-                    except Exception:
-                        st.session_state["cmp_codigos_provisorios"] = set()
+        
+                        # Botões lado a lado (SUBMIT DO FORM) — ficam logo após os depósitos (acima no fluxo)
+                        c_sel, c_limpar, _ = st.columns([1, 1, 6])
+                        aplicar = c_sel.form_submit_button("✅ Selecionar", help="Aplicar o filtro pelos códigos marcados acima")
+                        limpar  = c_limpar.form_submit_button("🧹 Limpar", help="Remover o filtro aplicado e desmarcar tudo")
+        
+                    # ===== AÇÃO PÓS-SUBMIT =====
+                    if aplicar:
+                        try:
+                            sel_mask = (edited_view["Selecionado"] == True) & (edited_view["Grupo"].astype(str).str.upper() != "TOTAL")
+                            sel_codigos = (
+                                edited_view.loc[sel_mask, "Código Everest"]
+                                .astype(str).str.extract(r"(\d+)")[0]
+                                .dropna().tolist()
+                            )
+                            st.session_state["cmp_codigos_selecionados"] = set(sel_codigos)
+                        except Exception:
+                            st.session_state["cmp_codigos_selecionados"] = set()
+                        st.rerun()  # aplica o filtro nos expanders só agora
+        
+                    if limpar:
+                        st.session_state["cmp_codigos_selecionados"] = set()
+                        try:
+                            view["Selecionado"] = False
+                        except Exception:
+                            pass
+                        st.rerun()
         
                     # ====================== EXPORTAÇÃO (com slicers quando possível) ======================
                     from io import BytesIO

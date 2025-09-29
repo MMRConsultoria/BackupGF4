@@ -1105,7 +1105,7 @@ with sub_caixa:
 
                     # ====================== BOTÕES Selecionar/Limpar + TABELA (depois dos depósitos) ======================
                     with st.form("form_selecao_codigos", clear_on_submit=False):
-                        c_sel, c_limpar, _ = st.columns([0.6, 0.6, 8], gap="small")
+                        c_sel, c_limpar, _ = st.columns([0.8, 0.8, 8], gap="small")
                         aplicar = c_sel.form_submit_button("Selecionar", help="Aplicar o filtro pelos códigos marcados na tabela")
                         limpar  = c_limpar.form_submit_button("Limpar", help="Remover o filtro aplicado e desmarcar tudo")
     

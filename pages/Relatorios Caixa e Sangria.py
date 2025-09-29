@@ -21,18 +21,7 @@ st.markdown("""
 [data-testid="stToolbar"]{visibility:hidden;height:0;position:fixed}
 </style>
 """, unsafe_allow_html=True)
-st.markdown("""
-<style>
-/* reduz padding e fonte só dos botões dentro de .small-btn */
-.small-btn button {
-    padding: 4px 10px;
-    font-size: 13px;
-    border-radius: 8px;
-}
-/* encurta o espaçamento horizontal entre as colunas do formulário */
-div[data-testid="column"]:has(.btn-row) { margin-right: .25rem !important; }
-</style>
-""", unsafe_allow_html=True)
+
 
 with st.spinner("⏳ Carregando dados..."):
     # ============ Conexão com Google Sheets ============

@@ -296,24 +296,25 @@ with st.spinner("⏳ Processando..."):
                                     linhas_validas.append(i)
     
                         df = df.loc[linhas_validas].copy()
-                        df.ffill(inplace=True)
-                        df = df.sort_values("_ordem_src", kind="stable")
-                        # ===== FIX: preencher Descrição quando Hora é horário e Valor(R$) está preenchido =====
-                        def _is_blank(series: pd.Series) -> pd.Series:
-                            s = series.astype(str).str.strip().str.lower()
-                            return series.isna() | s.isin(["", "nan", "none", "null"])
                         
-                        # Hora válida: tenta converter para horário (ou timestamp) → não NaT
-                        mask_hora_valida = pd.to_datetime(df["Hora"], errors="coerce").notna()
+
+                        # preenche para baixo só o que é cabeçalho de contexto
+                        for col in ["Data", "Funcionário", "Loja"]:
+                            df[col] = df[col].ffill()
                         
-                        # Valor(R$) preenchido (qualquer coisa diferente de vazio/NAN/NONE)
-                        mask_valor_preenchido = ~_is_blank(df["Valor(R$)"])
+                        # regras para linhas de transação
+                        def _is_blank(s):
+                            s = s.astype(str).str.strip().str.lower()
+                            return s.isna() | s.isin(["", "nan", "none", "null"])
                         
-                        # Descrição vazia
-                        mask_desc_vazia = _is_blank(df["Descrição"])
+                        hora_ok   = pd.to_datetime(df["Hora"], errors="coerce").notna()
+                        valor_ok  = ~_is_blank(df["Valor(R$)"])
+                        desc_vazia = _is_blank(df["Descrição"])
+                        meio_vazio = _is_blank(df.get("Meio de recebimento", ""))
                         
-                        # Aplica a regra
-                        df.loc[mask_hora_valida & mask_valor_preenchido & mask_desc_vazia, "Descrição"] = "sem preenchimento"
+                        df.loc[hora_ok & valor_ok & desc_vazia, "Descrição"] = "sem preenchimento"
+                        df.loc[hora_ok & valor_ok & meio_vazio, "Meio de recebimento"] = "Dinheiro"
+
                         # =======================================================================
 
                         # Limpeza e conversões

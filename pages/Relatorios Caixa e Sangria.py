@@ -696,10 +696,32 @@ with sub_caixa:
 
                 
                 # ====================== filtros/removidos/incluídos ======================
-                mask_dep_sys = (
-                    eh_deposito_mask(base)
-                    | base["Descrição Agrupada"].astype(str).str.contains(r"\b(maionese|Moeda Estrangeira)\b", regex=True, na=False)
+                # ====================== filtros/removidos/incluídos ======================
+                # 1) normaliza a "Descrição Agrupada"
+                desc_norm = (
+                    base.get("Descrição Agrupada", pd.Series("", index=base.index))
+                        .astype(str)
+                        .map(_norm_acento)     # sua função que remove acento e põe lower()
                 )
+                
+                tem_desc = desc_norm.str.len() > 0
+                
+                # 2) quando a "Descrição Agrupada" estiver preenchida, confiamos nela:
+                #    - é depósito se for "depósito/dep" OU se for "moeda estrangeira/maionese" (seu caso especial)
+                desc_eh_deposito = (
+                    desc_norm.str.contains(r"\b(dep(osi)?to|deposito|dep)\b", regex=True)
+                    | desc_norm.str.contains(r"\b(moeda estrangeira|maionese)\b", regex=True)
+                )
+                
+                # 3) fallback heurístico quando a coluna agrupada está vazia
+                mask_dep_auto = eh_deposito_mask(base)
+                
+                # 4) regra final: se tem agrupada -> usa agrupada; senão -> usa heurístico
+                mask_dep_sys = pd.Series(
+                    np.where(tem_desc, desc_eh_deposito, mask_dep_auto),
+                    index=base.index
+                )
+
 
                 _cols_hide = ["Mês", "Mes", "Ano", "Duplicidade", "Sistema"]
 

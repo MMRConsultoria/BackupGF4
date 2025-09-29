@@ -1196,30 +1196,30 @@ with sub_caixa:
                             df = df.rename(columns={"Mês":"Mes"})
                         return df
 
+                    
                     def exportar_xlsxwriter_tentando_slicers(cmp: pd.DataFrame, usar_mes_sem_acento: bool=False) -> tuple[BytesIO,bool]:
                         df = _prep_df_export(cmp, usar_mes_sem_acento=usar_mes_sem_acento)
                         try:
                             import xlsxwriter as xw
-                            st.caption(f"XlsxWriter em runtime: {xw.__version__}")
                             ver_tuple = tuple(int(p) for p in xw.__version__.split(".")[:3])
                         except Exception:
                             ver_tuple = (0,0,0)
-
+                    
                         from xlsxwriter import Workbook
                         buf = BytesIO()
                         wb  = Workbook(buf, {"in_memory": True})
                         ws  = wb.add_worksheet("Dados")
-
+                    
                         fmt_header = wb.add_format({"bold":True,"align":"center","valign":"vcenter","bg_color":"#F2F2F2","border":1})
                         fmt_text   = wb.add_format({"border":1})
                         fmt_int    = wb.add_format({"border":1,"num_format":"0"})
                         fmt_date   = wb.add_format({"border":1,"num_format":"dd/mm/yyyy"})
                         fmt_money  = wb.add_format({"border":1,"num_format":'R$ #,##0.00'})
-
+                    
                         headers = list(df.columns)
                         for j,c in enumerate(headers):
                             ws.write(0,j,c,fmt_header)
-
+                    
                         for i,row in df.iterrows():
                             r = i+1
                             for j,c in enumerate(headers):
@@ -1232,7 +1232,7 @@ with sub_caixa:
                                     ws.write_number(r,j,float(v),fmt_money)
                                 else:
                                     ws.write(r,j,("" if pd.isna(v) else v),fmt_text)
-
+                    
                         last_row = len(df)
                         last_col = len(headers)-1
                         ws.add_table(0,0,last_row,last_col,{
@@ -1240,7 +1240,7 @@ with sub_caixa:
                             "style":"TableStyleMedium9",
                             "columns":[{"header":h} for h in headers],
                         })
-
+                    
                         col_idx = {c:i for i,c in enumerate(headers)}
                         if "Data" in col_idx:           ws.set_column(col_idx["Data"], col_idx["Data"], 12, fmt_date)
                         if "Grupo" in col_idx:          ws.set_column(col_idx["Grupo"],col_idx["Grupo"],10,fmt_text)
@@ -1252,7 +1252,7 @@ with sub_caixa:
                         if "Mes" in col_idx:            ws.set_column(col_idx["Mes"],6,6,fmt_int)
                         if "Ano" in col_idx:            ws.set_column(col_idx["Ano"],8,8,fmt_int)
                         ws.freeze_panes(1,0)
-
+                    
                         slicers_ok = False
                         if ver_tuple >= (3,2,0) and hasattr(wb, "add_slicer"):
                             try:
@@ -1266,24 +1266,23 @@ with sub_caixa:
                                 if "Loja" in headers:
                                     wb.add_slicer({"table":"tbl_dados","column":"Loja","cell":"N12","width":260,"height":320})
                                 slicers_ok = True
-                            except Exception as e:
-                                st.warning(f"Falha ao inserir slicers via XlsxWriter ({type(e).__name__}). Vou tentar via template, se existir.")
-                                slicers_ok = False
-                        else:
-                            st.warning("Runtime sem suporte a wb.add_slicer. Vou tentar via template, se existir.")
-                            slicers_ok = False
-
+                            except Exception:
+                                slicers_ok = False  # silencioso
+                    
                         wb.close()
                         buf.seek(0)
                         return buf, slicers_ok
 
+
+                    
                     xlsx_out, ok = exportar_xlsxwriter_tentando_slicers(cmp, usar_mes_sem_acento=True)
                     if not ok:
                         try:
                             xlsx_out = exportar_via_template_preservando_slicers(cmp)
-                            st.success("Template usado — segmentações preservadas no Excel Desktop.")
                         except Exception:
-                            st.warning("Sem suporte a slicers no runtime e template ausente. Exportando sem segmentações.")
+                            pass  # segue sem mensagens
+
+
 
                     st.download_button(
                         label="⬇️ Baixar Excel",

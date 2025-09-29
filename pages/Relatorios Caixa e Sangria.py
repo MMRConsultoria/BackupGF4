@@ -1196,14 +1196,14 @@ with sub_caixa:
                             df = df.rename(columns={"Mês":"Mes"})
                         return df
 
-                    #def exportar_xlsxwriter_tentando_slicers(cmp: pd.DataFrame, usar_mes_sem_acento: bool=False) -> tuple[BytesIO,bool]:
-                        #df = _prep_df_export(cmp, usar_mes_sem_acento=usar_mes_sem_acento)
-                        #try:
-                        #    import xlsxwriter as xw
-                        #    st.caption(f"XlsxWriter em runtime: {xw.__version__}")
-                        #    ver_tuple = tuple(int(p) for p in xw.__version__.split(".")[:3])
-                        #except Exception:
-                        #    ver_tuple = (0,0,0)
+                    def exportar_xlsxwriter_tentando_slicers(cmp: pd.DataFrame, usar_mes_sem_acento: bool=False) -> tuple[BytesIO,bool]:
+                        df = _prep_df_export(cmp, usar_mes_sem_acento=usar_mes_sem_acento)
+                        try:
+                            import xlsxwriter as xw
+                            st.caption(f"XlsxWriter em runtime: {xw.__version__}")
+                            ver_tuple = tuple(int(p) for p in xw.__version__.split(".")[:3])
+                        except Exception:
+                            ver_tuple = (0,0,0)
 
                         from xlsxwriter import Workbook
                         buf = BytesIO()

@@ -626,8 +626,24 @@ with sub_caixa:
                 st.error("❌ Preciso de 'Data', 'Código Everest' e coluna de valor na aba Sangria.")
             else:
                 import re
-                from gspread.models import Cell
                 from streamlit import column_config as cc
+                
+                # Import robusto do Cell (funciona em várias versões do gspread)
+                try:
+                    from gspread.cell import Cell          # gspread >= 5.x
+                except Exception:
+                    try:
+                        from gspread.models import Cell    # versões antigas
+                    except Exception:
+                        Cell = None  # sem Cell → usamos fallback célula a célula
+                
+                def _excel_col_letter(idx_zero_based: int) -> str:
+                    n = idx_zero_based + 1
+                    s = ""
+                    while n:
+                        n, r = divmod(n - 1, 26)
+                        s = chr(65 + r) + s
+                    return s
 
                 # ====================== normalização ======================
                 base["Data"] = pd.to_datetime(base["Data"], dayfirst=True, errors="coerce").dt.normalize()
@@ -743,15 +759,29 @@ with sub_caixa:
                                         dup_key   = keys.iloc[i]
                                         nova_desc = depois.iloc[i].strip()
                                         hits = df_ws.index[df_ws["Duplicidade"] == dup_key].tolist()
+                                        
+                                        updates = []
                                         for h in hits:
                                             row_num = int(df_ws.loc[h, "_row"])
-                                            updates.append(Cell(row=row_num, col=col_idx_desc, value=nova_desc))
-                                    if not updates:
-                                        st.warning("Nenhuma linha correspondente encontrada no Sheets (incluídos).")
-                                    else:
-                                        ws_sys.update_cells(updates, value_input_option="USER_ENTERED")
-                                        st.success(f"Atualizei {len(updates)} célula(s) no Google Sheets (incluídos).")
-                                        st.rerun()
+                                            if Cell is not None:
+                                                updates.append(Cell(row=row_num, col=col_idx_desc, value=nova_desc))
+                                            else:
+                                                # fallback: guardamos tripleta para atualizar célula a célula depois
+                                                updates.append((row_num, col_idx_desc, nova_desc))
+                                        
+                                        if not updates:
+                                            st.warning("Nenhuma linha correspondente encontrada no Sheets (incluídos).")
+                                        else:
+                                            if Cell is not None:
+                                                ws_sys.update_cells(updates, value_input_option="USER_ENTERED")
+                                            else:
+                                                # fallback célula a célula
+                                                for row_num, col_idx, novo in updates:
+                                                    a1 = f"{_excel_col_letter(col_idx-1)}{row_num}"
+                                                    ws_sys.update(a1, novo, value_input_option="USER_ENTERED")
+                                            st.success(f"Atualizei {len(updates)} célula(s) no Google Sheets (incluídos).")
+                                            st.rerun()
+
                         except Exception as e:
                             st.error(f"Falha ao atualizar (incluídos): {type(e).__name__}: {e}")
 
@@ -819,15 +849,26 @@ with sub_caixa:
                                         dup_key   = keys.iloc[i]
                                         nova_desc = depois.iloc[i].strip()
                                         hits = df_ws.index[df_ws["Duplicidade"] == dup_key].tolist()
+                                        updates = []
                                         for h in hits:
                                             row_num = int(df_ws.loc[h, "_row"])
-                                            updates.append(Cell(row=row_num, col=col_idx_desc, value=nova_desc))
-                                    if not updates:
-                                        st.warning("Nenhuma linha correspondente encontrada no Sheets (removidos).")
-                                    else:
-                                        ws_sys.update_cells(updates, value_input_option="USER_ENTERED")
-                                        st.success(f"Atualizei {len(updates)} célula(s) no Google Sheets (removidos).")
-                                        st.rerun()
+                                            if Cell is not None:
+                                                updates.append(Cell(row=row_num, col=col_idx_desc, value=nova_desc))
+                                            else:
+                                                updates.append((row_num, col_idx_desc, nova_desc))
+                                        
+                                        if not updates:
+                                            st.warning("Nenhuma linha correspondente encontrada no Sheets (removidos).")
+                                        else:
+                                            if Cell is not None:
+                                                ws_sys.update_cells(updates, value_input_option="USER_ENTERED")
+                                            else:
+                                                for row_num, col_idx, novo in updates:
+                                                    a1 = f"{_excel_col_letter(col_idx-1)}{row_num}"
+                                                    ws_sys.update(a1, novo, value_input_option="USER_ENTERED")
+                                            st.success(f"Atualizei {len(updates)} célula(s) no Google Sheets (removidos).")
+                                            st.rerun()
+
                         except Exception as e:
                             st.error(f"Falha ao atualizar (removidos): {type(e).__name__}: {e}")
 

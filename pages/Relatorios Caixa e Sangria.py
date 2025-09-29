@@ -1,7 +1,5 @@
 # pages/05_Relatorios_Caixa_Sangria.py
 import streamlit as st
-
-
 import pandas as pd
 import numpy as np
 import re, json
@@ -9,6 +7,12 @@ from io import BytesIO
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
+st.set_page_config(
+    page_title="Relatórios Caixa e Sangria",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 # Bloqueio opcional (mantenha se você já usa login/sessão)
 if not st.session_state.get("acesso_liberado"):
     st.stop()

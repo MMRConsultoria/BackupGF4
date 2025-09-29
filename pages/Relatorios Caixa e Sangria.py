@@ -21,6 +21,18 @@ st.markdown("""
 [data-testid="stToolbar"]{visibility:hidden;height:0;position:fixed}
 </style>
 """, unsafe_allow_html=True)
+st.markdown("""
+<style>
+/* reduz padding e fonte só dos botões dentro de .small-btn */
+.small-btn button {
+    padding: 4px 10px;
+    font-size: 13px;
+    border-radius: 8px;
+}
+/* encurta o espaçamento horizontal entre as colunas do formulário */
+div[data-testid="column"]:has(.btn-row) { margin-right: .25rem !important; }
+</style>
+""", unsafe_allow_html=True)
 
 with st.spinner("⏳ Carregando dados..."):
     # ============ Conexão com Google Sheets ============
@@ -1104,10 +1116,29 @@ with sub_caixa:
 
                     # ====================== BOTÕES Selecionar/Limpar + TABELA (depois dos depósitos) ======================
                     with st.form("form_selecao_codigos", clear_on_submit=False):
-                        c_sel, c_limpar, _ = st.columns([1, 1, 1])
-                        aplicar = c_sel.form_submit_button("Selecionar", help="Aplicar o filtro pelos códigos marcados na tabela")
-                        limpar  = c_limpar.form_submit_button("Limpar", help="Remover o filtro aplicado e desmarcar tudo")
-
+                   
+                        # colunas bem estreitas para os botões ficarem pequenos
+                        c_sel, c_limpar, _ = st.columns([0.6, 0.6, 8], gap="small")
+                    
+                        with c_sel:
+                            st.markdown('<div class="small-btn btn-row">', unsafe_allow_html=True)
+                            aplicar = st.form_submit_button(
+                                "Selecionar",
+                                use_container_width=True,
+                                help="Aplicar o filtro pelos códigos marcados na tabela",
+                                type="primary",  # opcional: destaca levemente
+                            )
+                            st.markdown('</div>', unsafe_allow_html=True)
+                    
+                        with c_limpar:
+                            st.markdown('<div class="small-btn btn-row">', unsafe_allow_html=True)
+                            limpar  = st.form_submit_button(
+                                "Limpar",
+                                use_container_width=True,
+                                help="Remover o filtro aplicado e desmarcar tudo",
+                            )
+                            st.markdown('</div>', unsafe_allow_html=True)
+                    
                         df_show = df_exibe.copy()
                         df_show["Data"] = pd.to_datetime(df_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
                         for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:

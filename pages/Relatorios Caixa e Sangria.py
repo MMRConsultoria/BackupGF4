@@ -711,7 +711,9 @@ with sub_caixa:
                 codigos_aplicados = set(map(_only_digits, st.session_state.get("cmp_codigos_selecionados", set())))
                 codigos_aplicados = set(filter(None, codigos_aplicados))
                 tem_filtro_codigo = bool(codigos_aplicados)
-
+                # ✅ Versor do editor – precisa estar fora de funções e antes dos editores
+                if "rev_desc" not in st.session_state:
+                    st.session_state["rev_desc"] = 0
                 # Opções de "Descrição Agrupada" vindas do Google Sheets (Tabela Sangria),
                 # removendo duplicatas (insensível a maiúsc/minúsc, acentos e espaços extras).
                 def _desc_options_from_sheet(df_extra: pd.DataFrame | None = None) -> list[str]:
@@ -753,7 +755,7 @@ with sub_caixa:
                     # 4) Ordena alfabeticamente (case-insensitive)
                     return sorted(escolha.tolist(), key=lambda x: x.lower())
 
-
+                    
 
 
 
@@ -835,7 +837,7 @@ with sub_caixa:
                             hide_index=True,
                             height=320,
                             column_config=col_cfg_in,
-                            key="editor_incluidos_desc",
+                            key=f"editor_incluidos_desc_{st.session_state['rev_desc']}",
                         )
                         c_save_in, _ = st.columns([1, 6])
                         salvar_in = c_save_in.form_submit_button("Atualizar Google Sheets")
@@ -887,7 +889,8 @@ with sub_caixa:
                                                     a1 = f"{_excel_col_letter(col_idx-1)}{row_num}"
                                                     ws_sys.update(a1, novo, value_input_option="USER_ENTERED")
                                             st.success(f"Atualizei {len(updates)} célula(s) no Google Sheets (incluídos).")
-                                            st.rerun()
+                                            st.session_state["rev_desc"] += 1    
+                                            st.rerun()                           
 
                         except Exception as e:
                             st.error(f"Falha ao atualizar (incluídos): {type(e).__name__}: {e}")
@@ -942,7 +945,7 @@ with sub_caixa:
                             hide_index=True,
                             height=320,
                             column_config=col_cfg_out,
-                            key="editor_removidos_desc",
+                            key=f"editor_removidos_desc_{st.session_state['rev_desc']}",
                         )
                         c_save_out, _ = st.columns([1, 6])
                         salvar_out = c_save_out.form_submit_button("Atualizar Google Sheets")
@@ -991,8 +994,9 @@ with sub_caixa:
                                                     a1 = f"{_excel_col_letter(col_idx-1)}{row_num}"
                                                     ws_sys.update(a1, novo, value_input_option="USER_ENTERED")
                                             st.success(f"Atualizei {len(updates)} célula(s) no Google Sheets (removidos).")
-                                            st.rerun()
-
+                                            st.session_state["rev_desc"] += 1     
+                                            st.rerun()                            
+                                           
                         except Exception as e:
                             st.error(f"Falha ao atualizar (removidos): {type(e).__name__}: {e}")
 

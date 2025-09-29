@@ -667,6 +667,52 @@ with sub_caixa:
                 codigos_aplicados = set(filter(None, codigos_aplicados))
                 tem_filtro_codigo = bool(codigos_aplicados)
 
+                # Opções de "Descrição Agrupada" vindas do Google Sheets (Tabela Sangria),
+                # removendo duplicatas (insensível a maiúsc/minúsc, acentos e espaços extras).
+                def _desc_options_from_sheet(df_extra: pd.DataFrame | None = None) -> list[str]:
+                    import unicodedata, re
+                    def _clean(s: str) -> str:
+                        s = str(s or "").strip()
+                        s = re.sub(r"\s+", " ", s)                  # normaliza espaços
+                        return s
+                
+                    def _norm_key(s: str) -> str:
+                        # remove acentos, ignora caixa/espacos para deduplicar
+                        s0 = _clean(s)
+                        s0 = unicodedata.normalize("NFKD", s0).encode("ASCII", "ignore").decode("ASCII")
+                        return s0.lower()
+                
+                    # 1) Coleta do Sheets (df_descricoes["Descrição Agrupada"])
+                    base = []
+                    try:
+                        if "Descrição Agrupada" in df_descricoes.columns:
+                            base = df_descricoes["Descrição Agrupada"].dropna().astype(str).tolist()
+                    except Exception:
+                        pass
+                
+                    # 2) (opcional) agregar o que já existe no dataframe atual para não "sumir" nada que não esteja no Sheets
+                    extras = []
+                    if df_extra is not None and "Descrição Agrupada" in df_extra.columns:
+                        extras = df_extra["Descrição Agrupada"].dropna().astype(str).tolist()
+                
+                    candidatos = [x for x in map(_clean, base + extras) if x and x.lower() not in ("nan", "none")]
+                
+                    # 3) Dedup: escolhe a grafia mais frequente para cada chave normalizada
+                    import pandas as pd
+                    if not candidatos:
+                        return ["Outros"]
+                    s = pd.Series(candidatos)
+                    norm = s.map(_norm_key)
+                    df_opts = pd.DataFrame({"norm": norm, "orig": s})
+                    escolha = df_opts.groupby("norm")["orig"].agg(lambda col: col.value_counts().idxmax())
+                    # 4) Ordena alfabeticamente (case-insensitive)
+                    return sorted(escolha.tolist(), key=lambda x: x.lower())
+
+
+
+
+
+                
                 # ====================== helpers p/ sheets e opções de descrição ======================
                 WS_SISTEMA = "Sangria"  # ⬅️ ajuste o nome da aba do sistema no Google Sheets, se necessário
 
@@ -701,7 +747,7 @@ with sub_caixa:
                         audit_in_raw = audit_in_raw[audit_in_raw["_cod"].isin(codigos_aplicados)].drop(columns=["_cod"])
 
                     # Opções para o dropdown
-                    opcoes_desc_in = _desc_options_flex(audit_in_raw)
+                    opcoes_desc_in = _desc_options_from_sheet(audit_in_raw)
 
                     # Visão para tela
                     audit_in_view = audit_in_raw.drop(columns=_cols_hide, errors="ignore").copy()
@@ -800,7 +846,7 @@ with sub_caixa:
                         audit_out_raw["_cod"] = audit_out_raw["Código Everest"].astype(str).str.extract(r"(\d+)")
                         audit_out_raw = audit_out_raw[audit_out_raw["_cod"].isin(codigos_aplicados)].drop(columns=["_cod"])
 
-                    opcoes_desc_out = _desc_options_flex(audit_out_raw)
+                    opcoes_desc_out = _desc_options_from_sheet(audit_out_raw)
 
                     audit_out_view = audit_out_raw.drop(columns=_cols_hide, errors="ignore").copy()
                     if col_valor in audit_out_view.columns:

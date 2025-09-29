@@ -797,10 +797,21 @@ with sub_caixa:
                         cur_opts = set(fallback_df["Descrição Agrupada"].astype(str).dropna().unique())
                     opts = sorted({o.strip() for o in (base_opts | cur_opts) if o and o.strip()})
                     return opts if opts else ["Outros"]
-                def _obs_col_name(cols):
-                    for name in ("Observação", "Observacao", "Obs"):
-                        if name in cols:
-                            return name
+                  
+                def _find_col(cols, candidates=("Observação", "Observacao", "Obs")):
+                    import unicodedata, re
+                    def norm(s):
+                        s = unicodedata.normalize("NFKD", str(s)).encode("ASCII","ignore").decode("ASCII")
+                        return re.sub(r"\s+", " ", s).strip().lower()
+                    cmap = {norm(c): c for c in cols}
+                    for cand in candidates:
+                        key = norm(cand)
+                        if key in cmap:
+                            return cmap[key]
+                    # fallback: qualquer coisa que comece com "observa"
+                    for k, orig in cmap.items():
+                        if k.startswith("observa"):
+                            return orig
                     return None
                 # ====================== EXPANDERS (com edição de Descrição Agrupada) ======================
                 # -------- INCLUÍDOS --------
@@ -826,6 +837,17 @@ with sub_caixa:
                         st.info("Nenhum item incluído para os códigos selecionados.")
 
                     col_cfg_in = {c: cc.TextColumn(disabled=True, label=c) for c in audit_in_view.columns}
+                    # 🔓 Observação (texto livre) – habilitar a edição
+                    obs_col_in = _find_col(audit_in_view.columns)
+                    if obs_col_in:
+                        audit_in_view[obs_col_in] = (
+                            audit_in_view[obs_col_in].astype(str).replace({"nan": ""}).fillna("")
+                        )
+                        col_cfg_in[obs_col_in] = cc.TextColumn(
+                            label=obs_col_in,
+                            help="Digite livremente; será salvo no Google Sheets.",
+                            disabled=False,
+                        )
 
                     # Descrição Agrupada como select editável (já existia)
                     if "Descrição Agrupada" in audit_in_view.columns:
@@ -881,7 +903,12 @@ with sub_caixa:
                             else:
                                 ws_sys = planilha_empresa.worksheet(WS_SISTEMA)
                                 df_ws, col_map = _sheet_df_with_row(ws_sys)
-                        
+                                # localizar índices no Sheets
+                                col_idx_desc = col_map.get("Descrição Agrupada")
+                                
+                                # nome exato da coluna Observação no Sheets (robusto)
+                                obs_sheet_col_name = _find_col(col_map.keys())
+                                col_idx_obs = col_map.get(obs_sheet_col_name) if obs_sheet_col_name else None
                                 if "Duplicidade" not in df_ws.columns:
                                     st.error("A aba do Sheets precisa ter a coluna 'Duplicidade'.")
                                 else:
@@ -958,7 +985,18 @@ with sub_caixa:
                     
                     if "Data" in audit_out_view.columns:
                         col_cfg_out["Data"] = cc.DateColumn(label="Data", format="DD/MM/YYYY", disabled=True)
-                    
+                    # 🔓 Observação (texto livre) – habilitar a edição
+                    obs_col_out = _find_col(audit_out_view.columns)
+                    if obs_col_out:
+                        audit_out_view[obs_col_out] = (
+                            audit_out_view[obs_col_out].astype(str).replace({"nan": ""}).fillna("")
+                        )
+                        col_cfg_out[obs_col_out] = cc.TextColumn(
+                            label=obs_col_out,
+                            help="Digite livremente; será salvo no Google Sheets.",
+                            disabled=False,
+                        )
+
                     # 🔓 Observação editável
                     obs_col_out = _obs_col_name(audit_out_view.columns)
                     if obs_col_out:
@@ -999,7 +1037,9 @@ with sub_caixa:
                             else:
                                 ws_sys = planilha_empresa.worksheet(WS_SISTEMA)
                                 df_ws, col_map = _sheet_df_with_row(ws_sys)
-                        
+                                col_idx_desc = col_map.get("Descrição Agrupada")
+                                obs_sheet_col_name = _find_col(col_map.keys())
+                                col_idx_obs = col_map.get(obs_sheet_col_name) if obs_sheet_col_name else None
                                 if "Duplicidade" not in df_ws.columns:
                                     st.error("A aba do Sheets precisa ter a coluna 'Duplicidade'.")
                                 else:

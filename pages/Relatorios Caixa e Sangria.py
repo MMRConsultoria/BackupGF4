@@ -620,39 +620,52 @@ with sub_caixa:
         # ======= Comparativa =======
         if visao == "Comparativa Everest":
             base = df_fil.copy()
-
+        
             if "Data" not in base.columns or "Código Everest" not in base.columns or not col_valor:
                 st.error("❌ Preciso de 'Data', 'Código Everest' e coluna de valor na aba Sangria.")
             else:
-                import re
+                import re, unicodedata
                 from gspread.models import Cell
                 from streamlit import column_config as cc
-
+        
                 # ====================== normalização ======================
                 base["Data"] = pd.to_datetime(base["Data"], dayfirst=True, errors="coerce").dt.normalize()
                 base[col_valor] = pd.to_numeric(base[col_valor], errors="coerce").fillna(0.0)
                 base["Código Everest"] = base["Código Everest"].astype(str).str.extract(r"(\d+)")
-
+        
                 # ====================== filtros/removidos/incluídos ======================
                 mask_dep_sys = (
                     eh_deposito_mask(base)
                     | base["Descrição Agrupada"].astype(str).str.contains(r"\b(maionese|Moeda Estrangeira)\b", regex=True, na=False)
                 )
-
+        
+                # Colunas ocultas na visão (mas preservadas no raw p/ update por Duplicidade)
                 _cols_hide = ["Mês", "Mes", "Ano", "Duplicidade", "Sistema"]
-
-                # ====================== Estado (CÓDIGOS) aplicado para filtrar os expanders ======================
+        
+                # ====================== estado de seleção por CÓDIGO ======================
                 def _only_digits(x):
                     x = "" if x is None else str(x)
                     return re.sub(r"\D+", "", x)
-
+        
                 codigos_aplicados = set(map(_only_digits, st.session_state.get("cmp_codigos_selecionados", set())))
                 codigos_aplicados = set(filter(None, codigos_aplicados))
                 tem_filtro_codigo = bool(codigos_aplicados)
-
-                # ====================== helpers p/ sheets e opções de descrição ======================
-                WS_SISTEMA = "Sangria"  # ⬅️ ajuste o nome da aba do sistema no Google Sheets, se necessário
-
+        
+                # ====================== helpers ======================
+                WS_SISTEMA = "Sangria"  # <— nome da aba do sistema no Google Sheets (onde tem Duplicidade e Descrição Agrupada)
+        
+                def _norm_name(s: str) -> str:
+                    s = unicodedata.normalize("NFKD", str(s or "")).encode("ASCII", "ignore").decode("ASCII")
+                    s = re.sub(r"\s+", " ", s.strip().lower())
+                    return s
+        
+                def _find_col(df: pd.DataFrame, target_name: str):
+                    tgt = _norm_name(target_name)
+                    for c in df.columns:
+                        if _norm_name(c) == tgt:
+                            return c
+                    return None
+        
                 def _sheet_df_with_row(ws):
                     vals = ws.get_all_values()
                     if not vals:
@@ -661,90 +674,119 @@ with sub_caixa:
                     rows = vals[1:]
                     df_ws = pd.DataFrame(rows, columns=header)
                     df_ws["_row"] = (df_ws.index + 2).astype(int)  # linha real no Sheets
-                    col_map = {c: i+1 for i, c in enumerate(header)}  # coluna -> índice 1-based
+                    col_map = {c: i+1 for i, c in enumerate(header)}  # nome exato -> índice 1-based
                     return df_ws, col_map
-
+        
                 def _desc_options_flex(fallback_df: pd.DataFrame) -> list[str]:
                     try:
-                        base_opts = set(df_descricoes["Descrição Agrupada"].astype(str).dropna().unique())
+                        col_desc_tbl = _find_col(df_descricoes, "Descrição Agrupada")
+                        base_opts = set(df_descricoes[col_desc_tbl].astype(str).dropna().unique())
                     except Exception:
                         base_opts = set()
                     cur_opts = set()
-                    if "Descrição Agrupada" in fallback_df.columns:
-                        cur_opts = set(fallback_df["Descrição Agrupada"].astype(str).dropna().unique())
+                    dc = _find_col(fallback_df, "Descrição Agrupada")
+                    if dc:
+                        cur_opts = set(fallback_df[dc].astype(str).dropna().unique())
                     opts = sorted({o.strip() for o in (base_opts | cur_opts) if o and o.strip()})
                     return opts if opts else ["Outros"]
-
-                # ====================== EXPANDERS (com edição de Descrição Agrupada) ======================
-                # -------- INCLUÍDOS --------
+        
+                def _ws_desc_col_idx(df_ws: pd.DataFrame, col_map: dict) -> int | None:
+                    for cname in df_ws.columns:
+                        if _norm_name(cname) == _norm_name("Descrição Agrupada"):
+                            return col_map.get(cname)
+                    return None
+        
+                # ======================================================================
+                # EXPANDER: INCLUÍDOS (pode editar 'Descrição Agrupada' e gravar no Sheets por Duplicidade)
+                # ======================================================================
                 with st.expander("🧾 Ver itens incluídos (Colibri/CISS)"):
-                    audit_in_raw = base.loc[~mask_dep_sys, :].copy()  # mantém Duplicidade
+                    audit_in_raw = base.loc[~mask_dep_sys, :].copy()  # mantém Duplicidade para chave
                     if tem_filtro_codigo and "Código Everest" in audit_in_raw.columns:
                         audit_in_raw["_cod"] = audit_in_raw["Código Everest"].astype(str).str.extract(r"(\d+)")
                         audit_in_raw = audit_in_raw[audit_in_raw["_cod"].isin(codigos_aplicados)].drop(columns=["_cod"])
-
-                    # Opções para o dropdown
+        
                     opcoes_desc_in = _desc_options_flex(audit_in_raw)
-
-                    # Visão para tela
+        
                     audit_in_view = audit_in_raw.drop(columns=_cols_hide, errors="ignore").copy()
                     if col_valor in audit_in_view.columns:
                         audit_in_view[col_valor] = audit_in_view[col_valor].map(brl)
-
+        
                     if tem_filtro_codigo:
                         st.caption(f"Filtrando por {len(codigos_aplicados)} código(s) selecionado(s).")
                     if tem_filtro_codigo and audit_in_view.empty:
                         st.info("Nenhum item incluído para os códigos selecionados.")
-
+        
+                    desc_col_view_in = _find_col(audit_in_view, "Descrição Agrupada")
                     col_cfg_in = {c: cc.TextColumn(disabled=True, label=c) for c in audit_in_view.columns}
-                    if "Descrição Agrupada" in audit_in_view.columns:
-                        col_cfg_in["Descrição Agrupada"] = cc.SelectboxColumn(
+        
+                    have_dropdown_in = hasattr(cc, "SelectboxColumn") and bool(desc_col_view_in)
+                    if have_dropdown_in:
+                        col_cfg_in[desc_col_view_in] = cc.SelectboxColumn(
                             label="Descrição Agrupada",
                             options=opcoes_desc_in,
                             help="Escolha a descrição agrupada para esta linha."
                         )
-
+        
                     with st.form("form_editar_desc_incluidos", clear_on_submit=False):
                         edited_in_view = st.data_editor(
                             audit_in_view,
                             use_container_width=True,
                             hide_index=True,
-                            height=320,
+                            height=360,
                             column_config=col_cfg_in,
                             key="editor_incluidos_desc",
                         )
+        
+                        # Fallback se não houver SelectboxColumn
+                        changes_in = {}
+                        if not have_dropdown_in:
+                            st.info("Seu runtime do Streamlit não oferece dropdown na grade; use o editor auxiliar abaixo.")
+                            dup_col_in_raw = _find_col(audit_in_raw, "Duplicidade")
+                            vis_keys = audit_in_raw[dup_col_in_raw].astype(str).tolist() if dup_col_in_raw else []
+                            sel_dups = st.multiselect(
+                                "Escolha as duplicidades a alterar:",
+                                options=vis_keys,
+                                max_selections=1000,
+                            )
+                            nova_desc_in = st.selectbox("Nova 'Descrição Agrupada':", options=opcoes_desc_in, index=0)
+                            if sel_dups and nova_desc_in:
+                                for k in sel_dups:
+                                    changes_in[k] = nova_desc_in
+        
                         c_save_in, _ = st.columns([1, 6])
                         salvar_in = c_save_in.form_submit_button("💾 Atualizar planilha (incluídos)")
-
+        
                     if salvar_in:
                         try:
-                            antes = audit_in_raw["Descrição Agrupada"].astype(str).fillna("").reset_index(drop=True)
-                            try:
-                                depois = edited_in_view["Descrição Agrupada"].astype(str).fillna("").reset_index(drop=True)
-                            except Exception:
-                                depois = antes.copy()
-
-                            mask_changed = (antes != depois)
-                            if not mask_changed.any():
-                                st.success("Nada para atualizar — nenhuma descrição alterada nos incluídos.")
+                            ws_sys = planilha_empresa.worksheet(WS_SISTEMA)
+                            df_ws, col_map = _sheet_df_with_row(ws_sys)
+                            if df_ws.empty:
+                                st.error("A aba do Sheets está vazia.")
                             else:
-                                ws_sys = planilha_empresa.worksheet(WS_SISTEMA)
-                                df_ws, col_map = _sheet_df_with_row(ws_sys)
-
-                                if "Duplicidade" not in df_ws.columns or "Descrição Agrupada" not in df_ws.columns:
+                                col_idx_desc = _ws_desc_col_idx(df_ws, col_map)
+                                dup_ws_col = _find_col(df_ws, "Duplicidade")
+                                if (col_idx_desc is None) or (dup_ws_col is None):
                                     st.error("A aba do Sheets precisa ter as colunas 'Duplicidade' e 'Descrição Agrupada'.")
                                 else:
-                                    df_ws["Duplicidade"] = df_ws["Duplicidade"].astype(str)
-                                    col_idx_desc = col_map["Descrição Agrupada"]
-                                    keys = audit_in_raw["Duplicidade"].astype(str).reset_index(drop=True)
                                     updates = []
-                                    for i in mask_changed[mask_changed].index:
-                                        dup_key   = keys.iloc[i]
-                                        nova_desc = depois.iloc[i].strip()
-                                        hits = df_ws.index[df_ws["Duplicidade"] == dup_key].tolist()
-                                        for h in hits:
-                                            row_num = int(df_ws.loc[h, "_row"])
-                                            updates.append(Cell(row=row_num, col=col_idx_desc, value=nova_desc))
+                                    if have_dropdown_in:
+                                        desc_col_raw_in = _find_col(audit_in_raw, "Descrição Agrupada")
+                                        antes  = audit_in_raw[desc_col_raw_in].astype(str).fillna("").reset_index(drop=True)
+                                        depois = edited_in_view[desc_col_view_in].astype(str).fillna("").reset_index(drop=True)
+                                        mask_changed = (antes != depois)
+                                        keys = audit_in_raw[_find_col(audit_in_raw, "Duplicidade")].astype(str).reset_index(drop=True)
+                                        for i in mask_changed[mask_changed].index:
+                                            dup_key   = keys.iloc[i]
+                                            nova_desc = depois.iloc[i].strip()
+                                            hits = df_ws.index[df_ws[dup_ws_col] == dup_key].tolist()
+                                            for h in hits:
+                                                updates.append(Cell(row=int(df_ws.loc[h, "_row"]), col=col_idx_desc, value=nova_desc))
+                                    else:
+                                        for dup_key, nova_desc in changes_in.items():
+                                            hits = df_ws.index[df_ws[dup_ws_col] == str(dup_key)].tolist()
+                                            for h in hits:
+                                                updates.append(Cell(row=int(df_ws.loc[h, "_row"]), col=col_idx_desc, value=nova_desc))
+        
                                     if not updates:
                                         st.warning("Nenhuma linha correspondente encontrada no Sheets (incluídos).")
                                     else:
@@ -753,74 +795,97 @@ with sub_caixa:
                                         st.rerun()
                         except Exception as e:
                             st.error(f"Falha ao atualizar (incluídos): {type(e).__name__}: {e}")
-
-                # -------- REMOVIDOS --------
+        
+                # ======================================================================
+                # EXPANDER: REMOVIDOS (pode editar 'Descrição Agrupada' e gravar no Sheets por Duplicidade)
+                # ======================================================================
                 with st.expander("🔎 Ver depósitos removidos (Colibri/CISS)"):
                     audit_out_raw = base.loc[mask_dep_sys, :].copy()  # mantém Duplicidade
                     if tem_filtro_codigo and "Código Everest" in audit_out_raw.columns:
                         audit_out_raw["_cod"] = audit_out_raw["Código Everest"].astype(str).str.extract(r"(\d+)")
                         audit_out_raw = audit_out_raw[audit_out_raw["_cod"].isin(codigos_aplicados)].drop(columns=["_cod"])
-
+        
                     opcoes_desc_out = _desc_options_flex(audit_out_raw)
-
+        
                     audit_out_view = audit_out_raw.drop(columns=_cols_hide, errors="ignore").copy()
                     if col_valor in audit_out_view.columns:
                         audit_out_view[col_valor] = audit_out_view[col_valor].map(brl)
-
+        
                     if tem_filtro_codigo:
                         st.caption(f"Filtrando por {len(codigos_aplicados)} código(s) selecionado(s).")
                     if tem_filtro_codigo and audit_out_view.empty:
                         st.info("Nenhum depósito/remoção para os códigos selecionados.")
-
+        
+                    desc_col_view_out = _find_col(audit_out_view, "Descrição Agrupada")
                     col_cfg_out = {c: cc.TextColumn(disabled=True, label=c) for c in audit_out_view.columns}
-                    if "Descrição Agrupada" in audit_out_view.columns:
-                        col_cfg_out["Descrição Agrupada"] = cc.SelectboxColumn(
+        
+                    have_dropdown_out = hasattr(cc, "SelectboxColumn") and bool(desc_col_view_out)
+                    if have_dropdown_out:
+                        col_cfg_out[desc_col_view_out] = cc.SelectboxColumn(
                             label="Descrição Agrupada",
                             options=opcoes_desc_out,
                             help="Escolha a descrição agrupada para esta linha."
                         )
-
+        
                     with st.form("form_editar_desc_removidos", clear_on_submit=False):
                         edited_out_view = st.data_editor(
                             audit_out_view,
                             use_container_width=True,
                             hide_index=True,
-                            height=320,
+                            height=360,
                             column_config=col_cfg_out,
                             key="editor_removidos_desc",
                         )
+        
+                        changes_out = {}
+                        if not have_dropdown_out:
+                            st.info("Seu runtime do Streamlit não oferece dropdown na grade; use o editor auxiliar abaixo.")
+                            dup_col_out_raw = _find_col(audit_out_raw, "Duplicidade")
+                            vis_keys = audit_out_raw[dup_col_out_raw].astype(str).tolist() if dup_col_out_raw else []
+                            sel_dups_out = st.multiselect(
+                                "Escolha as duplicidades a alterar (removidos):",
+                                options=vis_keys,
+                                max_selections=1000,
+                            )
+                            nova_desc_out = st.selectbox("Nova 'Descrição Agrupada':", options=opcoes_desc_out, index=0, key="sb_rem")
+                            if sel_dups_out and nova_desc_out:
+                                for k in sel_dups_out:
+                                    changes_out[k] = nova_desc_out
+        
                         c_save_out, _ = st.columns([1, 6])
                         salvar_out = c_save_out.form_submit_button("💾 Atualizar planilha (removidos)")
-
+        
                     if salvar_out:
                         try:
-                            antes = audit_out_raw["Descrição Agrupada"].astype(str).fillna("").reset_index(drop=True)
-                            try:
-                                depois = edited_out_view["Descrição Agrupada"].astype(str).fillna("").reset_index(drop=True)
-                            except Exception:
-                                depois = antes.copy()
-
-                            mask_changed = (antes != depois)
-                            if not mask_changed.any():
-                                st.success("Nada para atualizar — nenhuma descrição alterada nos removidos.")
+                            ws_sys = planilha_empresa.worksheet(WS_SISTEMA)
+                            df_ws, col_map = _sheet_df_with_row(ws_sys)
+                            if df_ws.empty:
+                                st.error("A aba do Sheets está vazia.")
                             else:
-                                ws_sys = planilha_empresa.worksheet(WS_SISTEMA)
-                                df_ws, col_map = _sheet_df_with_row(ws_sys)
-
-                                if "Duplicidade" not in df_ws.columns or "Descrição Agrupada" not in df_ws.columns:
+                                col_idx_desc = _ws_desc_col_idx(df_ws, col_map)
+                                dup_ws_col = _find_col(df_ws, "Duplicidade")
+                                if (col_idx_desc is None) or (dup_ws_col is None):
                                     st.error("A aba do Sheets precisa ter as colunas 'Duplicidade' e 'Descrição Agrupada'.")
                                 else:
-                                    df_ws["Duplicidade"] = df_ws["Duplicidade"].astype(str)
-                                    col_idx_desc = col_map["Descrição Agrupada"]
-                                    keys = audit_out_raw["Duplicidade"].astype(str).reset_index(drop=True)
                                     updates = []
-                                    for i in mask_changed[mask_changed].index:
-                                        dup_key   = keys.iloc[i]
-                                        nova_desc = depois.iloc[i].strip()
-                                        hits = df_ws.index[df_ws["Duplicidade"] == dup_key].tolist()
-                                        for h in hits:
-                                            row_num = int(df_ws.loc[h, "_row"])
-                                            updates.append(Cell(row=row_num, col=col_idx_desc, value=nova_desc))
+                                    if have_dropdown_out:
+                                        desc_col_raw_out = _find_col(audit_out_raw, "Descrição Agrupada")
+                                        antes  = audit_out_raw[desc_col_raw_out].astype(str).fillna("").reset_index(drop=True)
+                                        depois = edited_out_view[desc_col_view_out].astype(str).fillna("").reset_index(drop=True)
+                                        mask_changed = (antes != depois)
+                                        keys = audit_out_raw[_find_col(audit_out_raw, "Duplicidade")].astype(str).reset_index(drop=True)
+                                        for i in mask_changed[mask_changed].index:
+                                            dup_key   = keys.iloc[i]
+                                            nova_desc = depois.iloc[i].strip()
+                                            hits = df_ws.index[df_ws[dup_ws_col] == dup_key].tolist()
+                                            for h in hits:
+                                                updates.append(Cell(row=int(df_ws.loc[h, "_row"]), col=col_idx_desc, value=nova_desc))
+                                    else:
+                                        for dup_key, nova_desc in changes_out.items():
+                                            hits = df_ws.index[df_ws[dup_ws_col] == str(dup_key)].tolist()
+                                            for h in hits:
+                                                updates.append(Cell(row=int(df_ws.loc[h, "_row"]), col=col_idx_desc, value=nova_desc))
+        
                                     if not updates:
                                         st.warning("Nenhuma linha correspondente encontrada no Sheets (removidos).")
                                     else:
@@ -829,38 +894,40 @@ with sub_caixa:
                                         st.rerun()
                         except Exception as e:
                             st.error(f"Falha ao atualizar (removidos): {type(e).__name__}: {e}")
-
-                # ====================== segue o fluxo normal usando apenas os incluídos ======================
+        
+                # ======================================================================
+                # Fluxo normal (comparativo) — usa apenas INCLUÍDOS
+                # ======================================================================
                 base = base.loc[~mask_dep_sys].copy()
-
-                # ====================== agrega Sistema (sem depósitos) ======================
+        
+                # agrega Sistema (sem depósitos)
                 df_sys = (
                     base.groupby(["Código Everest","Data"], as_index=False)[col_valor]
                         .sum()
                         .rename(columns={col_valor:"Sangria (Colibri/CISS)"})
                 )
-
-                # ====================== Everest ======================
+        
+                # --- Everest ---
                 ws_ev = planilha_empresa.worksheet("Sangria Everest")
                 df_ev = pd.DataFrame(ws_ev.get_all_records())
                 df_ev.columns = [c.strip() for c in df_ev.columns]
-
+        
                 def _norm(s): return re.sub(r"[^a-z0-9]", "", str(s).lower())
                 cmap = {_norm(c): c for c in df_ev.columns}
                 col_emp   = cmap.get("empresa")
                 # ✅ PRIORIDADE: D. Competência → fallback para D. Lançamento/Data
                 pref_comp      = ["dcompetencia", "datacompetencia", "datadecompetencia", "competencia", "dtcompetencia"]
                 fallback_lcto  = ["dlancamento", "dlancament", "dlanamento", "datadelancamento", "data"]
-
+        
                 col_dt_ev = next((cmap[k] for k in pref_comp if k in cmap), None)
                 if col_dt_ev is None:
                     col_dt_ev = next((cmap[k] for k in fallback_lcto if k in cmap), None)
-
+        
                 col_val_ev= next((orig for norm, orig in cmap.items()
                                   if norm in ("valorlancamento","valorlancament","valorlcto","valor")), None)
                 col_fant  = next((orig for norm, orig in cmap.items()
                                   if norm in ("fantasiaempresa","fantasia")), None)
-
+        
                 if not all([col_emp, col_dt_ev, col_val_ev]):
                     st.error("❌ Na 'Sangria Everest' preciso de 'Empresa', 'D. Competência' (ou 'D. Lançamento') e 'Valor Lancamento'.")
                 else:
@@ -871,7 +938,7 @@ with sub_caixa:
                     de["Valor Lancamento"] = de[col_val_ev].map(parse_valor_brl_sheets).astype(float)
                     de = de[(de["Data"].dt.date >= dt_inicio) & (de["Data"].dt.date <= dt_fim)]
                     de["Sangria Everest"]  = de["Valor Lancamento"].abs()
-
+        
                     def _pick_first(s):
                         s = s.dropna().astype(str).str.strip()
                         s = s[s != ""]
@@ -880,58 +947,57 @@ with sub_caixa:
                         de.groupby(["Código Everest","Data"], as_index=False)
                           .agg({"Sangria Everest":"sum","Fantasia Everest": _pick_first})
                     )
-
+        
                     cmp = df_sys.merge(de_agg, on=["Código Everest","Data"], how="outer", indicator=True)
                     cmp["Sangria (Colibri/CISS)"] = cmp["Sangria (Colibri/CISS)"].fillna(0.0)
                     cmp["Sangria Everest"]        = cmp["Sangria Everest"].fillna(0.0)
-
-                    # ========== mapeamento Loja/Grupo (garante 1 loja por Código Everest) ==========
+        
+                    # mapeamento Loja/Grupo (garante 1 loja por Código Everest)
                     mapa = df_empresa.copy()
                     mapa.columns = [str(c).strip() for c in mapa.columns]
-
+        
                     if "Código Everest" in mapa.columns:
                         mapa["Código Everest"] = mapa["Código Everest"].astype(str).str.extract(r"(\d+)")
-                        # prioridade: evitar nomes com "Embarque" ou "Checkin"
                         mapa["__prio__"] = mapa["Loja"].astype(str).str.contains(r"(embarque|checkin)", case=False, na=False).astype(int)
-                        # escolhe 1 linha por Código Everest (menor prioridade e, em empate, menor ordem alfabética)
                         mapa_unico = (
                             mapa.sort_values(["Código Everest", "__prio__", "Loja"])
                                 .drop_duplicates(subset=["Código Everest"], keep="first")
                                 [["Código Everest", "Loja", "Grupo"]]
                         )
                         cmp = cmp.merge(mapa_unico, on="Código Everest", how="left")
-
+        
                     # fallback LOJA = Fantasia (linhas apenas do Everest)
                     cmp["Loja"] = cmp["Loja"].astype(str)
                     so_everest = (cmp["_merge"] == "right_only") & (cmp["Loja"].isin(["", "nan"]))
                     cmp.loc[so_everest, "Loja"] = cmp.loc[so_everest, "Fantasia Everest"]
                     cmp["Nao Mapeada?"] = so_everest
-
-                    # ====================== diferença ======================
+        
+                    # diferença
                     cmp["Diferença"] = cmp["Sangria (Colibri/CISS)"] - cmp["Sangria Everest"]
-
-                    # ====================== filtro Diferenças/Sem diferença ======================
+        
+                    # filtro Diferenças/Sem diferença
+                    import numpy as np
                     cmp["Diferença"] = pd.to_numeric(cmp["Diferença"], errors="coerce").fillna(0.0)
                     TOL = 0.0099
                     eh_zero = np.isclose(cmp["Diferença"].to_numpy(dtype=float), 0.0, atol=TOL)
-
+        
                     if filtro_dif == "Diferenças":
                         cmp = cmp[~eh_zero]
                     elif filtro_dif == "Sem diferença":
                         cmp = cmp[eh_zero]
-
+        
                     if grupos_sel:
                         cmp = cmp[cmp["Grupo"].astype(str).isin(grupos_sel)]
-
+        
                     cmp = cmp[["Grupo","Loja","Código Everest","Data",
                                "Sangria (Colibri/CISS)","Sangria Everest","Diferença","Nao Mapeada?"]
                              ].sort_values(["Grupo","Loja","Código Everest","Data"])
-
+        
                     if filtro_dif == "Diferenças":
                         st.caption("Mostrando apenas linhas com diferença (|Diferença| > R$ 0,01).")
                     elif filtro_dif == "Sem diferença":
                         st.caption("Mostrando apenas linhas sem diferença (|Diferença| ≤ R$ 0,01).")
-
+        
                     total = {
                         "Grupo":"TOTAL","Loja":"","Código Everest":"","Data":pd.NaT,
                         "Sangria (Colibri/CISS)": cmp["Sangria (Colibri/CISS)"].sum(),
@@ -940,13 +1006,15 @@ with sub_caixa:
                         "Nao Mapeada?": False
                     }
                     df_exibe = pd.concat([pd.DataFrame([total]), cmp], ignore_index=True)
-
-                    # ====================== BOTÕES Selecionar/Limpar + TABELA (depois dos depósitos) ======================
+        
+                    # ======================================================================
+                    # Botões Selecionar/Limpar (após os depósitos) + Tabela com checkbox
+                    # ======================================================================
                     with st.form("form_selecao_codigos", clear_on_submit=False):
                         c_sel, c_limpar, _ = st.columns([1, 1, 6])
                         aplicar = c_sel.form_submit_button("✅ Selecionar", help="Aplicar o filtro pelos códigos marcados na tabela")
                         limpar  = c_limpar.form_submit_button("🧹 Limpar", help="Remover o filtro aplicado e desmarcar tudo")
-
+        
                         df_show = df_exibe.copy()
                         df_show["Data"] = pd.to_datetime(df_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
                         for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
@@ -954,12 +1022,12 @@ with sub_caixa:
                                 lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X",".")
                                 if isinstance(v,(int,float)) else v
                             )
-
+        
                         view = df_show.drop(columns=["Nao Mapeada?"], errors="ignore").copy()
                         insert_pos = (list(view.columns).index("Diferença") + 1) if "Diferença" in view.columns else len(view.columns)
                         if "Selecionado" not in view.columns:
                             view.insert(insert_pos, "Selecionado", False)
-
+        
                         col_cfg = {}
                         for col in view.columns:
                             if col == "Selecionado":
@@ -974,13 +1042,13 @@ with sub_caixa:
                                 col_cfg[col] = cc.TextColumn(label=col, disabled=True)
                             else:
                                 col_cfg[col] = cc.TextColumn(label=col, disabled=True)
-
+        
                         # Pré-marcar pelos códigos atualmente aplicados (não recarrega)
                         if tem_filtro_codigo and {"Código Everest","Grupo"}.issubset(set(view.columns)):
                             cod_series = view["Código Everest"].astype(str).str.extract(r"(\d+)")[0]
                             mask_normais = view["Grupo"].astype(str).str.upper() != "TOTAL"
                             view.loc[mask_normais, "Selecionado"] = cod_series[mask_normais].isin(codigos_aplicados).values
-
+        
                         edited_view = st.data_editor(
                             view,
                             use_container_width=True,
@@ -989,8 +1057,8 @@ with sub_caixa:
                             column_config=col_cfg,
                             key="cmp_editor_com_checkbox",
                         )
-
-                    # ===== AÇÃO PÓS-SUBMIT =====
+        
+                    # ações pós-submit
                     if aplicar:
                         try:
                             sel_mask = (edited_view["Selecionado"] == True) & (edited_view["Grupo"].astype(str).str.upper() != "TOTAL")
@@ -1002,39 +1070,36 @@ with sub_caixa:
                             st.session_state["cmp_codigos_selecionados"] = set(sel_codigos)
                         except Exception:
                             st.session_state["cmp_codigos_selecionados"] = set()
-                        st.rerun()  # aplica o filtro nos expanders só agora
-
+                        st.rerun()
+        
                     if limpar:
                         st.session_state["cmp_codigos_selecionados"] = set()
                         st.rerun()
-
-                    # ====================== EXPORTAÇÃO (com slicers quando possível) ======================
+        
+                    # ======================================================================
+                    # Exportação Excel (mantido)
+                    # ======================================================================
                     from io import BytesIO
-                    import os
-
+        
                     def _prep_df_export(cmp: pd.DataFrame, usar_mes_sem_acento: bool = False) -> pd.DataFrame:
                         df = cmp.copy()
                         df = df.drop(columns=["Nao Mapeada?"], errors="ignore")
                         if "Sangria (Sistema)" in df.columns:
                             df = df.rename(columns={"Sangria (Sistema)":"Sangria (Colibri/CISS)"})
-
                         df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.normalize()
                         df["Ano"]  = df["Data"].dt.year
                         df["Mês"]  = df["Data"].dt.month
-
                         for c in ["Sangria (Colibri/CISS)","Sangria Everest","Diferença"]:
                             if c in df.columns:
                                 df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
-
                         ordem = ["Data","Grupo","Loja","Código Everest",
                                  "Sangria (Colibri/CISS)","Sangria Everest","Diferença",
                                  "Mês","Ano"]
                         df = df[[c for c in ordem if c in df.columns]].copy()
-
                         if usar_mes_sem_acento and "Mês" in df.columns:
                             df = df.rename(columns={"Mês":"Mes"})
                         return df
-
+        
                     def exportar_xlsxwriter_tentando_slicers(cmp: pd.DataFrame, usar_mes_sem_acento: bool=False) -> tuple[BytesIO,bool]:
                         df = _prep_df_export(cmp, usar_mes_sem_acento=usar_mes_sem_acento)
                         try:
@@ -1043,22 +1108,22 @@ with sub_caixa:
                             ver_tuple = tuple(int(p) for p in xw.__version__.split(".")[:3])
                         except Exception:
                             ver_tuple = (0,0,0)
-
+        
                         from xlsxwriter import Workbook
                         buf = BytesIO()
                         wb  = Workbook(buf, {"in_memory": True})
                         ws  = wb.add_worksheet("Dados")
-
+        
                         fmt_header = wb.add_format({"bold":True,"align":"center","valign":"vcenter","bg_color":"#F2F2F2","border":1})
                         fmt_text   = wb.add_format({"border":1})
                         fmt_int    = wb.add_format({"border":1,"num_format":"0"})
                         fmt_date   = wb.add_format({"border":1,"num_format":"dd/mm/yyyy"})
                         fmt_money  = wb.add_format({"border":1,"num_format":'R$ #,##0.00'})
-
+        
                         headers = list(df.columns)
                         for j,c in enumerate(headers):
                             ws.write(0,j,c,fmt_header)
-
+        
                         for i,row in df.iterrows():
                             r = i+1
                             for j,c in enumerate(headers):
@@ -1071,7 +1136,7 @@ with sub_caixa:
                                     ws.write_number(r,j,float(v),fmt_money)
                                 else:
                                     ws.write(r,j,("" if pd.isna(v) else v),fmt_text)
-
+        
                         last_row = len(df)
                         last_col = len(headers)-1
                         ws.add_table(0,0,last_row,last_col,{
@@ -1079,7 +1144,7 @@ with sub_caixa:
                             "style":"TableStyleMedium9",
                             "columns":[{"header":h} for h in headers],
                         })
-
+        
                         col_idx = {c:i for i,c in enumerate(headers)}
                         if "Data" in col_idx:           ws.set_column(col_idx["Data"], col_idx["Data"], 12, fmt_date)
                         if "Grupo" in col_idx:          ws.set_column(col_idx["Grupo"],col_idx["Grupo"],10,fmt_text)
@@ -1091,7 +1156,7 @@ with sub_caixa:
                         if "Mes" in col_idx:            ws.set_column(col_idx["Mes"],6,6,fmt_int)
                         if "Ano" in col_idx:            ws.set_column(col_idx["Ano"],8,8,fmt_int)
                         ws.freeze_panes(1,0)
-
+        
                         slicers_ok = False
                         if ver_tuple >= (3,2,0) and hasattr(wb, "add_slicer"):
                             try:
@@ -1111,11 +1176,11 @@ with sub_caixa:
                         else:
                             st.warning("Runtime sem suporte a wb.add_slicer. Vou tentar via template, se existir.")
                             slicers_ok = False
-
+        
                         wb.close()
                         buf.seek(0)
                         return buf, slicers_ok
-
+        
                     xlsx_out, ok = exportar_xlsxwriter_tentando_slicers(cmp, usar_mes_sem_acento=True)
                     if not ok:
                         try:
@@ -1123,7 +1188,7 @@ with sub_caixa:
                             st.success("Template usado — segmentações preservadas no Excel Desktop.")
                         except Exception:
                             st.warning("Sem suporte a slicers no runtime e template ausente. Exportando sem segmentações.")
-
+        
                     st.download_button(
                         label="⬇️ Baixar Excel",
                         data=xlsx_out,

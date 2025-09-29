@@ -260,169 +260,213 @@ with st.spinner("⏳ Processando..."):
 
     
                 else:
-                    # ---------------- MODO COLIBRI (seu fluxo atual) ----------------
-                    try:
-                        df["Loja"] = np.nan
-                        df["Data"] = np.nan
-                        df["Funcionário"] = np.nan
-    
-                        data_atual = None
-                        funcionario_atual = None
-                        loja_atual = None
-                        linhas_validas = []
-    
-                        for i, row in df.iterrows():
-                            valor = str(row["Hora"]).strip()
-                            if valor.startswith("Loja:"):
-                                loja = valor.split("Loja:")[1].split("(Total")[0].strip()
-                                if "-" in loja:
-                                    loja = loja.split("-", 1)[1].strip()
-                                loja_atual = loja or "Loja não cadastrada"
-                            elif valor.startswith("Data:"):
-                                try:
-                                    data_atual = pd.to_datetime(
-                                        valor.split("Data:")[1].split("(Total")[0].strip(), dayfirst=True
-                                    )
-                                except Exception:
-                                    data_atual = pd.NaT
-                            elif valor.startswith("Funcionário:"):
-                                funcionario_atual = valor.split("Funcionário:")[1].split("(Total")[0].strip()
-                            else:
-                                if pd.notna(row["Valor(R$)"]) and pd.notna(row["Hora"]):
-                                    df.at[i, "Data"] = data_atual
-                                    df.at[i, "Funcionário"] = funcionario_atual
-                                    df.at[i, "Loja"] = loja_atual
-                                    linhas_validas.append(i)
-    
-                        df = df.loc[linhas_validas].copy()
-                        df.ffill(inplace=True)
-                        # ===== FIX: preencher Descrição quando Hora é horário e Valor(R$) está preenchido =====
-                        def _is_blank(series: pd.Series) -> pd.Series:
-                            s = series.astype(str).str.strip().str.lower()
-                            return series.isna() | s.isin(["", "nan", "none", "null"])
-                        
-                        # Hora válida: tenta converter para horário (ou timestamp) → não NaT
-                        mask_hora_valida = pd.to_datetime(df["Hora"], errors="coerce").notna()
-                        
-                        # Valor(R$) preenchido (qualquer coisa diferente de vazio/NAN/NONE)
-                        mask_valor_preenchido = ~_is_blank(df["Valor(R$)"])
-                        
-                        # Descrição vazia
-                        mask_desc_vazia = _is_blank(df["Descrição"])
-                        
-                        # Aplica a regra
-                        df.loc[mask_hora_valida & mask_valor_preenchido & mask_desc_vazia, "Descrição"] = "sem preenchimento"
-                        # =======================================================================
 
-                        # Limpeza e conversões
-                        df["Descrição"] = (
-                            df["Descrição"].astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
-                        )
-                        df["Funcionário"] = df["Funcionário"].astype(str).str.strip()
-                        df["Valor(R$)"] = pd.to_numeric(df["Valor(R$)"], errors="coerce").fillna(0.0).round(2)
-    
-                        # Dia semana / mês / ano
-                        dias_semana = {0: 'segunda-feira', 1: 'terça-feira', 2: 'quarta-feira',
-                                       3: 'quinta-feira', 4: 'sexta-feira', 5: 'sábado', 6: 'domingo'}
-                        df["Dia da Semana"] = df["Data"].dt.dayofweek.map(dias_semana)
-                        df["Mês"] = df["Data"].dt.month.map({
-                            1: 'jan', 2: 'fev', 3: 'mar', 4: 'abr', 5: 'mai', 6: 'jun',
-                            7: 'jul', 8: 'ago', 9: 'set', 10: 'out', 11: 'nov', 12: 'dez'
-                        })
-                        df["Ano"] = df["Data"].dt.year
-                        df["Data"] = df["Data"].dt.strftime("%d/%m/%Y")
-    
-                        # Merge com cadastro de lojas
-                        df["Loja"] = df["Loja"].astype(str).str.strip().str.lower()
-                        df_empresa["Loja"] = df_empresa["Loja"].astype(str).str.strip().str.lower()
-                        df = pd.merge(df, df_empresa, on="Loja", how="left")
-    
-                        # Agrupamento de descrição
-                        def mapear_descricao(desc):
-                            desc_lower = str(desc).lower()
-                            for _, r in df_descricoes.iterrows():
-                                if str(r["Palavra-chave"]).lower() in desc_lower:
-                                    return r["Descrição Agrupada"]
-                            return "Outros"
-    
-                        df["Descrição Agrupada"] = df["Descrição"].apply(mapear_descricao)
-    
-                        # ➕ Colunas adicionais
-                        df["Sistema"] = NOME_SISTEMA
-    
-                        # 🔑 DUPLICIDADE
-                        data_key = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
-                        hora_key = pd.to_datetime(df["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
-                        valor_centavos = (df["Valor(R$)"].astype(float) * 100).round().astype(int).astype(str)
-                        desc_key = df["Descrição"].fillna("").astype(str)
-                        df["Duplicidade"] = (
-                            data_key.fillna("") + "|" +
-                            hora_key.fillna("") + "|" +
-                            df["Código Everest"].fillna("").astype(str) + "|" +
-                            valor_centavos + "|" +
-                            desc_key
-                        )
-    
-                        if "Meio de recebimento" not in df.columns:
-                            df["Meio de recebimento"] = ""
-    
-                        colunas_ordenadas = [
-                            "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
-                            "Código Grupo Everest", "Funcionário", "Hora", "Descrição",
-                            "Descrição Agrupada", "Meio de recebimento", "Valor(R$)",
-                            "Mês", "Ano", "Duplicidade", "Sistema"
-                        ]
-                        df = df[colunas_ordenadas].sort_values(by=["Data", "Loja"])
-    
-                        # Métricas
-                        periodo_min = pd.to_datetime(df["Data"], dayfirst=True).min().strftime("%d/%m/%Y")
-                        periodo_max = pd.to_datetime(df["Data"], dayfirst=True).max().strftime("%d/%m/%Y")
-                        valor_total = float(df["Valor(R$)"].sum())
-    
-                        col1, col2 = st.columns(2)
-                        col1.metric("📅 Período processado", f"{periodo_min} até {periodo_max}")
-                        col2.metric(
-                            "💰 Valor total de sangria",
-                            f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                        )
-    
-                        st.success("✅ Relatório gerado com sucesso!")
-    
-                        lojas_sem_codigo = df[df["Código Everest"].isna()]["Loja"].unique()
-                        if len(lojas_sem_codigo) > 0:
-                            st.warning(
-                                f"⚠️ Lojas sem Código Everest cadastrado: {', '.join(lojas_sem_codigo)}\n\n"
-                                "🔗 Atualize na planilha de empresas."
-                            )
-    
-                        # Guarda para a Tab2 (fluxo antigo)
-                        st.session_state.mode = "colibri"
-                        st.session_state.df_sangria = df.copy()
-    
-                        # Download Excel local (sem formatação especial)
-                        # --- ORDENAR por Data antes do download local (Colibri) ---
-                        df_download = df.copy()
-                        
-                        # A coluna "Data" no fluxo Colibri já está como string dd/mm/aaaa.
-                        # Vamos criar uma coluna auxiliar datetime para ordenar corretamente.
-                        df_download["_Data_dt"] = pd.to_datetime(df_download["Data"], dayfirst=True, errors="coerce")
-                        
-                        # Se quiser desempatar por loja dentro do dia, use: by=["_Data_dt","Loja"]
-                        df_download = df_download.sort_values(by=["_Data_dt"]).drop(columns=["_Data_dt"])
-                        
-                        # Gera o Excel já ordenado
-                        output = BytesIO()
-                        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                            df_download.to_excel(writer, index=False, sheet_name="Sangria")
-                        output.seek(0)
-                        
-                        st.download_button("📥Sangria Colibri",
-                                           data=output,
-                                           file_name="Sangria_estruturada.xlsx",
-                                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-                    except KeyError as e:
-                        st.error(f"❌ Coluna obrigatória ausente para o padrão Colibri: {e}")
+                    # ---------------- MODO COLIBRI — normalizador robusto ----------------
+                    import re, unicodedata
+                
+                    def _norm(s: str) -> str:
+                        s = unicodedata.normalize("NFKD", str(s or "")).encode("ASCII", "ignore").decode("ASCII")
+                        s = re.sub(r"\s+", " ", s.strip().lower())
+                        return s
+                
+                    # 0) DataFrame base
+                    df = df_dados.copy()
+                    df.columns = [str(c).strip() for c in df.columns]
+                
+                    # 1) Detectar as colunas principais (aceita variações):
+                    col_hora = next((c for c in df.columns if _norm(c) == "hora"), df.columns[0])
+                    col_desc = next((c for c in df.columns if _norm(c) in ("descricao", "descrição")), None)
+                    col_meio = next((c for c in df.columns if _norm(c) in ("meio de recebimento", "meio recebimento", "meio", "forma de pagamento", "forma de recebimento", "recebimento")), None)
+                    col_val  = next((c for c in df.columns if "valor" in _norm(c)), None)
+                
+                    missing = [x for x in [col_hora, col_desc, col_meio, col_val] if x is None]
+                    if missing:
+                        st.error(f"❌ Não encontrei todas as colunas necessárias. Faltando: {missing}")
+                        st.stop()
+                
+                    # 2) Padronizar vazios
+                    for c in [col_hora, col_desc, col_meio, col_val]:
+                        df[c] = df[c].replace({"": None})
+                
+                    # 3) Extrair cabeçalhos (Loja:, Data:, Funcionário:) da coluna A (Hora)
+                    def _extrai_loja(s: str) -> str | None:
+                        if not s: return None
+                        s0 = str(s)
+                        if not _norm(s0).startswith("loja:"): return None
+                        # pega após "Loja:" e antes de "(Total"
+                        out = s0.split("Loja:", 1)[1]
+                        out = out.split("(Total", 1)[0].strip()
+                        # se vier "1-Alguma Loja", pega após o primeiro "-"
+                        if "-" in out:
+                            out = out.split("-", 1)[1].strip()
+                        return out or None
+                
+                    def _extrai_data(s: str):
+                        if not s: return None
+                        s0 = str(s)
+                        if not (_norm(s0).startswith("data:")): return None
+                        txt = s0.split("Data:", 1)[1].split("(Total", 1)[0].strip()
+                        return pd.to_datetime(txt, errors="coerce", dayfirst=True)
+                
+                    def _extrai_func(s: str) -> str | None:
+                        if not s: return None
+                        s0 = str(s)
+                        if not (_norm(s0).startswith("funcionario:")) and not (_norm(s0).startswith("funcionário:")):
+                            return None
+                        out = s0.split(":", 1)[1].split("(Total", 1)[0].strip()
+                        return out or None
+                
+                    cab = df[[col_hora]].rename(columns={col_hora: "A"})
+                    df["__loja_hdr__"] = cab["A"].map(_extrai_loja)
+                    df["__data_hdr__"] = cab["A"].map(_extrai_data)
+                    df["__func_hdr__"] = cab["A"].map(_extrai_func)
+                
+                    # Propaga para baixo (primeira linha acima que tem cada informação)
+                    df["Loja"]        = df["__loja_hdr__"].ffill()
+                    df["Data_dt"]     = df["__data_hdr__"].ffill()
+                    df["Funcionário"] = df["__func_hdr__"].ffill()
+                
+                    # 4) Converter valor (pt-BR)
+                    def to_number_br(series):
+                        def _one(x):
+                            if pd.isna(x): return np.nan
+                            s = str(x).strip()
+                            if s == "":   return np.nan
+                            neg = False
+                            if s.startswith("(") and s.endswith(")"):
+                                neg = True; s = s[1:-1].strip()
+                            s = s.replace("R$", "").replace("r$", "").strip()
+                            if s.endswith("-"):
+                                neg = True; s = s[:-1].strip()
+                            s = s.replace(".", "").replace(",", ".")
+                            s = re.sub(r"[^0-9.\-]", "", s)
+                            if s in ("", "-", "."): return np.nan
+                            try:
+                                v = float(s)
+                            except:
+                                v = np.nan
+                            return -abs(v) if neg and pd.notna(v) else v
+                        return series.apply(_one)
+                
+                    df["__valor_num__"] = to_number_br(df[col_val])
+                
+                    # 5) Linha de movimento = tem valor presente (não vazio)
+                    has_val = df[col_val].astype(str).str.strip().ne("").fillna(False) & df["__valor_num__"].notna()
+                    mov = df.loc[has_val].copy()
+                
+                    # 6) Hora (A) como HH:MM
+                    mov["Hora"] = pd.to_datetime(mov[col_hora], errors="coerce").dt.strftime("%H:%M")
+                
+                    # 7) Defaults: Meio de recebimento / Descrição
+                    def _is_blank(s):
+                        s = s.astype(str).str.strip().str.lower()
+                        return s.isna() | s.eq("") | s.eq("nan") | s.eq("none") | s.eq("null")
+                
+                    if col_meio not in mov.columns:
+                        mov[col_meio] = ""
+                
+                    mov.loc[_is_blank(mov[col_meio]), col_meio] = "Dinheiro"
+                
+                    if col_desc not in mov.columns:
+                        mov[col_desc] = ""
+                
+                    mov.loc[_is_blank(mov[col_desc]), col_desc] = "Sem Preenchimento"
+                
+                    # 8) Datas/formatos finais
+                    mov["Data"] = pd.to_datetime(mov["Data_dt"], errors="coerce").dt.normalize()
+                    mov["Data"] = mov["Data"].dt.strftime("%d/%m/%Y")
+                
+                    # Renomear colunas de origem para o padrão usado no resto do app
+                    mov = mov.rename(columns={
+                        col_desc: "Descrição",
+                        col_meio: "Meio de recebimento",
+                        col_val:  "Valor(R$)"
+                    })
+                
+                    # 9) Limpezas adicionais
+                    mov["Descrição"] = mov["Descrição"].astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
+                    mov["Funcionário"] = mov["Funcionário"].astype(str).str.strip()
+                    mov["Valor(R$)"] = mov["Valor(R$)"].where(mov["Valor(R$)"].notna(), 0)
+                    mov["Valor(R$)"] = pd.to_numeric(to_number_br(mov["Valor(R$)"]), errors="coerce").fillna(0.0).round(2)
+                
+                    # 10) Dia semana / mês / ano
+                    dt_aux = pd.to_datetime(mov["Data"], dayfirst=True, errors="coerce")
+                    dias_semana = {0:'segunda-feira',1:'terça-feira',2:'quarta-feira',3:'quinta-feira',4:'sexta-feira',5:'sábado',6:'domingo'}
+                    mov["Dia da Semana"] = dt_aux.dt.dayofweek.map(dias_semana)
+                    mov["Mês"] = dt_aux.dt.month.map({1:'jan',2:'fev',3:'mar',4:'abr',5:'mai',6:'jun',7:'jul',8:'ago',9:'set',10:'out',11:'nov',12:'dez'})
+                    mov["Ano"] = dt_aux.dt.year
+                
+                    # 11) Merge com cadastro de lojas (Código Everest / Grupo)
+                    mov["Loja"] = mov["Loja"].astype(str).str.strip().str.lower()
+                    df_empresa["Loja"] = df_empresa["Loja"].astype(str).str.strip().str.lower()
+                    mov = pd.merge(mov, df_empresa, on="Loja", how="left")
+                
+                    # 12) Descrição Agrupada a partir da Tabela Sangria
+                    def mapear_descricao(desc):
+                        desc_lower = str(desc).lower()
+                        for _, r in df_descricoes.iterrows():
+                            if str(r["Palavra-chave"]).lower() in desc_lower:
+                                return r["Descrição Agrupada"]
+                        return "Outros"
+                    mov["Descrição Agrupada"] = mov["Descrição"].apply(mapear_descricao)
+                
+                    # 13) Sistema + Duplicidade
+                    mov["Sistema"] = NOME_SISTEMA
+                
+                    data_key = pd.to_datetime(mov["Data"], dayfirst=True, errors="coerce").dt.strftime("%Y-%m-%d")
+                    hora_key = pd.to_datetime(mov["Hora"], errors="coerce").dt.strftime("%H:%M:%S")
+                    valor_centavos = (mov["Valor(R$)"].astype(float) * 100).round().astype(int).astype(str)
+                    desc_key = mov["Descrição"].fillna("").astype(str)
+                    mov["Duplicidade"] = (
+                        data_key.fillna("") + "|" +
+                        hora_key.fillna("") + "|" +
+                        mov["Código Everest"].fillna("").astype(str) + "|" +
+                        valor_centavos + "|" +
+                        desc_key
+                    )
+                
+                    # 14) Reordenar colunas para o restante do app
+                    colunas_ordenadas = [
+                        "Data","Dia da Semana","Loja","Código Everest","Grupo","Código Grupo Everest",
+                        "Funcionário","Hora","Descrição","Descrição Agrupada","Meio de recebimento",
+                        "Valor(R$)","Mês","Ano","Duplicidade","Sistema"
+                    ]
+                    mov = mov[[c for c in colunas_ordenadas if c in mov.columns]].sort_values(by=["Data","Loja"])
+                
+                    # 15) Métricas + download
+                    periodo_min = pd.to_datetime(mov["Data"], dayfirst=True).min().strftime("%d/%m/%Y")
+                    periodo_max = pd.to_datetime(mov["Data"], dayfirst=True).max().strftime("%d/%m/%Y")
+                    valor_total = float(mov["Valor(R$)"].sum())
+                
+                    c1, c2 = st.columns(2)
+                    c1.metric("📅 Período processado", f"{periodo_min} até {periodo_max}")
+                    c2.metric("💰 Valor total de sangria",
+                              f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X","."))
+                
+                    st.success("✅ Relatório gerado com sucesso!")
+                
+                    # Guarda para Tab2/fluxos seguintes
+                    st.session_state.mode = "colibri"
+                    st.session_state.df_sangria = mov.copy()
+                
+                    # Download Excel local (ordenado por data)
+                    df_download = mov.copy()
+                    df_download["_Data_dt"] = pd.to_datetime(df_download["Data"], dayfirst=True, errors="coerce")
+                    df_download = df_download.sort_values(by=["_Data_dt"]).drop(columns=["_Data_dt"])
+                
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                        df_download.to_excel(writer, index=False, sheet_name="Sangria")
+                    output.seek(0)
+                
+                    st.download_button(
+                        "📥Sangria Colibri",
+                        data=output,
+                        file_name="Sangria_estruturada.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
 
 
     # ================

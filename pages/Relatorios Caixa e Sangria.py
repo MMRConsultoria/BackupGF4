@@ -797,7 +797,11 @@ with sub_caixa:
                         cur_opts = set(fallback_df["Descrição Agrupada"].astype(str).dropna().unique())
                     opts = sorted({o.strip() for o in (base_opts | cur_opts) if o and o.strip()})
                     return opts if opts else ["Outros"]
-
+                def _obs_col_name(cols):
+                    for name in ("Observação", "Observacao", "Obs"):
+                        if name in cols:
+                            return name
+                    return None
                 # ====================== EXPANDERS (com edição de Descrição Agrupada) ======================
                 # -------- INCLUÍDOS --------
                 with st.expander("Sangria(Colibri/CISS)"):
@@ -822,27 +826,28 @@ with sub_caixa:
                         st.info("Nenhum item incluído para os códigos selecionados.")
 
                     col_cfg_in = {c: cc.TextColumn(disabled=True, label=c) for c in audit_in_view.columns}
+
+                    # Descrição Agrupada como select editável (já existia)
                     if "Descrição Agrupada" in audit_in_view.columns:
-                        # une opções globais + valores já presentes na visão
-                        presentes_in = (
-                            audit_in_view["Descrição Agrupada"].dropna().astype(str).map(_limpo).tolist()
-                            if "Descrição Agrupada" in audit_in_view.columns else []
-                        )
-                        options_in = sorted(set(opcoes_desc_global) | set(presentes_in), key=lambda x: x.lower())  # união
-                    
+                        presentes_in = audit_in_view["Descrição Agrupada"].dropna().astype(str).map(_limpo).tolist()
+                        options_in = sorted(set(opcoes_desc_global) | set(presentes_in), key=lambda x: x.lower())
                         col_cfg_in["Descrição Agrupada"] = cc.SelectboxColumn(
-                            label="Descrição Agrupada",
-                            options=options_in,
-                            help="Escolha a descrição agrupada para esta linha."
+                            label="Descrição Agrupada", options=options_in, help="Escolha a descrição agrupada para esta linha."
+                        )
+                    
+                    # Data apenas exibição (já existia)
+                    if "Data" in audit_in_view.columns:
+                        col_cfg_in["Data"] = cc.DateColumn(label="Data", format="DD/MM/YYYY", disabled=True)
+                    
+                    # 🔓 Observação: deixamos EDITÁVEL (texto livre)
+                    obs_col_in = _obs_col_name(audit_in_view.columns)
+                    if obs_col_in:
+                        col_cfg_in[obs_col_in] = cc.TextColumn(
+                            label=obs_col_in,
+                            help="Digite livremente; será salvo no Google Sheets.",
+                            disabled=False,
                         )
 
-                    # 👇 NOVO: Data como coluna de data real (só exibição)
-                    if "Data" in audit_in_view.columns:
-                        col_cfg_in["Data"] = cc.DateColumn(
-                            label="Data",
-                            format="DD/MM/YYYY",
-                            disabled=True
-                        )
                     with st.form("form_editar_desc_incluidos", clear_on_submit=False):
                         edited_in_view = st.data_editor(
                             audit_in_view,
@@ -857,56 +862,69 @@ with sub_caixa:
 
                     if salvar_in:
                         try:
-                            antes = audit_in_raw["Descrição Agrupada"].astype(str).fillna("").reset_index(drop=True)
-                            try:
-                                depois = edited_in_view["Descrição Agrupada"].astype(str).fillna("").reset_index(drop=True)
-                            except Exception:
-                                depois = antes.copy()
-
-                            mask_changed = (antes != depois)
+                            # Antes / Depois - Descrição Agrupada
+                            antes_desc  = audit_in_raw.get("Descrição Agrupada", pd.Series("", index=audit_in_raw.index)).astype(str).fillna("").reset_index(drop=True)
+                            depois_desc = edited_in_view.get("Descrição Agrupada", pd.Series("", index=audit_in_raw.index)).astype(str).fillna("").reset_index(drop=True)
+                        
+                            # Antes / Depois - Observação (se existir)
+                            obs_col_sheet_key = None
+                            obs_col_view = _obs_col_name(audit_in_view.columns)
+                            if obs_col_view:
+                                antes_obs  = audit_in_raw.get(obs_col_view, pd.Series("", index=audit_in_raw.index)).astype(str).fillna("").reset_index(drop=True)
+                                depois_obs = edited_in_view.get(obs_col_view, pd.Series("", index=audit_in_raw.index)).astype(str).fillna("").reset_index(drop=True)
+                            else:
+                                antes_obs = depois_obs = pd.Series("", index=antes_desc.index)
+                        
+                            mask_changed = (antes_desc != depois_desc) | (antes_obs != depois_obs)
                             if not mask_changed.any():
-                                st.success("Nada para atualizar — nenhuma descrição alterada nos incluídos.")
+                                st.success("Nada para atualizar — nenhuma alteração em incluídos.")
                             else:
                                 ws_sys = planilha_empresa.worksheet(WS_SISTEMA)
                                 df_ws, col_map = _sheet_df_with_row(ws_sys)
-
-                                if "Duplicidade" not in df_ws.columns or "Descrição Agrupada" not in df_ws.columns:
-                                    st.error("A aba do Sheets precisa ter as colunas 'Duplicidade' e 'Descrição Agrupada'.")
+                        
+                                if "Duplicidade" not in df_ws.columns:
+                                    st.error("A aba do Sheets precisa ter a coluna 'Duplicidade'.")
                                 else:
                                     df_ws["Duplicidade"] = df_ws["Duplicidade"].astype(str)
-                                    col_idx_desc = col_map["Descrição Agrupada"]
+                        
+                                    # índices das colunas no Sheets
+                                    col_idx_desc = col_map.get("Descrição Agrupada")
+                                    # Procuramos o nome que existir no Sheets:
+                                    for k in ("Observação", "Observacao", "Obs"):
+                                        if k in col_map:
+                                            obs_col_sheet_key = k
+                                            break
+                                    col_idx_obs = col_map.get(obs_col_sheet_key) if obs_col_sheet_key else None
+                        
                                     keys = audit_in_raw["Duplicidade"].astype(str).reset_index(drop=True)
-                                    updates = []
+                        
                                     for i in mask_changed[mask_changed].index:
                                         dup_key   = keys.iloc[i]
-                                        nova_desc = depois.iloc[i].strip()
+                                        nova_desc = depois_desc.iloc[i].strip()
+                                        nova_obs  = depois_obs.iloc[i].strip()
+                        
                                         hits = df_ws.index[df_ws["Duplicidade"] == dup_key].tolist()
-                                        
+                                        if not hits:
+                                            continue
+                        
                                         updates = []
                                         for h in hits:
                                             row_num = int(df_ws.loc[h, "_row"])
-                                            if Cell is not None:
+                                            if col_idx_desc:
                                                 updates.append(Cell(row=row_num, col=col_idx_desc, value=nova_desc))
-                                            else:
-                                                # fallback: guardamos tripleta para atualizar célula a célula depois
-                                                updates.append((row_num, col_idx_desc, nova_desc))
-                                        
-                                        if not updates:
-                                            st.warning("Nenhuma linha correspondente encontrada no Sheets (incluídos).")
-                                        else:
-                                            if Cell is not None:
-                                                ws_sys.update_cells(updates, value_input_option="USER_ENTERED")
-                                            else:
-                                                # fallback célula a célula
-                                                for row_num, col_idx, novo in updates:
-                                                    a1 = f"{_excel_col_letter(col_idx-1)}{row_num}"
-                                                    ws_sys.update(a1, novo, value_input_option="USER_ENTERED")
-                                            st.success(f"Atualizei {len(updates)} célula(s) no Google Sheets (incluídos).")
-                                            st.session_state["rev_desc"] += 1    
-                                            st.rerun()                           
-
+                                            if col_idx_obs:   # só se a coluna existir no Sheets
+                                                updates.append(Cell(row=row_num, col=col_idx_obs, value=nova_obs))
+                        
+                                        if updates:
+                                            ws_sys.update_cells(updates, value_input_option="USER_ENTERED")
+                        
+                                st.success("Alterações salvas (incluídos).")
+                                st.session_state["rev_desc"] += 1
+                                st.rerun()
+                        
                         except Exception as e:
                             st.error(f"Falha ao atualizar (incluídos): {type(e).__name__}: {e}")
+
 
                 # -------- REMOVIDOS --------
                 with st.expander("Depósitos(Colibri/CISS)"):
@@ -930,27 +948,26 @@ with sub_caixa:
                         st.info("Nenhum depósito/remoção para os códigos selecionados.")
 
                     col_cfg_out = {c: cc.TextColumn(disabled=True, label=c) for c in audit_out_view.columns}
+
                     if "Descrição Agrupada" in audit_out_view.columns:
-                        # une opções globais + valores já presentes na visão
-                        presentes_out = (
-                            audit_out_view["Descrição Agrupada"].dropna().astype(str).map(_limpo).tolist()
-                            if "Descrição Agrupada" in audit_out_view.columns else []
-                        )
+                        presentes_out = audit_out_view["Descrição Agrupada"].dropna().astype(str).map(_limpo).tolist()
                         options_out = sorted(set(opcoes_desc_global) | set(presentes_out), key=lambda x: x.lower())
-                    
                         col_cfg_out["Descrição Agrupada"] = cc.SelectboxColumn(
-                            label="Descrição Agrupada",
-                            options=options_out,
-                            help="Escolha a descrição agrupada para esta linha."
+                            label="Descrição Agrupada", options=options_out, help="Escolha a descrição agrupada para esta linha."
+                        )
+                    
+                    if "Data" in audit_out_view.columns:
+                        col_cfg_out["Data"] = cc.DateColumn(label="Data", format="DD/MM/YYYY", disabled=True)
+                    
+                    # 🔓 Observação editável
+                    obs_col_out = _obs_col_name(audit_out_view.columns)
+                    if obs_col_out:
+                        col_cfg_out[obs_col_out] = cc.TextColumn(
+                            label=obs_col_out,
+                            help="Digite livremente; será salvo no Google Sheets.",
+                            disabled=False,
                         )
 
-                    # 👇 NOVO: Data como coluna de data real (só exibição)
-                    if "Data" in audit_out_view.columns:
-                        col_cfg_out["Data"] = cc.DateColumn(
-                            label="Data",
-                            format="DD/MM/YYYY",
-                            disabled=True
-                        )
                     with st.form("form_editar_desc_removidos", clear_on_submit=False):
                         edited_out_view = st.data_editor(
                             audit_out_view,
@@ -965,53 +982,64 @@ with sub_caixa:
 
                     if salvar_out:
                         try:
-                            antes = audit_out_raw["Descrição Agrupada"].astype(str).fillna("").reset_index(drop=True)
-                            try:
-                                depois = edited_out_view["Descrição Agrupada"].astype(str).fillna("").reset_index(drop=True)
-                            except Exception:
-                                depois = antes.copy()
-
-                            mask_changed = (antes != depois)
+                            antes_desc  = audit_out_raw.get("Descrição Agrupada", pd.Series("", index=audit_out_raw.index)).astype(str).fillna("").reset_index(drop=True)
+                            depois_desc = edited_out_view.get("Descrição Agrupada", pd.Series("", index=audit_out_raw.index)).astype(str).fillna("").reset_index(drop=True)
+                        
+                            obs_col_sheet_key = None
+                            obs_col_view = _obs_col_name(audit_out_view.columns)
+                            if obs_col_view:
+                                antes_obs  = audit_out_raw.get(obs_col_view, pd.Series("", index=audit_out_raw.index)).astype(str).fillna("").reset_index(drop=True)
+                                depois_obs = edited_out_view.get(obs_col_view, pd.Series("", index=audit_out_raw.index)).astype(str).fillna("").reset_index(drop=True)
+                            else:
+                                antes_obs = depois_obs = pd.Series("", index=antes_desc.index)
+                        
+                            mask_changed = (antes_desc != depois_desc) | (antes_obs != depois_obs)
                             if not mask_changed.any():
-                                st.success("Nada para atualizar — nenhuma descrição alterada nos removidos.")
+                                st.success("Nada para atualizar — nenhuma alteração em removidos.")
                             else:
                                 ws_sys = planilha_empresa.worksheet(WS_SISTEMA)
                                 df_ws, col_map = _sheet_df_with_row(ws_sys)
-
-                                if "Duplicidade" not in df_ws.columns or "Descrição Agrupada" not in df_ws.columns:
-                                    st.error("A aba do Sheets precisa ter as colunas 'Duplicidade' e 'Descrição Agrupada'.")
+                        
+                                if "Duplicidade" not in df_ws.columns:
+                                    st.error("A aba do Sheets precisa ter a coluna 'Duplicidade'.")
                                 else:
                                     df_ws["Duplicidade"] = df_ws["Duplicidade"].astype(str)
-                                    col_idx_desc = col_map["Descrição Agrupada"]
+                                    col_idx_desc = col_map.get("Descrição Agrupada")
+                                    for k in ("Observação", "Observacao", "Obs"):
+                                        if k in col_map:
+                                            obs_col_sheet_key = k
+                                            break
+                                    col_idx_obs = col_map.get(obs_col_sheet_key) if obs_col_sheet_key else None
+                        
                                     keys = audit_out_raw["Duplicidade"].astype(str).reset_index(drop=True)
-                                    updates = []
+                        
                                     for i in mask_changed[mask_changed].index:
                                         dup_key   = keys.iloc[i]
-                                        nova_desc = depois.iloc[i].strip()
+                                        nova_desc = depois_desc.iloc[i].strip()
+                                        nova_obs  = depois_obs.iloc[i].strip()
+                        
                                         hits = df_ws.index[df_ws["Duplicidade"] == dup_key].tolist()
+                                        if not hits:
+                                            continue
+                        
                                         updates = []
                                         for h in hits:
                                             row_num = int(df_ws.loc[h, "_row"])
-                                            if Cell is not None:
+                                            if col_idx_desc:
                                                 updates.append(Cell(row=row_num, col=col_idx_desc, value=nova_desc))
-                                            else:
-                                                updates.append((row_num, col_idx_desc, nova_desc))
-                                        
-                                        if not updates:
-                                            st.warning("Nenhuma linha correspondente encontrada no Sheets (removidos).")
-                                        else:
-                                            if Cell is not None:
-                                                ws_sys.update_cells(updates, value_input_option="USER_ENTERED")
-                                            else:
-                                                for row_num, col_idx, novo in updates:
-                                                    a1 = f"{_excel_col_letter(col_idx-1)}{row_num}"
-                                                    ws_sys.update(a1, novo, value_input_option="USER_ENTERED")
-                                            st.success(f"Atualizei {len(updates)} célula(s) no Google Sheets (removidos).")
-                                            st.session_state["rev_desc"] += 1     
-                                            st.rerun()                            
-                                           
+                                            if col_idx_obs:
+                                                updates.append(Cell(row=row_num, col=col_idx_obs, value=nova_obs))
+                        
+                                        if updates:
+                                            ws_sys.update_cells(updates, value_input_option="USER_ENTERED")
+                        
+                                st.success("Alterações salvas (removidos).")
+                                st.session_state["rev_desc"] += 1
+                                st.rerun()
+                        
                         except Exception as e:
                             st.error(f"Falha ao atualizar (removidos): {type(e).__name__}: {e}")
+
 
                 # ====================== segue o fluxo normal usando apenas os incluídos ======================
                 base = base.loc[~mask_dep_sys].copy()

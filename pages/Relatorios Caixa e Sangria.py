@@ -780,7 +780,7 @@ with sub_caixa:
 
                 # ====================== EXPANDERS (com edição de Descrição Agrupada) ======================
                 # -------- INCLUÍDOS --------
-                with st.expander("🧾 Ver itens incluídos (Colibri/CISS)"):
+                with st.expander("Sangria(Colibri/CISS)"):
                     audit_in_raw = base.loc[~mask_dep_sys, :].copy()  # mantém Duplicidade
                     if tem_filtro_codigo and "Código Everest" in audit_in_raw.columns:
                         audit_in_raw["_cod"] = audit_in_raw["Código Everest"].astype(str).str.extract(r"(\d+)")
@@ -833,7 +833,7 @@ with sub_caixa:
                             key="editor_incluidos_desc",
                         )
                         c_save_in, _ = st.columns([1, 6])
-                        salvar_in = c_save_in.form_submit_button("💾 Atualizar planilha (incluídos)")
+                        salvar_in = c_save_in.form_submit_button("Atualizar Google Sheets")
 
                     if salvar_in:
                         try:
@@ -888,7 +888,7 @@ with sub_caixa:
                             st.error(f"Falha ao atualizar (incluídos): {type(e).__name__}: {e}")
 
                 # -------- REMOVIDOS --------
-                with st.expander("🔎 Ver depósitos removidos (Colibri/CISS)"):
+                with st.expander("Depósitos(Colibri/CISS)"):
                     audit_out_raw = base.loc[mask_dep_sys, :].copy()  # mantém Duplicidade
                     if tem_filtro_codigo and "Código Everest" in audit_out_raw.columns:
                         audit_out_raw["_cod"] = audit_out_raw["Código Everest"].astype(str).str.extract(r"(\d+)")
@@ -940,7 +940,7 @@ with sub_caixa:
                             key="editor_removidos_desc",
                         )
                         c_save_out, _ = st.columns([1, 6])
-                        salvar_out = c_save_out.form_submit_button("💾 Atualizar planilha (removidos)")
+                        salvar_out = c_save_out.form_submit_button("Atualizar Google Sheets")
 
                     if salvar_out:
                         try:

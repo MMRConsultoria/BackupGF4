@@ -296,7 +296,24 @@ with st.spinner("⏳ Processando..."):
     
                         df = df.loc[linhas_validas].copy()
                         df.ffill(inplace=True)
-    
+                        # ===== FIX: preencher Descrição quando Hora é horário e Valor(R$) está preenchido =====
+                        def _is_blank(series: pd.Series) -> pd.Series:
+                            s = series.astype(str).str.strip().str.lower()
+                            return series.isna() | s.isin(["", "nan", "none", "null"])
+                        
+                        # Hora válida: tenta converter para horário (ou timestamp) → não NaT
+                        mask_hora_valida = pd.to_datetime(df["Hora"], errors="coerce").notna()
+                        
+                        # Valor(R$) preenchido (qualquer coisa diferente de vazio/NAN/NONE)
+                        mask_valor_preenchido = ~_is_blank(df["Valor(R$)"])
+                        
+                        # Descrição vazia
+                        mask_desc_vazia = _is_blank(df["Descrição"])
+                        
+                        # Aplica a regra
+                        df.loc[mask_hora_valida & mask_valor_preenchido & mask_desc_vazia, "Descrição"] = "sem preenchimento"
+                        # =======================================================================
+
                         # Limpeza e conversões
                         df["Descrição"] = (
                             df["Descrição"].astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)

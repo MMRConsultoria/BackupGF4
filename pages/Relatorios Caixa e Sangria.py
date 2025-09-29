@@ -707,7 +707,9 @@ with sub_caixa:
                     audit_in_view = audit_in_raw.drop(columns=_cols_hide, errors="ignore").copy()
                     if col_valor in audit_in_view.columns:
                         audit_in_view[col_valor] = audit_in_view[col_valor].map(brl)
-
+                    # 👇 NOVO: garanta tipo date para a coluna Data
+                    if "Data" in audit_in_view.columns:
+                        audit_in_view["Data"] = pd.to_datetime(audit_in_view["Data"], errors="coerce").dt.date
                     if tem_filtro_codigo:
                         st.caption(f"Filtrando por {len(codigos_aplicados)} código(s) selecionado(s).")
                     if tem_filtro_codigo and audit_in_view.empty:
@@ -720,7 +722,13 @@ with sub_caixa:
                             options=opcoes_desc_in,
                             help="Escolha a descrição agrupada para esta linha."
                         )
-
+                    # 👇 NOVO: Data como coluna de data real (só exibição)
+                    if "Data" in audit_in_view.columns:
+                        col_cfg_in["Data"] = cc.DateColumn(
+                            label="Data",
+                            format="DD/MM/YYYY",
+                            disabled=True
+                        )
                     with st.form("form_editar_desc_incluidos", clear_on_submit=False):
                         edited_in_view = st.data_editor(
                             audit_in_view,
@@ -797,7 +805,10 @@ with sub_caixa:
                     audit_out_view = audit_out_raw.drop(columns=_cols_hide, errors="ignore").copy()
                     if col_valor in audit_out_view.columns:
                         audit_out_view[col_valor] = audit_out_view[col_valor].map(brl)
-
+                    # 👇 NOVO: garanta tipo date para a coluna Data
+                    if "Data" in audit_out_view.columns:
+                        audit_out_view["Data"] = pd.to_datetime(audit_out_view["Data"], errors="coerce").dt.date
+                        
                     if tem_filtro_codigo:
                         st.caption(f"Filtrando por {len(codigos_aplicados)} código(s) selecionado(s).")
                     if tem_filtro_codigo and audit_out_view.empty:
@@ -810,7 +821,13 @@ with sub_caixa:
                             options=opcoes_desc_out,
                             help="Escolha a descrição agrupada para esta linha."
                         )
-
+                    # 👇 NOVO: Data como coluna de data real (só exibição)
+                    if "Data" in audit_out_view.columns:
+                        col_cfg_out["Data"] = cc.DateColumn(
+                            label="Data",
+                            format="DD/MM/YYYY",
+                            disabled=True
+                        )
                     with st.form("form_editar_desc_removidos", clear_on_submit=False):
                         edited_out_view = st.data_editor(
                             audit_out_view,

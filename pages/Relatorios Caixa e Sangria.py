@@ -617,8 +617,6 @@ with sub_caixa:
         df_exibe = pd.DataFrame()
 
         # ======= Comparativa =======
-        # ======= Comparativa =======
-        # ======= Comparativa =======
         if visao == "Comparativa Everest":
             base = df_fil.copy()
 
@@ -650,6 +648,48 @@ with sub_caixa:
                 base[col_valor] = pd.to_numeric(base[col_valor], errors="coerce").fillna(0.0)
                 base["Código Everest"] = base["Código Everest"].astype(str).str.extract(r"(\d+)")
 
+
+                # ====================== opções globais de "Descrição Agrupada" a partir do Google Sheets ======================
+                # Tentamos primeiro uma aba dedicada ("Tabela Sangria"); se não existir, usamos a própria "Sangria".
+                try:
+                    ws_tab_desc = planilha_empresa.worksheet("Tabela Sangria")
+                except Exception:
+                    ws_tab_desc = planilha_empresa.worksheet("Sangria")
+                
+                df_descricoes = pd.DataFrame(ws_tab_desc.get_all_records())
+                df_descricoes.columns = [c.strip() for c in df_descricoes.columns]
+                
+                def _limpo(s: str) -> str:
+                    s = str(s or "").strip()
+                    s = re.sub(r"\s+", " ", s)
+                    return s
+                
+                def _norm_acento(s: str) -> str:
+                    import unicodedata
+                    s0 = _limpo(s)
+                    s0 = unicodedata.normalize("NFKD", s0).encode("ASCII","ignore").decode("ASCII")
+                    return s0.lower()
+                
+                # pega TODAS as opções únicas da coluna "Descrição Agrupada" do Sheets
+                opcoes_desc_global = []
+                if "Descrição Agrupada" in df_descricoes.columns:
+                    bruto = df_descricoes["Descrição Agrupada"].dropna().astype(str).map(_limpo)
+                    bruto = bruto[~bruto.isin(["", "nan", "none"])]
+                    if not bruto.empty:
+                        s = pd.Series(bruto.tolist())
+                        norm = s.map(_norm_acento)
+                        df_opts = pd.DataFrame({"norm": norm, "orig": s})
+                        # mantém a grafia mais frequente para cada chave normalizada
+                        escolha = df_opts.groupby("norm")["orig"].agg(lambda col: col.value_counts().idxmax())
+                        opcoes_desc_global = sorted(escolha.tolist(), key=lambda x: x.lower())
+                
+                # fallback mínimo
+                if not opcoes_desc_global:
+                    opcoes_desc_global = ["Outros"]
+
+
+
+                
                 # ====================== filtros/removidos/incluídos ======================
                 mask_dep_sys = (
                     eh_deposito_mask(base)
@@ -763,11 +803,19 @@ with sub_caixa:
 
                     col_cfg_in = {c: cc.TextColumn(disabled=True, label=c) for c in audit_in_view.columns}
                     if "Descrição Agrupada" in audit_in_view.columns:
+                        # une opções globais + valores já presentes na visão
+                        presentes_in = (
+                            audit_in_view["Descrição Agrupada"].dropna().astype(str).map(_limpo).tolist()
+                            if "Descrição Agrupada" in audit_in_view.columns else []
+                        )
+                        options_in = sorted({*_ [0:] for _ in opcoes_desc_global} | set(presentes_in), key=lambda x: x.lower())  # união
+                    
                         col_cfg_in["Descrição Agrupada"] = cc.SelectboxColumn(
                             label="Descrição Agrupada",
-                            options=opcoes_desc_in,
+                            options=options_in,
                             help="Escolha a descrição agrupada para esta linha."
                         )
+
                     # 👇 NOVO: Data como coluna de data real (só exibição)
                     if "Data" in audit_in_view.columns:
                         col_cfg_in["Data"] = cc.DateColumn(
@@ -862,11 +910,19 @@ with sub_caixa:
 
                     col_cfg_out = {c: cc.TextColumn(disabled=True, label=c) for c in audit_out_view.columns}
                     if "Descrição Agrupada" in audit_out_view.columns:
+                        # une opções globais + valores já presentes na visão
+                        presentes_out = (
+                            audit_out_view["Descrição Agrupada"].dropna().astype(str).map(_limpo).tolist()
+                            if "Descrição Agrupada" in audit_out_view.columns else []
+                        )
+                        options_out = sorted({*_ [0:] for _ in opcoes_desc_global} | set(presentes_out), key=lambda x: x.lower())
+                    
                         col_cfg_out["Descrição Agrupada"] = cc.SelectboxColumn(
                             label="Descrição Agrupada",
-                            options=opcoes_desc_out,
+                            options=options_out,
                             help="Escolha a descrição agrupada para esta linha."
                         )
+
                     # 👇 NOVO: Data como coluna de data real (só exibição)
                     if "Data" in audit_out_view.columns:
                         col_cfg_out["Data"] = cc.DateColumn(

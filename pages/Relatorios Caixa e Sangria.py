@@ -1105,8 +1105,8 @@ with sub_caixa:
                     # ====================== BOTÕES Selecionar/Limpar + TABELA (depois dos depósitos) ======================
                     with st.form("form_selecao_codigos", clear_on_submit=False):
                         c_sel, c_limpar, _ = st.columns([1, 1, 6])
-                        aplicar = c_sel.form_submit_button("✅ Selecionar", help="Aplicar o filtro pelos códigos marcados na tabela")
-                        limpar  = c_limpar.form_submit_button("🧹 Limpar", help="Remover o filtro aplicado e desmarcar tudo")
+                        aplicar = c_sel.form_submit_button("Selecionar", help="Aplicar o filtro pelos códigos marcados na tabela")
+                        limpar  = c_limpar.form_submit_button("Limpar", help="Remover o filtro aplicado e desmarcar tudo")
 
                         df_show = df_exibe.copy()
                         df_show["Data"] = pd.to_datetime(df_show["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")

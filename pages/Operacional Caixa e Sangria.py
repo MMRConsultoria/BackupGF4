@@ -114,6 +114,7 @@ with st.spinner("⏳ Processando..."):
                 st.error(f"❌ Não foi possível ler o arquivo enviado. Detalhes: {e}")
             else:
                 df = df_dados.copy()
+                df["_ordem_src"] = np.arange(len(df), dtype=int)
                 primeira_col = df.columns[0] if len(df.columns) else ""
                 is_everest = primeira_col.lower() in ["lançamento", "lancamento"] or ("Lançamento" in df.columns) or ("Lancamento" in df.columns)
     
@@ -296,6 +297,7 @@ with st.spinner("⏳ Processando..."):
     
                         df = df.loc[linhas_validas].copy()
                         df.ffill(inplace=True)
+                        df = df.sort_values("_ordem_src", kind="stable")
                         # ===== FIX: preencher Descrição quando Hora é horário e Valor(R$) está preenchido =====
                         def _is_blank(series: pd.Series) -> pd.Series:
                             s = series.astype(str).str.strip().str.lower()
@@ -335,7 +337,7 @@ with st.spinner("⏳ Processando..."):
                         # Merge com cadastro de lojas
                         df["Loja"] = df["Loja"].astype(str).str.strip().str.lower()
                         df_empresa["Loja"] = df_empresa["Loja"].astype(str).str.strip().str.lower()
-                        df = pd.merge(df, df_empresa, on="Loja", how="left")
+                        df = pd.merge(df, df_empresa, on="Loja", how="left", sort=False)
     
                         # Agrupamento de descrição
                         def mapear_descricao(desc):
@@ -372,7 +374,7 @@ with st.spinner("⏳ Processando..."):
                             "Descrição Agrupada", "Meio de recebimento", "Valor(R$)",
                             "Mês", "Ano", "Duplicidade", "Sistema"
                         ]
-                        df = df[colunas_ordenadas].sort_values(by=["Data", "Loja"])
+                        df = df[colunas_ordenadas + ["_ordem_src"]].sort_values("_ordem_src", kind="stable").drop(columns=["_ordem_src"])
     
                         # Métricas
                         periodo_min = pd.to_datetime(df["Data"], dayfirst=True).min().strftime("%d/%m/%Y")
@@ -401,14 +403,15 @@ with st.spinner("⏳ Processando..."):
     
                         # Download Excel local (sem formatação especial)
                         # --- ORDENAR por Data antes do download local (Colibri) ---
-                        df_download = df.copy()
+                        #df_download = df.copy()
                         
                         # A coluna "Data" no fluxo Colibri já está como string dd/mm/aaaa.
                         # Vamos criar uma coluna auxiliar datetime para ordenar corretamente.
-                        df_download["_Data_dt"] = pd.to_datetime(df_download["Data"], dayfirst=True, errors="coerce")
+                        #df_download["_Data_dt"] = pd.to_datetime(df_download["Data"], dayfirst=True, errors="coerce")
                         
                         # Se quiser desempatar por loja dentro do dia, use: by=["_Data_dt","Loja"]
-                        df_download = df_download.sort_values(by=["_Data_dt"]).drop(columns=["_Data_dt"])
+                        #df_download = df_download.sort_values(by=["_Data_dt"]).drop(columns=["_Data_dt"])
+                        df_download = df.copy()
                         
                         # Gera o Excel já ordenado
                         output = BytesIO()

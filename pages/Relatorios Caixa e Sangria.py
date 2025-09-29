@@ -808,7 +808,7 @@ with sub_caixa:
                             audit_in_view["Descrição Agrupada"].dropna().astype(str).map(_limpo).tolist()
                             if "Descrição Agrupada" in audit_in_view.columns else []
                         )
-                        options_in = sorted({*_ [0:] for _ in opcoes_desc_global} | set(presentes_in), key=lambda x: x.lower())  # união
+                        options_in = sorted(set(opcoes_desc_global) | set(presentes_in), key=lambda x: x.lower())  # união
                     
                         col_cfg_in["Descrição Agrupada"] = cc.SelectboxColumn(
                             label="Descrição Agrupada",
@@ -915,7 +915,7 @@ with sub_caixa:
                             audit_out_view["Descrição Agrupada"].dropna().astype(str).map(_limpo).tolist()
                             if "Descrição Agrupada" in audit_out_view.columns else []
                         )
-                        options_out = sorted({*_ [0:] for _ in opcoes_desc_global} | set(presentes_out), key=lambda x: x.lower())
+                        options_out = sorted(set(opcoes_desc_global) | set(presentes_out), key=lambda x: x.lower())
                     
                         col_cfg_out["Descrição Agrupada"] = cc.SelectboxColumn(
                             label="Descrição Agrupada",

@@ -1963,23 +1963,23 @@ with st.spinner("⏳ Processando..."):
     # Aba 4 - Auditoria PDV x Faturamento Meio Pagamento
     # =======================================
     # ===============================
-    # 📊 Auditoria Mensal — Sistema × Meio de Pagamento
-    #     - Usa Mês/Ano das abas (não deriva por Data)
+    # 📊 Auditoria Mensal — Sistema × Meio de Pagamento (Aba 4)
+    #     - Usa Mês/Ano das abas (sem normalizar por Data)
     #     - Soma EXATAMENTE: Externo = "Fat. Total"; MP = "Valor (R$)"
-    #     - Mostra tabela simples com Totais e Diferença
-    #     - Checkbox para escolher o(s) Mês/Sistema do detalhe por loja
-    #     - No detalhe, compara por Data+Código apenas para os selecionados
+    #     - Tabela simples com Totais e Diferença + checkbox por linha
+    #     - Detalhe (por Data+Código) só para os Mês/Sistema selecionados
+    #     - Filtro padrão: 2025 (mude ANO_ALVO = None para todos)
     # ===============================
     
-    with aba5:
-        import re, unicodedata
+    with aba4:
+        import re, unicodedata, json
         import pandas as pd
         import numpy as np
         import streamlit as st
     
-        st.subheader("📊 Auditoria Mensal — Sistema × Meio de Pagamento (usando Mês/Ano das abas)")
+        st.subheader("📊 Auditoria Mensal — Sistema × Meio de Pagamento (Mês/Ano das abas)")
     
-        # ---------------- Configuração ----------------
+        # ---------------- Config ----------------
         ANO_ALVO = 2025      # mude para None para considerar todos os anos
         TOL = 0.01           # tolerância de 1 centavo
     
@@ -1991,12 +1991,12 @@ with st.spinner("⏳ Processando..."):
             return re.sub(r"[^a-z0-9]+", " ", s).strip()
     
         def _norm_key(s: str) -> str:
-            # versão “super normalizada” para comparar cabeçalhos de colunas
+            # chave "super normalizada" para comparar cabeçalhos
             return _ns(s).replace(" ", "")
     
         def pick_exact_column(cols, targets):
             """
-            Escolhe uma coluna por ‘match exato’ contra uma lista de alvos normalizados.
+            Escolhe uma coluna por 'match exato' contra uma lista de alvos normalizados.
             Ex.: targets = ["Valor (R$)", "Valor R$"]
             """
             norm_map = {_norm_key(c): c for c in cols}
@@ -2007,16 +2007,15 @@ with st.spinner("⏳ Processando..."):
             return None
     
         _MAP_MES = {
-            # pt-br curtos e longos
+            # pt-br
             "jan":1,"fev":2,"mar":3,"abr":4,"mai":5,"jun":6,"jul":7,"ago":8,"set":9,"out":10,"nov":11,"dez":12,
             "janeiro":1,"fevereiro":2,"março":3,"marco":3,"abril":4,"maio":5,"junho":6,"julho":7,"agosto":8,"setembro":9,"outubro":10,"novembro":11,"dezembro":12,
-            # en comuns (se aparecerem)
+            # en comuns
             "jan.":1,"feb":2,"feb.":2,"mar.":3,"apr":4,"apr.":4,"may":5,"jun.":6,"jul.":7,"aug":8,"aug.":8,"sep":9,"sept":9,"sep.":9,"oct":10,"oct.":10,"nov.":11,"dec":12,"dec.":12
         }
         def _month_to_num(x):
             s = str(x or "").strip().lower()
             if s in _MAP_MES: return _MAP_MES[s]
-            # números (1..12) ou "09"
             try:
                 n = int(float(s))
                 if 1 <= n <= 12: return n
@@ -2036,8 +2035,7 @@ with st.spinner("⏳ Processando..."):
             s = str(x or "").strip()
             # remove tudo que não for dígito, vírgula, ponto, sinal
             s = re.sub(r"[^\d,.\-]", "", s)
-            if s == "":
-                return float("nan")
+            if s == "": return float("nan")
             # vírgula decimal / ponto milhar
             if s.count(",") == 1 and s.count(".") >= 1:
                 s = s.replace(".", "").replace(",", ".")
@@ -2060,10 +2058,12 @@ with st.spinner("⏳ Processando..."):
             dt2 = pd.to_datetime(num, origin="1899-12-30", unit="D", errors="coerce")
             return dt1.where(dt1.notna(), dt2)
     
-        # ---------------- Conexão (usa gc existente; se não houver, cria) ----------------
+        # ---------------- Conexão (reaproveita gc se já existe) ----------------
         try:
-            gc  # já existe
+            gc  # já existe acima
         except NameError:
+            import gspread
+            from oauth2client.service_account import ServiceAccountCredentials
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
             credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
             credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
@@ -2071,7 +2071,7 @@ with st.spinner("⏳ Processando..."):
     
         sh = gc.open("Vendas diarias")
     
-        # ---------------- Leitura segura (uma vez por aba) ----------------
+        # ---------------- Leitura segura das abas ----------------
         # Externo
         ws_ext = sh.worksheet("Fat Sistema Externo")
         vals_ext = ws_ext.get_all_values()
@@ -2097,7 +2097,7 @@ with st.spinner("⏳ Processando..."):
         col_ext_sis  = next((c for c in df_ext.columns if _norm_key(c) == _norm_key("Sistema")), None)
         col_ext_mes  = next((c for c in df_ext.columns if _norm_key(c) in (_norm_key("Mês"), _norm_key("Mes"))), None)
         col_ext_ano  = next((c for c in df_ext.columns if _norm_key(c) == _norm_key("Ano")), None)
-        col_ext_fat  = pick_exact_column(df_ext.columns, ["Fat. Total"])  # <- EXATO
+        col_ext_fat  = pick_exact_column(df_ext.columns, ["Fat. Total"])  # EXATO
     
         if not all([col_ext_data, col_ext_cod, col_ext_fat, col_ext_sis]):
             st.error("Em 'Fat Sistema Externo' preciso das colunas: Data, Código Everest, **Fat. Total**, Sistema (e idealmente Mês/Ano).")
@@ -2109,33 +2109,30 @@ with st.spinner("⏳ Processando..."):
         col_mp_sis  = next((c for c in df_mp.columns if _norm_key(c) == _norm_key("Sistema")), None)
         col_mp_mes  = next((c for c in df_mp.columns if _norm_key(c) in (_norm_key("Mês"), _norm_key("Mes"))), None)
         col_mp_ano  = next((c for c in df_mp.columns if _norm_key(c) == _norm_key("Ano")), None)
-        col_mp_val  = pick_exact_column(df_mp.columns, ["Valor (R$)", "Valor R$"])  # <- EXATO
+        col_mp_val  = pick_exact_column(df_mp.columns, ["Valor (R$)", "Valor R$"])  # EXATO
     
         if not all([col_mp_data, col_mp_cod, col_mp_val, col_mp_sis]):
             st.error("Em 'Faturamento Meio Pagamento' preciso das colunas: Data, Código Everest, **Valor (R$)**, Sistema (e idealmente Mês/Ano).")
             st.stop()
     
-        # ---------------- Preparar EXTERNO (usa Mês/Ano da ABA) ----------------
+        # ---------------- Preparar EXTERNO (usa Mês/Ano da aba) ----------------
         ext = pd.DataFrame({
-            "Data":           _parse_date_series(df_ext[col_ext_data]),          # só para detalhe
+            "Data":           _parse_date_series(df_ext[col_ext_data]),          # Data é só para detalhe
             "Código Everest": pd.to_numeric(df_ext[col_ext_cod], errors="coerce"),
-            "Fat.Total":      df_ext[col_ext_fat].map(_to_float_brl),
             "Sistema":        df_ext[col_ext_sis].astype(str).str.strip(),
+            "Fat.Total":      df_ext[col_ext_fat].map(_to_float_brl),
             "MesNum":         df_ext[col_ext_mes] if col_ext_mes else None,
             "Ano":            df_ext[col_ext_ano] if col_ext_ano else None,
         })
-        # normaliza Mes/Ano da aba
         ext["MesNum"] = ext["MesNum"].apply(lambda x: _month_to_num(x) if pd.notna(x) else None)
         ext["Ano"]    = pd.to_numeric(ext["Ano"], errors="coerce")
+        ext = ext[ext["Fat.Total"].notna()].copy()  # evita linhas sem valor
     
-        # descarta linhas sem valor (evita somar lixo)
-        ext = ext[ext["Fat.Total"].notna()].copy()
-    
-        # completa Mes/Ano que faltarem (usando Data apenas para completar a CHAVE)
-        if "MesNum" not in ext or ext["MesNum"].isna().any():
+        # completa Mes/Ano faltantes só para CHAVE (usa Data)
+        if ext["MesNum"].isna().any():
             m_aux = pd.to_datetime(ext["Data"], errors="coerce").dt.month
             ext["MesNum"] = ext["MesNum"].fillna(m_aux)
-        if "Ano" not in ext or ext["Ano"].isna().any():
+        if ext["Ano"].isna().any():
             a_aux = pd.to_datetime(ext["Data"], errors="coerce").dt.year
             ext["Ano"] = ext["Ano"].fillna(a_aux)
     
@@ -2144,12 +2141,12 @@ with st.spinner("⏳ Processando..."):
     
         ext["Mês"] = ext.apply(lambda r: _mk_messtr(r["MesNum"], r["Ano"]), axis=1)
     
-        # ---------------- Preparar MP (usa Mês/Ano da ABA) ----------------
+        # ---------------- Preparar MEIO DE PAGAMENTO (usa Mês/Ano da aba) ----------------
         mp = pd.DataFrame({
-            "Data":           _parse_date_series(df_mp[col_mp_data]),           # só para detalhe
+            "Data":           _parse_date_series(df_mp[col_mp_data]),           # Data é só para detalhe
             "Código Everest": pd.to_numeric(df_mp[col_mp_cod], errors="coerce"),
-            "Valor_MP":       df_mp[col_mp_val].map(_to_float_brl),             # EXATAMENTE esta coluna
             "Sistema":        df_mp[col_mp_sis].astype(str).str.strip(),
+            "Valor_MP":       df_mp[col_mp_val].map(_to_float_brl),             # EXATAMENTE esta coluna
             "MesNum":         df_mp[col_mp_mes] if col_mp_mes else None,
             "Ano":            df_mp[col_mp_ano] if col_mp_ano else None,
         })
@@ -2157,10 +2154,10 @@ with st.spinner("⏳ Processando..."):
         mp["Ano"]    = pd.to_numeric(mp["Ano"], errors="coerce")
         mp = mp[mp["Valor_MP"].notna()].copy()
     
-        if "MesNum" not in mp or mp["MesNum"].isna().any():
+        if mp["MesNum"].isna().any():
             m_aux = pd.to_datetime(mp["Data"], errors="coerce").dt.month
             mp["MesNum"] = mp["MesNum"].fillna(m_aux)
-        if "Ano" not in mp or mp["Ano"].isna().any():
+        if mp["Ano"].isna().any():
             a_aux = pd.to_datetime(mp["Data"], errors="coerce").dt.year
             mp["Ano"] = mp["Ano"].fillna(a_aux)
     
@@ -2172,7 +2169,7 @@ with st.spinner("⏳ Processando..."):
         # ---------------- RESUMO (Mês + Sistema) ----------------
         ext_mes = (ext.groupby(["Mês","Sistema"], as_index=False)["Fat.Total"].sum()
                       .rename(columns={"Fat.Total":"Total_FatTotal"}))
-        mp_mes  = (mp.groupby (["Mês","Sistema"], as_index=False)["Valor_MP"].sum()
+        mp_mes  = (mp .groupby(["Mês","Sistema"], as_index=False)["Valor_MP"].sum()
                       .rename(columns={"Valor_MP":"Total_MeioPagamento"}))
     
         resumo = ext_mes.merge(mp_mes, on=["Mês","Sistema"], how="outer")
@@ -2180,7 +2177,7 @@ with st.spinner("⏳ Processando..."):
         resumo["Total_MeioPagamento"] = resumo["Total_MeioPagamento"].fillna(0.0).round(2)
         resumo["Diferença"]           = (resumo["Total_FatTotal"] - resumo["Total_MeioPagamento"]).round(2)
     
-        # ---------------- Tabela simples (só diferenças) ----------------
+        # ---------------- Tabela simples (só diferenças) + checkbox ----------------
         diff_mask = resumo["Diferença"].abs() > TOL
         tabela_simples = (resumo.loc[diff_mask, ["Mês","Sistema","Total_FatTotal","Total_MeioPagamento","Diferença"]]
                           .assign(Tipo="Diferença")
@@ -2190,7 +2187,7 @@ with st.spinner("⏳ Processando..."):
     
         st.markdown("**Tabela simples — Tipo, Mês, Sistema, Total Fat.Total, Total Meio Pagamento e Diferença**")
         if tabela_simples.empty:
-            st.success("✅ Sem diferenças no período selecionado.")
+            st.success("✅ Sem diferenças no período.")
             selected_pairs = set()
         else:
             tabela_edit = tabela_simples.copy()
@@ -2211,7 +2208,7 @@ with st.spinner("⏳ Processando..."):
                     edited.loc[edited["Selecionar"] == True, "Sistema"])
             )
     
-        # ---------------- Verificação rápida (ex.: Set/2025 / Colibri) ----------------
+        # ---------------- Verificação rápida (ex.: 09/2025 / Colibri) ----------------
         with st.expander("🔎 Verificação rápida (ex.: 09/2025 / Colibri)"):
             alvo_mes, alvo_sis = "09/2025", "Colibri"
             tot_ext = resumo.loc[(resumo["Mês"]==alvo_mes)&(resumo["Sistema"]==alvo_sis),"Total_FatTotal"].sum()
@@ -2222,14 +2219,14 @@ with st.spinner("⏳ Processando..."):
             st.write(f"Meio de Pagamento ({alvo_mes}, {alvo_sis}): **{_fmt_brl(tot_mp)}**")
             st.write(f"**Diferença (Externo − MP): {_fmt_brl(round(tot_ext - tot_mp,2))}**")
     
-        # ---------------- Detalhe por loja (apenas selecionados) ----------------
+        # ---------------- Detalhe por loja (apenas dos selecionados) ----------------
         st.markdown("**Lojas com diferença (por Data), somente dos Mês/Sistema selecionados**")
         if not selected_pairs:
             st.info("Marque ao menos um **Mês/Sistema** na tabela acima para ver o detalhe.")
         else:
-            # Mapa Loja por Código
+            # Mapa Código -> Loja
             try:
-                df_emp_map = df_empresa.copy()  # já carregada no topo do app
+                df_emp_map = df_empresa.copy()  # se já estiver carregado no topo do app
             except NameError:
                 df_emp_map = pd.DataFrame(sh.worksheet("Tabela Empresa").get_all_records())
             df_emp_map.columns = df_emp_map.columns.str.strip()
@@ -2248,7 +2245,7 @@ with st.spinner("⏳ Processando..."):
                     mask = mask | ((df["Mês"] == m) & (df["Sistema"] == s))
                 return df[mask]
     
-            # detalhe somente dos pares marcados; soma por Data+Código
+            # detalhe só para os pares marcados; soma por Data+Código
             ext_det = (ext.pipe(_mask_sel)
                          .groupby(["Data","Mês","Sistema","Código Everest"], as_index=False)["Fat.Total"].sum()
                          .rename(columns={"Fat.Total":"Ext"}))

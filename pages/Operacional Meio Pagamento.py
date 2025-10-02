@@ -171,31 +171,43 @@ def processar_formato2(
     df["total"] = pd.to_numeric(df["total"], errors="coerce").fillna(0.0)
 
     # ====== BLOCO NOVO: montar 'Meio de Pagamento' sem duplicar CRÉDITO/DÉBITO ======
+    import re
+    
     ban_raw = df["bandeira"].fillna("").astype(str).str.strip()
     tip_raw = df["tipo_cartao"].fillna("").astype(str).str.strip()
-
-    # normalizados (sem acento/minúsculo) para comparação
-    ban_norm = ban_raw.map(_norm)  # ex.: "ELO CREDITO" -> "elo credito"
-    tip_norm = tip_raw.map(_norm)  # ex.: "Credito"     -> "credito"
-
-    # regra: se a bandeira já contém o tipo, usa só a bandeira; senão, concatena
-    meio_composto = np.where(
-        ((ban_raw != "") | (tip_raw != "")) & tip_norm.ne(""),
-        np.where(
-            ban_norm.str.contains(tip_norm, na=False),
-            ban_raw,                               # tipo já contido -> não duplica
-            (ban_raw + " " + tip_raw).str.strip()  # caso contrário, une os dois
-        ),
-        ban_raw.where(ban_raw != "", tip_raw)      # se só um existir, usa o que existir
+    
+    # normalizados (sem acento/minúsculo) para COMPARAR
+    ban_norm = ban_raw.map(_norm)   # ex.: "ELO CREDITO" -> "elo credito"
+    tip_norm = tip_raw.map(_norm)   # ex.: "Credito"     -> "credito"
+    
+    # elementwise: verifica se o tipo já aparece dentro da bandeira (ignorando acento/caixa)
+    contains_tipo = pd.Series(
+        [
+            bool(re.search(rf"\b{re.escape(t)}\b", b)) if (t != "" and b != "") else False
+            for b, t in zip(ban_norm, tip_norm)
+        ],
+        index=df.index
     )
-
-    # padroniza mantendo caixa (sua função existente)
+    
+    # regra:
+    # - se há bandeira/tipo e a bandeira já contém o tipo -> usa só a bandeira
+    # - se há bandeira/tipo e NÃO contém -> concatena
+    # - se só um existir -> usa o que existir
+    meio_composto = np.where(
+        ((ban_raw != "") | (tip_raw != "")) & (tip_norm != ""),
+        np.where(contains_tipo, ban_raw, (ban_raw + " " + tip_raw).str.strip()),
+        ban_raw.where(ban_raw != "", tip_raw)
+    )
+    
+    # padroniza mantendo caixa
     df["Meio de Pagamento"] = pd.Series(meio_composto).map(_strip_accents_keep_case).str.strip()
-
+    
     # (opcional) colapsa palavras repetidas adjacentes: "Credito Credito" -> "Credito"
     df["Meio de Pagamento"] = df["Meio de Pagamento"].str.replace(
         r'(?i)\b(\w+)(\s+\1\b)+', r'\1', regex=True
     )
+    # ==============================================================================
+
     # ==============================================================================
 
     # -------- classificação por tabela canônica --------

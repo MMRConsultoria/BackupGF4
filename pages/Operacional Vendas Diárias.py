@@ -1973,12 +1973,16 @@ with st.spinner("⏳ Processando..."):
         ANO_ALVO = 2025      # coloque None para todos os anos
         TOL = 0.01           # 1 centavo
     
-        # ---- helpers ----
+        import re
+        import unicodedata
+        
         def _ns(s: str) -> str:
             s = str(s or "").strip().lower()
             s = unicodedata.normalize("NFD", s)
-            s = "".join(ch for ch in s if unicodedata.category(c) != "Mn")
+            # usar a MESMA variável no generator e no unicodedata.category
+            s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
             return re.sub(r"[^a-z0-9]+", " ", s).strip()
+
     
         def _to_float_brl(x):
             s = str(x or "").strip()

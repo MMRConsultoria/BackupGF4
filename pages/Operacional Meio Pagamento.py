@@ -176,20 +176,30 @@ def processar_formato2(
     df["total"] = pd.to_numeric(df["total"], errors="coerce").fillna(0.0)
 
     # -------- meio de pagamento (sem override CiSS) --------
-    ban = df["bandeira"].fillna("").astype(str).str.strip()
-    tip = df["tipo_cartao"].fillna("").astype(str).str.strip()
-    meio_from_de = (ban + " " + tip).str.strip().map(_strip_accents_keep_case)
-
-    # Remove prefixo numérico do início de "forma_pgto" (ex.: "123 - Cartão" -> "Cartão")
-    meio_from_c = (
-        df["forma_pgto"]
-        .astype(str)
-        .str.strip()
-        .str.replace(r"^\d+\s*-\s*", "", regex=True)
+    # -------- meio de pagamento (evita duplicar "CRÉDITO"/"DÉBITO") --------
+    ban_raw = df["bandeira"].fillna("").astype(str).str.strip()
+    tip_raw = df["tipo_cartao"].fillna("").astype(str).str.strip()
+    
+    # normalizados (sem acento, minúsculo) para comparar
+    ban_norm = ban_raw.map(_norm)
+    tip_norm = tip_raw.map(_norm)
+    
+    # quando Bandeira ou Tipo existir, prioriza:
+    # - só Bandeira se ela já contém o Tipo (ex.: "elo credito" contém "credito")
+    # - senão concatena Bandeira + Tipo
+    meio_composto = np.where(
+        ((ban_raw != "") | (tip_raw != "")) & tip_norm.ne(""),
+        np.where(
+            ban_norm.str.contains(tip_norm, na=False),
+            ban_raw,                               # tipo já está na bandeira → usa só a bandeira
+            (ban_raw + " " + tip_raw).str.strip()  # caso contrário, une os dois
+        ),
+        ban_raw.where(ban_raw != "", tip_raw)      # se só um existir, usa o que existir
     )
+    
+    # aplica a função que você já usa para padronizar sem acentos, mantendo caixa
+    df["Meio de Pagamento"] = pd.Series(meio_composto).map(_strip_accents_keep_case).str.strip()
 
-    # Prioriza (Bandeira + Tipo) quando um dos dois existir; senão usa forma_pgto
-    df["Meio de Pagamento"] = np.where((ban != "") | (tip != ""), meio_from_de, meio_from_c)
 
     # -------- classificação usando tabela canônica (Google) --------
     # df_meio_pgto_google_norm deve estar deduplicado por canônico e conter "__meio_norm__", "Tipo de Pagamento" e "Tipo DRE"

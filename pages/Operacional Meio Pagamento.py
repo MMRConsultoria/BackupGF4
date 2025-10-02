@@ -172,21 +172,17 @@ def processar_formato2(
     df["data"] = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
     df["total"] = pd.to_numeric(df["total"], errors="coerce").fillna(0.0)
 
-
     # ================================
-    # BEGIN PATCH — Tipo por "contém cred/deb" + sem duplicar
+    # BEGIN — "contém cred/deb" + sem duplicar
     # ================================
-    import re
-    
-    # textos originais
     ban_raw = df["bandeira"].fillna("").astype(str).str.strip()
     tip_raw = df["tipo_cartao"].fillna("").astype(str).str.strip()
-    
-    # normalizados para comparação (minúsculo, sem acento)
+
+    # normalizados (minúsculo, sem acento) para comparar
     ban_norm = ban_raw.map(_norm)   # ex.: "ELO CREDITO" -> "elo credito"
     tip_norm = tip_raw.map(_norm)   # ex.: "CRED" -> "cred", "debito" -> "debito"
-    
-    # 1) Deriva o TIPO a partir de qualquer ocorrência de "cred" ou "deb"
+
+    # 1) Deriva o tipo a partir de qualquer ocorrência de "cred" ou "deb"
     def _tipo_from_text(tn: str) -> str:
         if not tn:
             return ""
@@ -194,42 +190,38 @@ def processar_formato2(
             return "CREDITO"
         if "deb" in tn:
             return "DEBITO"
-        # se não achou sinal de cred/deb, mantém original em UPPER (se existir)
         return ""
-    
+
+    # tenta primeiro pelo campo tipo_cartao
     tip_label = pd.Series([_tipo_from_text(t) for t in tip_norm], index=df.index)
-    
-    # se o tipo ainda ficou vazio, tenta derivar da própria BANDEIRA (casos como "ELO CREDITO")
-    tip_label = tip_label.where(tip_label != "", pd.Series(
-        [_tipo_from_text(b) for b in ban_norm], index=df.index
-    ))
-    
-    # 2) Checa por linha se a BANDEIRA já contém (cred/deb) → evita duplicar
+    # se vazio, tenta inferir pela bandeira (ex.: "elo credito")
+    tip_label = tip_label.where(
+        tip_label != "",
+        pd.Series([_tipo_from_text(b) for b in ban_norm], index=df.index)
+    )
+
+    # 2) Verifica se a bandeira já contém o marcador (cred/deb) para não duplicar
     tip_key = pd.Series(
         ["cred" if v == "CREDITO" else ("deb" if v == "DEBITO" else "") for v in tip_label],
         index=df.index
     )
-    
     contains_tipo = pd.Series(
         [(k != "" and k in b) for b, k in zip(ban_norm, tip_key)],
         index=df.index
     )
-    
-    # 3) Monta o "Meio de Pagamento"
-    #    - Se bandeira contém (cred/deb) informado → usa só a bandeira
-    #    - Senão, concatena "Bandeira + Tipo" (quando houver)
-    #    - Se só um existir, usa o que existir
+
+    # 3) Monta "Meio de Pagamento"
     meio_composto = np.where(
         (ban_raw != "") | (tip_label != ""),
         np.where(
             contains_tipo,
-            ban_raw,                                           # já contém → não duplica
-            (ban_raw + " " + tip_label).str.strip()           # concatena quando ambos existirem
+            ban_raw,                                       # já contém → não duplica
+            (ban_raw + " " + tip_label).str.strip()       # concatena quando fizer sentido
         ),
-        ""                                                     # nenhum existe
+        ""                                                # nenhum existe
     )
-    
-    # 4) Se ficou vazio, tente fallback para forma_pgto sem prefixo numérico
+
+    # 4) Fallback para forma_pgto sem prefixo numérico (ex.: "123 - ...")
     fallback = (
         df["forma_pgto"].astype(str).str.strip()
           .str.replace(r"^\d+\s*-\s*", "", regex=True)
@@ -237,48 +229,15 @@ def processar_formato2(
     meio_composto = pd.Series(meio_composto, index=df.index).where(
         lambda s: s != "", fallback
     )
-    
-    # 5) Padroniza e limpa repetições adjacentes
+
+    # 5) Padroniza e remove repetições adjacentes
     df["Meio de Pagamento"] = meio_composto.map(_strip_accents_keep_case).str.strip()
     df["Meio de Pagamento"] = df["Meio de Pagamento"].str.replace(
         r'(?i)\b(\w+)(\s+\1\b)+', r'\1', regex=True
     )
-
     # ================================
-    # END PATCH
+    # END — "contém cred/deb"
     # ================================
-
-    # ====== Monta 'Meio de Pagamento' sem duplicar CRÉDITO/DÉBITO ======
-    ban_raw = df["bandeira"].fillna("").astype(str).str.strip()
-    ban_norm = ban_raw.map(_norm)  # para comparação (minúsculo, sem acento)
-
-    # verifica linha a linha se a bandeira já contém o tipo (ignorando acento/caixa)
-    contains_tipo = pd.Series(
-        [
-            bool(re.search(rf"\b{re.escape(t.lower())}\b", b)) if (t and b) else False
-            for b, t in zip(ban_norm, tip_norm_full)
-        ],
-        index=df.index,
-    )
-
-    # regra:
-    # - se há bandeira ou tipo:
-    #     * se a bandeira já contém o tipo → usa só a bandeira
-    #     * senão → concatena bandeira + tipo
-    # - se só um existir → usa o que existir
-    meio_composto = np.where(
-        ((ban_raw != "") | (tip_norm_full != "")),
-        np.where(contains_tipo, ban_raw, (ban_raw + " " + tip_norm_full).str.strip()),
-        ban_raw.where(ban_raw != "", tip_norm_full),
-    )
-
-    # padroniza mantendo caixa definida pela sua função (remove acento, preserva caixa)
-    df["Meio de Pagamento"] = pd.Series(meio_composto).map(_strip_accents_keep_case).str.strip()
-
-    # (opcional) colapsa palavras repetidas adjacentes: "Credito Credito" -> "Credito"
-    df["Meio de Pagamento"] = df["Meio de Pagamento"].str.replace(
-        r"(?i)\b(\w+)(\s+\1\b)+", r"\1", regex=True
-    )
 
     # -------- classificação por tabela canônica --------
     tipo_pgto_map = dict(
@@ -308,7 +267,7 @@ def processar_formato2(
         how="left",
     )
 
-    # -------- etiqueta do sistema (ajuste se preferir) --------
+    # -------- etiqueta do sistema (ajuste se quiser) --------
     df["Sistema"] = "CISS"
 
     # -------- datas derivadas --------
@@ -323,7 +282,7 @@ def processar_formato2(
     }
     df["Dia da Semana"] = df["data"].dt.day_name().map(dias_semana)
     df["Mês"] = df["data"].dt.month.map(
-        {1: "jan", 2: "fev", 3: "mar", 4: "abr", 5: "mai", 6: "jun", 7: "jul", 8: "ago", 9: "set", 10: "out", 11: "nov", 12: "dez"}
+        {1:"jan",2:"fev",3:"mar",4:"abr",5:"mai",6:"jun",7:"jul",8:"ago",9:"set",10:"out",11:"nov",12:"dez"}
     )
     df["Ano"] = df["data"].dt.year
     df["Data"] = df["data"].dt.strftime("%d/%m/%Y")
@@ -331,19 +290,11 @@ def processar_formato2(
     # -------- valor e colunas finais --------
     df.rename(columns={"total": "Valor (R$)"}, inplace=True)
     col_order = [
-        "Data",
-        "Dia da Semana",
-        "Meio de Pagamento",
-        "Tipo de Pagamento",
-        "Tipo DRE",
-        "Loja",
-        "Código Everest",
-        "Grupo",
-        "Código Grupo Everest",
+        "Data","Dia da Semana",
+        "Meio de Pagamento","Tipo de Pagamento","Tipo DRE",
+        "Loja","Código Everest","Grupo","Código Grupo Everest",
         "Sistema",
-        "Valor (R$)",
-        "Mês",
-        "Ano",
+        "Valor (R$)","Mês","Ano"
     ]
     for c in col_order:
         if c not in df.columns:
@@ -358,6 +309,7 @@ def processar_formato2(
         pass
 
     return df_final
+
 
 
 

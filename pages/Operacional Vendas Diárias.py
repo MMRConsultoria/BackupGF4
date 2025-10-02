@@ -1971,7 +1971,7 @@ with st.spinner("⏳ Processando..."):
     #     - No detalhe, compara por Data+Código apenas para os selecionados
     # ===============================
     
-    with aba4:
+    with aba5:
         import re, unicodedata
         import pandas as pd
         import numpy as np

@@ -1963,12 +1963,15 @@ with st.spinner("⏳ Processando..."):
     # Aba 4 - Auditoria PDV x Faturamento Meio Pagamento
     # =======================================
     # ===============================
-    # 📊 Resumo Mensal (Sistema × MP)
+    # 📊 Resumo Mensal (Sistema × MP) — SOMENTE 2025
     # ===============================
     with aba5:
         import unicodedata
     
-        st.subheader("📊 Resumo Mensal — Sistema × Meio de Pagamento")
+        st.subheader("📊 Resumo Mensal — Sistema × Meio de Pagamento (2025)")
+    
+        ANO_ALVO = 2025
+        TOL = 0.01  # 1 centavo
     
         # ---- helpers ----
         def _ns(s: str) -> str:
@@ -1999,9 +2002,12 @@ with st.spinner("⏳ Processando..."):
                 return "R$ 0,00"
             return "R$ " + f"{v:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
     
-        def _mes_label(dt_ser):
-            dt = pd.to_datetime(dt_ser, dayfirst=True, errors="coerce")
-            return dt.dt.strftime("%m/%Y")
+        def _parse_date_series(ser):
+            """Aguenta datas do Sheets em serial (1899-12-30) ou dd/mm/aaaa."""
+            num = pd.to_numeric(ser, errors="coerce")
+            dt1 = pd.to_datetime(ser, dayfirst=True, errors="coerce")
+            dt2 = pd.to_datetime(num, origin="1899-12-30", unit="D", errors="coerce")
+            return dt1.where(dt1.notna(), dt2)
     
         # ----------------- Carregar planilhas -----------------
         sh = gc.open("Vendas diarias")
@@ -2024,22 +2030,24 @@ with st.spinner("⏳ Processando..."):
     
         # ----------------- Normalizações básicas -----------------
         # Fat Sistema Externo
-        col_ext_data   = next((c for c in df_ext.columns if _ns(c) == "data"), None)
-        col_ext_cod    = next((c for c in df_ext.columns if "codigo" in _ns(c) and "everest" in _ns(c)), None)
-        col_ext_fat    = next((c for c in df_ext.columns if _ns(c) in ("fat total","fat. total","fat total")), None)
-        col_ext_sis    = next((c for c in df_ext.columns if _ns(c) == "sistema"), None)
+        col_ext_data = next((c for c in df_ext.columns if _ns(c) == "data"), None)
+        col_ext_cod  = next((c for c in df_ext.columns if "codigo" in _ns(c) and "everest" in _ns(c)), None)
+        col_ext_fat  = next((c for c in df_ext.columns if _ns(c) in ("fat total","fat. total","fat total")), None)
+        col_ext_sis  = next((c for c in df_ext.columns if _ns(c) == "sistema"), None)
     
         if not all([col_ext_data, col_ext_cod, col_ext_fat, col_ext_sis]):
             st.error("Não encontrei as colunas esperadas em 'Fat Sistema Externo' (Data, Codigo Everest, Fat. Total, Sistema).")
             st.stop()
     
         df_ext_proc = pd.DataFrame({
-            "Data":   pd.to_datetime(df_ext[col_ext_data], dayfirst=True, errors="coerce"),
+            "Data": _parse_date_series(df_ext[col_ext_data]),
             "Código Everest": pd.to_numeric(df_ext[col_ext_cod], errors="coerce"),
             "Fat.Total": df_ext[col_ext_fat].map(_to_float_brl),
             "Sistema": df_ext[col_ext_sis].astype(str).str.strip()
         }).dropna(subset=["Data"])
     
+        # FILTRO: somente 2025
+        df_ext_proc = df_ext_proc[df_ext_proc["Data"].dt.year == ANO_ALVO].copy()
         df_ext_proc["Mês"] = df_ext_proc["Data"].dt.strftime("%m/%Y")
     
         # Faturamento Meio Pagamento
@@ -2053,56 +2061,53 @@ with st.spinner("⏳ Processando..."):
             st.stop()
     
         df_mp_proc = pd.DataFrame({
-            "Data":   pd.to_datetime(df_mp[col_mp_data], dayfirst=True, errors="coerce"),
+            "Data": _parse_date_series(df_mp[col_mp_data]),
             "Código Everest": pd.to_numeric(df_mp[col_mp_cod], errors="coerce"),
             "Valor_MP": df_mp[col_mp_val].map(_to_float_brl),
             "Sistema": df_mp[col_mp_sis].astype(str).str.strip()
         }).dropna(subset=["Data"])
     
+        # FILTRO: somente 2025
+        df_mp_proc = df_mp_proc[df_mp_proc["Data"].dt.year == ANO_ALVO].copy()
         df_mp_proc["Mês"] = df_mp_proc["Data"].dt.strftime("%m/%Y")
     
-        # ----------------- Resumo por Mês + Sistema -----------------
-        tol = 0.01  # tolerância de 1 centavo
-    
+        # ----------------- Resumo por Mês + Sistema (somente diferenças) -----------------
         ext_mes = (df_ext_proc
             .groupby(["Mês","Sistema"], as_index=False)["Fat.Total"].sum()
             .rename(columns={"Fat.Total":"Total_Externo"})
         )
-    
         mp_mes  = (df_mp_proc
             .groupby(["Mês","Sistema"], as_index=False)["Valor_MP"].sum()
             .rename(columns={"Valor_MP":"Total_MP"})
         )
     
-        resumo = (ext_mes
-            .merge(mp_mes, on=["Mês","Sistema"], how="outer")
-            .fillna(0.0)
-        )
+        resumo = (ext_mes.merge(mp_mes, on=["Mês","Sistema"], how="outer").fillna(0.0))
         resumo["Diferença"] = resumo["Total_Externo"] - resumo["Total_MP"]
-        resumo["Tipo"] = np.where(resumo["Diferença"] >  tol, "A mais no Externo",
-                          np.where(resumo["Diferença"] < -tol, "A mais no Meio Pagamento", "Sem diferença"))
     
-        # Tabela simples solicitada (somente diferenças ≠ 0)
-        tabela_simples = (resumo
-            .loc[resumo["Tipo"] != "Sem diferença", ["Tipo","Mês","Sistema","Diferença"]]
-            .sort_values(["Mês","Sistema"])
-            .reset_index(drop=True)
+        # 👉 Atende seu pedido: coluna Tipo sempre "Diferença" (somente quando houver diferença)
+        has_diff = resumo["Diferença"].abs() > TOL
+        tabela_simples = (
+            resumo.loc[has_diff, ["Mês","Sistema","Diferença"]]
+                  .assign(Tipo="Diferença")  # sempre "Diferença"
+                  .loc[:, ["Tipo","Mês","Sistema","Diferença"]]
+                  .sort_values(["Mês","Sistema"])
+                  .reset_index(drop=True)
         )
     
-        st.markdown("**Tabela simples — Tipo, Mês, Sistema e Diferença**")
+        st.markdown("**Tabela simples — (2025) Tipo, Mês, Sistema e Diferença**")
         if tabela_simples.empty:
-            st.success("✅ Sem diferenças detectadas no resumo mensal por Sistema.")
+            st.success("✅ Sem diferenças em 2025 no resumo mensal por Sistema.")
         else:
             st.dataframe(
                 tabela_simples.style.format({"Diferença": _fmt_brl}),
                 use_container_width=True, hide_index=True
             )
     
-        # ----------------- Lojas com diferença (apontar somente quando há) -----------------
+        # ----------------- Lojas com diferença (somente 2025) -----------------
         if not tabela_simples.empty:
             # Mapear Loja por Código Everest (usa df_empresa se já existir; senão carrega)
             try:
-                df_emp_map = df_empresa.copy()  # já carregada no seu topo
+                df_emp_map = df_empresa.copy()  # já carregada no topo do seu app
             except NameError:
                 df_emp_map = pd.DataFrame(sh.worksheet("Tabela Empresa").get_all_records())
             df_emp_map.columns = df_emp_map.columns.str.strip()
@@ -2115,7 +2120,7 @@ with st.spinner("⏳ Processando..."):
                 tmp = tmp.dropna(subset=[col_cod_emp])
                 mapa_loja = tmp.set_index(col_cod_emp)[col_loja].to_dict()
     
-            # diferenças por Código + Data + Sistema (e depois agregamos no mês)
+            # detalhe por Data+Mês+Sistema+Código (já filtrados em 2025)
             ext_det = (df_ext_proc
                 .groupby(["Data","Mês","Sistema","Código Everest"], as_index=False)["Fat.Total"].sum()
                 .rename(columns={"Fat.Total":"Ext"})
@@ -2124,22 +2129,20 @@ with st.spinner("⏳ Processando..."):
                 .groupby(["Data","Mês","Sistema","Código Everest"], as_index=False)["Valor_MP"].sum()
                 .rename(columns={"Valor_MP":"MP"})
             )
-            det = (ext_det.merge(mp_det, on=["Data","Mês","Sistema","Código Everest"], how="outer")
-                   .fillna(0.0))
+            det = (ext_det.merge(mp_det, on=["Data","Mês","Sistema","Código Everest"], how="outer").fillna(0.0))
             det["Dif"] = det["Ext"] - det["MP"]
-            det = det.loc[det["Dif"].abs() > tol].copy()
+            det = det.loc[det["Dif"].abs() > TOL].copy()
     
             if det.empty:
-                st.info("ℹ️ Houve diferenças no agregado mensal, mas não foi possível localizar por loja (Código) no detalhe.")
+                st.info("ℹ️ Houve diferenças no agregado de 2025, mas não foi possível localizar por loja no detalhe.")
             else:
                 det["Loja"] = det["Código Everest"].map(mapa_loja).fillna("")
-                # resumo por Mês+Sistema+Loja (soma das diferenças dentro do mês)
                 lojas_diff = (det
                     .groupby(["Mês","Sistema","Código Everest","Loja"], as_index=False)["Dif"].sum()
-                    .sort_values(["Mês","Sistema","Loja","Código Everest"])
                     .rename(columns={"Dif":"Diferença"})
+                    .sort_values(["Mês","Sistema","Loja","Código Everest"])
                 )
-                st.markdown("**Lojas com diferença (apontamento)**")
+                st.markdown("**Lojas com diferença (apontamento, 2025)**")
                 st.dataframe(
                     lojas_diff.style.format({"Diferença": _fmt_brl}),
                     use_container_width=True, hide_index=True

@@ -142,7 +142,7 @@ with st.spinner("⏳ Processando..."):
     # ================================
     # 3. Separação em ABAS
     # ================================
-    aba1, aba3, aba4, aba5 = st.tabs(["📄 Upload e Processamento", "🔄 Atualizar Google Sheets","📊 Auditar integração Everest"])
+    aba1, aba3, aba4, aba5 = st.tabs(["📄 Upload e Processamento", "🔄 Atualizar Google Sheets","📊 Auditar integração Everest","📊 Auditar PDV"])
     # ---- Helper para saber qual aba está ativa ----
     def marcar_aba_ativa(tab_key: str):
         st.session_state["_aba_ativa"] = tab_key

@@ -172,21 +172,78 @@ def processar_formato2(
     df["data"] = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
     df["total"] = pd.to_numeric(df["total"], errors="coerce").fillna(0.0)
 
-    # ================================
-    # BEGIN PATCH — Normalização de tipo (CRED/DEB → CREDITO/DEBITO)
-    # ================================
-    # mapeia abreviações e normaliza o tipo_cartao
-    map_tipo = {
-        "cred": "CREDITO",
-        "credito": "CREDITO",
-        "deb": "DEBITO",
-        "debito": "DEBITO",
-    }
 
+    # ================================
+    # BEGIN PATCH — Tipo por "contém cred/deb" + sem duplicar
+    # ================================
+    import re
+    
+    # textos originais
+    ban_raw = df["bandeira"].fillna("").astype(str).str.strip()
     tip_raw = df["tipo_cartao"].fillna("").astype(str).str.strip()
-    tip_norm = tip_raw.map(_norm)  # minúsculo sem acento
-    # se mapeou, usa padronizado; senão, mantém original em UPPER
-    tip_norm_full = tip_norm.map(map_tipo).fillna(tip_raw.str.upper().str.strip())
+    
+    # normalizados para comparação (minúsculo, sem acento)
+    ban_norm = ban_raw.map(_norm)   # ex.: "ELO CREDITO" -> "elo credito"
+    tip_norm = tip_raw.map(_norm)   # ex.: "CRED" -> "cred", "debito" -> "debito"
+    
+    # 1) Deriva o TIPO a partir de qualquer ocorrência de "cred" ou "deb"
+    def _tipo_from_text(tn: str) -> str:
+        if not tn:
+            return ""
+        if "cred" in tn:
+            return "CREDITO"
+        if "deb" in tn:
+            return "DEBITO"
+        # se não achou sinal de cred/deb, mantém original em UPPER (se existir)
+        return ""
+    
+    tip_label = pd.Series([_tipo_from_text(t) for t in tip_norm], index=df.index)
+    
+    # se o tipo ainda ficou vazio, tenta derivar da própria BANDEIRA (casos como "ELO CREDITO")
+    tip_label = tip_label.where(tip_label != "", pd.Series(
+        [_tipo_from_text(b) for b in ban_norm], index=df.index
+    ))
+    
+    # 2) Checa por linha se a BANDEIRA já contém (cred/deb) → evita duplicar
+    tip_key = pd.Series(
+        ["cred" if v == "CREDITO" else ("deb" if v == "DEBITO" else "") for v in tip_label],
+        index=df.index
+    )
+    
+    contains_tipo = pd.Series(
+        [(k != "" and k in b) for b, k in zip(ban_norm, tip_key)],
+        index=df.index
+    )
+    
+    # 3) Monta o "Meio de Pagamento"
+    #    - Se bandeira contém (cred/deb) informado → usa só a bandeira
+    #    - Senão, concatena "Bandeira + Tipo" (quando houver)
+    #    - Se só um existir, usa o que existir
+    meio_composto = np.where(
+        (ban_raw != "") | (tip_label != ""),
+        np.where(
+            contains_tipo,
+            ban_raw,                                           # já contém → não duplica
+            (ban_raw + " " + tip_label).str.strip()           # concatena quando ambos existirem
+        ),
+        ""                                                     # nenhum existe
+    )
+    
+    # 4) Se ficou vazio, tente fallback para forma_pgto sem prefixo numérico
+    fallback = (
+        df["forma_pgto"].astype(str).str.strip()
+          .str.replace(r"^\d+\s*-\s*", "", regex=True)
+    )
+    meio_composto = pd.Series(meio_composto, index=df.index).where(
+        lambda s: s != "", fallback
+    )
+    
+    # 5) Padroniza e limpa repetições adjacentes
+    df["Meio de Pagamento"] = meio_composto.map(_strip_accents_keep_case).str.strip()
+    df["Meio de Pagamento"] = df["Meio de Pagamento"].str.replace(
+        r'(?i)\b(\w+)(\s+\1\b)+', r'\1', regex=True
+    )
+
     # ================================
     # END PATCH
     # ================================

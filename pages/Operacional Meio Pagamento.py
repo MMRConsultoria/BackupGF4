@@ -156,13 +156,8 @@ def processar_formato2(
     df_src: pd.DataFrame,
     df_empresa: pd.DataFrame,
     df_meio_pgto_google_norm: pd.DataFrame,
-    depara_ciss_lookup: dict = None,  # 🚫 DEPRECADO/IGNORADO: mantido só p/ compatibilidade
+    depara_ciss_lookup: dict = None,  # ignorado (compatibilidade)
 ) -> pd.DataFrame:
-    """
-    Lê arquivo 'Formato 2' (plano), calcula 'Meio de Pagamento' a partir de (Bandeira + Tipo)
-    ou 'Forma_pgto' (sem prefixo numérico), classifica via df_meio_pgto_google_norm,
-    junta com Tabela Empresa e formata colunas finais. O override De→para CiSS foi removido.
-    """
     df = _rename_cols_formato2(df_src.copy())
 
     # -------- validações mínimas --------
@@ -175,112 +170,91 @@ def processar_formato2(
     df["data"] = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
     df["total"] = pd.to_numeric(df["total"], errors="coerce").fillna(0.0)
 
-    # -------- meio de pagamento (sem override CiSS) --------
-    # -------- meio de pagamento (evita duplicar "CRÉDITO"/"DÉBITO") --------
+    # ====== BLOCO NOVO: montar 'Meio de Pagamento' sem duplicar CRÉDITO/DÉBITO ======
     ban_raw = df["bandeira"].fillna("").astype(str).str.strip()
     tip_raw = df["tipo_cartao"].fillna("").astype(str).str.strip()
-    
-    # normalizados (sem acento, minúsculo) para comparar
-    ban_norm = ban_raw.map(_norm)
-    tip_norm = tip_raw.map(_norm)
-    
-    # quando Bandeira ou Tipo existir, prioriza:
-    # - só Bandeira se ela já contém o Tipo (ex.: "elo credito" contém "credito")
-    # - senão concatena Bandeira + Tipo
+
+    # normalizados (sem acento/minúsculo) para comparação
+    ban_norm = ban_raw.map(_norm)  # ex.: "ELO CREDITO" -> "elo credito"
+    tip_norm = tip_raw.map(_norm)  # ex.: "Credito"     -> "credito"
+
+    # regra: se a bandeira já contém o tipo, usa só a bandeira; senão, concatena
     meio_composto = np.where(
         ((ban_raw != "") | (tip_raw != "")) & tip_norm.ne(""),
         np.where(
             ban_norm.str.contains(tip_norm, na=False),
-            ban_raw,                               # tipo já está na bandeira → usa só a bandeira
+            ban_raw,                               # tipo já contido -> não duplica
             (ban_raw + " " + tip_raw).str.strip()  # caso contrário, une os dois
         ),
         ban_raw.where(ban_raw != "", tip_raw)      # se só um existir, usa o que existir
     )
-    
-    # aplica a função que você já usa para padronizar sem acentos, mantendo caixa
+
+    # padroniza mantendo caixa (sua função existente)
     df["Meio de Pagamento"] = pd.Series(meio_composto).map(_strip_accents_keep_case).str.strip()
 
+    # (opcional) colapsa palavras repetidas adjacentes: "Credito Credito" -> "Credito"
+    df["Meio de Pagamento"] = df["Meio de Pagamento"].str.replace(
+        r'(?i)\b(\w+)(\s+\1\b)+', r'\1', regex=True
+    )
+    # ==============================================================================
 
-    # -------- classificação usando tabela canônica (Google) --------
-    # df_meio_pgto_google_norm deve estar deduplicado por canônico e conter "__meio_norm__", "Tipo de Pagamento" e "Tipo DRE"
-    meio_norm = df["Meio de Pagamento"].map(_norm)
-    tipo_pgto_map = dict(
-        zip(
-            df_meio_pgto_google_norm["__meio_norm__"],
-            df_meio_pgto_google_norm["Tipo de Pagamento"].astype(str),
-        )
-    )
-    tipo_dre_map = dict(
-        zip(
-            df_meio_pgto_google_norm["__meio_norm__"],
-            df_meio_pgto_google_norm["Tipo DRE"].astype(str),
-        )
-    )
-    df["Tipo de Pagamento"] = meio_norm.map(tipo_pgto_map).fillna("")
-    df["Tipo DRE"] = meio_norm.map(tipo_dre_map).fillna("")
+    # -------- classificação por tabela canônica --------
+    tipo_pgto_map = dict(zip(
+        df_meio_pgto_google_norm["__meio_norm__"],
+        df_meio_pgto_google_norm["Tipo de Pagamento"].astype(str)
+    ))
+    tipo_dre_map = dict(zip(
+        df_meio_pgto_google_norm["__meio_norm__"],
+        df_meio_pgto_google_norm["Tipo DRE"].astype(str)
+    ))
+    df["__meio_norm__"] = df["Meio de Pagamento"].map(_norm)
+    df["Tipo de Pagamento"] = df["__meio_norm__"].map(tipo_pgto_map).fillna("")
+    df["Tipo DRE"]          = df["__meio_norm__"].map(tipo_dre_map).fillna("")
+    df.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
 
     # -------- join com Tabela Empresa --------
     emp = df_empresa.copy()
     emp["Código Everest"] = emp["Código Everest"].astype(str).str.strip()
-    df["Código Everest"] = df["cod_empresa"].astype(str).str.strip()
+    df["Código Everest"]  = df["cod_empresa"].astype(str).str.strip()
     df = df.merge(
         emp[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]],
-        on="Código Everest",
-        how="left",
+        on="Código Everest", how="left"
     )
 
-    # -------- etiqueta do sistema --------
-    # Mantive como "CISS" (como no original). Se preferir genérico, troque para "Formato 2" ou "".
+    # -------- etiqueta do sistema (ajuste se quiser) --------
     df["Sistema"] = "CISS"
 
     # -------- datas derivadas --------
     dias_semana = {
-        "Monday": "segunda-feira",
-        "Tuesday": "terça-feira",
-        "Wednesday": "quarta-feira",
-        "Thursday": "quinta-feira",
-        "Friday": "sexta-feira",
-        "Saturday": "sábado",
-        "Sunday": "domingo",
+        'Monday': 'segunda-feira','Tuesday': 'terça-feira','Wednesday': 'quarta-feira',
+        'Thursday': 'quinta-feira','Friday': 'sexta-feira','Saturday': 'sábado','Sunday': 'domingo'
     }
     df["Dia da Semana"] = df["data"].dt.day_name().map(dias_semana)
-    df["Mês"] = df["data"].dt.month.map({1: "jan", 2: "fev", 3: "mar", 4: "abr", 5: "mai", 6: "jun", 7: "jul", 8: "ago", 9: "set", 10: "out", 11: "nov", 12: "dez"})
+    df["Mês"] = df["data"].dt.month.map({1:'jan',2:'fev',3:'mar',4:'abr',5:'mai',6:'jun',7:'jul',8:'ago',9:'set',10:'out',11:'nov',12:'dez'})
     df["Ano"] = df["data"].dt.year
     df["Data"] = df["data"].dt.strftime("%d/%m/%Y")
 
     # -------- valor e colunas finais --------
     df.rename(columns={"total": "Valor (R$)"}, inplace=True)
-
     col_order = [
-        "Data",
-        "Dia da Semana",
-        "Meio de Pagamento",
-        "Tipo de Pagamento",
-        "Tipo DRE",
-        "Loja",
-        "Código Everest",
-        "Grupo",
-        "Código Grupo Everest",
+        "Data", "Dia da Semana",
+        "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",
+        "Loja", "Código Everest", "Grupo", "Código Grupo Everest",
         "Sistema",
-        "Valor (R$)",
-        "Mês",
-        "Ano",
+        "Valor (R$)", "Mês", "Ano"
     ]
     for c in col_order:
         if c not in df.columns:
             df[c] = ""
-
     df_final = df[col_order].copy()
 
     # -------- ordenação --------
-    # Mantido try/except como no original, ordenando por "Data" (string dd/mm/yyyy) e "Loja".
-    # Se quiser precisão absoluta por data, use ["data","Loja"] antes de formatar "Data".
     try:
         df_final.sort_values(by=["Data", "Loja"], inplace=True)
     except Exception:
         pass
-
     return df_final
+
 
 
 # ======================

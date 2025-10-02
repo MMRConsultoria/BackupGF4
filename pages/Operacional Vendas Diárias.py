@@ -1962,14 +1962,19 @@ with st.spinner("⏳ Processando..."):
     # =======================================
     # Aba 4 - Auditoria PDV x Faturamento Meio Pagamento
     # =======================================
+    # ===============================
+    # 📊 Resumo Mensal (Sistema × MP)
+    # ===============================
     with aba5:
-    
         import unicodedata
     
+        st.subheader("📊 Resumo Mensal — Sistema × Meio de Pagamento")
+    
+        # ---- helpers ----
         def _ns(s: str) -> str:
             s = str(s or "").strip().lower()
             s = unicodedata.normalize("NFD", s)
-            s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+            s = "".join(c for c in s if unicodedata.category(c) != "Mn")
             return re.sub(r"[^a-z0-9]+", " ", s).strip()
     
         def _to_float_brl(x):
@@ -1977,10 +1982,9 @@ with st.spinner("⏳ Processando..."):
             s = re.sub(r"[^\d,.\-]", "", s)
             if s == "":
                 return float("nan")
-            # 1) tem vírgula e ponto -> assume ponto milhar, vírgula decimal
+            # vírgula = decimal; ponto = milhar
             if s.count(",") == 1 and s.count(".") >= 1:
                 s = s.replace(".", "").replace(",", ".")
-            # 2) só vírgula -> vírgula decimal
             elif s.count(",") == 1 and s.count(".") == 0:
                 s = s.replace(",", ".")
             try:
@@ -1988,306 +1992,155 @@ with st.spinner("⏳ Processando..."):
             except:
                 return float("nan")
     
-        def _fmt_brl(v: float) -> str:
+        def _fmt_brl(v):
             try:
                 v = float(v)
             except:
                 return "R$ 0,00"
-            s = f"{v:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
-            return f"R$ {s}"
+            return "R$ " + f"{v:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
     
-        def carregar_tabela_empresa(gc, nome_planilha="Vendas diarias", aba="Tabela Empresa"):
-            try:
-                ws = gc.open(nome_planilha).worksheet(aba)
-                df = pd.DataFrame(ws.get_all_records())
-                if df.empty:
-                    return pd.DataFrame(columns=["Loja","Código Everest","Código Grupo Everest","Grupo"])
-                df.columns = df.columns.str.strip()
-                # normaliza possíveis nomes
-                col_loja = next((c for c in df.columns if _ns(c) == "loja"), None)
-                col_cod  = next((c for c in df.columns if "everest" in _ns(c) and "grupo" not in _ns(c)), None)
-                col_codg = next((c for c in df.columns if "grupo" in _ns(c) and "everest" in _ns(c)), None)
-                col_grp  = next((c for c in df.columns if _ns(c) == "grupo"), None)
-                out = pd.DataFrame()
-                out["Loja"] = df[col_loja].astype(str).str.strip() if col_loja else ""
-                out["Loja_norm"] = out["Loja"].str.lower()
-                out["Código Everest"] = pd.to_numeric(df[col_cod], errors="coerce") if col_cod else pd.NA
-                if col_codg: out["Código Grupo Everest"] = pd.to_numeric(df[col_codg], errors="coerce")
-                if col_grp:  out["Grupo"] = df[col_grp].astype(str).str.strip()
-                return out
-            except Exception as e:
-                st.error(f"❌ Erro ao carregar Tabela Empresa: {e}")
-                return pd.DataFrame(columns=["Loja","Código Everest","Código Grupo Everest","Grupo"])
+        def _mes_label(dt_ser):
+            dt = pd.to_datetime(dt_ser, dayfirst=True, errors="coerce")
+            return dt.dt.strftime("%m/%Y")
     
-        def ler_everest(gc, nome_planilha="Vendas diarias", aba="Everest"):
-            ws = gc.open(nome_planilha).worksheet(aba)
-            vals = ws.get_all_values()
-            if len(vals) < 2:
-                return pd.DataFrame(columns=["Data","Codigo","Valor Bruto (Everest)","Impostos (Everest)"])
-            df = pd.DataFrame(vals[1:], columns=vals[0])
-            df.columns = df.columns.str.strip()
-            # nomes prováveis
-            c_data = next((c for c in df.columns if _ns(c) == "data"), None)
-            c_cod  = next((c for c in df.columns if _ns(c) in ("codigo","código","codigo everest")), None)
-            c_vb   = next((c for c in df.columns if "valor" in _ns(c) and "bruto" in _ns(c)), None)
-            c_imp  = next((c for c in df.columns if "impost" in _ns(c)), None)
+        # ----------------- Carregar planilhas -----------------
+        sh = gc.open("Vendas diarias")
     
-            out = pd.DataFrame()
-            out["Data"] = pd.to_datetime(df[c_data], dayfirst=True, errors="coerce") if c_data else pd.NaT
-            out["Codigo"] = pd.to_numeric(df[c_cod], errors="coerce") if c_cod else pd.NA
-            if c_vb:
-                out["Valor Bruto (Everest)"] = df[c_vb].map(_to_float_brl)
-            else:
-                out["Valor Bruto (Everest)"] = 0.0
-            if c_imp:
-                out["Impostos (Everest)"] = pd.to_numeric(df[c_imp].map(_to_float_brl), errors="coerce").fillna(0.0)
-            else:
-                out["Impostos (Everest)"] = 0.0
-            out["Valor Real (Everest)"] = out["Valor Bruto (Everest)"] - out["Impostos (Everest)"]
-            # remove totais/subtotais
-            if c_cod:
-                mask_tot = df[c_cod].astype(str).str.lower().str.contains("total|subtotal", na=False)
-                out = out.loc[~mask_tot].copy()
-            return out
+        # Fat Sistema Externo
+        ws_ext = sh.worksheet("Fat Sistema Externo")
+        ext_vals = ws_ext.get_all_values()
+        if len(ext_vals) < 2:
+            st.error("Aba 'Fat Sistema Externo' vazia.")
+            st.stop()
+        df_ext = pd.DataFrame(ext_vals[1:], columns=[c.strip() for c in ext_vals[0]])
     
-        def ler_meio_pagamento(gc, nome_planilha="Vendas diarias", aba="Faturamento Meio Pagamento"):
-            """
-            Espera uma coluna de valor chamada 'Valor' (ou similar) e identificadores de Data, Loja ou Código Everest.
-            """
-            ws = gc.open(nome_planilha).worksheet(aba)
-            vals = ws.get_all_values()
-            if len(vals) < 2:
-                return pd.DataFrame(columns=["Data","Loja","Código Everest","Valor"])
-            df = pd.DataFrame(vals[1:], columns=vals[0])
-            df.columns = df.columns.str.strip()
+        # Faturamento Meio Pagamento
+        ws_mp = sh.worksheet("Faturamento Meio Pagamento")
+        mp_vals = ws_mp.get_all_values()
+        if len(mp_vals) < 2:
+            st.error("Aba 'Faturamento Meio Pagamento' vazia.")
+            st.stop()
+        df_mp = pd.DataFrame(mp_vals[1:], columns=[c.strip() for c in mp_vals[0]])
     
-            # detectar colunas
-            c_data = next((c for c in df.columns if _ns(c) == "data"), None)
-            c_loja = next((c for c in df.columns if _ns(c) == "loja"), None)
-            c_cod  = next((c for c in df.columns if "everest" in _ns(c) and "grupo" not in _ns(c)), None)
-            c_val  = next((c for c in df.columns if _ns(c) in ("valor","valor r","valor rs","valor r$","valor (r$)","valor liquido","valor líquido")), None)
+        # ----------------- Normalizações básicas -----------------
+        # Fat Sistema Externo
+        col_ext_data   = next((c for c in df_ext.columns if _ns(c) == "data"), None)
+        col_ext_cod    = next((c for c in df_ext.columns if "codigo" in _ns(c) and "everest" in _ns(c)), None)
+        col_ext_fat    = next((c for c in df_ext.columns if _ns(c) in ("fat total","fat. total","fat total")), None)
+        col_ext_sis    = next((c for c in df_ext.columns if _ns(c) == "sistema"), None)
     
-            out = pd.DataFrame()
-            out["Data"] = pd.to_datetime(df[c_data], dayfirst=True, errors="coerce") if c_data else pd.NaT
-            if c_loja: out["Loja"] = df[c_loja].astype(str).str.strip()
-            if c_cod:  out["Código Everest"] = pd.to_numeric(df[c_cod], errors="coerce")
-            out["Valor"] = df[c_val].map(_to_float_brl) if c_val else 0.0
-            return out
+        if not all([col_ext_data, col_ext_cod, col_ext_fat, col_ext_sis]):
+            st.error("Não encontrei as colunas esperadas em 'Fat Sistema Externo' (Data, Codigo Everest, Fat. Total, Sistema).")
+            st.stop()
     
-        try:
-            # === Carregamentos ===
-            gc_tmp = get_gc()
-            tab_emp = carregar_tabela_empresa(gc_tmp)
-            ev = ler_everest(gc_tmp)
-            mp = ler_meio_pagamento(gc_tmp)
+        df_ext_proc = pd.DataFrame({
+            "Data":   pd.to_datetime(df_ext[col_ext_data], dayfirst=True, errors="coerce"),
+            "Código Everest": pd.to_numeric(df_ext[col_ext_cod], errors="coerce"),
+            "Fat.Total": df_ext[col_ext_fat].map(_to_float_brl),
+            "Sistema": df_ext[col_ext_sis].astype(str).str.strip()
+        }).dropna(subset=["Data"])
     
-            if ev.empty:
-                st.warning("⚠️ Aba 'Everest' vazia ou não reconhecida.")
-                st.stop()
-            if mp.empty:
-                st.warning("⚠️ Aba 'Faturamento Meio Pagamento' vazia ou não reconhecida.")
-                st.stop()
+        df_ext_proc["Mês"] = df_ext_proc["Data"].dt.strftime("%m/%Y")
     
-            # === Seleção de período (em cima das datas do Everest para limitar UI) ===
-            datas_validas = ev["Data"].dropna()
-            if datas_validas.empty:
-                st.warning("⚠️ Não há datas válidas no Everest.")
-                st.stop()
+        # Faturamento Meio Pagamento
+        col_mp_data = next((c for c in df_mp.columns if _ns(c) == "data"), None)
+        col_mp_cod  = next((c for c in df_mp.columns if "codigo" in _ns(c) and "everest" in _ns(c)), None)
+        col_mp_val  = next((c for c in df_mp.columns if _ns(c) in ("valor","valor r","valor r$","valor (r$)","valor liquido","valor líquido")), None)
+        col_mp_sis  = next((c for c in df_mp.columns if _ns(c) == "sistema"), None)
     
-            min_data = datas_validas.min().date()
-            max_data = datas_validas.max().date()
-            sugestao = max_data
+        if not all([col_mp_data, col_mp_cod, col_mp_val, col_mp_sis]):
+            st.error("Não encontrei as colunas esperadas em 'Faturamento Meio Pagamento' (Data, Código Everest, Valor (R$), Sistema).")
+            st.stop()
     
-            data_range = st.date_input(
-                "Selecione o intervalo de datas:",
-                value=(sugestao, sugestao),
-                min_value=min_data,
-                max_value=max_data
-            )
-            if not (isinstance(data_range, tuple) and len(data_range) == 2):
-                st.stop()
-            data_inicio, data_fim = data_range
+        df_mp_proc = pd.DataFrame({
+            "Data":   pd.to_datetime(df_mp[col_mp_data], dayfirst=True, errors="coerce"),
+            "Código Everest": pd.to_numeric(df_mp[col_mp_cod], errors="coerce"),
+            "Valor_MP": df_mp[col_mp_val].map(_to_float_brl),
+            "Sistema": df_mp[col_mp_sis].astype(str).str.strip()
+        }).dropna(subset=["Data"])
     
-            # === Filtros por período ===
-            ev["Data"] = pd.to_datetime(ev["Data"], errors="coerce").dt.date
-            mp["Data"] = pd.to_datetime(mp["Data"], errors="coerce").dt.date
-            ev = ev[(ev["Data"] >= data_inicio) & (ev["Data"] <= data_fim)].copy()
-            mp = mp[(mp["Data"] >= data_inicio) & (mp["Data"] <= data_fim)].copy()
+        df_mp_proc["Mês"] = df_mp_proc["Data"].dt.strftime("%m/%Y")
     
-            # === Mapear Código Everest na MP se faltar, via Loja ===
-            if "Código Everest" not in mp.columns or mp["Código Everest"].isna().all():
-                if "Loja" in mp.columns and not tab_emp.empty:
-                    look = tab_emp.set_index("Loja_norm")["Código Everest"]
-                    mp["Loja_norm"] = mp["Loja"].astype(str).str.strip().str.lower()
-                    mp["Código Everest"] = mp["Loja_norm"].map(look)
-                else:
-                    mp["Código Everest"] = pd.NA
+        # ----------------- Resumo por Mês + Sistema -----------------
+        tol = 0.01  # tolerância de 1 centavo
     
-            # === Agregações por Data + Código ===
-            # lado Everest – você pode alternar entre "bruto" e "real" abaixo
-            usar_valor_real = True  # 🔁 troque para False se quiser comparar Bruto
-            col_ev_val = "Valor Real (Everest)" if usar_valor_real else "Valor Bruto (Everest)"
+        ext_mes = (df_ext_proc
+            .groupby(["Mês","Sistema"], as_index=False)["Fat.Total"].sum()
+            .rename(columns={"Fat.Total":"Total_Externo"})
+        )
     
-            agg_ev = (
-                ev.groupby(["Data","Codigo"], as_index=False)[col_ev_val]
-                  .sum()
-                  .rename(columns={"Codigo":"Código Everest", col_ev_val:"Valor (Everest)"})
-            )
+        mp_mes  = (df_mp_proc
+            .groupby(["Mês","Sistema"], as_index=False)["Valor_MP"].sum()
+            .rename(columns={"Valor_MP":"Total_MP"})
+        )
     
-            agg_mp = (
-                mp.groupby(["Data","Código Everest"], as_index=False)["Valor"]
-                  .sum()
-                  .rename(columns={"Valor":"Valor (Meio Pagamento)"})
-            )
+        resumo = (ext_mes
+            .merge(mp_mes, on=["Mês","Sistema"], how="outer")
+            .fillna(0.0)
+        )
+        resumo["Diferença"] = resumo["Total_Externo"] - resumo["Total_MP"]
+        resumo["Tipo"] = np.where(resumo["Diferença"] >  tol, "A mais no Externo",
+                          np.where(resumo["Diferença"] < -tol, "A mais no Meio Pagamento", "Sem diferença"))
     
-            # === Merge e enriquecimento (nome da loja a partir da Tabela Empresa) ===
-            base = pd.merge(agg_ev, agg_mp, on=["Data","Código Everest"], how="outer")
-            # Nome da loja (prioriza Tabela Empresa)
-            nome_por_cod = {}
-            if not tab_emp.empty and "Código Everest" in tab_emp.columns:
-                cod_loja = tab_emp.dropna(subset=["Código Everest"]).drop_duplicates("Código Everest")[["Código Everest","Loja"]]
-                nome_por_cod = cod_loja.set_index("Código Everest")["Loja"].to_dict()
-            base["Loja"] = base["Código Everest"].map(nome_por_cod)
-            # fallback: se Loja ainda vazia e MP tem Loja, podemos tentar recuperar último nome daquela data/código
-            if "Loja" in mp.columns:
-                ult_loja = mp.dropna(subset=["Código Everest"]).sort_values("Data").drop_duplicates(["Data","Código Everest"], keep="last")
-                d_ult = ult_loja.set_index(["Data","Código Everest"])["Loja"].to_dict()
-                base["Loja"] = base.apply(lambda r: r["Loja"] if pd.notna(r["Loja"]) and str(r["Loja"]).strip() != "" else d_ult.get((r["Data"], r["Código Everest"]), ""), axis=1)
+        # Tabela simples solicitada (somente diferenças ≠ 0)
+        tabela_simples = (resumo
+            .loc[resumo["Tipo"] != "Sem diferença", ["Tipo","Mês","Sistema","Diferença"]]
+            .sort_values(["Mês","Sistema"])
+            .reset_index(drop=True)
+        )
     
-            # === Cálculos de diferença ===
-            base["Valor (Everest)"] = pd.to_numeric(base["Valor (Everest)"], errors="coerce").fillna(0.0)
-            base["Valor (Meio Pagamento)"] = pd.to_numeric(base["Valor (Meio Pagamento)"], errors="coerce").fillna(0.0)
-            base["Diferença"] = base["Valor (Everest)"] - base["Valor (Meio Pagamento)"]
-            base["Abs Diferença"] = base["Diferença"].abs()
-    
-            # === Opções adicionais ===
-            # Ignorar grupo Kopp (com base no nome da loja vindo da Tabela Empresa)
-            ignora_kopp = st.checkbox("Ignorar diferenças de lojas do grupo Kopp", value=False)
-            if ignora_kopp and not tab_emp.empty and "Grupo" in tab_emp.columns:
-                grp_por_cod = tab_emp.dropna(subset=["Código Everest"]).drop_duplicates("Código Everest")[["Código Everest","Grupo"]].set_index("Código Everest")["Grupo"]
-                base["_grupo"] = base["Código Everest"].map(grp_por_cod)
-                base = base[~(base["_grupo"].astype(str).str.contains("kopp", case=False, na=False) & (base["Abs Diferença"] > 0.01))].copy()
-                base.drop(columns=["_grupo"], inplace=True, errors="ignore")
-    
-            # Filtro visual (tudo / só com diferenças / só sem diferenças)
-            opcao = st.selectbox("Filtro:", ["Todas", "Somente com diferenças", "Somente sem diferenças"])
-            if opcao == "Somente com diferenças":
-                exibe = base[base["Abs Diferença"] > 0.01].copy()
-            elif opcao == "Somente sem diferenças":
-                exibe = base[base["Abs Diferença"] <= 0.01].copy()
-            else:
-                exibe = base.copy()
-    
-            # Ordenação
-            exibe = exibe.sort_values(["Data","Loja","Código Everest"]).reset_index(drop=True)
-    
-            # Totais por dia (logo após cada data)
-            linhas = []
-            for d, grp in exibe.groupby("Data", sort=False):
-                linhas.append(grp)
-                tot = {
-                    "Data": d,
-                    "Loja": "Total do dia",
-                    "Código Everest": "",
-                    "Valor (Everest)": grp["Valor (Everest)"].sum(),
-                    "Valor (Meio Pagamento)": grp["Valor (Meio Pagamento)"].sum(),
-                    "Diferença": grp["Diferença"].sum(),
-                    "Abs Diferença": grp["Abs Diferença"].sum(),
-                }
-                linhas.append(pd.DataFrame([tot]))
-            if linhas:
-                exibe_tot = pd.concat(linhas, ignore_index=True)
-            else:
-                exibe_tot = exibe.copy()
-    
-            # Total geral (linha final)
-            linha_total = pd.DataFrame([{
-                "Data": "",
-                "Loja": "Total Geral",
-                "Código Everest": "",
-                "Valor (Everest)": exibe[ "Valor (Everest)"].sum(),
-                "Valor (Meio Pagamento)": exibe["Valor (Meio Pagamento)"].sum(),
-                "Diferença": exibe["Diferença"].sum(),
-                "Abs Diferença": exibe["Abs Diferença"].sum(),
-            }])
-            exibe_final = pd.concat([exibe_tot, linha_total], ignore_index=True)
-    
-            # Formatação linda na tela
-            def _highlight(row):
-                if isinstance(row["Data"], (pd.Timestamp, date)):
-                    # linhas normais → vermelho claro se diferença
-                    if abs(float(row.get("Diferença", 0.0))) > 0.01:
-                        return ["background-color: #ffdddd"] * len(row)
-                # linhas "Total do dia" / "Total Geral"
-                if str(row.get("Loja","")).lower().startswith("total"):
-                    return ["background-color: #f0f0f0; font-weight: 700;"] * len(row)
-                return [""] * len(row)
-    
+        st.markdown("**Tabela simples — Tipo, Mês, Sistema e Diferença**")
+        if tabela_simples.empty:
+            st.success("✅ Sem diferenças detectadas no resumo mensal por Sistema.")
+        else:
             st.dataframe(
-                exibe_final.style
-                    .apply(_highlight, axis=1)
-                    .format({
-                        "Valor (Everest)": _fmt_brl,
-                        "Valor (Meio Pagamento)": _fmt_brl,
-                        "Diferença": _fmt_brl,
-                        "Abs Diferença": _fmt_brl,
-                    }),
-                use_container_width=True, height=600
+                tabela_simples.style.format({"Diferença": _fmt_brl}),
+                use_container_width=True, hide_index=True
             )
     
-            # Download Excel com realce
-            def to_excel_auditoria(df):
-                buf = BytesIO()
-                with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-                    df2 = df.copy()
-                    # formata Data como string dd/mm/yyyy
-                    def _fmt_dt(x):
-                        try:
-                            if isinstance(x, str):
-                                return x
-                            return pd.to_datetime(x).strftime("%d/%m/%Y")
-                        except:
-                            return str(x or "")
-                    df2["Data"] = df2["Data"].apply(_fmt_dt)
-                    df2.to_excel(writer, index=False, sheet_name="Auditoria")
-                    wb  = writer.book
-                    ws  = writer.sheets["Auditoria"]
+        # ----------------- Lojas com diferença (apontar somente quando há) -----------------
+        if not tabela_simples.empty:
+            # Mapear Loja por Código Everest (usa df_empresa se já existir; senão carrega)
+            try:
+                df_emp_map = df_empresa.copy()  # já carregada no seu topo
+            except NameError:
+                df_emp_map = pd.DataFrame(sh.worksheet("Tabela Empresa").get_all_records())
+            df_emp_map.columns = df_emp_map.columns.str.strip()
+            col_cod_emp = next((c for c in df_emp_map.columns if "everest" in _ns(c) and "grupo" not in _ns(c)), None)
+            col_loja    = next((c for c in df_emp_map.columns if _ns(c) == "loja"), None)
+            mapa_loja = {}
+            if col_cod_emp and col_loja:
+                tmp = df_emp_map.dropna(subset=[col_cod_emp]).copy()
+                tmp[col_cod_emp] = pd.to_numeric(tmp[col_cod_emp], errors="coerce")
+                tmp = tmp.dropna(subset=[col_cod_emp])
+                mapa_loja = tmp.set_index(col_cod_emp)[col_loja].to_dict()
     
-                    # col widths
-                    ws.set_column("A:A", 12)
-                    ws.set_column("B:B", 30)
-                    ws.set_column("C:C", 15)
-                    ws.set_column("D:G", 18)
-    
-                    fmt_money = wb.add_format({"num_format": "R$ #,##0.00"})
-                    ws.set_column("D:G", 18, fmt_money)
-    
-                    fmt_dif = wb.add_format({"bg_color": "#FFDDDD"})
-                    fmt_total = wb.add_format({"bg_color": "#F0F0F0", "bold": True})
-    
-                    # aplica realce por linha
-                    for r in range(1, len(df2) + 1):
-                        loja = df2.iloc[r-1]["Loja"]
-                        dif  = df2.iloc[r-1]["Diferença"]
-                        if isinstance(loja, str) and loja.lower().startswith("total"):
-                            ws.set_row(r, None, fmt_total)
-                        else:
-                            try:
-                                if abs(float(dif)) > 0.01:
-                                    ws.set_row(r, None, fmt_dif)
-                            except:
-                                pass
-    
-                buf.seek(0)
-                return buf
-    
-            excel_bytes = to_excel_auditoria(exibe_final)
-            st.download_button(
-                label="📥 Baixar Auditoria (Excel)",
-                data=excel_bytes,
-                file_name="auditoria_pdv_meio_pagamento.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            # diferenças por Código + Data + Sistema (e depois agregamos no mês)
+            ext_det = (df_ext_proc
+                .groupby(["Data","Mês","Sistema","Código Everest"], as_index=False)["Fat.Total"].sum()
+                .rename(columns={"Fat.Total":"Ext"})
             )
+            mp_det  = (df_mp_proc
+                .groupby(["Data","Mês","Sistema","Código Everest"], as_index=False)["Valor_MP"].sum()
+                .rename(columns={"Valor_MP":"MP"})
+            )
+            det = (ext_det.merge(mp_det, on=["Data","Mês","Sistema","Código Everest"], how="outer")
+                   .fillna(0.0))
+            det["Dif"] = det["Ext"] - det["MP"]
+            det = det.loc[det["Dif"].abs() > tol].copy()
     
-        except Exception as e:
-            st.error(f"❌ Erro na auditoria: {e}")
+            if det.empty:
+                st.info("ℹ️ Houve diferenças no agregado mensal, mas não foi possível localizar por loja (Código) no detalhe.")
+            else:
+                det["Loja"] = det["Código Everest"].map(mapa_loja).fillna("")
+                # resumo por Mês+Sistema+Loja (soma das diferenças dentro do mês)
+                lojas_diff = (det
+                    .groupby(["Mês","Sistema","Código Everest","Loja"], as_index=False)["Dif"].sum()
+                    .sort_values(["Mês","Sistema","Loja","Código Everest"])
+                    .rename(columns={"Dif":"Diferença"})
+                )
+                st.markdown("**Lojas com diferença (apontamento)**")
+                st.dataframe(
+                    lojas_diff.style.format({"Diferença": _fmt_brl}),
+                    use_container_width=True, hide_index=True
+                )

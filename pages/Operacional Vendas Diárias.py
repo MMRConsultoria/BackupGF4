@@ -1971,7 +1971,7 @@ with st.spinner("⏳ Processando..."):
     #     - Filtro padrão: 2025 (mude ANO_ALVO = None para todos)
     # ===============================
     
-    with aba4:
+    with aba5:
         import re, unicodedata, json
         import pandas as pd
         import numpy as np

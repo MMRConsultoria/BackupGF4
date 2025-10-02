@@ -149,94 +149,129 @@ def excel_file_smart(uploaded_file):
             raise RuntimeError(f"Falha abrindo ExcelFile (kind={kind}). Tentativas: {e1} | {e2}")
 
 # ======================
-# Processamento Formato 2 (plano) — com De→para CiSS (override para canônico da tabela)
+# ======================
+# Processamento Formato 2 (plano) — sem De→para CiSS (override desativado)
 # ======================
 def processar_formato2(
     df_src: pd.DataFrame,
     df_empresa: pd.DataFrame,
     df_meio_pgto_google_norm: pd.DataFrame,
-    depara_ciss_lookup: dict = None,  # mapeia _norm("De para CiSS") -> "Meio de Pagamento" (canônico)
+    depara_ciss_lookup: dict = None,  # 🚫 DEPRECADO/IGNORADO: mantido só p/ compatibilidade
 ) -> pd.DataFrame:
+    """
+    Lê arquivo 'Formato 2' (plano), calcula 'Meio de Pagamento' a partir de (Bandeira + Tipo)
+    ou 'Forma_pgto' (sem prefixo numérico), classifica via df_meio_pgto_google_norm,
+    junta com Tabela Empresa e formata colunas finais. O override De→para CiSS foi removido.
+    """
     df = _rename_cols_formato2(df_src.copy())
 
+    # -------- validações mínimas --------
     req = {"cod_empresa", "data", "forma_pgto", "bandeira", "tipo_cartao", "total"}
     faltando = [c for c in req if c not in df.columns]
     if faltando:
         raise ValueError(f"Colunas obrigatórias ausentes no arquivo: {faltando}")
 
-    # Datas e valores
+    # -------- datas e valores --------
     df["data"] = pd.to_datetime(df["data"], dayfirst=True, errors="coerce")
     df["total"] = pd.to_numeric(df["total"], errors="coerce").fillna(0.0)
 
-    # Meio de Pagamento (Bandeira + Tipo sem acento; senão usa Forma_pgto sem prefixo numérico)
+    # -------- meio de pagamento (sem override CiSS) --------
     ban = df["bandeira"].fillna("").astype(str).str.strip()
     tip = df["tipo_cartao"].fillna("").astype(str).str.strip()
     meio_from_de = (ban + " " + tip).str.strip().map(_strip_accents_keep_case)
-    meio_from_c = df["forma_pgto"].astype(str).str.strip().str.replace(r"^\d+\s*-\s*", "", regex=True)
 
-    df["Meio de Pagamento"] = np.where((ban != "") | (tip != ""), meio_from_de, meio_from_c)
-
-    # ✅ APLICA **override De→para CiSS** (se houver) usando o **canônico da Tabela**
-    if depara_ciss_lookup:
-        key_norm = df["Meio de Pagamento"].astype(str).map(_norm)
-        overridden = key_norm.map(depara_ciss_lookup)  # retorna canônico da Tabela quando "De para CiSS" estiver preenchido
-        aplicadas = overridden.notna().sum()
-        df["Meio de Pagamento"] = overridden.fillna(df["Meio de Pagamento"])
-        if aplicadas > 0:
-            st.caption(f"🔁 Padronizações CiSS aplicadas (Formato 2): {aplicadas}")
-
-    # ==== Classificação após padronizar (usando df_meio_pgto_google_norm já deduplicado por canônico) ====
-    tipo_pgto_map = dict(zip(df_meio_pgto_google_norm["__meio_norm__"], df_meio_pgto_google_norm["Tipo de Pagamento"].astype(str)))
-    tipo_dre_map  = dict(zip(df_meio_pgto_google_norm["__meio_norm__"], df_meio_pgto_google_norm["Tipo DRE"].astype(str)))
-
-    df["__meio_norm__"] = df["Meio de Pagamento"].map(_norm)
-    df["Tipo de Pagamento"] = df["__meio_norm__"].map(tipo_pgto_map).fillna("")
-    df["Tipo DRE"]          = df["__meio_norm__"].map(tipo_dre_map).fillna("")
-    df.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
-
-    # Join com Tabela Empresa (Código Everest)
-    emp = df_empresa.copy()
-    emp["Código Everest"] = emp["Código Everest"].astype(str).str.strip()
-    df["Código Everest"]  = df["cod_empresa"].astype(str).str.strip()
-    df = df.merge(
-        emp[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]],
-        on="Código Everest", how="left"
+    # Remove prefixo numérico do início de "forma_pgto" (ex.: "123 - Cartão" -> "Cartão")
+    meio_from_c = (
+        df["forma_pgto"]
+        .astype(str)
+        .str.strip()
+        .str.replace(r"^\d+\s*-\s*", "", regex=True)
     )
 
-    # ➕ Sistema (Formato 2)
+    # Prioriza (Bandeira + Tipo) quando um dos dois existir; senão usa forma_pgto
+    df["Meio de Pagamento"] = np.where((ban != "") | (tip != ""), meio_from_de, meio_from_c)
+
+    # -------- classificação usando tabela canônica (Google) --------
+    # df_meio_pgto_google_norm deve estar deduplicado por canônico e conter "__meio_norm__", "Tipo de Pagamento" e "Tipo DRE"
+    meio_norm = df["Meio de Pagamento"].map(_norm)
+    tipo_pgto_map = dict(
+        zip(
+            df_meio_pgto_google_norm["__meio_norm__"],
+            df_meio_pgto_google_norm["Tipo de Pagamento"].astype(str),
+        )
+    )
+    tipo_dre_map = dict(
+        zip(
+            df_meio_pgto_google_norm["__meio_norm__"],
+            df_meio_pgto_google_norm["Tipo DRE"].astype(str),
+        )
+    )
+    df["Tipo de Pagamento"] = meio_norm.map(tipo_pgto_map).fillna("")
+    df["Tipo DRE"] = meio_norm.map(tipo_dre_map).fillna("")
+
+    # -------- join com Tabela Empresa --------
+    emp = df_empresa.copy()
+    emp["Código Everest"] = emp["Código Everest"].astype(str).str.strip()
+    df["Código Everest"] = df["cod_empresa"].astype(str).str.strip()
+    df = df.merge(
+        emp[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]],
+        on="Código Everest",
+        how="left",
+    )
+
+    # -------- etiqueta do sistema --------
+    # Mantive como "CISS" (como no original). Se preferir genérico, troque para "Formato 2" ou "".
     df["Sistema"] = "CISS"
 
-    # Datas derivadas
+    # -------- datas derivadas --------
     dias_semana = {
-        'Monday': 'segunda-feira','Tuesday': 'terça-feira','Wednesday': 'quarta-feira',
-        'Thursday': 'quinta-feira','Friday': 'sexta-feira','Saturday': 'sábado','Sunday': 'domingo'
+        "Monday": "segunda-feira",
+        "Tuesday": "terça-feira",
+        "Wednesday": "quarta-feira",
+        "Thursday": "quinta-feira",
+        "Friday": "sexta-feira",
+        "Saturday": "sábado",
+        "Sunday": "domingo",
     }
     df["Dia da Semana"] = df["data"].dt.day_name().map(dias_semana)
-    df["Mês"] = df["data"].dt.month.map({1:'jan',2:'fev',3:'mar',4:'abr',5:'mai',6:'jun',7:'jul',8:'ago',9:'set',10:'out',11:'nov',12:'dez'})
+    df["Mês"] = df["data"].dt.month.map({1: "jan", 2: "fev", 3: "mar", 4: "abr", 5: "mai", 6: "jun", 7: "jul", 8: "ago", 9: "set", 10: "out", 11: "nov", 12: "dez"})
     df["Ano"] = df["data"].dt.year
     df["Data"] = df["data"].dt.strftime("%d/%m/%Y")
 
-    # Valor e colunas finais
+    # -------- valor e colunas finais --------
     df.rename(columns={"total": "Valor (R$)"}, inplace=True)
 
-    # 💡 Ordem padrão de saída (inclui Sistema)
     col_order = [
-        "Data", "Dia da Semana",
-        "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",
-        "Loja", "Código Everest", "Grupo", "Código Grupo Everest",
+        "Data",
+        "Dia da Semana",
+        "Meio de Pagamento",
+        "Tipo de Pagamento",
+        "Tipo DRE",
+        "Loja",
+        "Código Everest",
+        "Grupo",
+        "Código Grupo Everest",
         "Sistema",
-        "Valor (R$)", "Mês", "Ano"
+        "Valor (R$)",
+        "Mês",
+        "Ano",
     ]
     for c in col_order:
         if c not in df.columns:
             df[c] = ""
+
     df_final = df[col_order].copy()
 
+    # -------- ordenação --------
+    # Mantido try/except como no original, ordenando por "Data" (string dd/mm/yyyy) e "Loja".
+    # Se quiser precisão absoluta por data, use ["data","Loja"] antes de formatar "Data".
     try:
         df_final.sort_values(by=["Data", "Loja"], inplace=True)
     except Exception:
         pass
+
     return df_final
+
 
 # ======================
 # Spinner + cargas do Google

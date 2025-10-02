@@ -1699,263 +1699,336 @@ with st.spinner("⏳ Processando..."):
     import streamlit as st
     import pandas as pd
     
+   
     # =======================================
-    # Aba 4 - Integração Everest (independente do upload)
+    # Aba 4 - Auditoria PDV x Faturamento Meio Pagamento
     # =======================================
-    
     with aba4:
-
-        try:
-            planilha = gc.open("Vendas diarias")
-            aba_everest = planilha.worksheet("Everest")
-            aba_externo = planilha.worksheet("Fat Sistema Externo")
     
-            df_everest = pd.DataFrame(aba_everest.get_all_values()[1:])
-            df_externo = pd.DataFrame(aba_externo.get_all_values()[1:])
+        import unicodedata
     
-            df_everest.columns = [f"col{i}" for i in range(df_everest.shape[1])]
-            df_externo.columns = [f"col{i}" for i in range(df_externo.shape[1])]
+        def _ns(s: str) -> str:
+            s = str(s or "").strip().lower()
+            s = unicodedata.normalize("NFD", s)
+            s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+            return re.sub(r"[^a-z0-9]+", " ", s).strip()
     
-            df_everest["col0"] = pd.to_datetime(df_everest["col0"], dayfirst=True, errors="coerce")
-            df_externo["col0"] = pd.to_datetime(df_externo["col0"], dayfirst=True, errors="coerce")
-    
-            datas_validas = df_everest["col0"].dropna()
-    
-            if not datas_validas.empty:
-               # Garantir objetos do tipo date
-                datas_validas = pd.to_datetime(df_everest["col0"], errors="coerce").dropna()
-                datas_validas = datas_validas.dt.date
-    
-                if not datas_validas.empty:
-                   from datetime import date
-    
-                # Garantir tipo date para todas as datas
-                datas_validas = pd.to_datetime(df_everest["col0"], errors="coerce").dropna().dt.date
-    
-                if not datas_validas.empty:
-                    datas_validas = df_everest["col0"].dropna()
-    
-                    if not datas_validas.empty:
-                        min_data = datas_validas.min().date()
-                        max_data_planilha = datas_validas.max().date()
-                        sugestao_data = max_data_planilha
-                    
-                        data_range = st.date_input(
-                            label="Selecione o intervalo de datas:",
-                            value=(sugestao_data, sugestao_data),
-                            min_value=min_data,
-                            max_value=max_data_planilha
-                        )
-                    
-                        if isinstance(data_range, tuple) and len(data_range) == 2:
-                            data_inicio, data_fim = data_range
-                            # Aqui já segue direto o processamento normal
-    
-    
-               
-                    def tratar_valor(valor):
-                        try:
-                            return float(str(valor).replace("R$", "").replace(".", "").replace(",", ".").strip())
-                        except:
-                            return None
-    
-                    ev = df_everest.rename(columns={
-                        "col0": "Data", "col1": "Codigo",
-                        "col7": "Valor Bruto (Everest)", "col6": "Impostos (Everest)"
-                    })
-                    
-                    # 🔥 Remove linhas do Everest que são Total/Subtotal
-                    ev = ev[~ev["Codigo"].astype(str).str.lower().str.contains("total", na=False)]
-                    ev = ev[~ev["Codigo"].astype(str).str.lower().str.contains("subtotal", na=False)]
-                    
-                    ex = df_externo.rename(columns={
-                        "col0": "Data",
-                        "col2": "Nome Loja Sistema Externo",
-                        "col3": "Codigo",
-                        "col6": "Valor Bruto (Externo)",
-                        "col8": "Valor Real (Externo)"
-                    })
-    
-                    ev["Data"] = pd.to_datetime(ev["Data"], errors="coerce").dt.date
-                    ex["Data"] = pd.to_datetime(ex["Data"], errors="coerce").dt.date
-    
-                    ev = ev[(ev["Data"] >= data_inicio) & (ev["Data"] <= data_fim)].copy()
-                    ex = ex[(ex["Data"] >= data_inicio) & (ex["Data"] <= data_fim)].copy()
-    
-                    for col in ["Valor Bruto (Everest)", "Impostos (Everest)"]:
-                        ev[col] = ev[col].apply(tratar_valor)
-                    for col in ["Valor Bruto (Externo)", "Valor Real (Externo)"]:
-                        ex[col] = ex[col].apply(tratar_valor)
-    
-                    if "Impostos (Everest)" in ev.columns:
-                        ev["Impostos (Everest)"] = pd.to_numeric(ev["Impostos (Everest)"], errors="coerce").fillna(0)
-                        ev["Valor Real (Everest)"] = ev["Valor Bruto (Everest)"] - ev["Impostos (Everest)"]
+        def _to_float_brl(x):
+            s = str(x or "").strip()
+            s = re.sub(r"[^\d,.\-]", "", s)
+            if s == "":
+                    return float("nan")
+                # 1) tem vírgula e ponto -> assume ponto milhar, vírgula decimal
+                if s.count(",") == 1 and s.count(".") >= 1:
+                    s = s.replace(".", "").replace(",", ".")
+                # 2) só vírgula -> vírgula decimal
+                elif s.count(",") == 1 and s.count(".") == 0:
+                    s = s.replace(",", ".")
+                try:
+                    return float(s)
+                except:
+                    return float("nan")
+        
+            def _fmt_brl(v: float) -> str:
+                try:
+                    v = float(v)
+                except:
+                    return "R$ 0,00"
+                s = f"{v:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+                return f"R$ {s}"
+        
+            def carregar_tabela_empresa(gc, nome_planilha="Vendas diarias", aba="Tabela Empresa"):
+                try:
+                    ws = gc.open(nome_planilha).worksheet(aba)
+                    df = pd.DataFrame(ws.get_all_records())
+                    if df.empty:
+                        return pd.DataFrame(columns=["Loja","Código Everest","Código Grupo Everest","Grupo"])
+                    df.columns = df.columns.str.strip()
+                    # normaliza possíveis nomes
+                    col_loja = next((c for c in df.columns if _ns(c) == "loja"), None)
+                    col_cod  = next((c for c in df.columns if "everest" in _ns(c) and "grupo" not in _ns(c)), None)
+                    col_codg = next((c for c in df.columns if "grupo" in _ns(c) and "everest" in _ns(c)), None)
+                    col_grp  = next((c for c in df.columns if _ns(c) == "grupo"), None)
+                    out = pd.DataFrame()
+                    out["Loja"] = df[col_loja].astype(str).str.strip() if col_loja else ""
+                    out["Loja_norm"] = out["Loja"].str.lower()
+                    out["Código Everest"] = pd.to_numeric(df[col_cod], errors="coerce") if col_cod else pd.NA
+                    if col_codg: out["Código Grupo Everest"] = pd.to_numeric(df[col_codg], errors="coerce")
+                    if col_grp:  out["Grupo"] = df[col_grp].astype(str).str.strip()
+                    return out
+                except Exception as e:
+                    st.error(f"❌ Erro ao carregar Tabela Empresa: {e}")
+                    return pd.DataFrame(columns=["Loja","Código Everest","Código Grupo Everest","Grupo"])
+        
+            def ler_everest(gc, nome_planilha="Vendas diarias", aba="Everest"):
+                ws = gc.open(nome_planilha).worksheet(aba)
+                vals = ws.get_all_values()
+                if len(vals) < 2:
+                    return pd.DataFrame(columns=["Data","Codigo","Valor Bruto (Everest)","Impostos (Everest)"])
+                df = pd.DataFrame(vals[1:], columns=vals[0])
+                df.columns = df.columns.str.strip()
+                # nomes prováveis
+                c_data = next((c for c in df.columns if _ns(c) == "data"), None)
+                c_cod  = next((c for c in df.columns if _ns(c) in ("codigo","código","codigo everest")), None)
+                c_vb   = next((c for c in df.columns if "valor" in _ns(c) and "bruto" in _ns(c)), None)
+                c_imp  = next((c for c in df.columns if "impost" in _ns(c)), None)
+        
+                out = pd.DataFrame()
+                out["Data"] = pd.to_datetime(df[c_data], dayfirst=True, errors="coerce") if c_data else pd.NaT
+                out["Codigo"] = pd.to_numeric(df[c_cod], errors="coerce") if c_cod else pd.NA
+                if c_vb:
+                    out["Valor Bruto (Everest)"] = df[c_vb].map(_to_float_brl)
+                else:
+                    out["Valor Bruto (Everest)"] = 0.0
+                if c_imp:
+                    out["Impostos (Everest)"] = pd.to_numeric(df[c_imp].map(_to_float_brl), errors="coerce").fillna(0.0)
+                else:
+                    out["Impostos (Everest)"] = 0.0
+                out["Valor Real (Everest)"] = out["Valor Bruto (Everest)"] - out["Impostos (Everest)"]
+                # remove totais/subtotais
+                if c_cod:
+                    mask_tot = df[c_cod].astype(str).str.lower().str.contains("total|subtotal", na=False)
+                    out = out.loc[~mask_tot].copy()
+                return out
+        
+            def ler_meio_pagamento(gc, nome_planilha="Vendas diarias", aba="Faturamento Meio Pagamento"):
+                """
+                Espera uma coluna de valor chamada 'Valor' (ou similar) e identificadores de Data, Loja ou Código Everest.
+                """
+                ws = gc.open(nome_planilha).worksheet(aba)
+                vals = ws.get_all_values()
+                if len(vals) < 2:
+                    return pd.DataFrame(columns=["Data","Loja","Código Everest","Valor"])
+                df = pd.DataFrame(vals[1:], columns=vals[0])
+                df.columns = df.columns.str.strip()
+        
+                # detectar colunas
+                c_data = next((c for c in df.columns if _ns(c) == "data"), None)
+                c_loja = next((c for c in df.columns if _ns(c) == "loja"), None)
+                c_cod  = next((c for c in df.columns if "everest" in _ns(c) and "grupo" not in _ns(c)), None)
+                c_val  = next((c for c in df.columns if _ns(c) in ("valor","valor r","valor rs","valor r$","valor (r$)","valor liquido","valor líquido")), None)
+        
+                out = pd.DataFrame()
+                out["Data"] = pd.to_datetime(df[c_data], dayfirst=True, errors="coerce") if c_data else pd.NaT
+                if c_loja: out["Loja"] = df[c_loja].astype(str).str.strip()
+                if c_cod:  out["Código Everest"] = pd.to_numeric(df[c_cod], errors="coerce")
+                out["Valor"] = df[c_val].map(_to_float_brl) if c_val else 0.0
+                return out
+        
+            try:
+                # === Carregamentos ===
+                gc_tmp = get_gc()
+                tab_emp = carregar_tabela_empresa(gc_tmp)
+                ev = ler_everest(gc_tmp)
+                mp = ler_meio_pagamento(gc_tmp)
+        
+                if ev.empty:
+                    st.warning("⚠️ Aba 'Everest' vazia ou não reconhecida.")
+                    st.stop()
+                if mp.empty:
+                    st.warning("⚠️ Aba 'Faturamento Meio Pagamento' vazia ou não reconhecida.")
+                    st.stop()
+        
+                # === Seleção de período (em cima das datas do Everest para limitar UI) ===
+                datas_validas = ev["Data"].dropna()
+                if datas_validas.empty:
+                    st.warning("⚠️ Não há datas válidas no Everest.")
+                    st.stop()
+        
+                min_data = datas_validas.min().date()
+                max_data = datas_validas.max().date()
+                sugestao = max_data
+        
+                data_range = st.date_input(
+                    "Selecione o intervalo de datas:",
+                    value=(sugestao, sugestao),
+                    min_value=min_data,
+                    max_value=max_data
+                )
+                if not (isinstance(data_range, tuple) and len(data_range) == 2):
+                    st.stop()
+                data_inicio, data_fim = data_range
+        
+                # === Filtros por período ===
+                ev["Data"] = pd.to_datetime(ev["Data"], errors="coerce").dt.date
+                mp["Data"] = pd.to_datetime(mp["Data"], errors="coerce").dt.date
+                ev = ev[(ev["Data"] >= data_inicio) & (ev["Data"] <= data_fim)].copy()
+                mp = mp[(mp["Data"] >= data_inicio) & (mp["Data"] <= data_fim)].copy()
+        
+                # === Mapear Código Everest na MP se faltar, via Loja ===
+                if "Código Everest" not in mp.columns or mp["Código Everest"].isna().all():
+                    if "Loja" in mp.columns and not tab_emp.empty:
+                        look = tab_emp.set_index("Loja_norm")["Código Everest"]
+                        mp["Loja_norm"] = mp["Loja"].astype(str).str.strip().str.lower()
+                        mp["Código Everest"] = mp["Loja_norm"].map(look)
                     else:
-                        ev["Valor Real (Everest)"] = ev["Valor Bruto (Everest)"]
-    
-                    ev["Valor Bruto (Everest)"] = pd.to_numeric(ev["Valor Bruto (Everest)"], errors="coerce").round(2)
-                    ev["Valor Real (Everest)"] = pd.to_numeric(ev["Valor Real (Everest)"], errors="coerce").round(2)
-                    ex["Valor Bruto (Externo)"] = pd.to_numeric(ex["Valor Bruto (Externo)"], errors="coerce").round(2)
-                    ex["Valor Real (Externo)"] = pd.to_numeric(ex["Valor Real (Externo)"], errors="coerce").round(2)
-    
-                    mapa_nome_loja = ex.drop_duplicates(subset="Codigo")[["Codigo", "Nome Loja Sistema Externo"]]\
-                        .set_index("Codigo").to_dict()["Nome Loja Sistema Externo"]
-                    ev["Nome Loja Everest"] = ev["Codigo"].map(mapa_nome_loja)
-    
-                    df_comp = pd.merge(ev, ex, on=["Data", "Codigo"], how="outer", suffixes=("_Everest", "_Externo"))
-    
-                    # 🔄 Comparação
-                    df_comp["Valor Bruto Iguais"] = df_comp["Valor Bruto (Everest)"] == df_comp["Valor Bruto (Externo)"]
-                    df_comp["Valor Real Iguais"] = df_comp["Valor Real (Everest)"] == df_comp["Valor Real (Externo)"]
-                    
-                    # 🔄 Criar coluna auxiliar só para lógica interna
-                    df_comp["_Tem_Diferenca"] = ~(df_comp["Valor Bruto Iguais"] & df_comp["Valor Real Iguais"])
-                    
-                    # 🔥 Filtro para ignorar as diferenças do grupo Kopp (apenas nas diferenças)
-                    df_comp["_Ignorar_Kopp"] = df_comp["Nome Loja Sistema Externo"].str.contains("kop", case=False, na=False)
-                    df_comp_filtrado = df_comp[~(df_comp["_Tem_Diferenca"] & df_comp["_Ignorar_Kopp"])].copy()
-                    
-                    # 🔧 Filtro no Streamlit
-                    opcao = st.selectbox("Filtro de diferenças:", ["Todas", "Somente com diferenças", "Somente sem diferenças"])
-                    
-                    if opcao == "Todas":
-                        df_resultado = df_comp_filtrado.copy()
-                    elif opcao == "Somente com diferenças":
-                        df_resultado = df_comp_filtrado[df_comp_filtrado["_Tem_Diferenca"]].copy()
-                    else:
-                        df_resultado = df_comp_filtrado[~df_comp_filtrado["_Tem_Diferenca"]].copy()
-                    
-                    # 🔧 Remover as colunas auxiliares antes de exibir
-                    df_resultado = df_resultado.drop(columns=["Valor Bruto Iguais", "Valor Real Iguais", "_Tem_Diferenca", "_Ignorar_Kopp"], errors='ignore')
-                    
-                    # 🔧 Ajuste de colunas para exibição
-                    df_resultado = df_resultado[[
-                        "Data",
-                        "Nome Loja Everest", "Codigo", "Valor Bruto (Everest)", "Valor Real (Everest)",
-                        "Nome Loja Sistema Externo", "Valor Bruto (Externo)", "Valor Real (Externo)"
-                    ]].sort_values("Data")
-                    
-                    df_resultado.columns = [
-                        "Data",
-                        "Nome (Everest)", "Código", "Valor Bruto (Everest)", "Valor Real (Everest)",
-                        "Nome (Externo)", "Valor Bruto (Externo)", "Valor Real (Externo)"
-                    ]
-                    
-                    colunas_texto = ["Nome (Everest)", "Nome (Externo)"]
-                    df_resultado[colunas_texto] = df_resultado[colunas_texto].fillna("")
-                    df_resultado = df_resultado.fillna(0)
-    
-                    df_resultado = df_resultado.reset_index(drop=True)
-    
-                    # ✅ Aqui adiciona o Total do dia logo após cada dia
-                    dfs_com_totais = []
-                    for data, grupo in df_resultado.groupby("Data", sort=False):
-                        dfs_com_totais.append(grupo)
-                    
-                        total_dia = {
-                            "Data": data,
-                            "Nome (Everest)": "Total do dia",
-                            "Código": "",
-                            "Valor Bruto (Everest)": grupo["Valor Bruto (Everest)"].sum(),
-                            "Valor Real (Everest)": grupo["Valor Real (Everest)"].sum(),
-                            "Nome (Externo)": "",
-                            "Valor Bruto (Externo)": grupo["Valor Bruto (Externo)"].sum(),
-                            "Valor Real (Externo)": grupo["Valor Real (Externo)"].sum(),
-                        }
-                        dfs_com_totais.append(pd.DataFrame([total_dia]))
-                    
-                    df_resultado_final = pd.concat(dfs_com_totais, ignore_index=True)
-                    
-                    # 🔄 E continua com seu Total Geral normalmente
-                    linha_total = pd.DataFrame([{
-                        "Data": "",
-                        "Nome (Everest)": "Total Geral",
-                        "Código": "",
-                        "Valor Bruto (Everest)": ev["Valor Bruto (Everest)"].sum(),
-                        "Valor Real (Everest)": ev["Valor Real (Everest)"].sum(),
-                        "Nome (Externo)": "",
-                        "Valor Bruto (Externo)": ex["Valor Bruto (Externo)"].sum(),
-                        "Valor Real (Externo)": ex["Valor Real (Externo)"].sum()
-                    }])
-                    
-                    df_resultado_final = pd.concat([df_resultado_final, linha_total], ignore_index=True)
-    
-                                    
-                    st.session_state.df_resultado = df_resultado
-                                          
-                    # 🔹 Estilo linha: destacar se tiver diferença (em vermelho)
-                    def highlight_diferenca(row):
-                        if (row["Valor Bruto (Everest)"] != row["Valor Bruto (Externo)"]) or (row["Valor Real (Everest)"] != row["Valor Real (Externo)"]):
-                            return ["background-color: #ff9999"] * len(row)  # vermelho claro
-                        else:
-                            return [""] * len(row)
-                    
-                    # 🔹 Estilo colunas: manter azul e rosa padrão
-                    def destacar_colunas_por_origem(col):
-                        if "Everest" in col:
-                            return "background-color: #e6f2ff"
-                        elif "Externo" in col:
-                            return "background-color: #fff5e6"
-                        else:
-                            return ""
-                    
-                    # 🔹 Aplicar estilos
-                    st.dataframe(
-                        df_resultado_final.style
-                            .apply(highlight_diferenca, axis=1)
-                            .set_properties(subset=["Valor Bruto (Everest)", "Valor Real (Everest)"], **{"background-color": "#e6f2ff"})
-                            .set_properties(subset=["Valor Bruto (Externo)", "Valor Real (Externo)"], **{"background-color": "#fff5e6"})
-                            .format({
-                                "Valor Bruto (Everest)": "R$ {:,.2f}",
-                                "Valor Real (Everest)": "R$ {:,.2f}",
-                                "Valor Bruto (Externo)": "R$ {:,.2f}",
-                                "Valor Real (Externo)": "R$ {:,.2f}"
-                            }),
-                        use_container_width=True,
-                        height=600
-                    )
-    
-    
-                    
-            else:
-                st.warning("⚠️ Nenhuma data válida encontrada nas abas do Google Sheets.")
-    
-        except Exception as e:
-            st.error(f"❌ Erro ao carregar ou comparar dados: {e}")
-    
-        # ==================================
-        # Botão download Excel estilizado
-        # ==================================
+                        mp["Código Everest"] = pd.NA
         
-        def to_excel_com_estilo(df):
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False, sheet_name='Comparativo')
-                workbook  = writer.book
-                worksheet = writer.sheets['Comparativo']
+                # === Agregações por Data + Código ===
+                # lado Everest – você pode alternar entre "bruto" e "real" abaixo
+                usar_valor_real = True  # 🔁 troque para False se quiser comparar Bruto
+                col_ev_val = "Valor Real (Everest)" if usar_valor_real else "Valor Bruto (Everest)"
         
-                # Formatos
-                formato_everest = workbook.add_format({'bg_color': '#e6f2ff'})
-                formato_externo = workbook.add_format({'bg_color': '#fff5e6'})
-                formato_dif     = workbook.add_format({'bg_color': '#ff9999'})
+                agg_ev = (
+                    ev.groupby(["Data","Codigo"], as_index=False)[col_ev_val]
+                      .sum()
+                      .rename(columns={"Codigo":"Código Everest", col_ev_val:"Valor (Everest)"})
+                )
         
-                # Formatar colunas Everest e Externo
-                worksheet.set_column('D:E', 15, formato_everest)
-                worksheet.set_column('G:H', 15, formato_externo)
+                agg_mp = (
+                    mp.groupby(["Data","Código Everest"], as_index=False)["Valor"]
+                      .sum()
+                      .rename(columns={"Valor":"Valor (Meio Pagamento)"})
+                )
         
-                # Destacar linhas com diferença
-                for row_num, row_data in enumerate(df.itertuples(index=False)):
-                    if (row_data[3] != row_data[6]) or (row_data[4] != row_data[7]):
-                        worksheet.set_row(row_num+1, None, formato_dif)
+                # === Merge e enriquecimento (nome da loja a partir da Tabela Empresa) ===
+                base = pd.merge(agg_ev, agg_mp, on=["Data","Código Everest"], how="outer")
+                # Nome da loja (prioriza Tabela Empresa)
+                nome_por_cod = {}
+                if not tab_emp.empty and "Código Everest" in tab_emp.columns:
+                    cod_loja = tab_emp.dropna(subset=["Código Everest"]).drop_duplicates("Código Everest")[["Código Everest","Loja"]]
+                    nome_por_cod = cod_loja.set_index("Código Everest")["Loja"].to_dict()
+                base["Loja"] = base["Código Everest"].map(nome_por_cod)
+                # fallback: se Loja ainda vazia e MP tem Loja, podemos tentar recuperar último nome daquela data/código
+                if "Loja" in mp.columns:
+                    ult_loja = mp.dropna(subset=["Código Everest"]).sort_values("Data").drop_duplicates(["Data","Código Everest"], keep="last")
+                    d_ult = ult_loja.set_index(["Data","Código Everest"])["Loja"].to_dict()
+                    base["Loja"] = base.apply(lambda r: r["Loja"] if pd.notna(r["Loja"]) and str(r["Loja"]).strip() != "" else d_ult.get((r["Data"], r["Código Everest"]), ""), axis=1)
         
-            output.seek(0)
-            return output
+                # === Cálculos de diferença ===
+                base["Valor (Everest)"] = pd.to_numeric(base["Valor (Everest)"], errors="coerce").fillna(0.0)
+                base["Valor (Meio Pagamento)"] = pd.to_numeric(base["Valor (Meio Pagamento)"], errors="coerce").fillna(0.0)
+                base["Diferença"] = base["Valor (Everest)"] - base["Valor (Meio Pagamento)"]
+                base["Abs Diferença"] = base["Diferença"].abs()
         
-            # botão de download
-            excel_bytes = to_excel_com_estilo(df_resultado_final)
-            st.download_button(
-                label="📥 Baixar Excel",
-                data=excel_bytes,
-                file_name="comparativo_everest_externo.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+                # === Opções adicionais ===
+                # Ignorar grupo Kopp (com base no nome da loja vindo da Tabela Empresa)
+                ignora_kopp = st.checkbox("Ignorar diferenças de lojas do grupo Kopp", value=False)
+                if ignora_kopp and not tab_emp.empty and "Grupo" in tab_emp.columns:
+                    grp_por_cod = tab_emp.dropna(subset=["Código Everest"]).drop_duplicates("Código Everest")[["Código Everest","Grupo"]].set_index("Código Everest")["Grupo"]
+                    base["_grupo"] = base["Código Everest"].map(grp_por_cod)
+                    base = base[~(base["_grupo"].astype(str).str.contains("kopp", case=False, na=False) & (base["Abs Diferença"] > 0.01))].copy()
+                    base.drop(columns=["_grupo"], inplace=True, errors="ignore")
+        
+                # Filtro visual (tudo / só com diferenças / só sem diferenças)
+                opcao = st.selectbox("Filtro:", ["Todas", "Somente com diferenças", "Somente sem diferenças"])
+                if opcao == "Somente com diferenças":
+                    exibe = base[base["Abs Diferença"] > 0.01].copy()
+                elif opcao == "Somente sem diferenças":
+                    exibe = base[base["Abs Diferença"] <= 0.01].copy()
+                else:
+                    exibe = base.copy()
+        
+                # Ordenação
+                exibe = exibe.sort_values(["Data","Loja","Código Everest"]).reset_index(drop=True)
+        
+                # Totais por dia (logo após cada data)
+                linhas = []
+                for d, grp in exibe.groupby("Data", sort=False):
+                    linhas.append(grp)
+                    tot = {
+                        "Data": d,
+                        "Loja": "Total do dia",
+                        "Código Everest": "",
+                        "Valor (Everest)": grp["Valor (Everest)"].sum(),
+                        "Valor (Meio Pagamento)": grp["Valor (Meio Pagamento)"].sum(),
+                        "Diferença": grp["Diferença"].sum(),
+                        "Abs Diferença": grp["Abs Diferença"].sum(),
+                    }
+                    linhas.append(pd.DataFrame([tot]))
+                if linhas:
+                    exibe_tot = pd.concat(linhas, ignore_index=True)
+                else:
+                    exibe_tot = exibe.copy()
+        
+                # Total geral (linha final)
+                linha_total = pd.DataFrame([{
+                    "Data": "",
+                    "Loja": "Total Geral",
+                    "Código Everest": "",
+                    "Valor (Everest)": exibe[ "Valor (Everest)"].sum(),
+                    "Valor (Meio Pagamento)": exibe["Valor (Meio Pagamento)"].sum(),
+                    "Diferença": exibe["Diferença"].sum(),
+                    "Abs Diferença": exibe["Abs Diferença"].sum(),
+                }])
+                exibe_final = pd.concat([exibe_tot, linha_total], ignore_index=True)
+        
+                # Formatação linda na tela
+                def _highlight(row):
+                    if isinstance(row["Data"], (pd.Timestamp, date)):
+                        # linhas normais → vermelho claro se diferença
+                        if abs(float(row.get("Diferença", 0.0))) > 0.01:
+                            return ["background-color: #ffdddd"] * len(row)
+                    # linhas "Total do dia" / "Total Geral"
+                    if str(row.get("Loja","")).lower().startswith("total"):
+                        return ["background-color: #f0f0f0; font-weight: 700;"] * len(row)
+                    return [""] * len(row)
+        
+                st.dataframe(
+                    exibe_final.style
+                        .apply(_highlight, axis=1)
+                        .format({
+                            "Valor (Everest)": _fmt_brl,
+                            "Valor (Meio Pagamento)": _fmt_brl,
+                            "Diferença": _fmt_brl,
+                            "Abs Diferença": _fmt_brl,
+                        }),
+                    use_container_width=True, height=600
+                )
+        
+                # Download Excel com realce
+                def to_excel_auditoria(df):
+                    buf = BytesIO()
+                    with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+                        df2 = df.copy()
+                        # formata Data como string dd/mm/yyyy
+                        def _fmt_dt(x):
+                            try:
+                                if isinstance(x, str):
+                                    return x
+                                return pd.to_datetime(x).strftime("%d/%m/%Y")
+                            except:
+                                return str(x or "")
+                        df2["Data"] = df2["Data"].apply(_fmt_dt)
+                        df2.to_excel(writer, index=False, sheet_name="Auditoria")
+                        wb  = writer.book
+                        ws  = writer.sheets["Auditoria"]
+        
+                        # col widths
+                        ws.set_column("A:A", 12)
+                        ws.set_column("B:B", 30)
+                        ws.set_column("C:C", 15)
+                        ws.set_column("D:G", 18)
+        
+                        fmt_money = wb.add_format({"num_format": "R$ #,##0.00"})
+                        ws.set_column("D:G", 18, fmt_money)
+        
+                        fmt_dif = wb.add_format({"bg_color": "#FFDDDD"})
+                        fmt_total = wb.add_format({"bg_color": "#F0F0F0", "bold": True})
+        
+                        # aplica realce por linha
+                        for r in range(1, len(df2) + 1):
+                            loja = df2.iloc[r-1]["Loja"]
+                            dif  = df2.iloc[r-1]["Diferença"]
+                            if isinstance(loja, str) and loja.lower().startswith("total"):
+                                ws.set_row(r, None, fmt_total)
+                            else:
+                                try:
+                                    if abs(float(dif)) > 0.01:
+                                        ws.set_row(r, None, fmt_dif)
+                                except:
+                                    pass
+        
+                    buf.seek(0)
+                    return buf
+        
+                excel_bytes = to_excel_auditoria(exibe_final)
+                st.download_button(
+                    label="📥 Baixar Auditoria (Excel)",
+                    data=excel_bytes,
+                    file_name="auditoria_pdv_meio_pagamento.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        
+            except Exception as e:
+                st.error(f"❌ Erro na auditoria: {e}")

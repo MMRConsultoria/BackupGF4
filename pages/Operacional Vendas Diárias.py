@@ -1961,241 +1961,241 @@ with st.spinner("⏳ Processando..."):
             )
     # =======================================
     with aba5:
-    try:
-        st.markdown("""
-        <div style="background-color:#fff3cd; border-left: 6px solid #ffecb5; padding: 1rem; border-radius: 6px; font-size: 16px;">
-        🚧 <strong>Este relatório está em desenvolvimento.</strong> Resultados e funcionalidades podem mudar a qualquer momento.
-        </div>
-        """, unsafe_allow_html=True)
-
-        # =========================
-        # Helpers iguais ao Gerencial
-        # =========================
-        import re, unicodedata, json
-        import pandas as pd
-        import numpy as np
-        import streamlit as st
-
-        def _ns(s: str) -> str:
-            s = str(s or "").strip().lower()
-            s = unicodedata.normalize("NFD", s)
-            s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
-            return re.sub(r"[^a-z0-9]+", " ", s).strip()
-
-        def _norm_key(s: str) -> str:
-            return _ns(s).replace(" ", "")
-
-        def pick_exact_column(cols, targets):
-            norm_map = {_norm_key(c): c for c in cols}
-            for t in targets:
-                t_norm = _norm_key(t)
-                if t_norm in norm_map:
-                    return norm_map[t_norm]
-            return None
-
-        def _to_float_brl(x):
-            s = str(x or "").strip()
-            # remove tudo que não for dígito, vírgula, ponto, sinal
-            s = re.sub(r"[^\d,.\-()]", "", s)
-            if s == "":
-                return float("nan")
-            # trata negativo com parênteses
-            neg = False
-            if s.startswith("(") and s.endswith(")"):
-                neg = True
-                s = s[1:-1]
-            # vírgula decimal, ponto milhar
-            if s.count(",") == 1 and s.count(".") >= 1:
-                s = s.replace(".", "").replace(",", ".")
-            elif s.count(",") == 1 and s.count(".") == 0:
-                s = s.replace(",", ".")
+        try:
+            st.markdown("""
+            <div style="background-color:#fff3cd; border-left: 6px solid #ffecb5; padding: 1rem; border-radius: 6px; font-size: 16px;">
+            🚧 <strong>Este relatório está em desenvolvimento.</strong> Resultados e funcionalidades podem mudar a qualquer momento.
+            </div>
+            """, unsafe_allow_html=True)
+    
+            # =========================
+            # Helpers iguais ao Gerencial
+            # =========================
+            import re, unicodedata, json
+            import pandas as pd
+            import numpy as np
+            import streamlit as st
+    
+            def _ns(s: str) -> str:
+                s = str(s or "").strip().lower()
+                s = unicodedata.normalize("NFD", s)
+                s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+                return re.sub(r"[^a-z0-9]+", " ", s).strip()
+    
+            def _norm_key(s: str) -> str:
+                return _ns(s).replace(" ", "")
+    
+            def pick_exact_column(cols, targets):
+                norm_map = {_norm_key(c): c for c in cols}
+                for t in targets:
+                    t_norm = _norm_key(t)
+                    if t_norm in norm_map:
+                        return norm_map[t_norm]
+                return None
+    
+            def _to_float_brl(x):
+                s = str(x or "").strip()
+                # remove tudo que não for dígito, vírgula, ponto, sinal
+                s = re.sub(r"[^\d,.\-()]", "", s)
+                if s == "":
+                    return float("nan")
+                # trata negativo com parênteses
+                neg = False
+                if s.startswith("(") and s.endswith(")"):
+                    neg = True
+                    s = s[1:-1]
+                # vírgula decimal, ponto milhar
+                if s.count(",") == 1 and s.count(".") >= 1:
+                    s = s.replace(".", "").replace(",", ".")
+                elif s.count(",") == 1 and s.count(".") == 0:
+                    s = s.replace(",", ".")
+                try:
+                    v = float(s)
+                except:
+                    return float("nan")
+                return -v if neg else v
+    
+            def _parse_date_series(ser):
+                """Aceita dd/mm/aaaa e serial do Sheets (1899-12-30)."""
+                num = pd.to_numeric(ser, errors="coerce")
+                dt1 = pd.to_datetime(ser, dayfirst=True, errors="coerce")
+                dt2 = pd.to_datetime(num, origin="1899-12-30", unit="D", errors="coerce")
+                return dt1.where(dt1.notna(), dt2)
+    
+            # =========================
+            # Conexão (reaproveita gc; usa ID se houver)
+            # =========================
             try:
-                v = float(s)
-            except:
-                return float("nan")
-            return -v if neg else v
-
-        def _parse_date_series(ser):
-            """Aceita dd/mm/aaaa e serial do Sheets (1899-12-30)."""
-            num = pd.to_numeric(ser, errors="coerce")
-            dt1 = pd.to_datetime(ser, dayfirst=True, errors="coerce")
-            dt2 = pd.to_datetime(num, origin="1899-12-30", unit="D", errors="coerce")
-            return dt1.where(dt1.notna(), dt2)
-
-        # =========================
-        # Conexão (reaproveita gc; usa ID se houver)
-        # =========================
-        try:
-            gc  # se já existe no app, reaproveita
-        except NameError:
-            import gspread
-            from oauth2client.service_account import ServiceAccountCredentials
-            scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-            credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
-            credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
-            gc = gspread.authorize(credentials)
-
-        # Abra por ID se disponível, senão por título (mantém seu padrão)
-        try:
-            SHEET_ID = st.secrets.get("GOOGLE_SHEET_ID", None)
-        except Exception:
-            SHEET_ID = None
-
-        if SHEET_ID:
-            planilha = gc.open_by_key(SHEET_ID)
-        else:
-            planilha = gc.open("Vendas diarias")
-
-        # =========================
-        # Leitura das abas
-        # =========================
-        # Aba com dados analíticos
-        aba_relatorio = planilha.worksheet("Faturamento Meio Pagamento")
-        df_relatorio = pd.DataFrame(aba_relatorio.get_all_records())
-        df_relatorio.columns = df_relatorio.columns.str.strip()
-
-        # Aba com o tipo de pagamento
-        aba_meio_pagamento = planilha.worksheet("Tabela Meio Pagamento")
-        df_meio_pagamento = pd.DataFrame(aba_meio_pagamento.get_all_records())
-        df_meio_pagamento.columns = df_meio_pagamento.columns.str.strip()
-
-        # =========================
-        # Normalizações para merge
-        # =========================
-        # "Meio de Pagamento" em ambos
-        if "Meio de Pagamento" not in df_relatorio.columns:
-            st.error("A aba 'Faturamento Meio Pagamento' precisa ter a coluna 'Meio de Pagamento'.")
-            st.stop()
-
-        if "Meio de Pagamento" not in df_meio_pagamento.columns:
-            st.error("A aba 'Tabela Meio Pagamento' precisa ter a coluna 'Meio de Pagamento'.")
-            st.stop()
-
-        df_relatorio["Meio de Pagamento"] = (
-            df_relatorio["Meio de Pagamento"].astype(str).str.strip().str.upper()
-        )
-        df_meio_pagamento["Meio de Pagamento"] = (
-            df_meio_pagamento["Meio de Pagamento"].astype(str).str.strip().str.upper()
-        )
-
-        # "Tipo de Pagamento" (pode vir em um ou outro)
-        tem_tipo_no_rel = "Tipo de Pagamento" in df_relatorio.columns
-        if tem_tipo_no_rel:
-            df_relatorio["Tipo de Pagamento"] = (
-                df_relatorio["Tipo de Pagamento"].astype(str).str.strip().str.upper()
+                gc  # se já existe no app, reaproveita
+            except NameError:
+                import gspread
+                from oauth2client.service_account import ServiceAccountCredentials
+                scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+                credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+                credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+                gc = gspread.authorize(credentials)
+    
+            # Abra por ID se disponível, senão por título (mantém seu padrão)
+            try:
+                SHEET_ID = st.secrets.get("GOOGLE_SHEET_ID", None)
+            except Exception:
+                SHEET_ID = None
+    
+            if SHEET_ID:
+                planilha = gc.open_by_key(SHEET_ID)
+            else:
+                planilha = gc.open("Vendas diarias")
+    
+            # =========================
+            # Leitura das abas
+            # =========================
+            # Aba com dados analíticos
+            aba_relatorio = planilha.worksheet("Faturamento Meio Pagamento")
+            df_relatorio = pd.DataFrame(aba_relatorio.get_all_records())
+            df_relatorio.columns = df_relatorio.columns.str.strip()
+    
+            # Aba com o tipo de pagamento
+            aba_meio_pagamento = planilha.worksheet("Tabela Meio Pagamento")
+            df_meio_pagamento = pd.DataFrame(aba_meio_pagamento.get_all_records())
+            df_meio_pagamento.columns = df_meio_pagamento.columns.str.strip()
+    
+            # =========================
+            # Normalizações para merge
+            # =========================
+            # "Meio de Pagamento" em ambos
+            if "Meio de Pagamento" not in df_relatorio.columns:
+                st.error("A aba 'Faturamento Meio Pagamento' precisa ter a coluna 'Meio de Pagamento'.")
+                st.stop()
+    
+            if "Meio de Pagamento" not in df_meio_pagamento.columns:
+                st.error("A aba 'Tabela Meio Pagamento' precisa ter a coluna 'Meio de Pagamento'.")
+                st.stop()
+    
+            df_relatorio["Meio de Pagamento"] = (
+                df_relatorio["Meio de Pagamento"].astype(str).str.strip().str.upper()
             )
-
-        if "Tipo de Pagamento" in df_meio_pagamento.columns:
-            df_meio_pagamento["Tipo de Pagamento"] = (
-                df_meio_pagamento["Tipo de Pagamento"].astype(str).str.strip().str.upper()
+            df_meio_pagamento["Meio de Pagamento"] = (
+                df_meio_pagamento["Meio de Pagamento"].astype(str).str.strip().str.upper()
             )
-        else:
-            # garante existência para o merge
-            df_meio_pagamento["Tipo de Pagamento"] = np.nan
-
-        # =========================
-        # Merge com coalesce (igual ao que você já fazia)
-        # =========================
-        df_tmp = df_relatorio.merge(
-            df_meio_pagamento[["Meio de Pagamento", "Tipo de Pagamento"]]
-              .rename(columns={"Tipo de Pagamento": "Tipo de Pagamento_tab"}),
-            on="Meio de Pagamento",
-            how="left",
-        )
-
-        if tem_tipo_no_rel:
-            df_tmp["Tipo de Pagamento"] = df_tmp["Tipo de Pagamento"].replace(
-                ["", "NAN", "NONE"], np.nan
+    
+            # "Tipo de Pagamento" (pode vir em um ou outro)
+            tem_tipo_no_rel = "Tipo de Pagamento" in df_relatorio.columns
+            if tem_tipo_no_rel:
+                df_relatorio["Tipo de Pagamento"] = (
+                    df_relatorio["Tipo de Pagamento"].astype(str).str.strip().str.upper()
+                )
+    
+            if "Tipo de Pagamento" in df_meio_pagamento.columns:
+                df_meio_pagamento["Tipo de Pagamento"] = (
+                    df_meio_pagamento["Tipo de Pagamento"].astype(str).str.strip().str.upper()
+                )
+            else:
+                # garante existência para o merge
+                df_meio_pagamento["Tipo de Pagamento"] = np.nan
+    
+            # =========================
+            # Merge com coalesce (igual ao que você já fazia)
+            # =========================
+            df_tmp = df_relatorio.merge(
+                df_meio_pagamento[["Meio de Pagamento", "Tipo de Pagamento"]]
+                  .rename(columns={"Tipo de Pagamento": "Tipo de Pagamento_tab"}),
+                on="Meio de Pagamento",
+                how="left",
             )
-            df_tmp["Tipo de Pagamento"] = df_tmp["Tipo de Pagamento"].fillna(
-                df_tmp["Tipo de Pagamento_tab"]
+    
+            if tem_tipo_no_rel:
+                df_tmp["Tipo de Pagamento"] = df_tmp["Tipo de Pagamento"].replace(
+                    ["", "NAN", "NONE"], np.nan
+                )
+                df_tmp["Tipo de Pagamento"] = df_tmp["Tipo de Pagamento"].fillna(
+                    df_tmp["Tipo de Pagamento_tab"]
+                )
+            else:
+                df_tmp["Tipo de Pagamento"] = df_tmp["Tipo de Pagamento_tab"]
+    
+            df_relatorio = df_tmp.drop(columns=["Tipo de Pagamento_tab"])
+    
+            # =========================
+            # DETECÇÃO da coluna de valor e PARSE igual ao Gerencial
+            # =========================
+            valor_col = pick_exact_column(
+                df_relatorio.columns,
+                ["Valor (R$)", "Valor R$", "Valor", "VALOR (R$)", "VALOR R$"]
             )
-        else:
-            df_tmp["Tipo de Pagamento"] = df_tmp["Tipo de Pagamento_tab"]
-
-        df_relatorio = df_tmp.drop(columns=["Tipo de Pagamento_tab"])
-
-        # =========================
-        # DETECÇÃO da coluna de valor e PARSE igual ao Gerencial
-        # =========================
-        valor_col = pick_exact_column(
-            df_relatorio.columns,
-            ["Valor (R$)", "Valor R$", "Valor", "VALOR (R$)", "VALOR R$"]
-        )
-        if not valor_col:
-            st.error("Não encontrei a coluna de valor (ex.: 'Valor (R$)' ou 'Valor R$') na aba 'Faturamento Meio Pagamento'.")
-            st.stop()
-
-        # Converte com o parser robusto e padroniza a saída em "Valor (R$)" (float)
-        df_relatorio["Valor (R$)"] = df_relatorio[valor_col].map(_to_float_brl)
-
-        # =========================
-        # DATA com parser robusto
-        # =========================
-        if "Data" not in df_relatorio.columns:
-            st.error("A aba 'Faturamento Meio Pagamento' precisa ter a coluna 'Data'.")
-            st.stop()
-        df_relatorio["Data"] = _parse_date_series(df_relatorio["Data"])
-
-        # =========================
-        # Intervalo de datas seguro (ignora NaT)
-        # =========================
-        _datas_validas = df_relatorio["Data"].dropna()
-        if _datas_validas.empty:
-            st.info("Não há datas válidas na aba 'Faturamento Meio Pagamento'.")
-            st.stop()
-
-        data_min = _datas_validas.min().date()
-        data_max = _datas_validas.max().date()
-
-        # ===== FILTROS GERAIS =====
-        # 📅 Seleção de data
-        datas_selecionadas = st.date_input(
-            "📅 Intervalo de datas:",
-            value=(data_max, data_max),
-            min_value=data_min,
-            max_value=data_max
-        )
-        if isinstance(datas_selecionadas, (tuple, list)) and len(datas_selecionadas) == 2:
-            data_inicio, data_fim = datas_selecionadas
-        else:
-            st.warning("⚠️ Por favor, selecione um intervalo com **duas datas** (início e fim).")
-            st.stop()
-
-        # 💳 Filtro de Tipo de Pagamento
-        tipos_disponiveis = (
-            df_relatorio["Tipo de Pagamento"]
-            .dropna().astype(str).str.strip().unique().tolist()
-        )
-        tipos_disponiveis = sorted(tipos_disponiveis)
-        filtro_tipo_pagamento = st.multiselect(
-            "💳 Tipo de Pagamento:",
-            options=tipos_disponiveis,
-            default=tipos_disponiveis
-        )
-
-        # 🔎 Aplica filtro global
-        df_filtrado = df_relatorio[
-            (df_relatorio["Data"].dt.date >= data_inicio) &
-            (df_relatorio["Data"].dt.date <= data_fim) &
-            (df_relatorio["Tipo de Pagamento"].isin(filtro_tipo_pagamento))
-        ].copy()
-
-        if df_filtrado.empty:
-            st.info("🔍 Não há dados para o período e filtros selecionados.")
-            st.stop()
-
-        # ====== TABS ======
-        aba_vendas, aba_taxas, aba_financeiro, aba_previsao_fc, aba_conciliacao = st.tabs([
-            "💰 Vendas meio pagamento",
-            "🔗 Vendas + Prazo e Taxas",
-            "📄 Financeiro (Recebimentos)",
-            "💰 Previsão FC",
-            "🔄 Conciliação Adquirente"
-        ])
-
-        # Dica: daqui pra baixo, todo lugar que você somar o valor, use df_filtrado["Valor (R$)"]
-        # pois agora está garantidamente em float e com o mesmo parse do Relatório Gerencial.
-
-    except Exception as e:
-        st.error(f"Erro ao montar a aba 4: {e}")
+            if not valor_col:
+                st.error("Não encontrei a coluna de valor (ex.: 'Valor (R$)' ou 'Valor R$') na aba 'Faturamento Meio Pagamento'.")
+                st.stop()
+    
+            # Converte com o parser robusto e padroniza a saída em "Valor (R$)" (float)
+            df_relatorio["Valor (R$)"] = df_relatorio[valor_col].map(_to_float_brl)
+    
+            # =========================
+            # DATA com parser robusto
+            # =========================
+            if "Data" not in df_relatorio.columns:
+                st.error("A aba 'Faturamento Meio Pagamento' precisa ter a coluna 'Data'.")
+                st.stop()
+            df_relatorio["Data"] = _parse_date_series(df_relatorio["Data"])
+    
+            # =========================
+            # Intervalo de datas seguro (ignora NaT)
+            # =========================
+            _datas_validas = df_relatorio["Data"].dropna()
+            if _datas_validas.empty:
+                st.info("Não há datas válidas na aba 'Faturamento Meio Pagamento'.")
+                st.stop()
+    
+            data_min = _datas_validas.min().date()
+            data_max = _datas_validas.max().date()
+    
+            # ===== FILTROS GERAIS =====
+            # 📅 Seleção de data
+            datas_selecionadas = st.date_input(
+                "📅 Intervalo de datas:",
+                value=(data_max, data_max),
+                min_value=data_min,
+                max_value=data_max
+            )
+            if isinstance(datas_selecionadas, (tuple, list)) and len(datas_selecionadas) == 2:
+                data_inicio, data_fim = datas_selecionadas
+            else:
+                st.warning("⚠️ Por favor, selecione um intervalo com **duas datas** (início e fim).")
+                st.stop()
+    
+            # 💳 Filtro de Tipo de Pagamento
+            tipos_disponiveis = (
+                df_relatorio["Tipo de Pagamento"]
+                .dropna().astype(str).str.strip().unique().tolist()
+            )
+            tipos_disponiveis = sorted(tipos_disponiveis)
+            filtro_tipo_pagamento = st.multiselect(
+                "💳 Tipo de Pagamento:",
+                options=tipos_disponiveis,
+                default=tipos_disponiveis
+            )
+    
+            # 🔎 Aplica filtro global
+            df_filtrado = df_relatorio[
+                (df_relatorio["Data"].dt.date >= data_inicio) &
+                (df_relatorio["Data"].dt.date <= data_fim) &
+                (df_relatorio["Tipo de Pagamento"].isin(filtro_tipo_pagamento))
+            ].copy()
+    
+            if df_filtrado.empty:
+                st.info("🔍 Não há dados para o período e filtros selecionados.")
+                st.stop()
+    
+            # ====== TABS ======
+            aba_vendas, aba_taxas, aba_financeiro, aba_previsao_fc, aba_conciliacao = st.tabs([
+                "💰 Vendas meio pagamento",
+                "🔗 Vendas + Prazo e Taxas",
+                "📄 Financeiro (Recebimentos)",
+                "💰 Previsão FC",
+                "🔄 Conciliação Adquirente"
+            ])
+    
+            # Dica: daqui pra baixo, todo lugar que você somar o valor, use df_filtrado["Valor (R$)"]
+            # pois agora está garantidamente em float e com o mesmo parse do Relatório Gerencial.
+    
+        except Exception as e:
+            st.error(f"Erro ao montar a aba 4: {e}")

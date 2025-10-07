@@ -1963,10 +1963,13 @@ with st.spinner("⏳ Processando..."):
     # =======================================
     # Aba 4 - Auditoria PDV x Faturamento Meio Pagamento
     # =======================================
+    # =======================================
+    # Aba 4 - Auditoria PDV x Faturamento Meio Pagamento
+    # =======================================
     # ===============================
     # 📊 Auditoria Mensal — Sistema × Meio de Pagamento (Aba 5)
     #     - Usa Mês/Ano das abas (sem normalizar por Data)
-    #     - Soma EXATAMENTE: Externo = "Fat. Total"; MP = "Valor (R$)" (parser robusto)
+    #     - Soma EXATAMENTE: Externo = "Fat. Total"; MP = "Valor (R$)" (padrão idêntico ao da Aba Vendas)
     #     - Tabela simples com Totais e Diferença + checkbox por linha
     #     - Detalhe (por Data+Código) só para os Mês/Sistema selecionados
     #     - Filtro padrão: 2025 (mude ANO_ALVO = None para todos)
@@ -2032,34 +2035,19 @@ with st.spinner("⏳ Processando..."):
                 pass
             return ""
     
-        def _to_float_brl(x):
-            """Parser robusto: aceita R$, milhar, vírgula decimal e parênteses para negativo."""
+        def _to_float_brl_ext(x):
+            """Parser usado SOMENTE para 'Fat. Total' do Externo (mantido como estava)."""
             s = str(x or "").strip()
-            if s == "": 
-                return float("nan")
-            # negativo por parênteses
-            neg = s.startswith("(") and s.endswith(")")
-            s = s.replace("R$", "").replace(" ", "")
-            s = s.replace("(", "").replace(")", "")
-            # remove tudo que não for dígito, vírgula, ponto ou sinal
             s = re.sub(r"[^\d,.\-]", "", s)
-            if s == "":
-                return float("nan")
-            # vírgula decimal / ponto milhar
+            if s == "": return float("nan")
             if s.count(",") == 1 and s.count(".") >= 1:
                 s = s.replace(".", "").replace(",", ".")
             elif s.count(",") == 1 and s.count(".") == 0:
                 s = s.replace(",", ".")
             try:
-                v = float(s)
+                return float(s)
             except:
                 return float("nan")
-            return -v if neg else v
-    
-        def _fmt_brl(v):
-            try: v = float(v)
-            except: return "R$ 0,00"
-            return "R$ " + f"{v:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
     
         def _parse_date_series(ser):
             """Só para o detalhe: aceita dd/mm/aaaa e serial do Sheets (1899-12-30)."""
@@ -2067,6 +2055,16 @@ with st.spinner("⏳ Processando..."):
             dt1 = pd.to_datetime(ser, dayfirst=True, errors="coerce")
             dt2 = pd.to_datetime(num, origin="1899-12-30", unit="D", errors="coerce")
             return dt1.where(dt1.notna(), dt2)
+    
+        # >>>> NOVO: padrão de cálculo do Meio de Pagamento (igual ao que você usa na Aba Vendas)
+        def _valor_meio_pagamento_padrao_series(ser: pd.Series) -> pd.Series:
+            ser = ser.astype(str)
+            ser = ser.str.replace("R$", "", regex=False)
+            ser = ser.str.replace("(", "-", regex=False).str.replace(")", "", regex=False)
+            ser = ser.str.replace(" ", "", regex=False)
+            ser = ser.str.replace(".", "", regex=False)
+            ser = ser.str.replace(",", ".", regex=False)
+            return pd.to_numeric(ser, errors="coerce")
     
         # ---------------- Conexão (reaproveita gc se já existe) ----------------
         try:
@@ -2119,7 +2117,7 @@ with st.spinner("⏳ Processando..."):
         col_mp_sis  = next((c for c in df_mp.columns if _norm_key(c) == _norm_key("Sistema")), None)
         col_mp_mes  = next((c for c in df_mp.columns if _norm_key(c) in (_norm_key("Mês"), _norm_key("Mes"))), None)
         col_mp_ano  = next((c for c in df_mp.columns if _norm_key(c) == _norm_key("Ano")), None)
-        col_mp_val  = pick_exact_column(df_mp.columns, ["Valor (R$)", "Valor R$", "Valor", "VALOR (R$)", "VALOR R$"])  # flexível
+        col_mp_val  = pick_exact_column(df_mp.columns, ["Valor (R$)", "Valor R$"])  # segue seu padrão
     
         if not all([col_mp_data, col_mp_cod, col_mp_val, col_mp_sis]):
             st.error("Em 'Faturamento Meio Pagamento' preciso das colunas: Data, Código Everest, **Valor (R$)**, Sistema (e idealmente Mês/Ano).")
@@ -2129,8 +2127,8 @@ with st.spinner("⏳ Processando..."):
         ext = pd.DataFrame({
             "Data":           _parse_date_series(df_ext[col_ext_data]),          # Data é só para detalhe
             "Código Everest": pd.to_numeric(df_ext[col_ext_cod], errors="coerce"),
-            "Sistema":        df_ext[col_ext_sis].astype(str).str.strip().str.upper(),   # 🔒 normaliza
-            "Fat.Total":      df_ext[col_ext_fat].map(_to_float_brl),
+            "Sistema":        df_ext[col_ext_sis].astype(str).str.strip(),       # mantém sem upper() para não divergir do seu padrão
+            "Fat.Total":      df_ext[col_ext_fat].map(_to_float_brl_ext),
             "MesNum":         df_ext[col_ext_mes] if col_ext_mes else None,
             "Ano":            df_ext[col_ext_ano] if col_ext_ano else None,
         })
@@ -2155,8 +2153,9 @@ with st.spinner("⏳ Processando..."):
         mp = pd.DataFrame({
             "Data":           _parse_date_series(df_mp[col_mp_data]),           # Data é só para detalhe
             "Código Everest": pd.to_numeric(df_mp[col_mp_cod], errors="coerce"),
-            "Sistema":        df_mp[col_mp_sis].astype(str).str.strip().str.upper(),    # 🔒 normaliza
-            "Valor_MP":       df_mp[col_mp_val].map(_to_float_brl),             # parser robusto
+            "Sistema":        df_mp[col_mp_sis].astype(str).str.strip(),        # mantém sem upper()
+            # >>>> AQUI: cálculo idêntico ao da Aba Vendas
+            "Valor_MP":       _valor_meio_pagamento_padrao_series(df_mp[col_mp_val]),
             "MesNum":         df_mp[col_mp_mes] if col_mp_mes else None,
             "Ano":            df_mp[col_mp_ano] if col_mp_ano else None,
         })
@@ -2182,7 +2181,6 @@ with st.spinner("⏳ Processando..."):
         mp_mes  = (mp .groupby(["Mês","Sistema"], as_index=False)["Valor_MP"].sum()
                       .rename(columns={"Valor_MP":"Total_MeioPagamento"}))
     
-        # merge por Mês e Sistema já normalizados
         resumo = ext_mes.merge(mp_mes, on=["Mês","Sistema"], how="outer")
         resumo["Total_FatTotal"]      = resumo["Total_FatTotal"].fillna(0.0).round(2)
         resumo["Total_MeioPagamento"] = resumo["Total_MeioPagamento"].fillna(0.0).round(2)
@@ -2219,9 +2217,9 @@ with st.spinner("⏳ Processando..."):
                     edited.loc[edited["Selecionar"] == True, "Sistema"])
             )
     
-        # ---------------- Verificação rápida (ex.: 09/2025 / COLIBRI) ----------------
-        with st.expander("🔎 Verificação rápida (ex.: 09/2025 / COLIBRI)"):
-            alvo_mes, alvo_sis = "09/2025", "COLIBRI"
+        # ---------------- Verificação rápida (ex.: 09/2025 / Colibri) ----------------
+        with st.expander("🔎 Verificação rápida (ex.: 09/2025 / Colibri)"):
+            alvo_mes, alvo_sis = "09/2025", "Colibri"
             tot_ext = resumo.loc[(resumo["Mês"]==alvo_mes)&(resumo["Sistema"]==alvo_sis),"Total_FatTotal"].sum()
             tot_mp  = resumo.loc[(resumo["Mês"]==alvo_mes)&(resumo["Sistema"]==alvo_sis),"Total_MeioPagamento"].sum()
             st.write(f"Coluna usada no Externo: **{col_ext_fat}**")
@@ -2276,6 +2274,10 @@ with st.spinner("⏳ Processando..."):
                 det = det.sort_values(["Mês","Sistema","Data","Loja","Código Everest"]).reset_index(drop=True)
                 st.dataframe(
                     det[["Mês","Sistema","Data","Loja","Código Everest","Ext","MP","Diferença"]]
-                      .style.format({"Ext": _fmt_brl, "MP": _fmt_brl, "Diferença": _fmt_brl}),
+                      .style.format({"Ext": lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                                     "MP":  lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                                     "Diferença": lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")}),
                     use_container_width=True, hide_index=True
                 )
+    
+        

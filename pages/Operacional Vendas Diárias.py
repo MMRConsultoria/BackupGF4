@@ -1959,13 +1959,14 @@ with st.spinner("⏳ Processando..."):
                 file_name="comparativo_everest_externo.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+    
     # =======================================
     # Aba 4 - Auditoria PDV x Faturamento Meio Pagamento
     # =======================================
     # ===============================
-    # 📊 Auditoria Mensal — Sistema × Meio de Pagamento (Aba 4)
+    # 📊 Auditoria Mensal — Sistema × Meio de Pagamento (Aba 5)
     #     - Usa Mês/Ano das abas (sem normalizar por Data)
-    #     - Soma EXATAMENTE: Externo = "Fat. Total"; MP = "Valor (R$)"
+    #     - Soma EXATAMENTE: Externo = "Fat. Total"; MP = "Valor (R$)" (parser robusto)
     #     - Tabela simples com Totais e Diferença + checkbox por linha
     #     - Detalhe (por Data+Código) só para os Mês/Sistema selecionados
     #     - Filtro padrão: 2025 (mude ANO_ALVO = None para todos)
@@ -2011,7 +2012,7 @@ with st.spinner("⏳ Processando..."):
             "jan":1,"fev":2,"mar":3,"abr":4,"mai":5,"jun":6,"jul":7,"ago":8,"set":9,"out":10,"nov":11,"dez":12,
             "janeiro":1,"fevereiro":2,"março":3,"marco":3,"abril":4,"maio":5,"junho":6,"julho":7,"agosto":8,"setembro":9,"outubro":10,"novembro":11,"dezembro":12,
             # en comuns
-            "jan.":1,"feb":2,"feb.":2,"mar.":3,"apr":4,"apr.":4,"may":5,"jun.":6,"jul.":7,"aug":8,"aug.":8,"sep":9,"sept":9,"sep.":9,"oct":10,"oct.":10,"nov.":11,"dec":12,"dec.":12
+            "jan.":1,"feb":2,"feb.":2,"mar.":3,"apr":4,"apr.":4,"may":5,"jun.":6,"jul.":7,"aug":8,"aug.":8,"sep":9,"sept":9,"sep.":9,"oct":10,"oct.":10,"nov":11,"dec":12,"dec.":12
         }
         def _month_to_num(x):
             s = str(x or "").strip().lower()
@@ -2032,19 +2033,28 @@ with st.spinner("⏳ Processando..."):
             return ""
     
         def _to_float_brl(x):
+            """Parser robusto: aceita R$, milhar, vírgula decimal e parênteses para negativo."""
             s = str(x or "").strip()
-            # remove tudo que não for dígito, vírgula, ponto, sinal
+            if s == "": 
+                return float("nan")
+            # negativo por parênteses
+            neg = s.startswith("(") and s.endswith(")")
+            s = s.replace("R$", "").replace(" ", "")
+            s = s.replace("(", "").replace(")", "")
+            # remove tudo que não for dígito, vírgula, ponto ou sinal
             s = re.sub(r"[^\d,.\-]", "", s)
-            if s == "": return float("nan")
+            if s == "":
+                return float("nan")
             # vírgula decimal / ponto milhar
             if s.count(",") == 1 and s.count(".") >= 1:
                 s = s.replace(".", "").replace(",", ".")
             elif s.count(",") == 1 and s.count(".") == 0:
                 s = s.replace(",", ".")
             try:
-                return float(s)
+                v = float(s)
             except:
                 return float("nan")
+            return -v if neg else v
     
         def _fmt_brl(v):
             try: v = float(v)
@@ -2109,7 +2119,7 @@ with st.spinner("⏳ Processando..."):
         col_mp_sis  = next((c for c in df_mp.columns if _norm_key(c) == _norm_key("Sistema")), None)
         col_mp_mes  = next((c for c in df_mp.columns if _norm_key(c) in (_norm_key("Mês"), _norm_key("Mes"))), None)
         col_mp_ano  = next((c for c in df_mp.columns if _norm_key(c) == _norm_key("Ano")), None)
-        col_mp_val  = pick_exact_column(df_mp.columns, ["Valor (R$)", "Valor R$"])  # EXATO
+        col_mp_val  = pick_exact_column(df_mp.columns, ["Valor (R$)", "Valor R$", "Valor", "VALOR (R$)", "VALOR R$"])  # flexível
     
         if not all([col_mp_data, col_mp_cod, col_mp_val, col_mp_sis]):
             st.error("Em 'Faturamento Meio Pagamento' preciso das colunas: Data, Código Everest, **Valor (R$)**, Sistema (e idealmente Mês/Ano).")
@@ -2119,7 +2129,7 @@ with st.spinner("⏳ Processando..."):
         ext = pd.DataFrame({
             "Data":           _parse_date_series(df_ext[col_ext_data]),          # Data é só para detalhe
             "Código Everest": pd.to_numeric(df_ext[col_ext_cod], errors="coerce"),
-            "Sistema":        df_ext[col_ext_sis].astype(str).str.strip(),
+            "Sistema":        df_ext[col_ext_sis].astype(str).str.strip().str.upper(),   # 🔒 normaliza
             "Fat.Total":      df_ext[col_ext_fat].map(_to_float_brl),
             "MesNum":         df_ext[col_ext_mes] if col_ext_mes else None,
             "Ano":            df_ext[col_ext_ano] if col_ext_ano else None,
@@ -2145,8 +2155,8 @@ with st.spinner("⏳ Processando..."):
         mp = pd.DataFrame({
             "Data":           _parse_date_series(df_mp[col_mp_data]),           # Data é só para detalhe
             "Código Everest": pd.to_numeric(df_mp[col_mp_cod], errors="coerce"),
-            "Sistema":        df_mp[col_mp_sis].astype(str).str.strip(),
-            "Valor_MP":       df_mp[col_mp_val].map(_to_float_brl),             # EXATAMENTE esta coluna
+            "Sistema":        df_mp[col_mp_sis].astype(str).str.strip().str.upper(),    # 🔒 normaliza
+            "Valor_MP":       df_mp[col_mp_val].map(_to_float_brl),             # parser robusto
             "MesNum":         df_mp[col_mp_mes] if col_mp_mes else None,
             "Ano":            df_mp[col_mp_ano] if col_mp_ano else None,
         })
@@ -2172,6 +2182,7 @@ with st.spinner("⏳ Processando..."):
         mp_mes  = (mp .groupby(["Mês","Sistema"], as_index=False)["Valor_MP"].sum()
                       .rename(columns={"Valor_MP":"Total_MeioPagamento"}))
     
+        # merge por Mês e Sistema já normalizados
         resumo = ext_mes.merge(mp_mes, on=["Mês","Sistema"], how="outer")
         resumo["Total_FatTotal"]      = resumo["Total_FatTotal"].fillna(0.0).round(2)
         resumo["Total_MeioPagamento"] = resumo["Total_MeioPagamento"].fillna(0.0).round(2)
@@ -2208,9 +2219,9 @@ with st.spinner("⏳ Processando..."):
                     edited.loc[edited["Selecionar"] == True, "Sistema"])
             )
     
-        # ---------------- Verificação rápida (ex.: 09/2025 / Colibri) ----------------
-        with st.expander("🔎 Verificação rápida (ex.: 09/2025 / Colibri)"):
-            alvo_mes, alvo_sis = "09/2025", "Colibri"
+        # ---------------- Verificação rápida (ex.: 09/2025 / COLIBRI) ----------------
+        with st.expander("🔎 Verificação rápida (ex.: 09/2025 / COLIBRI)"):
+            alvo_mes, alvo_sis = "09/2025", "COLIBRI"
             tot_ext = resumo.loc[(resumo["Mês"]==alvo_mes)&(resumo["Sistema"]==alvo_sis),"Total_FatTotal"].sum()
             tot_mp  = resumo.loc[(resumo["Mês"]==alvo_mes)&(resumo["Sistema"]==alvo_sis),"Total_MeioPagamento"].sum()
             st.write(f"Coluna usada no Externo: **{col_ext_fat}**")

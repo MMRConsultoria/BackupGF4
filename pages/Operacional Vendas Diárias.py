@@ -1959,11 +1959,16 @@ with st.spinner("⏳ Processando..."):
                 file_name="comparativo_everest_externo.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-    
+    a
     # =======================================
     # Aba 4 - Auditoria PDV x Faturamento Meio Pagamento
     # =======================================
-    
+    # 📊 Auditoria Mensal — Sistema × Meio de Pagamento (Aba 5)
+    #   - Usa Mês/Ano das abas (sem normalizar por Data)
+    #   - Soma EXATAMENTE: Externo = "Fat. Total"; MP = "Valor (R$)" (parser idêntico ao da Aba Vendas)
+    #   - Tabela simples com Totais e Diferença + checkbox por linha
+    #   - Detalhe (por Data+Código) só para os Mês/Sistema selecionados
+    #   - Filtro padrão: 2025 (mude ANO_ALVO = None para todos)
     
     with aba5:
         import re, unicodedata, json

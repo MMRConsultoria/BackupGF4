@@ -1959,7 +1959,7 @@ with st.spinner("⏳ Processando..."):
                 file_name="comparativo_everest_externo.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-    a
+   
     # =======================================
     # Aba 4 - Auditoria PDV x Faturamento Meio Pagamento
     # =======================================

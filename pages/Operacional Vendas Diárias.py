@@ -1961,7 +1961,7 @@ with st.spinner("⏳ Processando..."):
             )
 
     # =======================================
-    # =======================================
+   # =======================================
     # Aba 6 - Comparativo Faturamento x Meio de Pagamento
     # =======================================
     aba6, = st.tabs(["📊 Comparativo Faturamento x Meio de Pagamento"])
@@ -1970,9 +1970,12 @@ with st.spinner("⏳ Processando..."):
         st.subheader("📊 Comparativo Faturamento x Meio de Pagamento (2025+)")
     
         import re
+        import json
         import pandas as pd
         import numpy as np
+        from io import BytesIO
     
+        # ---------- helpers de mês/valores (reaproveitados/compatíveis) ----------
         _MAP_MES = {
             "jan":1,"fev":2,"mar":3,"abr":4,"mai":5,"jun":6,"jul":7,"ago":8,"set":9,"out":10,"nov":11,"dez":12,
             "janeiro":1,"fevereiro":2,"março":3,"marco":3,"abril":4,"maio":5,"junho":6,"julho":7,"agosto":8,
@@ -1980,7 +1983,6 @@ with st.spinner("⏳ Processando..."):
             "jan.":1,"feb":2,"feb.":2,"mar.":3,"apr":4,"apr.":4,"may":5,"jun.":6,"jul.":7,"aug":8,"aug.":8,
             "sep":9,"sept":9,"sep.":9,"oct":10,"oct.":10,"nov.":11,"dec":12,"dec.":12
         }
-    
         def _month_to_num(x):
             s = str(x or "").strip().lower()
             if s in _MAP_MES: return _MAP_MES[s]
@@ -2021,30 +2023,9 @@ with st.spinner("⏳ Processando..."):
             ser = ser.str.replace(",", ".", regex=False)
             return pd.to_numeric(ser, errors="coerce")
     
-        # ---------------- Conexão com Sheets ----------------
-        try:
-            gc  # reaproveita se já existir
-        except NameError:
-            import gspread
-            from oauth2client.service_account import ServiceAccountCredentials
-            import json
-            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
-            credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
-            gc = gspread.authorize(credentials)
-    
-        sh = gc.open("Vendas diarias")
-        _ = gc  # evita imprimir o objeto do cliente no Streamlit
-        ws_ext = sh.worksheet("Fat Sistema Externo")
-        df_ext = pd.DataFrame(ws_ext.get_all_records())
-    
-        ws_mp = sh.worksheet("Faturamento Meio Pagamento")
-        df_mp = pd.DataFrame(ws_mp.get_all_records())
-    
-        # ---------------- Localização de colunas ----------------
+        # ---------- normalização leve ----------
         def _ns(x): return str(x).strip().lower().replace(" ", "")
         def _norm_key(x): return re.sub(r"[^a-z0-9]", "", str(x).lower())
-    
         def pick_exact_column(cols, keys):
             for k in keys:
                 for c in cols:
@@ -2052,6 +2033,35 @@ with st.spinner("⏳ Processando..."):
                         return c
             return None
     
+        # ---------- conexão com Google Sheets (sem try/except) ----------
+        if "get_gc" in globals() and callable(get_gc):
+            gc = get_gc()
+        else:
+            import gspread
+            from oauth2client.service_account import ServiceAccountCredentials
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            credentials = ServiceAccountCredentials.from_json_keyfile_dict(
+                json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"]), scope
+            )
+            gc = gspread.authorize(credentials)
+    
+        sh = gc.open("Vendas diarias")
+        _ = gc  # evita imprimir o objeto do cliente
+    
+        # ---------- leitura das abas ----------
+        ws_ext = sh.worksheet("Fat Sistema Externo")
+        df_ext = pd.DataFrame(ws_ext.get_all_records())
+        if df_ext.empty:
+            st.warning("Aba 'Fat Sistema Externo' vazia.")
+            st.stop()
+    
+        ws_mp = sh.worksheet("Faturamento Meio Pagamento")
+        df_mp = pd.DataFrame(ws_mp.get_all_records())
+        if df_mp.empty:
+            st.warning("Aba 'Faturamento Meio Pagamento' vazia.")
+            st.stop()
+    
+        # ---------- localização de colunas (flexível) ----------
         col_ext_sis = next((c for c in df_ext.columns if "sistema" in _ns(c)), None)
         col_ext_mes = next((c for c in df_ext.columns if "mês" in _ns(c) or "mes" in _ns(c)), None)
         col_ext_ano = next((c for c in df_ext.columns if "ano" in _ns(c)), None)
@@ -2060,44 +2070,65 @@ with st.spinner("⏳ Processando..."):
         col_mp_sis = next((c for c in df_mp.columns if "sistema" in _ns(c)), None)
         col_mp_mes = next((c for c in df_mp.columns if "mês" in _ns(c) or "mes" in _ns(c)), None)
         col_mp_ano = next((c for c in df_mp.columns if "ano" in _ns(c)), None)
+        # na aba de meio de pagamento, normalmente a coluna é "Valor (R$)"
         col_mp_val = next((c for c in df_mp.columns if "valor" in _ns(c)), None)
     
-        # ---------------- Conversões ----------------
+        faltantes = []
+        if not col_ext_sis: faltantes.append("Sistema (Fat Sistema Externo)")
+        if not col_ext_mes: faltantes.append("Mês (Fat Sistema Externo)")
+        if not col_ext_ano: faltantes.append("Ano (Fat Sistema Externo)")
+        if not col_ext_val: faltantes.append("Fat.Total/Valor (Fat Sistema Externo)")
+        if not col_mp_sis:  faltantes.append("Sistema (Faturamento Meio Pagamento)")
+        if not col_mp_mes:  faltantes.append("Mês (Faturamento Meio Pagamento)")
+        if not col_mp_ano:  faltantes.append("Ano (Faturamento Meio Pagamento)")
+        if not col_mp_val:  faltantes.append("Valor (R$) (Faturamento Meio Pagamento)")
+    
+        if faltantes:
+            st.error("❌ Colunas necessárias não encontradas:\n- " + "\n- ".join(faltantes))
+            st.stop()
+    
+        # ---------- conversões ----------
         df_ext[col_ext_val] = df_ext[col_ext_val].map(_to_float_brl_ext)
         df_mp[col_mp_val] = _valor_meio_pagamento(df_mp[col_mp_val])
     
         df_ext["MesNum"] = df_ext[col_ext_mes].apply(_month_to_num)
-        df_mp["MesNum"] = df_mp[col_mp_mes].apply(_month_to_num)
-        df_ext["Ano"] = pd.to_numeric(df_ext[col_ext_ano], errors="coerce")
-        df_mp["Ano"] = pd.to_numeric(df_mp[col_mp_ano], errors="coerce")
+        df_mp["MesNum"]  = df_mp[col_mp_mes].apply(_month_to_num)
+        df_ext["Ano"]    = pd.to_numeric(df_ext[col_ext_ano], errors="coerce")
+        df_mp["Ano"]     = pd.to_numeric(df_mp[col_mp_ano], errors="coerce")
     
         df_ext["Mês"] = df_ext.apply(lambda r: _mk_messtr(r["MesNum"], r["Ano"]), axis=1)
-        df_mp["Mês"] = df_mp.apply(lambda r: _mk_messtr(r["MesNum"], r["Ano"]), axis=1)
+        df_mp["Mês"]  = df_mp.apply(lambda r: _mk_messtr(r["MesNum"], r["Ano"]), axis=1)
     
-        # ---------------- Filtro 2025+ ----------------
+        # ---------- filtro 2025+ ----------
         df_ext = df_ext[df_ext["Ano"] >= 2025]
-        df_mp = df_mp[df_mp["Ano"] >= 2025]
+        df_mp  = df_mp[df_mp["Ano"]  >= 2025]
     
-        # ---------------- Agrupamento ----------------
+        if df_ext.empty and df_mp.empty:
+            st.info("ℹ️ Não há registros de 2025 em diante nas duas abas.")
+            st.stop()
+    
+        # ---------- agregação por Mês/Sistema ----------
         ext_grp = (
             df_ext.groupby(["Mês", col_ext_sis], as_index=False)[col_ext_val]
-            .sum()
-            .rename(columns={col_ext_val: "Total_Faturamento"})
+            .sum().rename(columns={col_ext_val: "Total_Faturamento"})
         )
         mp_grp = (
             df_mp.groupby(["Mês", col_mp_sis], as_index=False)[col_mp_val]
-            .sum()
-            .rename(columns={col_mp_val: "Total_MeioPagamento"})
+            .sum().rename(columns={col_mp_val: "Total_MeioPagamento"})
         )
     
-        resumo = pd.merge(ext_grp, mp_grp, left_on=["Mês", col_ext_sis], right_on=["Mês", col_mp_sis], how="outer")
+        # ---------- merge e cálculo ----------
+        resumo = pd.merge(
+            ext_grp, mp_grp,
+            left_on=["Mês", col_ext_sis], right_on=["Mês", col_mp_sis],
+            how="outer"
+        )
         resumo["Sistema"] = resumo[col_ext_sis].combine_first(resumo[col_mp_sis])
-        resumo = resumo[["Mês", "Sistema", "Total_Faturamento", "Total_MeioPagamento"]].fillna(0)
-        resumo["Diferença"] = resumo["Total_Faturamento"] - resumo["Total_MeioPagamento"]
-    
+        resumo = resumo[["Mês", "Sistema", "Total_Faturamento", "Total_MeioPagamento"]].fillna(0.0)
+        resumo["Diferença"] = (resumo["Total_Faturamento"] - resumo["Total_MeioPagamento"]).round(2)
         resumo = resumo.sort_values(["Mês", "Sistema"]).reset_index(drop=True)
     
-        # ---------------- Exibir ----------------
+        # ---------- exibição ----------
         st.dataframe(
             resumo.style.format({
                 "Total_Faturamento": "R$ {:,.2f}".format,
@@ -2107,14 +2138,67 @@ with st.spinner("⏳ Processando..."):
             use_container_width=True, hide_index=True
         )
     
-        # ---------------- Totais ----------------
-        total_fat = resumo["Total_Faturamento"].sum()
-        total_mp = resumo["Total_MeioPagamento"].sum()
+        # ---------- totais gerais ----------
+        total_fat = float(resumo["Total_Faturamento"].sum())
+        total_mp  = float(resumo["Total_MeioPagamento"].sum())
         diff_total = total_fat - total_mp
-        st.markdown(f"""
-        <div style='margin-top:15px; font-size:16px;'>
-        💰 <b>Total Faturamento:</b> R$ {total_fat:,.2f}<br>
-        💳 <b>Total Meio de Pagamento:</b> R$ {total_mp:,.2f}<br>
-        ⚖️ <b>Diferença Total:</b> R$ {diff_total:,.2f}
-        </div>
-        """.replace(",", "X").replace(".", ",").replace("X", "."), unsafe_allow_html=True)
+    
+        def _fmt_brl(v: float) -> str:
+            s = f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            return f"R$ {s}"
+    
+        st.markdown(
+            f"""
+            <div style='margin-top:15px; font-size:16px;'>
+            💰 <b>Total Faturamento:</b> {_fmt_brl(total_fat)}<br>
+            💳 <b>Total Meio de Pagamento:</b> {_fmt_brl(total_mp)}<br>
+            ⚖️ <b>Diferença Total:</b> {_fmt_brl(diff_total)}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    
+        # ---------- (opcional) download Excel ----------
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+    
+        def exportar_excel(df):
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Comparativo 2025+"
+    
+            # cabeçalho
+            headers = ["Mês/Ano", "Sistema", "Total Faturamento", "Total Meio de Pagamento", "Diferença"]
+            for j, h in enumerate(headers, 1):
+                c = ws.cell(row=1, column=j, value=h)
+                c.font = Font(bold=True, color="FFFFFF")
+                c.alignment = Alignment(horizontal="center")
+                c.fill = PatternFill(start_color="0366D6", end_color="0366D6", fill_type="solid")
+    
+            # linhas
+            for i, r in enumerate(df.itertuples(index=False), 2):
+                ws.cell(row=i, column=1, value=r.Mês)
+                ws.cell(row=i, column=2, value=str(r.Sistema))
+                ws.cell(row=i, column=3, value=_fmt_brl(float(r.Total_Faturamento)))
+                ws.cell(row=i, column=4, value=_fmt_brl(float(r.Total_MeioPagamento)))
+                dif_cell = ws.cell(row=i, column=5, value=_fmt_brl(float(r.Diferença)))
+                if float(r.Diferença) != 0:
+                    dif_cell.fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
+    
+            # larguras
+            for col in ws.columns:
+                max_len = max(len(str(c.value or "")) for c in col)
+                ws.column_dimensions[col[0].column_letter].width = max_len + 2
+    
+            buf = BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+            return buf
+    
+        excel_bytes = exportar_excel(resumo)
+        st.download_button(
+            "📥 Baixar Excel do Comparativo",
+            data=excel_bytes,
+            file_name="Comparativo_Faturamento_x_MeioPagamento_2025+.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )

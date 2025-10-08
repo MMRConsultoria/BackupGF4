@@ -2034,10 +2034,43 @@ with st.spinner("⏳ Processando..."):
                 return float("nan")
     
         def _parse_date_series(ser):
+            """
+            Converte uma Series que pode conter datas como texto (dd/mm/aaaa) OU
+            números seriais do Excel (dias desde 1899-12-30) para datetime64[ns],
+            de forma resiliente (evita FloatingPointError).
+            """
+            import numpy as np
+            import pandas as pd
+        
+            # Garante Series
+            if not isinstance(ser, pd.Series):
+                ser = pd.Series(ser)
+        
+            # 1) Tenta parsear como texto (dd/mm/aaaa, etc.)
+            dt_text = pd.to_datetime(ser, dayfirst=True, errors="coerce")
+        
+            # 2) Tenta como serial do Excel, mas SOMENTE para números plausíveis
             num = pd.to_numeric(ser, errors="coerce")
-            dt1 = pd.to_datetime(ser, dayfirst=True, errors="coerce")
-            dt2 = pd.to_datetime(num, origin="1899-12-30", unit="D", errors="coerce")
-            return dt1.where(dt1.notna(), dt2)
+        
+            # máscara: numérico, finito e dentro de uma faixa plausível de dias do Excel
+            # (1 até 100000 cobre ~até ano 2173; ajuste se quiser mais curto)
+            mask = num.notna() & np.isfinite(num) & (num >= 1) & (num <= 100000)
+        
+            # Evita passar floats para o parser com unit="D" (que aciona np.round internamente).
+            # Forçamos inteiro por truncamento (ou use np.floor se preferir).
+            num_i = pd.Series(index=ser.index, dtype="Int64")
+            if mask.any():
+                num_i.loc[mask] = np.floor(num.loc[mask].astype(float)).astype("Int64")
+        
+            dt_excel = pd.Series(pd.NaT, index=ser.index, dtype="datetime64[ns]")
+            if mask.any():
+                dt_excel.loc[mask] = pd.to_datetime(
+                    num_i.loc[mask], origin="1899-12-30", unit="D", errors="coerce"
+                )
+        
+            # 3) Prioriza texto; onde NaT, usa Excel; resto fica NaT
+            return dt_text.where(dt_text.notna(), dt_excel)
+
     
         # === parser do Meio de Pagamento (mesmo da Aba Vendas)
         def _valor_meio_pagamento(ser: pd.Series) -> pd.Series:

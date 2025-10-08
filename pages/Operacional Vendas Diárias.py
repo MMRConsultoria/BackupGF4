@@ -1965,7 +1965,15 @@ with st.spinner("⏳ Processando..."):
     # Aba 6 - Comparativo Faturamento x Meio de Pagamento
     # =======================================
     aba6, = st.tabs(["📊 Comparativo Faturamento x Meio de Pagamento"])
-    
+        if "gc" not in locals():
+        # conexão com sheets (já padrão)
+        import gspread
+        from oauth2client.service_account import ServiceAccountCredentials
+        import json
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+        gc = gspread.authorize(credentials)
     with aba6:
         st.subheader("📊 Comparativo Faturamento x Meio de Pagamento (2025+)")
     

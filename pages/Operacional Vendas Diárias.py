@@ -1975,29 +1975,7 @@ with st.spinner("⏳ Processando..."):
         import numpy as np
         import streamlit as st
 
-        # DEBUG: mostra quem está chamando help()/st.help()/st.write(classe)
-        import builtins, inspect, traceback, streamlit as st
         
-        _old_help = builtins.help
-        def _debug_help(*a, **k):
-            st.error("help() chamado por:\n" + "".join(traceback.format_stack(limit=6)))
-            return None
-        builtins.help = _debug_help
-        
-        if hasattr(st, "help"):
-            _old_st_help = st.help
-            def _debug_st_help(*a, **k):
-                st.error("st.help() chamado por:\n" + "".join(traceback.format_stack(limit=6)))
-                return None
-            st.help = _debug_st_help
-        
-        _old_write = st.write
-        def _debug_write(*objs, **kw):
-            if any(isinstance(o, type) for o in objs):  # classe passada ao write
-                st.error("st.write(classe) chamado por:\n" + "".join(traceback.format_stack(limit=6)))
-                return None
-            return _old_write(*objs, **kw)
-        st.write = _debug_write
     
         st.subheader("📊 Auditoria Mensal — Sistema × Meio de Pagamento (Mês/Ano das abas)")
     

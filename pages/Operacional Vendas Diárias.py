@@ -2022,7 +2022,7 @@ with st.spinner("⏳ Processando..."):
             return pd.to_numeric(ser, errors="coerce")
     
         # ---------------- Conexão com Sheets ----------------
-        #try:
+        try:
             gc  # reaproveita se já existir
         except NameError:
             import gspread

@@ -1961,13 +1961,15 @@ with st.spinner("⏳ Processando..."):
             )
 
     # =======================================
+    # =======================================
     # Aba 6 - Comparativo Faturamento x Meio de Pagamento
     # =======================================
     aba6, = st.tabs(["📊 Comparativo Faturamento x Meio de Pagamento"])
     
     with aba6:
         try:
-            # ====== Conexão ======
+            st.subheader("📊 Comparativo Faturamento x Meio de Pagamento (2025+)")
+    
             planilha = gc.open("Vendas diarias")
             aba_fat = planilha.worksheet("Fat Sistema Externo")
             aba_meio = planilha.worksheet("Faturamento Meio Pagamento")
@@ -1975,110 +1977,151 @@ with st.spinner("⏳ Processando..."):
             df_fat = pd.DataFrame(aba_fat.get_all_records())
             df_meio = pd.DataFrame(aba_meio.get_all_records())
     
-            # ====== Padronização ======
+            # ============================
+            # 1️⃣ Padronização de colunas
+            # ============================
             df_fat.columns = df_fat.columns.str.strip().str.lower()
             df_meio.columns = df_meio.columns.str.strip().str.lower()
     
-            # Renomeia para uniformizar
-            df_fat = df_fat.rename(columns={
-                "valor (r$)": "valor",
-                "codigo everest": "codigo_everest"
-            })
-            df_meio = df_meio.rename(columns={
-                "fat.total": "valor_faturamento",
-                "valor": "valor_meio_pagamento",
-                "codigo everest": "codigo_everest"
-            })
+            # ---- tenta detectar a coluna de valor da aba Fat Sistema Externo ----
+            col_valor_fat = next(
+                (c for c in df_fat.columns if "valor" in c or "fat" in c),
+                None
+            )
+            if not col_valor_fat:
+                st.error("❌ Não encontrei coluna de valor em 'Fat Sistema Externo'.")
+                st.stop()
     
-            # ====== Tipos e Filtro ======
+            # ---- tenta detectar a coluna de valor da aba Faturamento Meio Pagamento ----
+            col_valor_meio = next(
+                (c for c in df_meio.columns if "valor" in c or "fat.total" in c or "fat total" in c),
+                None
+            )
+            if not col_valor_meio:
+                st.error("❌ Não encontrei coluna de valor em 'Faturamento Meio Pagamento'.")
+                st.stop()
+    
+            # ============================
+            # 2️⃣ Normaliza e converte tipos
+            # ============================
             for df in [df_fat, df_meio]:
-                df["ano"] = pd.to_numeric(df["ano"], errors="coerce")
-                df["mês"] = pd.to_numeric(df["mês"], errors="coerce")
+                if "ano" in df.columns:
+                    df["ano"] = pd.to_numeric(df["ano"], errors="coerce")
+                if "mês" in df.columns:
+                    df["mês"] = pd.to_numeric(df["mês"], errors="coerce")
+                elif "mes" in df.columns:
+                    df.rename(columns={"mes": "mês"}, inplace=True)
     
-            df_fat["valor"] = pd.to_numeric(df_fat["valor"], errors="coerce").fillna(0)
-            df_meio["valor_meio_pagamento"] = pd.to_numeric(df_meio["valor_meio_pagamento"], errors="coerce").fillna(0)
+            df_fat[col_valor_fat] = pd.to_numeric(df_fat[col_valor_fat], errors="coerce").fillna(0)
+            df_meio[col_valor_meio] = pd.to_numeric(df_meio[col_valor_meio], errors="coerce").fillna(0)
     
-            # Filtrar apenas 2025 em diante
+            # ============================
+            # 3️⃣ Filtro para 2025 em diante
+            # ============================
             df_fat = df_fat[df_fat["ano"] >= 2025]
             df_meio = df_meio[df_meio["ano"] >= 2025]
     
             if df_fat.empty or df_meio.empty:
                 st.warning("⚠️ Nenhum dado encontrado para o ano de 2025 em diante.")
-            else:
-                # ====== Agregação ======
-                fat_agr = df_fat.groupby(["mês", "ano", "sistema"], as_index=False)["valor"].sum()
-                meio_agr = df_meio.groupby(["mês", "ano", "sistema"], as_index=False)["valor_meio_pagamento"].sum()
+                st.stop()
     
-                # ====== Merge ======
-                df_comp = pd.merge(fat_agr, meio_agr, on=["mês", "ano", "sistema"], how="outer").fillna(0)
-                df_comp["diferença"] = df_comp["valor"] - df_comp["valor_meio_pagamento"]
-                df_comp["mês/ano"] = df_comp["mês"].astype(int).astype(str).str.zfill(2) + "/" + df_comp["ano"].astype(int).astype(str)
-                df_comp = df_comp.sort_values(["ano", "mês", "sistema"])
+            # ============================
+            # 4️⃣ Agregação
+            # ============================
+            if "sistema" not in df_fat.columns:
+                df_fat["sistema"] = "Desconhecido"
+            if "sistema" not in df_meio.columns:
+                df_meio["sistema"] = "Desconhecido"
     
-                # ====== Formatar ======
-                def brl(x): return f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                df_comp["Total Faturamento"] = df_comp["valor"].apply(brl)
-                df_comp["Total Meio de Pagamento"] = df_comp["valor_meio_pagamento"].apply(brl)
-                df_comp["Diferença"] = df_comp["diferença"].apply(brl)
-                df_comp = df_comp[["mês/ano", "sistema", "Total Faturamento", "Total Meio de Pagamento", "Diferença"]]
-                df_comp = df_comp.rename(columns={"mês/ano": "Mês/Ano", "sistema": "Sistema"})
+            fat_agr = (
+                df_fat.groupby(["mês", "ano", "sistema"], as_index=False)[col_valor_fat]
+                .sum()
+                .rename(columns={col_valor_fat: "total_faturamento"})
+            )
+            meio_agr = (
+                df_meio.groupby(["mês", "ano", "sistema"], as_index=False)[col_valor_meio]
+                .sum()
+                .rename(columns={col_valor_meio: "total_meio_pagamento"})
+            )
     
-                st.subheader("📊 Comparativo Faturamento x Meio de Pagamento (2025+)")
-                st.dataframe(df_comp, use_container_width=True, hide_index=True)
+            # ============================
+            # 5️⃣ Merge e cálculo diferença
+            # ============================
+            df_comp = pd.merge(fat_agr, meio_agr, on=["mês", "ano", "sistema"], how="outer").fillna(0)
+            df_comp["diferença"] = df_comp["total_faturamento"] - df_comp["total_meio_pagamento"]
+            df_comp["mês/ano"] = df_comp["mês"].astype(int).astype(str).str.zfill(2) + "/" + df_comp["ano"].astype(int).astype(str)
+            df_comp = df_comp.sort_values(["ano", "mês", "sistema"])
     
-                # ====== Totais Gerais ======
-                total_fat = df_fat["valor"].sum()
-                total_meio = df_meio["valor_meio_pagamento"].sum()
-                diff_total = total_fat - total_meio
-                st.markdown(f"""
-                <div style='margin-top:15px; font-size:16px;'>
-                💰 <b>Total Faturamento:</b> {brl(total_fat)}<br>
-                💳 <b>Total Meio de Pagamento:</b> {brl(total_meio)}<br>
-                ⚖️ <b>Diferença Total:</b> {brl(diff_total)}
-                </div>
-                """, unsafe_allow_html=True)
+            # ============================
+            # 6️⃣ Formatação visual
+            # ============================
+            def brl(x): return f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            df_comp["Total Faturamento"] = df_comp["total_faturamento"].apply(brl)
+            df_comp["Total Meio de Pagamento"] = df_comp["total_meio_pagamento"].apply(brl)
+            df_comp["Diferença"] = df_comp["diferença"].apply(brl)
     
-                # ====== Exportar Excel ======
-                from openpyxl import Workbook
-                from openpyxl.styles import Alignment, Font, PatternFill
+            df_comp = df_comp[["mês/ano", "sistema", "Total Faturamento", "Total Meio de Pagamento", "Diferença"]]
+            df_comp = df_comp.rename(columns={"mês/ano": "Mês/Ano", "sistema": "Sistema"})
     
-                def exportar_excel(df_comp):
-                    wb = Workbook()
-                    ws = wb.active
-                    ws.title = "Comparativo 2025+"
+            # ============================
+            # 7️⃣ Exibição
+            # ============================
+            st.dataframe(df_comp, use_container_width=True, hide_index=True)
     
-                    # Cabeçalho
-                    for j, col in enumerate(df_comp.columns, 1):
-                        c = ws.cell(row=1, column=j, value=col)
-                        c.font = Font(bold=True, color="FFFFFF")
-                        c.alignment = Alignment(horizontal="center")
-                        c.fill = PatternFill(start_color="0366D6", end_color="0366D6", fill_type="solid")
+            # Totais gerais
+            total_fat = fat_agr["total_faturamento"].sum()
+            total_meio = meio_agr["total_meio_pagamento"].sum()
+            diff_total = total_fat - total_meio
+            st.markdown(f"""
+            <div style='margin-top:15px; font-size:16px;'>
+            💰 <b>Total Faturamento:</b> {brl(total_fat)}<br>
+            💳 <b>Total Meio de Pagamento:</b> {brl(total_meio)}<br>
+            ⚖️ <b>Diferença Total:</b> {brl(diff_total)}
+            </div>
+            """, unsafe_allow_html=True)
     
-                    # Dados
-                    for i, row in enumerate(df_comp.itertuples(index=False), 2):
-                        for j, val in enumerate(row, 1):
-                            c = ws.cell(row=i, column=j, value=str(val))
-                            if "Diferença" in df_comp.columns[j-1] and "-" in str(val):
-                                c.fill = PatternFill(start_color="FF9999", end_color="FF9999", fill_type="solid")
+            # ============================
+            # 8️⃣ Exportar para Excel
+            # ============================
+            from openpyxl import Workbook
+            from openpyxl.styles import Alignment, Font, PatternFill
     
-                    for col in ws.columns:
-                        max_len = max(len(str(c.value or "")) for c in col)
-                        ws.column_dimensions[col[0].column_letter].width = max_len + 2
+            def exportar_excel(df_comp):
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "Comparativo 2025+"
     
-                    buffer = BytesIO()
-                    wb.save(buffer)
-                    buffer.seek(0)
-                    return buffer
+                # Cabeçalho
+                for j, col in enumerate(df_comp.columns, 1):
+                    c = ws.cell(row=1, column=j, value=col)
+                    c.font = Font(bold=True, color="FFFFFF")
+                    c.alignment = Alignment(horizontal="center")
+                    c.fill = PatternFill(start_color="0366D6", end_color="0366D6", fill_type="solid")
     
-                excel_bytes = exportar_excel(df_comp)
-                st.download_button(
-                    label="📥 Baixar Excel Comparativo",
-                    data=excel_bytes,
-                    file_name="Comparativo_Faturamento_x_MeioPagamento.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                # Dados
+                for i, row in enumerate(df_comp.itertuples(index=False), 2):
+                    for j, val in enumerate(row, 1):
+                        c = ws.cell(row=i, column=j, value=str(val))
+                        if "Diferença" in df_comp.columns[j-1] and "-" in str(val):
+                            c.fill = PatternFill(start_color="FF9999", end_color="FF9999", fill_type="solid")
+    
+                # Ajuste de largura
+                for col in ws.columns:
+                    max_len = max(len(str(c.value or "")) for c in col)
+                    ws.column_dimensions[col[0].column_letter].width = max_len + 2
+    
+                buf = BytesIO()
+                wb.save(buf)
+                buf.seek(0)
+                return buf
+    
+            excel_bytes = exportar_excel(df_comp)
+            st.download_button(
+                label="📥 Baixar Excel Comparativo",
+                data=excel_bytes,
+                file_name="Comparativo_Faturamento_x_MeioPagamento.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
     
         except Exception as e:
             st.error(f"❌ Erro ao processar o comparativo: {e}")
-
-    

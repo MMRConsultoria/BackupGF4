@@ -1967,161 +1967,154 @@ with st.spinner("⏳ Processando..."):
     aba6, = st.tabs(["📊 Comparativo Faturamento x Meio de Pagamento"])
     
     with aba6:
+        st.subheader("📊 Comparativo Faturamento x Meio de Pagamento (2025+)")
+    
+        import re
+        import pandas as pd
+        import numpy as np
+    
+        _MAP_MES = {
+            "jan":1,"fev":2,"mar":3,"abr":4,"mai":5,"jun":6,"jul":7,"ago":8,"set":9,"out":10,"nov":11,"dez":12,
+            "janeiro":1,"fevereiro":2,"março":3,"marco":3,"abril":4,"maio":5,"junho":6,"julho":7,"agosto":8,
+            "setembro":9,"outubro":10,"novembro":11,"dezembro":12,
+            "jan.":1,"feb":2,"feb.":2,"mar.":3,"apr":4,"apr.":4,"may":5,"jun.":6,"jul.":7,"aug":8,"aug.":8,
+            "sep":9,"sept":9,"sep.":9,"oct":10,"oct.":10,"nov.":11,"dec":12,"dec.":12
+        }
+    
+        def _month_to_num(x):
+            s = str(x or "").strip().lower()
+            if s in _MAP_MES: return _MAP_MES[s]
+            try:
+                n = int(float(s))
+                if 1 <= n <= 12: return n
+            except: pass
+            return None
+    
+        def _mk_messtr(m, a):
+            try:
+                m = int(m); a = int(a)
+                if 1 <= m <= 12:
+                    return f"{m:02d}/{a}"
+            except:
+                pass
+            return ""
+    
+        def _to_float_brl_ext(x):
+            s = str(x or "").strip()
+            s = re.sub(r"[^\d,.\-]", "", s)
+            if s == "": return float("nan")
+            if s.count(",") == 1 and s.count(".") >= 1:
+                s = s.replace(".", "").replace(",", ".")
+            elif s.count(",") == 1 and s.count(".") == 0:
+                s = s.replace(",", ".")
+            try:
+                return float(s)
+            except:
+                return float("nan")
+    
+        def _valor_meio_pagamento(ser: pd.Series) -> pd.Series:
+            ser = ser.astype(str)
+            ser = ser.str.replace("R$", "", regex=False)
+            ser = ser.str.replace("(", "-", regex=False).str.replace(")", "", regex=False)
+            ser = ser.str.replace(" ", "", regex=False)
+            ser = ser.str.replace(".", "", regex=False)
+            ser = ser.str.replace(",", ".", regex=False)
+            return pd.to_numeric(ser, errors="coerce")
+    
+        # ---------------- Conexão com Sheets ----------------
         try:
-            st.subheader("📊 Comparativo Faturamento x Meio de Pagamento (2025+)")
+            gc  # reaproveita se já existir
+        except NameError:
+            import gspread
+            from oauth2client.service_account import ServiceAccountCredentials
+            import json
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+            credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+            gc = gspread.authorize(credentials)
     
-            planilha = gc.open("Vendas diarias")
-            aba_fat = planilha.worksheet("Fat Sistema Externo")
-            aba_meio = planilha.worksheet("Faturamento Meio Pagamento")
+        sh = gc.open("Vendas diarias")
     
-            df_fat = pd.DataFrame(aba_fat.get_all_records())
-            df_meio = pd.DataFrame(aba_meio.get_all_records())
+        ws_ext = sh.worksheet("Fat Sistema Externo")
+        df_ext = pd.DataFrame(ws_ext.get_all_records())
     
-            # ============================
-            # 1️⃣ Padronização de colunas
-            # ============================
-            df_fat.columns = df_fat.columns.str.strip().str.lower()
-            df_meio.columns = df_meio.columns.str.strip().str.lower()
+        ws_mp = sh.worksheet("Faturamento Meio Pagamento")
+        df_mp = pd.DataFrame(ws_mp.get_all_records())
     
-            # ---- tenta detectar a coluna de valor da aba Fat Sistema Externo ----
-            col_valor_fat = next(
-                (c for c in df_fat.columns if "valor" in c or "fat" in c),
-                None
-            )
-            if not col_valor_fat:
-                st.error("❌ Não encontrei coluna de valor em 'Fat Sistema Externo'.")
-                st.stop()
+        # ---------------- Localização de colunas ----------------
+        def _ns(x): return str(x).strip().lower().replace(" ", "")
+        def _norm_key(x): return re.sub(r"[^a-z0-9]", "", str(x).lower())
     
-            # ---- tenta detectar a coluna de valor da aba Faturamento Meio Pagamento ----
-            col_valor_meio = next(
-                (c for c in df_meio.columns if "valor" in c or "fat.total" in c or "fat total" in c),
-                None
-            )
-            if not col_valor_meio:
-                st.error("❌ Não encontrei coluna de valor em 'Faturamento Meio Pagamento'.")
-                st.stop()
+        def pick_exact_column(cols, keys):
+            for k in keys:
+                for c in cols:
+                    if _norm_key(c) == _norm_key(k):
+                        return c
+            return None
     
-            # ============================
-            # 2️⃣ Normaliza e converte tipos
-            # ============================
-            for df in [df_fat, df_meio]:
-                if "ano" in df.columns:
-                    df["ano"] = pd.to_numeric(df["ano"], errors="coerce")
-                if "mês" in df.columns:
-                    df["mês"] = pd.to_numeric(df["mês"], errors="coerce")
-                elif "mes" in df.columns:
-                    df.rename(columns={"mes": "mês"}, inplace=True)
+        col_ext_sis = next((c for c in df_ext.columns if "sistema" in _ns(c)), None)
+        col_ext_mes = next((c for c in df_ext.columns if "mês" in _ns(c) or "mes" in _ns(c)), None)
+        col_ext_ano = next((c for c in df_ext.columns if "ano" in _ns(c)), None)
+        col_ext_val = next((c for c in df_ext.columns if "fat" in _ns(c) or "valor" in _ns(c)), None)
     
-            df_fat[col_valor_fat] = pd.to_numeric(df_fat[col_valor_fat], errors="coerce").fillna(0)
-            df_meio[col_valor_meio] = pd.to_numeric(df_meio[col_valor_meio], errors="coerce").fillna(0)
+        col_mp_sis = next((c for c in df_mp.columns if "sistema" in _ns(c)), None)
+        col_mp_mes = next((c for c in df_mp.columns if "mês" in _ns(c) or "mes" in _ns(c)), None)
+        col_mp_ano = next((c for c in df_mp.columns if "ano" in _ns(c)), None)
+        col_mp_val = next((c for c in df_mp.columns if "valor" in _ns(c)), None)
     
-            # ============================
-            # 3️⃣ Filtro para 2025 em diante
-            # ============================
-            df_fat = df_fat[df_fat["ano"] >= 2025]
-            df_meio = df_meio[df_meio["ano"] >= 2025]
+        # ---------------- Conversões ----------------
+        df_ext[col_ext_val] = df_ext[col_ext_val].map(_to_float_brl_ext)
+        df_mp[col_mp_val] = _valor_meio_pagamento(df_mp[col_mp_val])
     
-            if df_fat.empty or df_meio.empty:
-                st.warning("⚠️ Nenhum dado encontrado para o ano de 2025 em diante.")
-                st.stop()
+        df_ext["MesNum"] = df_ext[col_ext_mes].apply(_month_to_num)
+        df_mp["MesNum"] = df_mp[col_mp_mes].apply(_month_to_num)
+        df_ext["Ano"] = pd.to_numeric(df_ext[col_ext_ano], errors="coerce")
+        df_mp["Ano"] = pd.to_numeric(df_mp[col_mp_ano], errors="coerce")
     
-            # ============================
-            # 4️⃣ Agregação
-            # ============================
-            if "sistema" not in df_fat.columns:
-                df_fat["sistema"] = "Desconhecido"
-            if "sistema" not in df_meio.columns:
-                df_meio["sistema"] = "Desconhecido"
+        df_ext["Mês"] = df_ext.apply(lambda r: _mk_messtr(r["MesNum"], r["Ano"]), axis=1)
+        df_mp["Mês"] = df_mp.apply(lambda r: _mk_messtr(r["MesNum"], r["Ano"]), axis=1)
     
-            fat_agr = (
-                df_fat.groupby(["mês", "ano", "sistema"], as_index=False)[col_valor_fat]
-                .sum()
-                .rename(columns={col_valor_fat: "total_faturamento"})
-            )
-            meio_agr = (
-                df_meio.groupby(["mês", "ano", "sistema"], as_index=False)[col_valor_meio]
-                .sum()
-                .rename(columns={col_valor_meio: "total_meio_pagamento"})
-            )
+        # ---------------- Filtro 2025+ ----------------
+        df_ext = df_ext[df_ext["Ano"] >= 2025]
+        df_mp = df_mp[df_mp["Ano"] >= 2025]
     
-            # ============================
-            # 5️⃣ Merge e cálculo diferença
-            # ============================
-            df_comp = pd.merge(fat_agr, meio_agr, on=["mês", "ano", "sistema"], how="outer").fillna(0)
-            df_comp["diferença"] = df_comp["total_faturamento"] - df_comp["total_meio_pagamento"]
-            df_comp["mês/ano"] = df_comp["mês"].astype(int).astype(str).str.zfill(2) + "/" + df_comp["ano"].astype(int).astype(str)
-            df_comp = df_comp.sort_values(["ano", "mês", "sistema"])
+        # ---------------- Agrupamento ----------------
+        ext_grp = (
+            df_ext.groupby(["Mês", col_ext_sis], as_index=False)[col_ext_val]
+            .sum()
+            .rename(columns={col_ext_val: "Total_Faturamento"})
+        )
+        mp_grp = (
+            df_mp.groupby(["Mês", col_mp_sis], as_index=False)[col_mp_val]
+            .sum()
+            .rename(columns={col_mp_val: "Total_MeioPagamento"})
+        )
     
-            # ============================
-            # 6️⃣ Formatação visual
-            # ============================
-            def brl(x): return f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            df_comp["Total Faturamento"] = df_comp["total_faturamento"].apply(brl)
-            df_comp["Total Meio de Pagamento"] = df_comp["total_meio_pagamento"].apply(brl)
-            df_comp["Diferença"] = df_comp["diferença"].apply(brl)
+        resumo = pd.merge(ext_grp, mp_grp, left_on=["Mês", col_ext_sis], right_on=["Mês", col_mp_sis], how="outer")
+        resumo["Sistema"] = resumo[col_ext_sis].combine_first(resumo[col_mp_sis])
+        resumo = resumo[["Mês", "Sistema", "Total_Faturamento", "Total_MeioPagamento"]].fillna(0)
+        resumo["Diferença"] = resumo["Total_Faturamento"] - resumo["Total_MeioPagamento"]
     
-            df_comp = df_comp[["mês/ano", "sistema", "Total Faturamento", "Total Meio de Pagamento", "Diferença"]]
-            df_comp = df_comp.rename(columns={"mês/ano": "Mês/Ano", "sistema": "Sistema"})
+        resumo = resumo.sort_values(["Mês", "Sistema"]).reset_index(drop=True)
     
-            # ============================
-            # 7️⃣ Exibição
-            # ============================
-            st.dataframe(df_comp, use_container_width=True, hide_index=True)
+        # ---------------- Exibir ----------------
+        st.dataframe(
+            resumo.style.format({
+                "Total_Faturamento": "R$ {:,.2f}".format,
+                "Total_MeioPagamento": "R$ {:,.2f}".format,
+                "Diferença": "R$ {:,.2f}".format,
+            }),
+            use_container_width=True, hide_index=True
+        )
     
-            # Totais gerais
-            total_fat = fat_agr["total_faturamento"].sum()
-            total_meio = meio_agr["total_meio_pagamento"].sum()
-            diff_total = total_fat - total_meio
-            st.markdown(f"""
-            <div style='margin-top:15px; font-size:16px;'>
-            💰 <b>Total Faturamento:</b> {brl(total_fat)}<br>
-            💳 <b>Total Meio de Pagamento:</b> {brl(total_meio)}<br>
-            ⚖️ <b>Diferença Total:</b> {brl(diff_total)}
-            </div>
-            """, unsafe_allow_html=True)
-    
-            # ============================
-            # 8️⃣ Exportar para Excel
-            # ============================
-            from openpyxl import Workbook
-            from openpyxl.styles import Alignment, Font, PatternFill
-    
-            def exportar_excel(df_comp):
-                wb = Workbook()
-                ws = wb.active
-                ws.title = "Comparativo 2025+"
-    
-                # Cabeçalho
-                for j, col in enumerate(df_comp.columns, 1):
-                    c = ws.cell(row=1, column=j, value=col)
-                    c.font = Font(bold=True, color="FFFFFF")
-                    c.alignment = Alignment(horizontal="center")
-                    c.fill = PatternFill(start_color="0366D6", end_color="0366D6", fill_type="solid")
-    
-                # Dados
-                for i, row in enumerate(df_comp.itertuples(index=False), 2):
-                    for j, val in enumerate(row, 1):
-                        c = ws.cell(row=i, column=j, value=str(val))
-                        if "Diferença" in df_comp.columns[j-1] and "-" in str(val):
-                            c.fill = PatternFill(start_color="FF9999", end_color="FF9999", fill_type="solid")
-    
-                # Ajuste de largura
-                for col in ws.columns:
-                    max_len = max(len(str(c.value or "")) for c in col)
-                    ws.column_dimensions[col[0].column_letter].width = max_len + 2
-    
-                buf = BytesIO()
-                wb.save(buf)
-                buf.seek(0)
-                return buf
-    
-            excel_bytes = exportar_excel(df_comp)
-            st.download_button(
-                label="📥 Baixar Excel Comparativo",
-                data=excel_bytes,
-                file_name="Comparativo_Faturamento_x_MeioPagamento.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-    
-        except Exception as e:
-            st.error(f"❌ Erro ao processar o comparativo: {e}")
+        # ---------------- Totais ----------------
+        total_fat = resumo["Total_Faturamento"].sum()
+        total_mp = resumo["Total_MeioPagamento"].sum()
+        diff_total = total_fat - total_mp
+        st.markdown(f"""
+        <div style='margin-top:15px; font-size:16px;'>
+        💰 <b>Total Faturamento:</b> R$ {total_fat:,.2f}<br>
+        💳 <b>Total Meio de Pagamento:</b> R$ {total_mp:,.2f}<br>
+        ⚖️ <b>Diferença Total:</b> R$ {diff_total:,.2f}
+        </div>
+        """.replace(",", "X").replace(".", ",").replace("X", "."), unsafe_allow_html=True)

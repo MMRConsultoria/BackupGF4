@@ -1964,12 +1964,6 @@ with st.spinner("⏳ Processando..."):
     # =======================================
     # Aba 4 - Auditoria PDV x Faturamento Meio Pagamento
     # =======================================
-    # 📊 Auditoria Mensal — Sistema × Meio de Pagamento (Aba 5)
-    #   - Usa Mês/Ano das abas (sem normalizar por Data)
-    #   - Soma EXATAMENTE: Externo = "Fat. Total"; MP = "Valor (R$)"
-    #   - Mostra diferenças com checkbox e detalhe por loja
-    #   - Filtro padrão: ANO_ALVO = 2025 (troque para None para todos os anos)
-    
     with aba5:
         import re
         import json
@@ -1980,7 +1974,7 @@ with st.spinner("⏳ Processando..."):
         st.subheader("📊 Auditoria Mensal — Sistema × Meio de Pagamento (Mês/Ano das abas)")
     
         # ---------------- Config ----------------
-        ANO_ALVO = 2025      # troque para None para considerar todos os anos
+        ANO_MIN = 2025       # considera 2025 em diante (>= 2025)
         TOL = 0.01           # tolerância de 1 centavo
     
         # ---------------- Helpers ----------------
@@ -2045,7 +2039,7 @@ with st.spinner("⏳ Processando..."):
             dt2 = pd.to_datetime(num, origin="1899-12-30", unit="D", errors="coerce")
             return dt1.where(dt1.notna(), dt2)
     
-        # === CÁLCULO DO MEIO DE PAGAMENTO — mesmo padrão da Aba Vendas ===
+        # === parser do Meio de Pagamento (mesmo da Aba Vendas)
         def _valor_meio_pagamento(ser: pd.Series) -> pd.Series:
             ser = ser.astype(str)
             ser = ser.str.replace("R$", "", regex=False)
@@ -2055,7 +2049,7 @@ with st.spinner("⏳ Processando..."):
             ser = ser.str.replace(",", ".", regex=False)
             return pd.to_numeric(ser, errors="coerce")
     
-        # ✅ BRL formatador (padrão brasileiro): R$ 246.931,52
+        # ✅ BRL: R$ 246.931,52
         def _fmt_brl(v):
             try:
                 v = float(v)
@@ -2064,8 +2058,7 @@ with st.spinner("⏳ Processando..."):
             s = f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
             return f"R$ {s}"
     
-        # ---------------- Conexão (NÃO usa 'gc' visível) ----------------
-        # Usa get_gc() se existir; senão, autentica localmente em _gc e remove depois.
+        # ---------------- Conexão (sem vazar gc) ----------------
         if "get_gc" in globals() and callable(get_gc):
             _gc = get_gc()
         else:
@@ -2077,9 +2070,9 @@ with st.spinner("⏳ Processando..."):
             _gc = gspread.authorize(credentials)
     
         sh = _gc.open("Vendas diarias")
-        del _gc  # 🔒 remove o cliente da memória para não aparecer
+        del _gc  # remove o cliente para não aparecer
     
-        # ---------------- Leitura segura das abas ----------------
+        # ---------------- Leitura ----------------
         ws_ext = sh.worksheet("Fat Sistema Externo")
         vals_ext = ws_ext.get_all_values()
         if len(vals_ext) < 2:
@@ -2096,7 +2089,7 @@ with st.spinner("⏳ Processando..."):
         header_mp, rows_mp = vals_mp[0], vals_mp[1:]
         df_mp = pd.DataFrame(rows_mp, columns=[c.strip() for c in header_mp])
     
-        # ---------------- Localização de colunas ----------------
+        # ---------------- Colunas ----------------
         col_ext_data = next((c for c in df_ext.columns if _norm_key(c) == _norm_key("Data")), None)
         col_ext_cod  = next((c for c in df_ext.columns if "codigo" in _ns(c) and "everest" in _ns(c)), None)
         col_ext_sis  = next((c for c in df_ext.columns if _norm_key(c) == _norm_key("Sistema")), None)
@@ -2113,7 +2106,7 @@ with st.spinner("⏳ Processando..."):
         col_mp_sis  = next((c for c in df_mp.columns if _norm_key(c) == _norm_key("Sistema")), None)
         col_mp_mes  = next((c for c in df_mp.columns if _norm_key(c) in (_norm_key("Mês"), _norm_key("Mes"))), None)
         col_mp_ano  = next((c for c in df_mp.columns if _norm_key(c) == _norm_key("Ano")), None)
-        col_mp_val  = pick_exact_column(df_mp.columns, ["Valor (R$)", "Valor R$"])  # segue o cabeçalho da sua aba
+        col_mp_val  = pick_exact_column(df_mp.columns, ["Valor (R$)", "Valor R$"])
     
         if not all([col_mp_data, col_mp_cod, col_mp_val, col_mp_sis]):
             st.error("Em 'Faturamento Meio Pagamento' preciso de: Data, Código Everest, **Valor (R$)**, Sistema (ideal Mês/Ano).")
@@ -2135,8 +2128,8 @@ with st.spinner("⏳ Processando..."):
             ext["MesNum"] = ext["MesNum"].fillna(pd.to_datetime(ext["Data"], errors="coerce").dt.month)
         if ext["Ano"].isna().any():
             ext["Ano"] = ext["Ano"].fillna(pd.to_datetime(ext["Data"], errors="coerce").dt.year)
-        if ANO_ALVO is not None:
-            ext = ext[ext["Ano"] == ANO_ALVO].copy()
+        # 2025+
+        ext = ext[ext["Ano"] >= ANO_MIN].copy()
         ext["Mês"] = ext.apply(lambda r: _mk_messtr(r["MesNum"], r["Ano"]), axis=1)
     
         # ---------------- Preparar MEIO DE PAGAMENTO ----------------
@@ -2155,26 +2148,49 @@ with st.spinner("⏳ Processando..."):
             mp["MesNum"] = mp["MesNum"].fillna(pd.to_datetime(mp["Data"], errors="coerce").dt.month)
         if mp["Ano"].isna().any():
             mp["Ano"] = mp["Ano"].fillna(pd.to_datetime(mp["Data"], errors="coerce").dt.year)
-        if ANO_ALVO is not None:
-            mp = mp[mp["Ano"] == ANO_ALVO].copy()
+        # 2025+
+        mp = mp[mp["Ano"] >= ANO_MIN].copy()
         mp["Mês"] = mp.apply(lambda r: _mk_messtr(r["MesNum"], r["Ano"]), axis=1)
     
         # ---------------- RESUMO (Mês + Sistema) ----------------
         ext_mes = (ext.groupby(["Mês","Sistema"], as_index=False)["Fat.Total"].sum()
-                      .rename(columns={"Fat.Total":"Total_FatTotal"}))
+                      .rename(columns={"Fat.Total":"Total_Faturamento"}))
         mp_mes  = (mp .groupby(["Mês","Sistema"], as_index=False)["Valor_MP"].sum()
                       .rename(columns={"Valor_MP":"Total_MeioPagamento"}))
     
         resumo = ext_mes.merge(mp_mes, on=["Mês","Sistema"], how="outer")
-        resumo["Total_FatTotal"]      = resumo["Total_FatTotal"].fillna(0.0).round(2)
-        resumo["Total_MeioPagamento"] = resumo["Total_MeioPagamento"].fillna(0.0).round(2)
-        resumo["Diferença"]           = (resumo["Total_FatTotal"] - resumo["Total_MeioPagamento"]).round(2)
+        resumo[["Total_Faturamento","Total_MeioPagamento"]] = resumo[["Total_Faturamento","Total_MeioPagamento"]].fillna(0.0).round(2)
+        resumo["Diferença"] = (resumo["Total_Faturamento"] - resumo["Total_MeioPagamento"]).round(2)
     
-        # ---------------- Tabela simples (só diferenças) + checkbox ----------------
+        # 🔢 Ordenação por ano/mês
+        def _ordem_mes(mes_str):
+            try:
+                mm, aa = mes_str.split("/")
+                return int(aa)*100 + int(mm)
+            except:
+                return 0
+        resumo["__ordem__"] = resumo["Mês"].apply(_ordem_mes)
+        resumo = resumo.sort_values(["__ordem__","Sistema"]).reset_index(drop=True)
+    
+        # 🎯 Exibe RESUMO COMPLETO (agora o Colibri aparece mesmo sem diferenças)
+        resumo_view = resumo.copy()
+        resumo_view["Sistema"] = resumo_view["Sistema"].str.title()
+        st.markdown("**Resumo completo (2025+)**")
+        st.dataframe(
+            resumo_view[["Mês","Sistema","Total_Faturamento","Total_MeioPagamento","Diferença"]]
+              .style.format({
+                  "Total_Faturamento": _fmt_brl,
+                  "Total_MeioPagamento": _fmt_brl,
+                  "Diferença": _fmt_brl,
+              }),
+            use_container_width=True, hide_index=True
+        )
+    
+        # ---------------- Tabela de DIFERENÇAS + checkbox ----------------
         diff_mask = resumo["Diferença"].abs() > TOL
-        tabela_simples = (resumo.loc[diff_mask, ["Mês","Sistema","Total_FatTotal","Total_MeioPagamento","Diferença"]]
+        tabela_simples = (resumo.loc[diff_mask, ["Mês","Sistema","Total_Faturamento","Total_MeioPagamento","Diferença"]]
                           .assign(Tipo="Diferença")
-                          .loc[:, ["Tipo","Mês","Sistema","Total_FatTotal","Total_MeioPagamento","Diferença"]]
+                          .loc[:, ["Tipo","Mês","Sistema","Total_Faturamento","Total_MeioPagamento","Diferença"]]
                           .sort_values(["Mês","Sistema"])
                           .reset_index(drop=True))
     
@@ -2184,9 +2200,8 @@ with st.spinner("⏳ Processando..."):
         else:
             tabela_edit = tabela_simples.copy()
             tabela_edit.insert(0, "Selecionar", False)
-    
-            # 🔹 Pré-formata valores em BRL (como texto)
-            for col in ["Total_FatTotal", "Total_MeioPagamento", "Diferença"]:
+            # BRL como texto
+            for col in ["Total_Faturamento","Total_MeioPagamento","Diferença"]:
                 tabela_edit[col] = tabela_edit[col].apply(_fmt_brl)
     
             edited = st.data_editor(
@@ -2195,20 +2210,20 @@ with st.spinner("⏳ Processando..."):
                 use_container_width=True,
                 column_config={
                     "Selecionar": st.column_config.CheckboxColumn(help="Marque o(s) Mês/Sistema para ver o detalhe por loja"),
-                    "Total_FatTotal":      st.column_config.TextColumn(label="Total Faturamento (R$)"),
-                    "Total_MeioPagamento": st.column_config.TextColumn(label="Total Meio Pagamento (R$)"),
-                    "Diferença":           st.column_config.TextColumn(label="Diferença (R$)"),
+                    "Total_Faturamento":      st.column_config.TextColumn(label="Total Faturamento (R$)"),
+                    "Total_MeioPagamento":   st.column_config.TextColumn(label="Total Meio Pagamento (R$)"),
+                    "Diferença":             st.column_config.TextColumn(label="Diferença (R$)"),
                 },
             )
             selected_pairs = set(
                 zip(edited.loc[edited["Selecionar"] == True, "Mês"],
-                    edited.loc[edited["Selecionar"] == True, "Sistema"])
+                    edited.loc[edited["Selecionar"] == True, "Sistema"].str.upper())
             )
     
         # ---------------- Detalhe por loja (apenas dos selecionados) ----------------
         st.markdown("**Lojas com diferença (por Data), somente dos Mês/Sistema selecionados**")
         if not selected_pairs:
-            st.info("Marque ao menos um **Mês/Sistema** na tabela acima para ver o detalhe.")
+            st.info("Marque ao menos um **Mês/Sistema** acima para ver o detalhe.")
         else:
             try:
                 df_emp_map = df_empresa.copy()
@@ -2246,8 +2261,6 @@ with st.spinner("⏳ Processando..."):
             else:
                 det["Loja"] = det["Código Everest"].map(mapa_loja).fillna("")
                 det = det.sort_values(["Mês","Sistema","Data","Loja","Código Everest"]).reset_index(drop=True)
-    
-                # 🔹 Dataframe com BRL nas colunas de valores
                 st.dataframe(
                     det[["Mês","Sistema","Data","Loja","Código Everest","Ext","MP","Diferença"]]
                       .style.format({"Ext": _fmt_brl, "MP": _fmt_brl, "Diferença": _fmt_brl})

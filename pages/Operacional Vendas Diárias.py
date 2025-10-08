@@ -2078,16 +2078,15 @@ with st.spinner("⏳ Processando..."):
             ser = ser.str.replace(",", ".", regex=False)
             return pd.to_numeric(ser, errors="coerce")
     
-        # ---------- conexão com Google Sheets (sem try/except) ----------
-        if "get_gc" in globals() and callable(get_gc):
-            gc = get_gc()
-        else:
+        # ---------------- Conexão (reaproveita gc se já existe) ----------------
+        try:
+            gc  # já existe acima
+        except NameError:
             import gspread
             from oauth2client.service_account import ServiceAccountCredentials
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            credentials = ServiceAccountCredentials.from_json_keyfile_dict(
-                json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"]), scope
-            )
+            credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+            credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
             gc = gspread.authorize(credentials)
     
         sh = gc.open("Vendas diarias")

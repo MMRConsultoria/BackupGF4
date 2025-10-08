@@ -2023,7 +2023,7 @@ with st.spinner("⏳ Processando..."):
     
         # ---------------- Conexão com Sheets ----------------
         #try:
-        #    gc  # reaproveita se já existir
+            gc  # reaproveita se já existir
         except NameError:
             import gspread
             from oauth2client.service_account import ServiceAccountCredentials
@@ -2034,7 +2034,7 @@ with st.spinner("⏳ Processando..."):
             gc = gspread.authorize(credentials)
     
         sh = gc.open("Vendas diarias")
-    
+        _ = gc  # evita imprimir o objeto do cliente no Streamlit
         ws_ext = sh.worksheet("Fat Sistema Externo")
         df_ext = pd.DataFrame(ws_ext.get_all_records())
     

@@ -2243,7 +2243,7 @@ with st.spinner("⏳ Processando..."):
         # ---------------- Detalhe por loja (apenas dos selecionados) ----------------
         #st.markdown("**Lojas com diferença (por Data), somente dos Mês/Sistema selecionados**")
         if not selected_pairs:
-            st.info("")
+            st.info("Marque ao menos um Mês/Sistema na tabela para ver o detalhe.")
         else:
             try:
                 df_emp_map = df_empresa.copy()

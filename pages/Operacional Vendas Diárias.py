@@ -1959,6 +1959,7 @@ with st.spinner("⏳ Processando..."):
                 file_name="comparativo_everest_externo.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
     # =======================================
     # Aba 4 - Auditoria PDV x Faturamento Meio Pagamento
     # =======================================
@@ -1974,31 +1975,8 @@ with st.spinner("⏳ Processando..."):
         import json
         import pandas as pd
         import numpy as np
+        import unicodedata
         from io import BytesIO
-
-        # DEBUG: mostra quem está chamando help()/st.help()/st.write(classe)
-        import builtins, inspect, traceback, streamlit as st
-        
-        _old_help = builtins.help
-        def _debug_help(*a, **k):
-            st.error("help() chamado por:\n" + "".join(traceback.format_stack(limit=6)))
-            return None
-        builtins.help = _debug_help
-        
-        if hasattr(st, "help"):
-            _old_st_help = st.help
-            def _debug_st_help(*a, **k):
-                st.error("st.help() chamado por:\n" + "".join(traceback.format_stack(limit=6)))
-                return None
-            st.help = _debug_st_help
-        
-        _old_write = st.write
-        def _debug_write(*objs, **kw):
-            if any(isinstance(o, type) for o in objs):  # classe passada ao write
-                st.error("st.write(classe) chamado por:\n" + "".join(traceback.format_stack(limit=6)))
-                return None
-            return _old_write(*objs, **kw)
-        st.write = _debug_write
     
         st.subheader("📊 Auditoria Mensal — Sistema × Meio de Pagamento (Mês/Ano das abas)")
     
@@ -2078,19 +2056,20 @@ with st.spinner("⏳ Processando..."):
             ser = ser.str.replace(",", ".", regex=False)
             return pd.to_numeric(ser, errors="coerce")
     
-        # ---------------- Conexão (reaproveita gc se já existe) ----------------
-        try:
-            gc  # já existe acima
-        except NameError:
+        # ---------------- Conexão (NÃO usa 'gc' visível) ----------------
+        # Usa get_gc() se existir; senão, autentica localmente em _gc e deleta depois.
+        if "get_gc" in globals() and callable(get_gc):
+            _gc = get_gc()
+        else:
             import gspread
             from oauth2client.service_account import ServiceAccountCredentials
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
             credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
             credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
-            gc = gspread.authorize(credentials)
+            _gc = gspread.authorize(credentials)
     
-        sh = gc.open("Vendas diarias")
-        _ = gc  # evita imprimir o objeto do cliente
+        sh = _gc.open("Vendas diarias")
+        del _gc  # 🔒 remove o cliente da memória para não aparecer em nenhum lugar
     
         # ---------------- Leitura segura das abas ----------------
         ws_ext = sh.worksheet("Fat Sistema Externo")
@@ -2262,5 +2241,5 @@ with st.spinner("⏳ Processando..."):
                       .format_index(na_rep=""),
                     use_container_width=True, hide_index=True
                 )
- 
+
     

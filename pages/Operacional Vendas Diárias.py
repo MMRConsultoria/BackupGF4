@@ -142,7 +142,7 @@ with st.spinner("⏳ Processando..."):
     # ================================
     # 3. Separação em ABAS
     # ================================
-    aba1, aba3, aba4, aba5 = st.tabs(["📄 Upload e Processamento", "🔄 Atualizar Google Sheets","📊 Auditar integração Everest","📊 Auditar PDV"])
+    aba1, aba3, aba4, aba5 = st.tabs(["📄 Upload e Processamento", "🔄 Atualizar Google Sheets","📊 Auditar integração Everest","📊 Auditar Faturamento X Meio Pagamento"])
     # ---- Helper para saber qual aba está ativa ----
     def marcar_aba_ativa(tab_key: str):
         st.session_state["_aba_ativa"] = tab_key
@@ -1971,7 +1971,7 @@ with st.spinner("⏳ Processando..."):
         import numpy as np
         import unicodedata
     
-        st.subheader("📊 Auditoria Mensal — Sistema × Meio de Pagamento (Mês/Ano das abas)")
+        #st.subheader("📊 Auditoria Mensal — Sistema × Meio de Pagamento (Mês/Ano das abas)")
     
         # ---------------- Config ----------------
         ANO_MIN = 2025       # considera 2025 em diante (>= 2025)
@@ -2241,9 +2241,9 @@ with st.spinner("⏳ Processando..."):
         )
     
         # ---------------- Detalhe por loja (apenas dos selecionados) ----------------
-        st.markdown("**Lojas com diferença (por Data), somente dos Mês/Sistema selecionados**")
+        #st.markdown("**Lojas com diferença (por Data), somente dos Mês/Sistema selecionados**")
         if not selected_pairs:
-            st.info("Marque ao menos um **Mês/Sistema** na tabela para ver o detalhe.")
+            st.info("")
         else:
             try:
                 df_emp_map = df_empresa.copy()

@@ -1962,7 +1962,7 @@ with st.spinner("⏳ Processando..."):
 
     # =======================================
     # =======================================
-    # Aba 4 - Auditoria PDV x Faturamento Meio Pagamento
+    # Aba 5 - Auditoria PDV x Faturamento Meio Pagamento (tabela única)
     # =======================================
     with aba5:
         import re
@@ -2070,7 +2070,7 @@ with st.spinner("⏳ Processando..."):
             _gc = gspread.authorize(credentials)
     
         sh = _gc.open("Vendas diarias")
-        del _gc  # remove o cliente para não aparecer
+        del _gc  # remove o cliente para não “aparecer”
     
         # ---------------- Leitura ----------------
         ws_ext = sh.worksheet("Fat Sistema Externo")
@@ -2162,7 +2162,7 @@ with st.spinner("⏳ Processando..."):
         resumo[["Total_Faturamento","Total_MeioPagamento"]] = resumo[["Total_Faturamento","Total_MeioPagamento"]].fillna(0.0).round(2)
         resumo["Diferença"] = (resumo["Total_Faturamento"] - resumo["Total_MeioPagamento"]).round(2)
     
-        # 🔢 Ordenação por ano/mês
+        # 🔢 Ordena por ano/mês + sistema
         def _ordem_mes(mes_str):
             try:
                 mm, aa = mes_str.split("/")
@@ -2172,58 +2172,45 @@ with st.spinner("⏳ Processando..."):
         resumo["__ordem__"] = resumo["Mês"].apply(_ordem_mes)
         resumo = resumo.sort_values(["__ordem__","Sistema"]).reset_index(drop=True)
     
-        # 🎯 Exibe RESUMO COMPLETO (agora o Colibri aparece mesmo sem diferenças)
-        resumo_view = resumo.copy()
-        resumo_view["Sistema"] = resumo_view["Sistema"].str.title()
-        st.markdown("**Resumo completo (2025+)**")
-        st.dataframe(
-            resumo_view[["Mês","Sistema","Total_Faturamento","Total_MeioPagamento","Diferença"]]
-              .style.format({
-                  "Total_Faturamento": _fmt_brl,
-                  "Total_MeioPagamento": _fmt_brl,
-                  "Diferença": _fmt_brl,
-              }),
-            use_container_width=True, hide_index=True
+        # ----------- TABELA ÚNICA (com checkbox e BRL em texto) -----------
+        tabela = resumo[["Mês","Sistema","Total_Faturamento","Total_MeioPagamento","Diferença"]].copy()
+    
+        # Aparência do Sistema (title) apenas visual; manteremos UPPER nas comparações
+        tabela["Sistema_View"] = tabela["Sistema"].str.title()
+        # Formata BRL em texto
+        for col in ["Total_Faturamento","Total_MeioPagamento","Diferença"]:
+            tabela[col] = tabela[col].apply(_fmt_brl)
+    
+        # Coluna de seleção
+        tabela.insert(0, "Selecionar", False)
+    
+        # Ordena e organiza colunas para exibição
+        tabela_view = tabela[["Selecionar","Mês","Sistema_View","Total_Faturamento","Total_MeioPagamento","Diferença"]].rename(
+            columns={"Sistema_View":"Sistema"}
         )
     
-        # ---------------- Tabela de DIFERENÇAS + checkbox ----------------
-        diff_mask = resumo["Diferença"].abs() > TOL
-        tabela_simples = (resumo.loc[diff_mask, ["Mês","Sistema","Total_Faturamento","Total_MeioPagamento","Diferença"]]
-                          .assign(Tipo="Diferença")
-                          .loc[:, ["Tipo","Mês","Sistema","Total_Faturamento","Total_MeioPagamento","Diferença"]]
-                          .sort_values(["Mês","Sistema"])
-                          .reset_index(drop=True))
+        edited = st.data_editor(
+            tabela_view,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Selecionar": st.column_config.CheckboxColumn(help="Marque o(s) Mês/Sistema para ver o detalhe por loja"),
+                "Total_Faturamento":    st.column_config.TextColumn(label="Total Faturamento (R$)"),
+                "Total_MeioPagamento":  st.column_config.TextColumn(label="Total Meio Pagamento (R$)"),
+                "Diferença":            st.column_config.TextColumn(label="Diferença (R$)"),
+            },
+        )
     
-        if tabela_simples.empty:
-            st.success("✅ Sem diferenças no período.")
-            selected_pairs = set()
-        else:
-            tabela_edit = tabela_simples.copy()
-            tabela_edit.insert(0, "Selecionar", False)
-            # BRL como texto
-            for col in ["Total_Faturamento","Total_MeioPagamento","Diferença"]:
-                tabela_edit[col] = tabela_edit[col].apply(_fmt_brl)
-    
-            edited = st.data_editor(
-                tabela_edit,
-                hide_index=True,
-                use_container_width=True,
-                column_config={
-                    "Selecionar": st.column_config.CheckboxColumn(help="Marque o(s) Mês/Sistema para ver o detalhe por loja"),
-                    "Total_Faturamento":      st.column_config.TextColumn(label="Total Faturamento (R$)"),
-                    "Total_MeioPagamento":   st.column_config.TextColumn(label="Total Meio Pagamento (R$)"),
-                    "Diferença":             st.column_config.TextColumn(label="Diferença (R$)"),
-                },
-            )
-            selected_pairs = set(
-                zip(edited.loc[edited["Selecionar"] == True, "Mês"],
-                    edited.loc[edited["Selecionar"] == True, "Sistema"].str.upper())
-            )
+        # Pares selecionados (convertendo Sistema de volta para UPPER p/ casar com dados)
+        selected_pairs = set(
+            zip(edited.loc[edited["Selecionar"] == True, "Mês"],
+                edited.loc[edited["Selecionar"] == True, "Sistema"].astype(str).str.upper())
+        )
     
         # ---------------- Detalhe por loja (apenas dos selecionados) ----------------
         st.markdown("**Lojas com diferença (por Data), somente dos Mês/Sistema selecionados**")
         if not selected_pairs:
-            st.info("Marque ao menos um **Mês/Sistema** acima para ver o detalhe.")
+            st.info("Marque ao menos um **Mês/Sistema** na tabela para ver o detalhe.")
         else:
             try:
                 df_emp_map = df_empresa.copy()

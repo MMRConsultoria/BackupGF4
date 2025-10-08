@@ -1961,14 +1961,14 @@ with st.spinner("⏳ Processando..."):
             )
 
     # =======================================
+    # =======================================
     # Aba 4 - Auditoria PDV x Faturamento Meio Pagamento
     # =======================================
     # 📊 Auditoria Mensal — Sistema × Meio de Pagamento (Aba 5)
     #   - Usa Mês/Ano das abas (sem normalizar por Data)
-    #   - Soma EXATAMENTE: Externo = "Fat. Total"; MP = "Valor (R$)" (parser idêntico ao da Aba Vendas)
-    #   - Tabela simples com Totais e Diferença + checkbox por linha
-    #   - Detalhe (por Data+Código) só para os Mês/Sistema selecionados
-    #   - Filtro padrão: 2025 (mude ANO_ALVO = None para todos)
+    #   - Soma EXATAMENTE: Externo = "Fat. Total"; MP = "Valor (R$)"
+    #   - Mostra diferenças com checkbox e detalhe por loja
+    #   - Filtro padrão: ANO_ALVO = 2025 (troque para None para todos os anos)
     
     with aba5:
         import re
@@ -1976,12 +1976,11 @@ with st.spinner("⏳ Processando..."):
         import pandas as pd
         import numpy as np
         import unicodedata
-        from io import BytesIO
     
         st.subheader("📊 Auditoria Mensal — Sistema × Meio de Pagamento (Mês/Ano das abas)")
     
         # ---------------- Config ----------------
-        ANO_ALVO = 2025      # mude para None para considerar todos os anos
+        ANO_ALVO = 2025      # troque para None para considerar todos os anos
         TOL = 0.01           # tolerância de 1 centavo
     
         # ---------------- Helpers ----------------
@@ -2056,8 +2055,17 @@ with st.spinner("⏳ Processando..."):
             ser = ser.str.replace(",", ".", regex=False)
             return pd.to_numeric(ser, errors="coerce")
     
+        # ✅ BRL formatador (padrão brasileiro): R$ 246.931,52
+        def _fmt_brl(v):
+            try:
+                v = float(v)
+            except:
+                return "R$ 0,00"
+            s = f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            return f"R$ {s}"
+    
         # ---------------- Conexão (NÃO usa 'gc' visível) ----------------
-        # Usa get_gc() se existir; senão, autentica localmente em _gc e deleta depois.
+        # Usa get_gc() se existir; senão, autentica localmente em _gc e remove depois.
         if "get_gc" in globals() and callable(get_gc):
             _gc = get_gc()
         else:
@@ -2069,7 +2077,7 @@ with st.spinner("⏳ Processando..."):
             _gc = gspread.authorize(credentials)
     
         sh = _gc.open("Vendas diarias")
-        del _gc  # 🔒 remove o cliente da memória para não aparecer em nenhum lugar
+        del _gc  # 🔒 remove o cliente da memória para não aparecer
     
         # ---------------- Leitura segura das abas ----------------
         ws_ext = sh.worksheet("Fat Sistema Externo")
@@ -2136,7 +2144,7 @@ with st.spinner("⏳ Processando..."):
             "Data":           _parse_date_series(df_mp[col_mp_data]),
             "Código Everest": pd.to_numeric(df_mp[col_mp_cod], errors="coerce"),
             "Sistema":        df_mp[col_mp_sis].astype(str).str.strip().str.upper(),
-            "Valor_MP":       _valor_meio_pagamento(df_mp[col_mp_val]),  # <= cálculo idêntico ao da Aba Vendas
+            "Valor_MP":       _valor_meio_pagamento(df_mp[col_mp_val]),
             "MesNum":         df_mp[col_mp_mes] if col_mp_mes else None,
             "Ano":            df_mp[col_mp_ano] if col_mp_ano else None,
         })
@@ -2176,15 +2184,20 @@ with st.spinner("⏳ Processando..."):
         else:
             tabela_edit = tabela_simples.copy()
             tabela_edit.insert(0, "Selecionar", False)
+    
+            # 🔹 Pré-formata valores em BRL (como texto)
+            for col in ["Total_FatTotal", "Total_MeioPagamento", "Diferença"]:
+                tabela_edit[col] = tabela_edit[col].apply(_fmt_brl)
+    
             edited = st.data_editor(
                 tabela_edit,
                 hide_index=True,
                 use_container_width=True,
                 column_config={
                     "Selecionar": st.column_config.CheckboxColumn(help="Marque o(s) Mês/Sistema para ver o detalhe por loja"),
-                    "Total_FatTotal":      st.column_config.NumberColumn(format="R$ %.2f"),
-                    "Total_MeioPagamento": st.column_config.NumberColumn(format="R$ %.2f"),
-                    "Diferença":           st.column_config.NumberColumn(format="R$ %.2f"),
+                    "Total_FatTotal":      st.column_config.TextColumn(label="Total Faturamento (R$)"),
+                    "Total_MeioPagamento": st.column_config.TextColumn(label="Total Meio Pagamento (R$)"),
+                    "Diferença":           st.column_config.TextColumn(label="Diferença (R$)"),
                 },
             )
             selected_pairs = set(
@@ -2233,13 +2246,11 @@ with st.spinner("⏳ Processando..."):
             else:
                 det["Loja"] = det["Código Everest"].map(mapa_loja).fillna("")
                 det = det.sort_values(["Mês","Sistema","Data","Loja","Código Everest"]).reset_index(drop=True)
+    
+                # 🔹 Dataframe com BRL nas colunas de valores
                 st.dataframe(
                     det[["Mês","Sistema","Data","Loja","Código Everest","Ext","MP","Diferença"]]
-                      .style.format({"Ext": "R$ {:,.2f}".format,
-                                     "MP":  "R$ {:,.2f}".format,
-                                     "Diferença": "R$ {:,.2f}".format})
+                      .style.format({"Ext": _fmt_brl, "MP": _fmt_brl, "Diferença": _fmt_brl})
                       .format_index(na_rep=""),
                     use_container_width=True, hide_index=True
                 )
-
-    

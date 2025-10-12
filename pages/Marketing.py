@@ -9,7 +9,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 st.set_page_config(page_title="Lojas ↔ Tabela Empresa", layout="wide")
 
-# ----------------- helpers -----------------
+# ---------- helpers ----------
 def _strip_invis(s: str) -> str:
     return re.sub(r"[\u200B-\u200D\uFEFF]", "", str(s or ""))
 
@@ -21,10 +21,11 @@ def _ns(s: str) -> str:
 
 def _norm_loja(s: str) -> str:
     s = str(s or "").strip()
-    s = re.sub(r"^\s*\d+\s*[-–]?\s*", "", s)   # remove "123 - "
+    s = re.sub(r"^\s*\d+\s*[-–]?\s*", "", s)  # remove prefixo "123 - "
     return s.strip().lower()
 
-def localizar_linha_qtde_valor(df: pd.DataFrame) -> int | None:
+def localizar_linha_cabecalho_qtde_valor(df: pd.DataFrame) -> int | None:
+    """linha que contém Qtde e Valor (R$)"""
     lim = min(60, len(df))
     for r in range(lim):
         vals = [_ns(df.iat[r, c]) for c in range(df.shape[1])]
@@ -32,98 +33,84 @@ def localizar_linha_qtde_valor(df: pd.DataFrame) -> int | None:
             return r
     return None
 
+def _titulo_acima(df, r_sub, c):
+    """texto de título logo acima dos pares (Qtde/Valor)"""
+    for up in (1, 2, 3):
+        r = r_sub - up
+        if r < 0: break
+        raw = str(df.iat[r, c]).strip()
+        if raw and _ns(raw) not in ("qtde", "valor", "valor (r$)"):
+            return raw
+    return ""
+
 def mapear_lojas(df: pd.DataFrame, r_sub: int):
+    """varre pares (Qtde, Valor) e pega o título acima como nome da loja;
+       ignora cabeçalhos 'Total/Subtotal' que ficam no início"""
     header = [_ns(df.iat[r_sub, c]) for c in range(df.shape[1])]
-
-    def titulo_acima(c):
-        for up in (1, 2, 3):
-            r = r_sub - up
-            if r < 0: break
-            raw = str(df.iat[r, c]).strip()
-            if raw and _ns(raw) not in ("qtde", "valor", "valor (r$)"):
-                return raw
-        return ""
-
-    lojas = []
-    c = 0
+    lojas, c = [], 0
     while c < len(header):
         eh_qtde = header[c] == "qtde"
         eh_val  = c+1 < len(header) and ("valor" in header[c+1])
         if eh_qtde and eh_val:
-            loja_raw = titulo_acima(c) or titulo_acima(c+1)
-            if loja_raw:
-                lojas.append({
-                    "Loja (original)": loja_raw,
-                    "Loja_norm": _norm_loja(loja_raw),
-                })
+            nome = _titulo_acima(df, r_sub, c) or _titulo_acima(df, r_sub, c+1)
+            nome_norm = _ns(nome)
+            if nome and not re.search(r"\b(total|subtotal)\b", nome_norm):
+                lojas.append(_norm_loja(nome))
             c += 2
         else:
             c += 1
-    return lojas
+    # dedup mantendo a ordem
+    seen, out = set(), []
+    for l in lojas:
+        if l and l not in seen:
+            seen.add(l); out.append(l)
+    return out
 
-# ----------------- Auth Google robusto -----------------
+# ---------- Google Auth ----------
 def _get_service_account_dict() -> dict:
-    """
-    Lê as credenciais do Streamlit Secrets.
-    Aceita:
-      - st.secrets["GOOGLE_SERVICE_ACCOUNT"] (str JSON ou dict)
-      - st.secrets["gcp_service_account"]    (str JSON ou dict)
-    """
-    cand_keys = ["GOOGLE_SERVICE_ACCOUNT", "gcp_service_account"]
-    raw = None
-    for k in cand_keys:
+    for k in ("GOOGLE_SERVICE_ACCOUNT", "gcp_service_account"):
         if k in st.secrets:
             raw = st.secrets[k]
-            break
-    if raw is None:
-        raise RuntimeError(
-            "Credenciais não encontradas em st.secrets. "
-            "Defina 'GOOGLE_SERVICE_ACCOUNT' (ou 'gcp_service_account')."
-        )
-    if isinstance(raw, str):
-        return json.loads(raw)  # era string -> vira dict
-    if isinstance(raw, dict):
-        return raw
-    raise TypeError("Credenciais em formato inesperado (use string JSON ou dict).")
+            return json.loads(raw) if isinstance(raw, str) else raw
+    raise RuntimeError("Defina a credencial em st.secrets como GOOGLE_SERVICE_ACCOUNT (ou gcp_service_account).")
 
 def _get_gspread_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    keydict = _get_service_account_dict()
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(keydict, scope)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(_get_service_account_dict(), scope)
     return gspread.authorize(creds)
 
-# ----------------- Google Sheets: Tabela Empresa -----------------
 def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa") -> pd.DataFrame:
     gc = _get_gspread_client()
     ws = gc.open(nome_planilha).worksheet(aba)
     df = pd.DataFrame(ws.get_all_records())
-
-    # limpar cabeçalho e padronizar nomes
     df.columns = [_strip_invis(c).strip() for c in df.columns]
+
     ren = {}
     for c in df.columns:
         cn = _ns(c)
         if cn == "loja": ren[c] = "Loja"
         elif cn == "grupo": ren[c] = "Grupo"
         elif ("codigo" in cn and "everest" in cn and "grupo" not in cn): ren[c] = "Código Everest"
-        elif ("codigo" in cn and "grupo"  in cn and "everest" in cn):    ren[c] = "Código Grupo Everest"
+        elif ("codigo" in cn and "grupo" in cn and "everest" in cn):     ren[c] = "Código Grupo Everest"
     df = df.rename(columns=ren)
 
     if "Loja" in df.columns:
         df["Loja_norm"] = df["Loja"].astype(str).map(_norm_loja)
     else:
         df["Loja_norm"] = ""
-    return df[["Loja","Grupo","Código Everest","Código Grupo Everest","Loja_norm"]]
 
-# ----------------- UI -----------------
-st.title("🧭 Lojas do Excel + Tabela Empresa")
-st.caption("Extrai as lojas do relatório e cruza com **Vendas diarias → Tabela Empresa** para gerar Loja, Grupo, Código Everest e Código Grupo Everest.")
+    cols = ["Loja","Grupo","Código Everest","Código Grupo Everest","Loja_norm"]
+    return df[[c for c in cols if c in df.columns]]
+
+# ---------- UI ----------
+st.title("🧭 Lojas ↔ Tabela Empresa")
+st.caption("Extrai as lojas (ignorando a linha Total/Subtotal do início) e cruza com **Vendas diarias → Tabela Empresa**.")
 
 c1, c2 = st.columns(2)
 with c1:
-    nome_planilha = st.text_input("Planilha no Google Sheets", value="Vendas diarias")
+    nome_planilha = st.text_input("Planilha Google Sheets", value="Vendas diarias")
 with c2:
-    aba_empresa = st.text_input("Aba com Tabela Empresa", value="Tabela Empresa")
+    aba_empresa = st.text_input("Aba da Tabela Empresa", value="Tabela Empresa")
 
 uploaded = st.file_uploader("Envie o Excel (venda-de-materiais-por-grupo-e-loja.xlsx)", type=["xlsx","xls"])
 
@@ -136,47 +123,42 @@ if uploaded:
         st.error(f"Não consegui ler o Excel: {e}")
         st.stop()
 
-    # 1) localizar subcabeçalho Qtde/Valor e listar lojas
-    r_sub = localizar_linha_qtde_valor(df_raw)
+    r_sub = localizar_linha_cabecalho_qtde_valor(df_raw)
     if r_sub is None:
-        st.error("Não encontrei a linha com 'Qtde' e 'Valor(R$)' para identificar as lojas.")
+        st.error("Não encontrei a linha com 'Qtde' e 'Valor(R$)'.")
         st.stop()
-    lojas = pd.DataFrame(mapear_lojas(df_raw, r_sub)).drop_duplicates(subset=["Loja_norm"])
 
-    if lojas.empty:
+    lojas_norm = mapear_lojas(df_raw, r_sub)
+    if not lojas_norm:
         st.warning("Nenhuma loja identificada no arquivo.")
         st.stop()
 
-    # 2) carregar Tabela Empresa e cruzar
     try:
         df_emp = carregar_tabela_empresa(nome_planilha, aba_empresa)
     except Exception as e:
-        st.error(f"Erro ao carregar a Tabela Empresa do Google Sheets: {e}")
+        st.error(f"Erro ao carregar Tabela Empresa do Google Sheets: {e}")
         st.stop()
 
-    base = lojas.merge(df_emp, on="Loja_norm", how="left")
+    base = pd.DataFrame({"Loja_norm": lojas_norm})
+    out = base.merge(df_emp, on="Loja_norm", how="left")
 
-    # 3) organizar colunas exigidas
-    out = base[["Loja","Grupo","Código Everest","Código Grupo Everest"]].copy()
-    out.insert(0, "Loja (arquivo)", base["Loja (original)"])
+    # apenas o que você pediu (sem 'Loja (arquivo)')
+    resultado = out[["Loja","Grupo","Código Everest","Código Grupo Everest"]].copy()
 
-    st.subheader("Lojas encontradas + Tabela Empresa")
-    st.dataframe(out, use_container_width=True, hide_index=True)
-    st.info(f"Total de lojas no arquivo: {len(out)}")
+    st.subheader("Lojas encontradas")
+    st.dataframe(resultado, use_container_width=True, hide_index=True)
+    st.info(f"Total de lojas: {len(resultado)}")
 
-    # aviso de não mapeadas
-    nao_mapeadas = out[out["Código Everest"].isna() | (out["Código Everest"].astype(str).str.strip() == "")]
-    if not nao_mapeadas.empty:
+    faltando = resultado[resultado["Código Everest"].isna() | (resultado["Código Everest"].astype(str).str.strip() == "")]
+    if not faltando.empty:
         st.warning(
-            "Algumas lojas não possuem **Código Everest** cadastradas na Tabela Empresa: "
-            + ", ".join(sorted(nao_mapeadas["Loja (arquivo)"].astype(str).unique()))
+            "Lojas sem **Código Everest** na Tabela Empresa: " +
+            ", ".join(sorted(faltando["Loja"].dropna().astype(str).unique()))
         )
 
-    # 4) download com exatamente as 4 colunas requisitadas
-    to_save = out[["Loja","Grupo","Código Everest","Código Grupo Everest"]].copy()
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine="xlsxwriter") as wr:
-        to_save.to_excel(wr, index=False, sheet_name="Lojas")
+        resultado.to_excel(wr, index=False, sheet_name="Lojas")
     buf.seek(0)
     st.download_button(
         "⬇️ Baixar Excel (Loja / Grupo / Código Everest / Código Grupo Everest)",

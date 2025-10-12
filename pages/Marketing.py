@@ -11,7 +11,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 st.set_page_config(page_title="Materiais × Lojas (com Operação)", layout="wide")
 
 # ---------------- Helpers ----------------
-RE_SUBTOTAL = re.compile(r"\bsub\.?\s*total\b", re.I)   # cobre: "Sub.Total", "Subtotal"
+RE_SUBTOTAL = re.compile(r"\bsub\.?\s*total\b", re.I)   # "Sub.Total", "Subtotal", "Sub total"
 
 def _strip_invis(s: str) -> str:
     return re.sub(r"[\u200B-\u200D\uFEFF]", "", str(s or ""))
@@ -29,13 +29,21 @@ def _norm_loja(s: str) -> str:
     s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
     return s.strip().lower()
 
+def _is_empty_cell(x) -> bool:
+    if x is None:
+        return True
+    if isinstance(x, float) and np.isnan(x):
+        return True
+    s = str(x).strip()
+    return s == "" or s.lower() in ("nan", "none")
+
 # --- Google Sheets auth ---
 def _get_service_account_dict() -> dict:
     for k in ("GOOGLE_SERVICE_ACCOUNT", "gcp_service_account"):
         if k in st.secrets:
             raw = st.secrets[k]
             return json.loads(raw) if isinstance(raw, str) else raw
-    raise RuntimeError("Defina a credencial no st.secrets (GOOGLE_SERVICE_ACCOUNT ou gcp_service_account).")
+    raise RuntimeError("Defina st.secrets['GOOGLE_SERVICE_ACCOUNT'] (ou 'gcp_service_account').")
 
 def _get_gspread_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -67,8 +75,8 @@ def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa"
 # ---------------- Parser do Excel ----------------
 def detectar_blocos_loja(df_raw: pd.DataFrame):
     """
-    Lojas na linha 4 (index 3). Na linha 5 (index 4) estão 'Qtde' e 'Valor(R$)'.
-    Retorna blocos: [{'col_qtde':c, 'col_valor':c+1, 'loja_raw', 'loja_norm'}, ...]
+    Lojas na linha 4 (index 3). Linha 5 (index 4) contém 'Qtde' e 'Valor(R$)'.
+    Retorna: [{'col_qtde':c, 'col_valor':c+1, 'loja_raw', 'loja_norm'}, ...]
     """
     r_lojas = 3  # linha 4
     r_sub   = 4  # linha 5
@@ -84,21 +92,28 @@ def detectar_blocos_loja(df_raw: pd.DataFrame):
                 loja_norm = _norm_loja(loja_raw)
                 if loja_norm:
                     blocos.append({"col_qtde": c, "col_valor": c+1, "loja_raw": loja_raw, "loja_norm": loja_norm})
-            c += 2
+            c += 2  # anda 2; se houver colunas extras, o while segue testando até achar outro 'qtde'
         else:
             c += 1
     return blocos
 
 def _to_float_qtde(x):
+    if _is_empty_cell(x):
+        return np.nan
     try:
         return float(str(x).replace(",", "."))
     except:
         return pd.to_numeric(x, errors="coerce")
 
 def _to_float_brl(x):
-    s = str(x or "")
+    if _is_empty_cell(x):
+        return np.nan
+    s = str(x)
     s = s.replace("R$", "").replace("\u00A0","").replace(" ", "")
     s = s.replace(".", "").replace(",", ".")  # milhar→remove, decimal→.
+    # trata "(1.234,56)" -> negativo
+    if s.startswith("(") and s.endswith(")"):
+        s = "-" + s[1:-1]
     try:
         return float(s)
     except:
@@ -107,7 +122,7 @@ def _to_float_brl(x):
 def extrair_registros(df_raw: pd.DataFrame, blocos: list) -> pd.DataFrame:
     """
     A partir da linha 6 (index 5):
-      - Grupo do produto: coluna B (index 1) → mantém o último grupo visto (carry-forward)
+      - Grupo do produto: coluna B (index 1) → carry-forward
       - Ignora linhas cuja coluna B contém 'Sub.Total'/'Subtotal'
       - Código material:  coluna C (index 2)
       - Material:         coluna D (index 3)
@@ -117,31 +132,34 @@ def extrair_registros(df_raw: pd.DataFrame, blocos: list) -> pd.DataFrame:
     grupo_atual = None
 
     for r in range(5, df_raw.shape[0]):
-        cel_b = str(df_raw.iat[r, 1]).strip()
+        raw_b = df_raw.iat[r, 1] if 1 < df_raw.shape[1] else None
+        cel_b = "" if _is_empty_cell(raw_b) else str(raw_b).strip()
         cel_b_ns = _ns(cel_b)
 
-        # se veio um novo grupo explícito (e não é Sub.Total), atualiza e pula a linha (é cabeçalho de grupo)
-        if cel_b and not RE_SUBTOTAL.search(cel_b_ns):
-            grupo_atual = cel_b
-            # esta linha costuma ser só cabeçalho de grupo; segue para próxima
-            continue
-
-        # se for Sub.Total, só encerra o grupo (sem processar item)
+        # Sub.Total encerra grupo
         if cel_b and RE_SUBTOTAL.search(cel_b_ns):
             grupo_atual = None
             continue
 
-        # linhas de item: usam o grupo_atual
+        # Linha com novo Grupo (texto em B, não é subtotal)
+        if cel_b and not RE_SUBTOTAL.search(cel_b_ns):
+            grupo_atual = cel_b
+            # esta linha é de cabeçalho do grupo → não processa itens
+            continue
+
+        # Linhas de item: precisam ter grupo vigente
         if not grupo_atual:
-            # sem grupo vigente, não há item válido
             continue
 
-        cod_mat = df_raw.iat[r, 2]
-        mat     = df_raw.iat[r, 3]
+        # Colunas C (código) e D (material)
+        cod_mat = df_raw.iat[r, 2] if 2 < df_raw.shape[1] else ""
+        mat     = df_raw.iat[r, 3] if 3 < df_raw.shape[1] else ""
 
-        # material vazio? pula
-        if (str(mat).strip() == "") and (str(cod_mat).strip() == ""):
+        if _is_empty_cell(cod_mat) and _is_empty_cell(mat):
             continue
+
+        cod_mat = "" if _is_empty_cell(cod_mat) else str(cod_mat).strip()
+        mat     = "" if _is_empty_cell(mat) else str(mat).strip()
 
         for b in blocos:
             qtde_raw  = df_raw.iat[r, b["col_qtde"]]
@@ -150,15 +168,14 @@ def extrair_registros(df_raw: pd.DataFrame, blocos: list) -> pd.DataFrame:
             qtde_num  = _to_float_qtde(qtde_raw)
             valor_num = _to_float_brl(valor_raw)
 
-            # regra: só entra se Valor > 0
             if pd.isna(valor_num) or float(valor_num) <= 0:
                 continue
 
             registros.append({
                 "Loja_norm": b["loja_norm"],
                 "Grupo do Produto": str(grupo_atual).strip(),
-                "Código Material": str(cod_mat).strip(),
-                "Material": str(mat).strip(),
+                "Código Material": cod_mat,
+                "Material": mat,
                 "Qtde": float(qtde_num) if pd.notna(qtde_num) else np.nan,
                 "Valor (R$)": float(valor_num),
             })
@@ -167,7 +184,7 @@ def extrair_registros(df_raw: pd.DataFrame, blocos: list) -> pd.DataFrame:
 
 # ---------------- UI ----------------
 st.title("📦 Materiais por Loja — com Operação (Tabela Empresa)")
-st.caption("Upload do Excel (lojas na linha 4; cabeçalho linha 5). Ignora linhas 'Sub.Total/Subtotal' e itens sem valor (> 0).")
+st.caption("Upload do Excel (lojas na linha 4; cabeçalho na linha 5). Ignora 'Sub.Total/Subtotal' e itens com Valor = 0.")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -178,7 +195,6 @@ with col2:
 uploaded = st.file_uploader("Envie o Excel", type=["xlsx","xls","xlsm"])
 
 if uploaded:
-    # 1) Lê o Excel sem header
     try:
         df_raw = pd.read_excel(uploaded, sheet_name=0, header=None, dtype=object)
         for c in range(df_raw.shape[1]):
@@ -187,28 +203,31 @@ if uploaded:
         st.error(f"Não consegui ler o Excel: {e}")
         st.stop()
 
-    # 2) Detecta blocos de lojas (Qtde/Valor)
+    debug = st.checkbox("Mostrar debug de cabeçalho/lojas", value=False)
     blocos = detectar_blocos_loja(df_raw)
+    if debug:
+        st.write("Blocos detectados (Qtde/Valor por loja):", blocos)
+        st.dataframe(df_raw.head(15))
+
     if not blocos:
         st.error("Não encontrei pares 'Qtde'/'Valor(R$)' na linha 5.")
         st.stop()
 
-    # 3) Extrai itens (carry-forward do Grupo; ignora Sub.Total; só Valor > 0)
     df_itens = extrair_registros(df_raw, blocos)
     if df_itens.empty:
-        st.warning("Nenhum item elegível (com Valor > 0) foi encontrado.")
+        st.warning("Nenhum item elegível (Valor > 0) encontrado. Ligue o debug acima e me envie um print da linha 4/5 + 2 linhas de itens.")
         st.stop()
 
-    # 4) Carrega Tabela Empresa e cruza
+    # Carrega Tabela Empresa e cruza
     try:
         df_emp = carregar_tabela_empresa(nome_planilha, aba_empresa)
     except Exception as e:
-        st.error(f"Erro ao carregar Tabela Empresa do Google Sheets: {e}")
+        st.error(f"Erro ao carregar Tabela Empresa: {e}")
         st.stop()
 
     df_final = df_itens.merge(df_emp, on="Loja_norm", how="left")
 
-    # 5) Seleção/ordem final
+    # Seleção final
     cols_final = [
         "Operação", "Loja", "Código Everest", "Código Grupo Everest",
         "Grupo do Produto", "Código Material", "Material", "Qtde", "Valor (R$)"
@@ -218,7 +237,6 @@ if uploaded:
             df_final[c] = np.nan
     df_final = df_final[cols_final]
 
-    # 6) Exibir + baixar
     st.subheader("Prévia")
     st.dataframe(df_final.head(200), use_container_width=True, hide_index=True)
     st.info(f"Linhas: {len(df_final):,}".replace(",", "."))
@@ -227,7 +245,7 @@ if uploaded:
     if not faltando.empty:
         st.warning(
             "Algumas lojas não bateram com a Tabela Empresa. "
-            "Atualize a aba e reenvie. Exemplos: "
+            "Atualize a aba e reenvie. Ex.: "
             + ", ".join(sorted(faltando["Loja"].dropna().astype(str).unique())[:10])
         )
 

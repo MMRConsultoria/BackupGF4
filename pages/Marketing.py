@@ -1,8 +1,7 @@
 # pages/Importar_Lojas_TabelaEmpresa.py
 import streamlit as st
 import pandas as pd
-import numpy as np
-import re, unicodedata
+import re, unicodedata, json
 from io import BytesIO
 
 import gspread
@@ -62,11 +61,40 @@ def mapear_lojas(df: pd.DataFrame, r_sub: int):
             c += 1
     return lojas
 
+# ----------------- Auth Google robusto -----------------
+def _get_service_account_dict() -> dict:
+    """
+    Lê as credenciais do Streamlit Secrets.
+    Aceita:
+      - st.secrets["GOOGLE_SERVICE_ACCOUNT"] (str JSON ou dict)
+      - st.secrets["gcp_service_account"]    (str JSON ou dict)
+    """
+    cand_keys = ["GOOGLE_SERVICE_ACCOUNT", "gcp_service_account"]
+    raw = None
+    for k in cand_keys:
+        if k in st.secrets:
+            raw = st.secrets[k]
+            break
+    if raw is None:
+        raise RuntimeError(
+            "Credenciais não encontradas em st.secrets. "
+            "Defina 'GOOGLE_SERVICE_ACCOUNT' (ou 'gcp_service_account')."
+        )
+    if isinstance(raw, str):
+        return json.loads(raw)  # era string -> vira dict
+    if isinstance(raw, dict):
+        return raw
+    raise TypeError("Credenciais em formato inesperado (use string JSON ou dict).")
+
+def _get_gspread_client():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    keydict = _get_service_account_dict()
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(keydict, scope)
+    return gspread.authorize(creds)
+
 # ----------------- Google Sheets: Tabela Empresa -----------------
 def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa") -> pd.DataFrame:
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["GOOGLE_SERVICE_ACCOUNT"], scope)
-    gc = gspread.authorize(creds)
+    gc = _get_gspread_client()
     ws = gc.open(nome_planilha).worksheet(aba)
     df = pd.DataFrame(ws.get_all_records())
 
@@ -81,7 +109,6 @@ def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa"
         elif ("codigo" in cn and "grupo"  in cn and "everest" in cn):    ren[c] = "Código Grupo Everest"
     df = df.rename(columns=ren)
 
-    # chave normalizada
     if "Loja" in df.columns:
         df["Loja_norm"] = df["Loja"].astype(str).map(_norm_loja)
     else:
@@ -121,7 +148,12 @@ if uploaded:
         st.stop()
 
     # 2) carregar Tabela Empresa e cruzar
-    df_emp = carregar_tabela_empresa(nome_planilha, aba_empresa)
+    try:
+        df_emp = carregar_tabela_empresa(nome_planilha, aba_empresa)
+    except Exception as e:
+        st.error(f"Erro ao carregar a Tabela Empresa do Google Sheets: {e}")
+        st.stop()
+
     base = lojas.merge(df_emp, on="Loja_norm", how="left")
 
     # 3) organizar colunas exigidas
@@ -136,7 +168,7 @@ if uploaded:
     nao_mapeadas = out[out["Código Everest"].isna() | (out["Código Everest"].astype(str).str.strip() == "")]
     if not nao_mapeadas.empty:
         st.warning(
-            "Algumas lojas não possuem **Código Everest** cadastrado na Tabela Empresa: "
+            "Algumas lojas não possuem **Código Everest** cadastradas na Tabela Empresa: "
             + ", ".join(sorted(nao_mapeadas["Loja (arquivo)"].astype(str).unique()))
         )
 

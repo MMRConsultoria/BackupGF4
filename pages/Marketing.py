@@ -1,78 +1,40 @@
-# pages/Importar_Lojas_TabelaEmpresa.py
+# pages/Importar_Materiais_por_Loja.py
 import streamlit as st
 import pandas as pd
+import numpy as np
 import re, unicodedata, json
 from io import BytesIO
 
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-st.set_page_config(page_title="Lojas ↔ Tabela Empresa", layout="wide")
+st.set_page_config(page_title="Materiais × Lojas (com Operação)", layout="wide")
 
-# ---------- helpers ----------
+# ---------------- Helpers ----------------
 def _strip_invis(s: str) -> str:
     return re.sub(r"[\u200B-\u200D\uFEFF]", "", str(s or ""))
 
 def _ns(s: str) -> str:
     s = str(s or "").strip().lower()
     s = unicodedata.normalize("NFD", s)
-    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
     return re.sub(r"\s+", " ", s)
 
 def _norm_loja(s: str) -> str:
+    # remove prefixo "123 - " e normaliza
     s = str(s or "").strip()
-    s = re.sub(r"^\s*\d+\s*[-–]?\s*", "", s)  # remove prefixo "123 - "
+    s = re.sub(r"^\s*\d+\s*[-–]?\s*", "", s)
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
     return s.strip().lower()
 
-def localizar_linha_cabecalho_qtde_valor(df: pd.DataFrame) -> int | None:
-    """linha que contém Qtde e Valor (R$)"""
-    lim = min(60, len(df))
-    for r in range(lim):
-        vals = [_ns(df.iat[r, c]) for c in range(df.shape[1])]
-        if "qtde" in vals and any("valor" in v for v in vals):
-            return r
-    return None
-
-def _titulo_acima(df, r_sub, c):
-    """texto de título logo acima dos pares (Qtde/Valor)"""
-    for up in (1, 2, 3):
-        r = r_sub - up
-        if r < 0: break
-        raw = str(df.iat[r, c]).strip()
-        if raw and _ns(raw) not in ("qtde", "valor", "valor (r$)"):
-            return raw
-    return ""
-
-def mapear_lojas(df: pd.DataFrame, r_sub: int):
-    """varre pares (Qtde, Valor) e pega o título acima como nome da loja;
-       ignora cabeçalhos 'Total/Subtotal' que ficam no início"""
-    header = [_ns(df.iat[r_sub, c]) for c in range(df.shape[1])]
-    lojas, c = [], 0
-    while c < len(header):
-        eh_qtde = header[c] == "qtde"
-        eh_val  = c+1 < len(header) and ("valor" in header[c+1])
-        if eh_qtde and eh_val:
-            nome = _titulo_acima(df, r_sub, c) or _titulo_acima(df, r_sub, c+1)
-            nome_norm = _ns(nome)
-            if nome and not re.search(r"\b(total|subtotal)\b", nome_norm):
-                lojas.append(_norm_loja(nome))
-            c += 2
-        else:
-            c += 1
-    # dedup mantendo a ordem
-    seen, out = set(), []
-    for l in lojas:
-        if l and l not in seen:
-            seen.add(l); out.append(l)
-    return out
-
-# ---------- Google Auth ----------
+# --- Google Sheets auth (lê de st.secrets) ---
 def _get_service_account_dict() -> dict:
     for k in ("GOOGLE_SERVICE_ACCOUNT", "gcp_service_account"):
         if k in st.secrets:
             raw = st.secrets[k]
             return json.loads(raw) if isinstance(raw, str) else raw
-    raise RuntimeError("Defina a credencial em st.secrets como GOOGLE_SERVICE_ACCOUNT (ou gcp_service_account).")
+    raise RuntimeError("Defina a credencial no st.secrets (GOOGLE_SERVICE_ACCOUNT ou gcp_service_account).")
 
 def _get_gspread_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -89,32 +51,104 @@ def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa"
     for c in df.columns:
         cn = _ns(c)
         if cn == "loja": ren[c] = "Loja"
-        elif cn == "grupo": ren[c] = "Grupo"
+        elif cn == "grupo": ren[c] = "Operação"         # <- já renomeio para Operação
         elif ("codigo" in cn and "everest" in cn and "grupo" not in cn): ren[c] = "Código Everest"
         elif ("codigo" in cn and "grupo" in cn and "everest" in cn):     ren[c] = "Código Grupo Everest"
     df = df.rename(columns=ren)
+    if "Loja" not in df.columns:
+        df["Loja"] = ""
+    df["Loja_norm"] = df["Loja"].astype(str).map(_norm_loja)
+    return df[["Loja","Loja_norm","Operação"]]
 
-    if "Loja" in df.columns:
-        df["Loja_norm"] = df["Loja"].astype(str).map(_norm_loja)
-    else:
-        df["Loja_norm"] = ""
+# ---------------- Parser do Excel ----------------
+def detectar_blocos_loja(df_raw: pd.DataFrame):
+    """
+    Lojas na linha 4 (index 3). Na linha 5 (index 4) ficam 'Qtde' e 'Valor(R$)'.
+    Retorna lista de blocos: [{'col_qtde':c, 'col_valor':c+1, 'loja_raw': ... , 'loja_norm': ...}, ...]
+    """
+    r_lojas = 3  # linha 4
+    r_sub    = 4  # linha 5
+    header_row = [_ns(df_raw.iat[r_sub, c]) for c in range(df_raw.shape[1])]
+    blocos = []
+    c = 0
+    while c < len(header_row):
+        eh_qtde = header_row[c] == "qtde"
+        eh_val  = (c+1 < len(header_row)) and ("valor" in header_row[c+1])
+        if eh_qtde and eh_val:
+            loja_raw = str(df_raw.iat[r_lojas, c]).strip() or str(df_raw.iat[r_lojas, c+1]).strip()
+            if loja_raw:
+                loja_norm = _norm_loja(loja_raw)
+                if loja_norm and not re.search(r"\b(total|subtotal)\b", _ns(loja_raw)):
+                    blocos.append({"col_qtde": c, "col_valor": c+1, "loja_raw": loja_raw, "loja_norm": loja_norm})
+            c += 2
+        else:
+            c += 1
+    return blocos
 
-    cols = ["Loja","Grupo","Código Everest","Código Grupo Everest","Loja_norm"]
-    return df[[c for c in cols if c in df.columns]]
+def extrair_registros(df_raw: pd.DataFrame, blocos: list) -> pd.DataFrame:
+    """
+    A partir da linha 6 (index 5):
+      - Grupo do produto: coluna B (index 1)
+      - Código material:  coluna C (index 2)
+      - Material:         coluna D (index 3)
+      - Para cada bloco (loja): Qtde/Valor nas colunas do bloco
+    Ignora linhas cuja coluna B contenha 'total' ou 'subtotal'.
+    """
+    registros = []
+    for r in range(5, df_raw.shape[0]):
+        grupo_prod = str(df_raw.iat[r, 1]).strip()
+        if not grupo_prod:
+            # linha vazia — pode pular
+            continue
+        if re.search(r"\b(total|subtotal)\b", _ns(grupo_prod)):
+            # linha de total/subtotal (fim de grupo) — ignora
+            continue
+        cod_mat = df_raw.iat[r, 2]
+        mat     = df_raw.iat[r, 3]
 
-# ---------- UI ----------
-st.title("🧭 Lojas ↔ Tabela Empresa")
-st.caption("Extrai as lojas (ignorando a linha Total/Subtotal do início) e cruza com **Vendas diarias → Tabela Empresa**.")
+        for b in blocos:
+            qtde  = df_raw.iat[r, b["col_qtde"]]
+            valor = df_raw.iat[r, b["col_valor"]]
 
-c1, c2 = st.columns(2)
-with c1:
-    nome_planilha = st.text_input("Planilha Google Sheets", value="Vendas diarias")
-with c2:
+            # considera só quando houver quantidade ou valor
+            if (pd.isna(qtde) or str(qtde).strip() == "") and (pd.isna(valor) or str(valor).strip() == ""):
+                continue
+
+            try:
+                qtde_num = float(str(qtde).replace(",", "."))
+            except:
+                qtde_num = pd.to_numeric(qtde, errors="coerce")
+            try:
+                valor_num = float(
+                    str(valor).replace("R$", "").replace(".", "").replace(",", ".").strip()
+                )
+            except:
+                valor_num = pd.to_numeric(valor, errors="coerce")
+
+            registros.append({
+                "Loja_norm": b["loja_norm"],
+                "Grupo do Produto": grupo_prod,
+                "Código Material": str(cod_mat).strip(),
+                "Material": str(mat).strip(),
+                "Qtde": float(qtde_num) if pd.notna(qtde_num) else np.nan,
+                "Valor (R$)": float(valor_num) if pd.notna(valor_num) else np.nan,
+            })
+    return pd.DataFrame(registros)
+
+# ---------------- UI ----------------
+st.title("📦 Materiais por Loja — com Operação (Tabela Empresa)")
+st.caption("Lê o Excel (lojas na linha 4; Qtde/Valor na linha 5) e cruza com a Tabela Empresa para trazer **Operação** e **Loja** (oficial).")
+
+col1, col2 = st.columns(2)
+with col1:
+    nome_planilha = st.text_input("Nome da planilha no Google Sheets", value="Vendas diarias")
+with col2:
     aba_empresa = st.text_input("Aba da Tabela Empresa", value="Tabela Empresa")
 
-uploaded = st.file_uploader("Envie o Excel (venda-de-materiais-por-grupo-e-loja.xlsx)", type=["xlsx","xls"])
+uploaded = st.file_uploader("Envie o Excel", type=["xlsx","xls","xlsm"])
 
 if uploaded:
+    # 1) Lê o Excel sem header
     try:
         df_raw = pd.read_excel(uploaded, sheet_name=0, header=None, dtype=object)
         for c in range(df_raw.shape[1]):
@@ -123,47 +157,56 @@ if uploaded:
         st.error(f"Não consegui ler o Excel: {e}")
         st.stop()
 
-    r_sub = localizar_linha_cabecalho_qtde_valor(df_raw)
-    if r_sub is None:
-        st.error("Não encontrei a linha com 'Qtde' e 'Valor(R$)'.")
+    # 2) Detecta blocos de lojas
+    blocos = detectar_blocos_loja(df_raw)
+    if not blocos:
+        st.error("Não encontrei pares 'Qtde'/'Valor(R$)' na linha 5.")
         st.stop()
 
-    lojas_norm = mapear_lojas(df_raw, r_sub)
-    if not lojas_norm:
-        st.warning("Nenhuma loja identificada no arquivo.")
+    # 3) Extrai os registros (uma linha por material/loja com Qtde/Valor)
+    df_itens = extrair_registros(df_raw, blocos)
+    if df_itens.empty:
+        st.warning("Nenhum item com Qtde/Valor encontrado.")
         st.stop()
 
+    # 4) Carrega Tabela Empresa e cruza para obter Operação e Loja oficial
     try:
         df_emp = carregar_tabela_empresa(nome_planilha, aba_empresa)
     except Exception as e:
         st.error(f"Erro ao carregar Tabela Empresa do Google Sheets: {e}")
         st.stop()
 
-    base = pd.DataFrame({"Loja_norm": lojas_norm})
-    out = base.merge(df_emp, on="Loja_norm", how="left")
+    df_final = df_itens.merge(df_emp, on="Loja_norm", how="left")
 
-    # apenas o que você pediu (sem 'Loja (arquivo)')
-    resultado = out[["Loja","Grupo","Código Everest","Código Grupo Everest"]].copy()
+    # 5) Seleção e ordem de colunas finais
+    cols_final = ["Operação", "Loja", "Grupo do Produto", "Código Material", "Material", "Qtde", "Valor (R$)"]
+    for c in cols_final:
+        if c not in df_final.columns:
+            df_final[c] = np.nan
+    df_final = df_final[cols_final]
 
-    st.subheader("Lojas encontradas")
-    st.dataframe(resultado, use_container_width=True, hide_index=True)
-    st.info(f"Total de lojas: {len(resultado)}")
+    # 6) Exibe + download
+    st.subheader("Prévia")
+    st.dataframe(df_final.head(200), use_container_width=True, hide_index=True)
 
-    faltando = resultado[resultado["Código Everest"].isna() | (resultado["Código Everest"].astype(str).str.strip() == "")]
+    st.info(f"Linhas: {len(df_final):,}".replace(",", "."))
+
+    faltando = df_final[df_final["Operação"].isna() | (df_final["Operação"].astype(str).str.strip() == "")]
     if not faltando.empty:
         st.warning(
-            "Lojas sem **Código Everest** na Tabela Empresa: " +
-            ", ".join(sorted(faltando["Loja"].dropna().astype(str).unique()))
+            "Existem lojas sem correspondência na **Tabela Empresa**. "
+            "Atualize a aba e reenvie. Lojas afetadas (amostra): "
+            + ", ".join(sorted(faltando["Loja"].dropna().astype(str).unique())[:10])
         )
 
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine="xlsxwriter") as wr:
-        resultado.to_excel(wr, index=False, sheet_name="Lojas")
+        df_final.to_excel(wr, index=False, sheet_name="MateriaisPorLoja")
     buf.seek(0)
     st.download_button(
-        "⬇️ Baixar Excel (Loja / Grupo / Código Everest / Código Grupo Everest)",
+        "⬇️ Baixar Excel (Materiais × Lojas)",
         data=buf,
-        file_name="lojas_tabela_empresa.xlsx",
+        file_name="materiais_por_loja_com_operacao.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 else:

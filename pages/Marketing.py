@@ -6,9 +6,10 @@ import re
 import unicodedata
 from io import BytesIO
 
-# ====== Dependências Google Sheets (ajuste conforme seu projeto) ======
+# ====== Dependências Google Sheets ======
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import json  # <- para carregar o JSON do st.secrets
 
 st.set_page_config(page_title="Vendas por Grupo e Loja (com Tabela Empresa)", layout="wide")
 
@@ -51,41 +52,56 @@ def limpar_dataframe(df: pd.DataFrame):
     return df
 
 def carregar_tabela_empresa_gsheets(nome_planilha="Vendas diarias", aba="Tabela Empresa"):
-    # >>>> IMPORTANTE <<<<
-    # Ajuste o caminho do JSON ou use st.secrets["gcp_service_account"]
-    # Exemplo com arquivo local:
-    # creds = ServiceAccountCredentials.from_json_keyfile_name("service_account.json", scopes=[
-    #     "https://spreadsheets.google.com/feeds",
-    #     "https://www.googleapis.com/auth/drive"
-    # ])
-    # Exemplo com st.secrets:
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scopes=[
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
-    ])
-    gc = gspread.authorize(creds)
-    sh = gc.open(nome_planilha)
-    ws = sh.worksheet(aba)
-    df_emp = pd.DataFrame(ws.get_all_records())
-    # limpeza
-    df_emp.columns = _strip_invisible_cols(df_emp.columns)
-    # normaliza nomes esperados
-    ren = {}
-    for c in df_emp.columns:
-        cn = _ns(c)
-        if cn in ["codigo everest", "cod everest", "codigo loja", "cod loja"]:
-            ren[c] = "Código Everest"
-        elif cn == "loja":
-            ren[c] = "Loja"
-        elif cn == "grupo":
-            ren[c] = "Grupo"
-        elif cn == "tipo":
-            ren[c] = "Tipo"
-    df_emp = df_emp.rename(columns=ren)
-    return df_emp
+    """
+    Lê a 'Tabela Empresa' do Google Sheets usando as mesmas credenciais da sua plataforma:
+    st.secrets["GOOGLE_SERVICE_ACCOUNT"] (JSON).
+    """
+    try:
+        scope = [
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        # 🔐 carrega o JSON do service account do st.secrets
+        # (o seu padrão atual guarda como string JSON)
+        credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+        gc = gspread.authorize(creds)
+
+        sh = gc.open(nome_planilha)
+        ws = sh.worksheet(aba)
+        df_emp = pd.DataFrame(ws.get_all_records())
+
+        # limpeza
+        df_emp.columns = _strip_invisible_cols(df_emp.columns)
+
+        # normaliza nomes esperados
+        ren = {}
+        for c in df_emp.columns:
+            cn = _ns(c)
+            if cn in ["codigo everest", "cod everest", "codigo loja", "cod loja"]:
+                ren[c] = "Código Everest"
+            elif cn == "loja":
+                ren[c] = "Loja"
+            elif cn == "grupo":
+                ren[c] = "Grupo"
+            elif cn == "tipo":
+                ren[c] = "Tipo"
+            elif cn in ["codigo grupo everest", "cod grupo everest"]:
+                ren[c] = "Código Grupo Everest"
+        df_emp = df_emp.rename(columns=ren)
+
+        return df_emp
+
+    except KeyError:
+        raise RuntimeError(
+            "st.secrets['GOOGLE_SERVICE_ACCOUNT'] não encontrado. "
+            "Adicione o JSON de credenciais em Secrets."
+        )
+    except Exception as e:
+        raise RuntimeError(f"Erro ao ler Google Sheets: {e}")
 
 def merge_com_tabela_empresa(df_base: pd.DataFrame, df_emp: pd.DataFrame):
-    cols_emp = [c for c in ["Código Everest", "Loja", "Grupo", "Tipo"] if c in df_emp.columns]
+    cols_emp = [c for c in ["Código Everest", "Loja", "Grupo", "Tipo", "Código Grupo Everest"] if c in df_emp.columns]
     df_emp = df_emp[cols_emp].drop_duplicates()
 
     tem_cod_base = "Código Everest" in df_base.columns
@@ -121,7 +137,10 @@ def exportar_excel_formatado(df: pd.DataFrame, nome="vendas_materiais_com_lojas.
         fmt_border = wb.add_format({"border": 1})
         # auto largura
         for i, col in enumerate(df.columns):
-            largura = max(10, min(45, int(df[col].astype(str).str.len().fillna(0).quantile(0.95)) + 2))
+            try:
+                largura = max(10, min(45, int(df[col].astype(str).str.len().fillna(0).quantile(0.95)) + 2))
+            except Exception:
+                largura = 18
             ws.set_column(i, i, largura)
         # header
         ws.set_row(0, None, fmt_header)
@@ -131,7 +150,8 @@ def exportar_excel_formatado(df: pd.DataFrame, nome="vendas_materiais_com_lojas.
         ws.conditional_format(0, 0, len(df), len(df.columns)-1,
                               {"type": "blanks", "format": fmt_border})
     buffer.seek(0)
-    st.download_button("⬇️ Baixar Excel (com lojas)", data=buffer, file_name=nome, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button("⬇️ Baixar Excel (com lojas)", data=buffer, file_name=nome,
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 # ======================
 # UI
@@ -139,7 +159,10 @@ def exportar_excel_formatado(df: pd.DataFrame, nome="vendas_materiais_com_lojas.
 st.title("📦 Vendas de Materiais por Grupo e Loja — com Tabela Empresa")
 st.caption("Lê o Excel exportado, detecta o cabeçalho, limpa colunas e junta com a aba **Tabela Empresa** do seu Google Sheets.")
 
-up = st.file_uploader("Envie o relatório Excel (ex.: venda-de-materiais-por-grupo-e-loja.xlsx)", type=["xlsx","xls"])
+up = st.file_uploader(
+    "Envie o relatório Excel (ex.: venda-de-materiais-por-grupo-e-loja.xlsx)",
+    type=["xlsx","xls","xlsm"]  # inclui xlsm também
+)
 
 col_cfg1, col_cfg2 = st.columns([1,1])
 with col_cfg1:
@@ -149,7 +172,8 @@ with col_cfg2:
 
 if up is not None:
     try:
-        df_raw = pd.read_excel(up, sheet_name=0, header=None, dtype=object)
+        # Lemos sem header para detectar a linha correta
+        df_raw = pd.read_excel(up, sheet_name=0, header=None, dtype=object, engine="openpyxl")
     except Exception as e:
         st.error(f"Não consegui ler o Excel: {e}")
         st.stop()
@@ -170,7 +194,7 @@ if up is not None:
     for c in poss_data:
         df[c] = pd.to_datetime(df[c], errors="coerce")
 
-    # carrega Tabela Empresa
+    # carrega Tabela Empresa (via conexões)
     try:
         df_emp = carregar_tabela_empresa_gsheets(nome_planilha, aba_empresa)
     except Exception as e:

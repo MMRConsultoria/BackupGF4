@@ -23,9 +23,6 @@ def normalizar_loja(txt: str) -> str:
     s = re.sub(r"^\s*\d+\s*-\s*", "", s)
     return s.strip()
 
-def loja_join_key(txt: str) -> str:
-    return normalizar_loja(txt).lower()
-
 def pick_name(cols, targets):
     m = {_ns(c): c for c in cols}
     for t in targets:
@@ -104,83 +101,65 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
     - Linha 5 (idx 4): cabeçalhos; pares 'Qtde' e 'Valor(R$)' de cada loja.
     - Coluna B (idx 1): Grupo do produto. Só aparece ao mudar, então ffill.
     - Coluna C (idx 2): Código do material. Se vazio, herdar da linha de cima.
-    - Coluna D (idx 3): Material (nome). Linhas Sub.Total (col C) e Total Geral (C ou D) devem ser excluídas.
+    - Coluna D (idx 3): Material (nome).
     - Linhas com Qtde vazia ou Valor <= 0 são descartadas.
     """
     df0 = pd.read_excel(uploaded_file, sheet_name=0, header=None, dtype=object)
     if df0.shape[0] < 6:
         return pd.DataFrame()
 
-   
-    # === DETECÇÃO ROBUSTA DE LOJAS + PARES QTDE/VALOR ===
+    # Constantes de posição — definidas ANTES do uso
     ROW_LOJA = 3   # linha 4 (0-based)
     ROW_HDR  = 4   # linha 5 (0-based)
-    
-    # Linha 5 (cabeçalhos)
+    COL_B, COL_C, COL_D = 1, 2, 3  # Grupo, Código, Material
+
+    # --- Cabeçalhos da linha 5
     r5 = df0.iloc[ROW_HDR].astype(str).fillna("")
     r5n = r5.map(_ns)
-    
-    # Linha 4 (lojas) com preenchimento horizontal (resolve mesclas "tortas")
+
+    # --- Linha 4 (lojas) com ffill horizontal (robusto a mesclas deslocadas)
     lojas_row = df0.iloc[ROW_LOJA].astype(str)
-    # trata vazios/NaN e faz ffill à direita
     lojas_row = lojas_row.replace(["", "nan", "None", "NaN"], pd.NA)
-    lojas_row_ff = lojas_row.ffill(axis=0)   # uma única Series; ffill já funciona na horizontal para NaN corridos
-    
-    pairs = []  # (col_qt, col_vl, loja_name)
-    
+    lojas_row_ff = lojas_row.ffill()
+
+    # Funções de detecção
     def eh_qtde(tok: str) -> bool:
         return _ns(tok) == "qtde"
-    
+
     VAL_TOKS = {"valor(r$)", "valor r$", "valor (r$)", "valor(r$ )", "valor r$)", "valor"}
     def eh_valor(tok: str) -> bool:
         return _ns(tok) in VAL_TOKS
-    
+
+    # Detectar pares (Qtde, Valor) por loja — tolerante a desalinhamento (procura valor nas 3 próximas colunas)
+    pairs = []  # (col_qt, col_vl, loja_name)
     j = 0
     ncols = df0.shape[1]
     while j < ncols:
         if eh_qtde(r5n.iloc[j]):
-            # procurar o "Valor" nas próximas 1..3 colunas (ou até antes do próximo Qtde)
             vcol = None
-            limite = min(ncols, j + 4)
+            limite = min(ncols, j + 4)  # procura até 3 colunas à frente
             k = j + 1
-            while k < limite and not eh_qtde(r5n.iloc[k]):  # para não atravessar outro bloco de loja
+            while k < limite and not eh_qtde(r5n.iloc[k]):  # não atravessar outro bloco
                 if eh_valor(r5n.iloc[k]):
                     vcol = k
                     break
                 k += 1
-    
             if vcol is not None:
-                # nome da loja após ffill (robusto a mescla deslocada)
                 loja_bruta = str(lojas_row_ff.iloc[j] if j < len(lojas_row_ff) else "").strip()
                 loja_bruta = normalizar_loja(loja_bruta)
                 if loja_bruta and "total" not in _ns(loja_bruta):
                     pairs.append((j, vcol, loja_bruta))
-    
-                # avança para depois do valor encontrado (ou +1 para continuar a varrer)
                 j = vcol + 1
                 continue
-    
         j += 1
 
-
-    # Base de linhas (a partir da linha 6)
+    # --- Base de linhas (a partir da linha 6)
     base = df0.iloc[ROW_HDR+1:].copy()
     base = base.rename(columns={
         COL_B: "GrupoColB",
         COL_C: "Codigo",
         COL_D: "Material",
     })
-
-    # marcar Sub.Total (coluna C) e Total Geral (em C ou D)
-    def is_subtotal_c(x):
-        s = _ns(x)
-        return "sub.total" in s or ("sub" in s and "total" in s) or s == "subtotal"
-
-    def is_total_geral(row):
-        return "total geral" in _ns(row.get("Codigo", "")) or "total geral" in _ns(row.get("Material",""))
-
-    base["_is_sub"] = base["Codigo"].apply(is_subtotal_c)
-    base["_is_total_geral"] = base.apply(is_total_geral, axis=1)
 
     # Grupo (ffill) e Código (ffill quando houver material)
     base["GrupoProduto"] = (
@@ -195,15 +174,19 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
     base["Codigo"] = base["Codigo"].where(base["Codigo"].astype(str).str.strip() != "", np.nan).ffill()
     base["Codigo"] = base["Codigo"].astype(str).str.strip()
 
-    # filtrar linhas inválidas
-    base = base[(~base["_is_sub"]) & (~base["_is_total_geral"]) & (base["Material"] != "")]
     if base.empty or not pairs:
         return pd.DataFrame(columns=["Loja","GrupoProduto","Codigo","Material","Qtde","Valor"])
 
+    # Monta registros por par Loja/cols
     registros = []
     for c_q, c_v, loja_nome in pairs:
         sub = base[["GrupoProduto","Codigo","Material", c_q, c_v]].copy()
         sub = sub.rename(columns={c_q: "Qtde", c_v: "Valor"})
+
+        # Filtro leve de linhas de total/subtotal (apenas se o texto "total" aparecer explícito)
+        mask_total = sub["Codigo"].astype(str).str.contains(r"\btotal\b", case=False, na=False) | \
+                     sub["Material"].astype(str).str.contains(r"\btotal\b", case=False, na=False)
+        sub = sub[~mask_total]
 
         # qtde: descarta em branco
         sub["Qtde"] = pd.to_numeric(sub["Qtde"], errors="coerce")
@@ -244,7 +227,7 @@ if not up:
 # Ler Excel
 df_items = ler_relatorio(up)
 if df_items.empty:
-    st.warning("Nenhum item elegível foi encontrado (verifique Sub.Total / Total Geral / valores e qtde).")
+    st.warning("Nenhum item elegível foi encontrado (verifique valores/qtde e colunas Qtde/Valor).")
     st.stop()
 
 # Tabela Empresa

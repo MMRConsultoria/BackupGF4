@@ -1,360 +1,253 @@
-# pages/Importar_Vendas_Materiais.py
 import streamlit as st
 import pandas as pd
 import numpy as np
-import re
+import re, unicodedata, json
 from io import BytesIO
-import json
-
-# Google Sheets
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-st.set_page_config(page_title="Vendas por Grupo e Loja (Materiais)", layout="wide")
+st.set_page_config(page_title="Importar Materiais por Loja", layout="wide")
+st.title("📥 Importar Materiais por Loja (com Tabela Empresa)")
 
-# ======================
-# Helpers de normalização
-# ======================
+# ---------------- Helpers ----------------
 def _ns(s: str) -> str:
     s = str(s or "").strip().lower()
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
     s = re.sub(r"\s+", " ", s)
     return s
 
-def _limpa_loja(loja: str) -> str:
-    """remove prefixo 'NN - ' e espaços dobrados."""
-    s = str(loja or "").strip()
-    s = re.sub(r"^\s*\d+\s*-\s*", "", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+def normalizar_loja(txt: str) -> str:
+    s = str(txt or "").strip()
+    s = re.sub(r"^\d+\s*-\s*", "", s)  # remove "123 - "
+    return s.strip()
 
-def _to_number(x):
-    """Converte (br/pt/en) para float. Vazio vira NaN."""
-    s = str(x or "").strip()
-    if s == "" or s.lower() == "nan":
-        return np.nan
-    s = s.replace("R$", "").replace("\u00A0", "")
-    s = re.sub(r"[^\d,.\-]", "", s)
-    # Se tem vírgula e ponto, assume pt-BR -> remove pontos, troca vírgula por ponto
-    if s.count(",") == 1 and s.count(".") >= 1:
-        s = s.replace(".", "").replace(",", ".")
-    # Se tem vírgula e não tem ponto, assume pt-BR -> vírgula vira ponto
-    elif s.count(",") == 1 and s.count(".") == 0:
-        s = s.replace(",", ".")
-    try:
-        return float(s)
-    except:
-        return np.nan
+def loja_join_key(txt: str) -> str:
+    return normalizar_loja(txt).lower()
 
-# ======================
-# Google Sheets: Tabela Empresa
-# ======================
+def pick_name(cols, targets):
+    m = {_ns(c): c for c in cols}
+    for t in targets:
+        if _ns(t) in m:
+            return m[_ns(t)]
+    return None
+
+# --------- Google Sheets: Tabela Empresa ----------
 def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa") -> pd.DataFrame:
+    # aceita secrets como dict ou string JSON
+    key = "GOOGLE_SERVICE_ACCOUNT" if "GOOGLE_SERVICE_ACCOUNT" in st.secrets else "gcp_service_account"
+    creds_any = st.secrets.get(key)
+    if creds_any is None:
+        raise RuntimeError("Configure st.secrets['GOOGLE_SERVICE_ACCOUNT'] (ou 'gcp_service_account').")
+    creds_dict = json.loads(creds_any) if isinstance(creds_any, str) else creds_any
+
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-
-    # aceita GOOGLE_SERVICE_ACCOUNT como dict ou string JSON
-    # e também gcp_service_account (alguns projetos usam esse nome)
-    raw = None
-    try:
-        raw = st.secrets.get("GOOGLE_SERVICE_ACCOUNT", None)
-        if raw is None:
-            raw = st.secrets.get("gcp_service_account", None)
-    except Exception:
-        raw = None
-
-    if raw is None:
-        raise RuntimeError(
-            "Credenciais não encontradas em st.secrets. "
-            "Defina GOOGLE_SERVICE_ACCOUNT (ou gcp_service_account)."
-        )
-
-    # se vier string, fazer json.loads; se já for dict, usa direto
-    if isinstance(raw, str):
-        credentials_dict = json.loads(raw)
-    else:
-        credentials_dict = dict(raw)
-
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
-    gc = gspread.authorize(creds)
+    credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    gc = gspread.authorize(credentials)
 
     ws = gc.open(nome_planilha).worksheet(aba)
     df = pd.DataFrame(ws.get_all_records())
     if df.empty:
-        return pd.DataFrame(columns=["Loja","Grupo","Código Everest","Código Grupo Everest"])
+        return pd.DataFrame(columns=["Loja","Loja_norm","Grupo","Código Everest","Código Grupo Everest"])
 
-    df.columns = [str(c).strip() for c in df.columns]
+    cols = df.columns.tolist()
+    col_loja  = pick_name(cols, ["Loja"])
+    col_grupo = pick_name(cols, ["Grupo","Operação"])
+    col_cod   = pick_name(cols, ["Código Everest","Codigo Everest","Cod Everest"])
+    col_codg  = pick_name(cols, ["Código Grupo Everest","Codigo Grupo Everest","Cod Grupo Empresas","Código Grupo Empresas"])
 
-    # localizar colunas com tolerância de grafia
-    def _ns(s: str) -> str:
-        return re.sub(r"\s+", " ", str(s or "").strip().lower())
+    out = pd.DataFrame()
+    out["Loja"] = df[col_loja].astype(str).str.strip() if col_loja else ""
+    out["Loja_norm"] = out["Loja"].map(lambda x: x.strip().lower())
+    out["Grupo"] = df[col_grupo].astype(str).str.strip() if col_grupo else ""
+    out["Código Everest"] = pd.to_numeric(df[col_cod], errors="coerce") if col_cod else pd.NA
+    out["Código Grupo Everest"] = pd.to_numeric(df[col_codg], errors="coerce") if col_codg else pd.NA
+    return out
 
-    def pick(cols, alvo, *alts):
-        alvo_norm = _ns(alvo)
-        cand = [alvo, *alts]
-        for wanted in cand:
-            wn = _ns(wanted)
-            for c in cols:
-                if _ns(c) == wn:
-                    return c
-        return None
+# --------- Parser do Excel de Upload ----------
+def ler_relatorio(uploaded_file) -> pd.DataFrame:
+    df0 = pd.read_excel(uploaded_file, sheet_name=0, header=None, dtype=object)
+    if df0.shape[0] < 6:
+        return pd.DataFrame()
 
-    c_loja  = pick(df.columns, "Loja")
-    c_grupo = pick(df.columns, "Grupo")
-    c_cod   = pick(df.columns, "Código Everest", "Codigo Everest", "Cod Everest", "Codigo Ev", "Cód Everest")
-    c_codg  = pick(df.columns, "Código Grupo Everest", "Codigo Grupo Everest", "Cod Grupo Empresas", "Codigo Grupo Empresas")
+    ROW_LOJA = 3   # linha 4 (0-based)
+    ROW_HDR  = 4   # linha 5 (0-based)
+    COL_B, COL_C, COL_D = 1, 2, 3  # Grupo, Código, Material
 
-    keep = {c_loja:"Loja", c_grupo:"Grupo", c_cod:"Código Everest", c_codg:"Código Grupo Everest"}
-    # remove None que não foram achados
-    keep = {k:v for k,v in keep.items() if k is not None}
+    # Detectar pares Qtde / Valor(R$)
+    r5 = df0.iloc[ROW_HDR].astype(str).fillna("")
+    r5n = r5.map(_ns)
+    pairs = []  # (col_qt, col_vl, loja_name)
 
-    df = df[list(keep.keys())].rename(columns=keep)
-
-    # normalização para o join
-    df["Loja"] = df["Loja"].astype(str).str.strip()
-    df["Loja_norm"] = df["Loja"].str.lower()
-    return df
-
-
-# ======================
-# Parser do Excel de Upload
-# ======================
-def parse_excel_materiais(file) -> pd.DataFrame:
-    """
-    Regras:
-      - Lojas estão na linha 4 (células mescladas), cada loja ocupa 2 colunas (Qtde / Valor(R$)) na linha 5
-      - Grupo de material: coluna B (apenas em algumas linhas) -> forward-fill
-      - Código: coluna C (nem todas as linhas têm) -> forward-fill quando Material preenchido
-      - Material: coluna D
-      - Ignorar linhas 'Sub.Total' (coluna C), 'Total' em lojas, 'Total Geral'
-      - Itens: trazer somente se Qtde e Valor forem > 0 (ou pelo menos Valor > 0, conforme sua regra)
-    Retorna: DataFrame com colunas base (antes do merge):
-      ['Loja','GrupoProduto','Codigo','Material','Qtde','Valor']
-    """
-    # Lê planilha principal (primeira aba)
-    df_raw = pd.read_excel(file, sheet_name=0, header=None, dtype=object)
-
-    # Linha 4 (index 3) = nomes das lojas (mescladas)
-    # Linha 5 (index 4) = cabeçalho ("Qtde" / "Valor(R$)")
-    if df_raw.shape[0] < 6:
-        return pd.DataFrame(columns=["Loja","GrupoProduto","Codigo","Material","Qtde","Valor"])
-
-    header_row = 4  # linha 5 (0-based = 4)
-    lojas_row  = 3  # linha 4 (0-based = 3)
-
-    # Identificar os pares de colunas (Qtde / Valor)
-    col_pairs = []  # [(col_qtde, col_valor, loja_name), ...]
-    c = 0
-    ncols = df_raw.shape[1]
-
-    # Primeiro, extrai os nomes de loja da linha lojas_row.
-    # Em planilhas com mesclagem, só uma das duas colunas do par pode carregar o nome;
-    # por isso usamos "preencher para a direita" (ffill axis=1) numa cópia dessa linha.
-    lojas_line = df_raw.iloc[lojas_row:lojas_row+1, :].copy()
-    lojas_line = lojas_line.ffill(axis=1).iloc[0].tolist()  # lista de nomes repetidos
-
-    while c < ncols - 1:
-        h1 = str(df_raw.iat[header_row, c]).strip().lower() if c < ncols else ""
-        h2 = str(df_raw.iat[header_row, c+1]).strip().lower() if c+1 < ncols else ""
-        if "qtde" in h1 and "valor" in h2:
-            loja_bruta = lojas_line[c] if c < len(lojas_line) else ""
-            loja = _limpa_loja(loja_bruta).strip()
-            if loja == "" or _ns(loja).startswith("total"):
-                # ignora colunas cuja "loja" é Total / Total Geral
-                c += 2
-                continue
-            col_pairs.append((c, c+1, loja))
-            c += 2
+    j = 0
+    while j < df0.shape[1] - 1:
+        is_q = r5n.iloc[j] == "qtde"
+        is_v = r5n.iloc[j+1] in ("valor(r$)","valor r$","valor (r$)","valor(r$ )","valor r$)")
+        if is_q and is_v:
+            # Capturar a loja na linha 4; se célula vazia por mescla, anda para a esquerda
+            k = j
+            loja = ""
+            while k >= 0:
+                val = str(df0.iat[ROW_LOJA, k] if k < df0.shape[1] else "")
+                if val and str(val).strip().lower() not in ("nan",):
+                    loja = str(val).strip()
+                    break
+                k -= 1
+            loja_norm_ns = _ns(loja)
+            # ignorar lojas 'total'
+            if loja and "total" not in loja_norm_ns:
+                pairs.append((j, j+1, normalizar_loja(loja)))
+            j += 2
         else:
-            c += 1
+            j += 1
 
-    # Colunas de base (A,B,C,D) => 0,1,2,3
-    COL_GRUPO   = 1
-    COL_CODIGO  = 2
-    COL_MATERIAL= 3
-
-    # Faixa de dados começa depois do cabeçalho (linha 6 para baixo: index 5+)
-    start_row = header_row + 1
-
-    # Vamos construir itens linha a linha (para cada linha do produto, replicar por loja)
-    registros = []
-    grupo_atual = None
-    cod_atual = None
-
-    for r in range(start_row, df_raw.shape[0]):
-        grupo_raw = str(df_raw.iat[r, COL_GRUPO]) if COL_GRUPO < ncols else ""
-        cod_raw   = df_raw.iat[r, COL_CODIGO] if COL_CODIGO < ncols else ""
-        mat_raw   = df_raw.iat[r, COL_MATERIAL] if COL_MATERIAL < ncols else ""
-
-        grupo_txt = str(grupo_raw or "").strip()
-        cod_txt   = str(cod_raw   or "").strip()
-        mat_txt   = str(mat_raw   or "").strip()
-
-        # Ignora linhas “Total Geral” explícitas
-        if re.search(r"total\s*geral", f"{grupo_txt} {cod_txt} {mat_txt}", flags=re.I):
-            continue
-
-        # Detecta linha de Sub.Total (fica na coluna C, segundo seu relato)
-        if re.search(r"sub\.?\s*total", cod_txt, flags=re.I):
-            # Ao encontrar Sub.Total, apenas marca “fronteira” de grupo e PULA o registro
-            # (grupo_atual só troca quando B tiver novo nome; aqui só ignora a linha)
-            continue
-
-        # Quando coluna B (grupo) não está vazia, atualiza grupo_atual
-        grp_clean = grupo_txt.strip()
-        if grp_clean != "" and not re.search(r"sub\.?\s*total", grp_clean, flags=re.I):
-            grupo_atual = grp_clean
-
-        # Material vazio => nada para registrar
-        if mat_txt == "" or _ns(mat_txt) == "nan":
-            continue
-
-        # Código: se vier vazio, mantém o último (forward-fill)
-        if cod_txt != "" and not re.search(r"sub\.?\s*total", cod_txt, flags=re.I):
-            cod_atual = cod_txt
-        # Se ainda assim não temos código, skipa — (ou mantém vazio se preferir)
-        codigo_final = cod_atual if (cod_atual is not None and str(cod_atual).strip() != "") else ""
-
-        # Para cada par de loja (Qtde/Valor), cria uma linha
-        for (c_q, c_v, loja) in col_pairs:
-            qtde_v = _to_number(df_raw.iat[r, c_q]) if c_q < ncols else np.nan
-            val_v  = _to_number(df_raw.iat[r, c_v]) if c_v < ncols else np.nan
-
-            # Ignora lojas "Total" (já tratadas ao montar col_pairs), mas reforça aqui
-            if _ns(loja).startswith("total"):
-                continue
-
-            # Regras: se qtde vazia/0 ou valor vazio/0 -> não traz
-            if pd.isna(qtde_v) or pd.isna(val_v) or qtde_v == 0 or val_v == 0:
-                continue
-
-            registros.append([
-                loja,                  # Loja
-                grupo_atual or "",     # GrupoProduto (Grupo do material)
-                codigo_final,          # Codigo
-                mat_txt,               # Material
-                float(qtde_v),         # Qtde
-                float(val_v),          # Valor
-            ])
-
-    df_items = pd.DataFrame(registros, columns=["Loja","GrupoProduto","Codigo","Material","Qtde","Valor"])
-    return df_items
-
-# ======================
-# Enriquecimento com Tabela Empresa
-# ======================
-def enriquecer_com_tabela_empresa(df_items: pd.DataFrame, df_emp: pd.DataFrame) -> pd.DataFrame:
-    # Normaliza lojas
-    df_items = df_items.copy()
-    df_items["Loja"] = df_items["Loja"].astype(str).map(_limpa_loja)
-    df_items["Loja_norm"] = df_items["Loja"].str.lower()
-
-    df_emp = df_emp.copy()
-    if "Loja_norm" not in df_emp.columns:
-        df_emp["Loja"] = df_emp["Loja"].astype(str).str.strip()
-        df_emp["Loja_norm"] = df_emp["Loja"].str.lower()
-
-    merged = df_items.merge(
-        df_emp[["Loja_norm","Loja","Grupo","Código Everest","Código Grupo Everest"]],
-        on="Loja_norm", how="left", suffixes=("_x","_y")
-    )
-
-    # Loja preferindo a da Tabela Empresa
-    if "Loja_x" in merged.columns and "Loja_y" in merged.columns:
-        merged["Loja"] = merged["Loja_y"].where(
-            merged["Loja_y"].astype(str).str.strip() != "", merged["Loja_x"]
-        )
-        merged.drop(columns=["Loja_x","Loja_y"], inplace=True)
-    elif "Loja_y" in merged.columns:
-        merged["Loja"] = merged["Loja_y"]; merged.drop(columns=["Loja_y"], inplace=True)
-    elif "Loja_x" in merged.columns:
-        merged["Loja"] = merged["Loja_x"]; merged.drop(columns=["Loja_x"], inplace=True)
-
-    # Renomeia para modelo final
-    merged = merged.rename(columns={
-        "Grupo": "Operação",            # Grupo da Tabela Empresa = Operação
-        "GrupoProduto": "Grupo Material",
-        "Codigo": "Codigo Material",
+    # Base de linhas (a partir da linha 6)
+    base = df0.iloc[ROW_HDR+1:].copy()
+    base = base.rename(columns={
+        COL_B: "GrupoColB",
+        COL_C: "Codigo",
+        COL_D: "Material",
     })
 
-    final_cols = [
-        "Operação","Loja","Código Everest","Código Grupo Everest",
-        "Grupo Material","Codigo Material","Material","Qtde","Valor"
-    ]
-    for c in final_cols:
-        if c not in merged.columns:
-            merged[c] = ""
+    # marcar Sub.Total (coluna C) e Total Geral (em C ou D)
+    def is_subtotal_c(x):
+        s = _ns(x)
+        return "sub.total" in s or ("sub" in s and "total" in s) or s == "subtotal"
 
-    df_final = merged[final_cols].copy()
-    return df_final
+    def is_total_geral(row):
+        return "total geral" in _ns(row.get("Codigo", "")) or "total geral" in _ns(row.get("Material",""))
 
-# ======================
-# UI
-# ======================
-st.title("📦 Importar Vendas de Materiais por Grupo e Loja")
-st.caption("Lê o Excel do PDV (lojas na linha 4; Qtde/Valor na linha 5), elimina Sub.Total/Total, e completa com a Tabela Empresa do Google Sheets.")
+    base["_is_sub"] = base["Codigo"].apply(is_subtotal_c)
+    base["_is_total_geral"] = base.apply(is_total_geral, axis=1)
 
-colA, colB = st.columns([1,1])
-with colA:
-    nome_planilha = st.text_input("Planilha do Google Sheets", value="Vendas diarias")
-with colB:
-    aba_empresa   = st.text_input("Aba da Tabela Empresa", value="Tabela Empresa")
+    # Grupo (ffill) e Código (ffill quando houver material)
+    base["GrupoProduto"] = (
+        base["GrupoColB"]
+        .where(base["GrupoColB"].notna() & (base["GrupoColB"].astype(str).str.strip() != ""), np.nan)
+        .ffill()
+        .astype(str).str.strip()
+    )
+    base["Material"] = base["Material"].astype(str).str.strip()
 
-up = st.file_uploader("Envie o Excel (venda-de-materiais-por-grupo-e-loja.xlsx)", type=["xlsx","xls"])
+    # Código: se a linha tem material, precisamos de código; se vier vazio, herdamos de cima
+    base["Codigo"] = base["Codigo"].where(base["Codigo"].astype(str).str.strip() != "", np.nan).ffill()
+    base["Codigo"] = base["Codigo"].astype(str).str.strip()
 
-if up is not None:
-    try:
-        with st.spinner("🔎 Lendo arquivo e montando itens..."):
-            df_items = parse_excel_materiais(up)
+    # filtrar linhas inválidas
+    base = base[(~base["_is_sub"]) & (~base["_is_total_geral"]) & (base["Material"] != "")]
+    if base.empty or not pairs:
+        return pd.DataFrame(columns=["Operacao","Loja","GrupoProduto","Codigo","Material","Qtde","Valor"])
 
-        if df_items.empty:
-            st.warning("Nenhum item elegível foi encontrado (verifique se há Qtde/Valor > 0 e se o layout segue a regra da linha 4/5).")
-            st.stop()
+    registros = []
+    for c_q, c_v, loja_nome in pairs:
+        sub = base[["GrupoProduto","Codigo","Material", c_q, c_v]].copy()
+        sub = sub.rename(columns={c_q: "Qtde", c_v: "Valor"})
 
-        # Carrega Tabela Empresa
-        with st.spinner("🔗 Carregando Tabela Empresa..."):
-            df_emp = carregar_tabela_empresa(nome_planilha, aba_empresa)
+        # qtde: descarta em branco
+        sub["Qtde"] = pd.to_numeric(sub["Qtde"], errors="coerce")
+        sub = sub[sub["Qtde"].notna()]
 
-        # Enriquecer com Tabela Empresa
-        with st.spinner("🧭 Normalizando lojas e anexando códigos..."):
-            df_final = enriquecer_com_tabela_empresa(df_items, df_emp)
+        # valor: BRL → float
+        val = sub["Valor"].astype(str)
+        val = val.str.replace("R$", "", regex=False).str.replace("\u00A0","", regex=False)
+        val = val.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+        sub["Valor"] = pd.to_numeric(val, errors="coerce").fillna(0.0)
 
-        st.success(f"✅ Itens processados: {len(df_final):,}".replace(",", "."))
+        # descarta valor <= 0
+        sub = sub[sub["Valor"] > 0]
 
-        st.subheader("Prévia")
-        st.dataframe(df_final.head(200), use_container_width=True, hide_index=True)
+        # anexa loja
+        sub["Loja"] = loja_nome
+        if not sub.empty:
+            registros.append(sub)
 
-        # Download Excel
-        def _to_excel(df: pd.DataFrame) -> BytesIO:
-            buf = BytesIO()
-            with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
-                df.to_excel(w, index=False, sheet_name="Materiais")
-                ws = w.sheets["Materiais"]
-                for i, col in enumerate(df.columns):
-                    width = max(12, min(45, int(df[col].astype(str).str.len().quantile(0.95)) + 2))
-                    ws.set_column(i, i, width)
-            buf.seek(0)
-            return buf
+    if not registros:
+        return pd.DataFrame(columns=["Operacao","Loja","GrupoProduto","Codigo","Material","Qtde","Valor"])
 
-        excel_bytes = _to_excel(df_final)
-        st.download_button(
-            "⬇️ Baixar Excel (Materiais por Loja)",
-            data=excel_bytes,
-            file_name="materiais_por_loja.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    out = pd.concat(registros, ignore_index=True)
+    out = out[["Loja","GrupoProduto","Codigo","Material","Qtde","Valor"]].copy()
+    return out
 
-        # Avisos úteis
-        faltantes = df_final[df_final["Código Everest"].astype(str).str.strip().isin(["","nan"])].copy()
-        if not faltantes.empty:
-            lojas_faltantes = sorted(faltantes["Loja"].dropna().astype(str).unique().tolist())
-            if lojas_faltantes:
-                st.warning(
-                    "⚠️ Algumas lojas não foram localizadas na **Tabela Empresa**. "
-                    "Atualize a planilha e reprocese:\n\n- " + "\n- ".join(lojas_faltantes)
-                )
+# --------------- UI ----------------
+c1, c2 = st.columns(2)
+with c1:
+    nome_planilha = st.text_input("Planilha no Google Sheets", value="Vendas diarias")
+with c2:
+    aba_empresa = st.text_input("Aba Tabela Empresa", value="Tabela Empresa")
 
-    except KeyError as e:
-        st.error(f"❌ Erro de colunas: {e}")
-    except Exception as e:
-        st.error(f"❌ Erro ao processar: {e}")
-else:
-    st.info("Envie o arquivo Excel para começar.")
+up = st.file_uploader("Envie o Excel (linha 4 = lojas, linha 5 = cabeçalhos Qtde/Valor)", type=["xlsx","xls"])
+
+if not up:
+    st.info("Envie o arquivo para começar.")
+    st.stop()
+
+# Ler Excel
+df_items = ler_relatorio(up)
+if df_items.empty:
+    st.warning("Nenhum item elegível foi encontrado (verifique Sub.Total / Total Geral / valores e qtde).")
+    st.stop()
+
+# Tabela Empresa
+try:
+    df_emp = carregar_tabela_empresa(nome_planilha, aba_empresa)
+except Exception as e:
+    st.error(f"❌ Erro ao carregar Tabela Empresa: {e}")
+    st.stop()
+
+# Join por loja normalizada
+df_items["Loja_norm"] = df_items["Loja"].map(lambda x: x.lower())
+merged = df_items.merge(
+    df_emp[["Loja_norm","Loja","Grupo","Código Everest","Código Grupo Everest"]],
+    on="Loja_norm", how="left"
+)
+
+# “Operação” = Grupo (tabela empresa) ; “Grupo Material” = GrupoProduto
+merged = merged.rename(columns={
+    "Grupo": "Operação",
+    "GrupoProduto": "Grupo Material",
+    "Codigo": "Codigo Material",
+    "Valor": "Valor",
+})
+
+final_cols = [
+    "Operação","Loja","Código Everest","Código Grupo Everest",
+    "Grupo Material","Codigo Material","Material","Qtde","Valor"
+]
+for c in final_cols:
+    if c not in merged.columns:
+        merged[c] = ""
+
+df_final = merged[final_cols].copy()
+
+# Primeira linha = TOTAL
+linha_total = {
+    "Operação": "TOTAL",
+    "Loja": "",
+    "Código Everest": "",
+    "Código Grupo Everest": "",
+    "Grupo Material": "",
+    "Codigo Material": "",
+    "Material": "",
+    "Qtde": df_final["Qtde"].sum(skipna=True),
+    "Valor": df_final["Valor"].sum(skipna=True),
+}
+df_final = pd.concat([pd.DataFrame([linha_total]), df_final], ignore_index=True)
+
+st.subheader("Prévia")
+st.dataframe(df_final.head(120), use_container_width=True, hide_index=True)
+st.caption(f"Linhas (com TOTAL): {len(df_final):,}".replace(",", "."))
+
+# Download
+def to_excel(df: pd.DataFrame):
+    buf = BytesIO()
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
+        df.to_excel(w, index=False, sheet_name="MateriaisPorLoja")
+    buf.seek(0)
+    return buf
+
+st.download_button(
+    "⬇️ Baixar Excel",
+    data=to_excel(df_final),
+    file_name="materiais_por_loja.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)

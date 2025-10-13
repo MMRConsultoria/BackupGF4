@@ -17,24 +17,14 @@ def _ns(s: str) -> str:
     s = re.sub(r"\s+", " ", s)
     return s
 
-def _is_totalish_text(x: str) -> bool:
-    s = _ns(x)
-    if not s:
-        return False
-    return (
-        s == "total"
-        or "total geral" in s
-        or s.replace(" ", "") == "totalgeral"
-        or s == "subtotal"
-        or "sub total" in s
-        or "sub.total" in s
-        or "subtotal" in s
-    )
-
 def normalizar_loja(txt: str) -> str:
     s = str(txt or "").strip()
-    s = re.sub(r"^\s*\d+\s*-\s*", "", s)  # remove "123 - "
+    # remove "123 - " do começo
+    s = re.sub(r"^\s*\d+\s*-\s*", "", s)
     return s.strip()
+
+def loja_join_key(txt: str) -> str:
+    return normalizar_loja(txt).lower()
 
 def pick_name(cols, targets):
     m = {_ns(c): c for c in cols}
@@ -53,7 +43,8 @@ def _parse_brl(x) -> float:
     s = s.replace("R$", "").replace("\u00A0", "").replace(" ", "")
     s = re.sub(r"[^0-9,.\-]", "", s)
     if s.count(",") >= 1 and s.count(".") >= 1:
-        s = s.replace(".", "").replace(",", ".")   # BR: ponto milhar, vírgula decimal
+        # BR: ponto milhar, vírgula decimal
+        s = s.replace(".", "").replace(",", ".")
     elif s.count(",") >= 1 and s.count(".") == 0:
         s = s.replace(",", ".")
     try:
@@ -72,6 +63,7 @@ def _fmt_brl(v) -> str:
 
 # --------- Google Sheets: Tabela Empresa ----------
 def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa") -> pd.DataFrame:
+    # aceita secrets como dict ou string JSON
     key = "GOOGLE_SERVICE_ACCOUNT" if "GOOGLE_SERVICE_ACCOUNT" in st.secrets else (
         "gcp_service_account" if "gcp_service_account" in st.secrets else None
     )
@@ -107,29 +99,33 @@ def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa"
 # --------- Parser do Excel de Upload ----------
 def ler_relatorio(uploaded_file) -> pd.DataFrame:
     """
-    Linha 4: lojas (mescladas); ignorar 'Total'.
-    Linha 5: cabeçalhos; pares 'Qtde' e 'Valor(R$)' por loja.
-    Col B: Grupo do produto (ffill). Col C: Código (ffill). Col D: Material.
-    Remover Sub.Total/Sub total/Subtotal e Total Geral.
-    Descartar qtde vazia e valor <= 0.
+    Regras do arquivo:
+    - Linha 4 (idx 3): nomes das Lojas (células mescladas). Ignorar lojas 'Total'.
+    - Linha 5 (idx 4): cabeçalhos; pares 'Qtde' e 'Valor(R$)' de cada loja.
+    - Coluna B (idx 1): Grupo do produto. Só aparece ao mudar, então ffill.
+    - Coluna C (idx 2): Código do material. Se vazio, herdar da linha de cima.
+    - Coluna D (idx 3): Material (nome). Linhas Sub.Total (col C) e Total Geral (C ou D) devem ser excluídas.
+    - Linhas com Qtde vazia ou Valor <= 0 são descartadas.
     """
     df0 = pd.read_excel(uploaded_file, sheet_name=0, header=None, dtype=object)
     if df0.shape[0] < 6:
         return pd.DataFrame()
 
-    ROW_LOJA = 3   # linha 4
-    ROW_HDR  = 4   # linha 5
-    COL_B, COL_C, COL_D = 1, 2, 3
+    ROW_LOJA = 3   # linha 4 (0-based)
+    ROW_HDR  = 4   # linha 5 (0-based)
+    COL_B, COL_C, COL_D = 1, 2, 3  # Grupo, Código, Material
 
-    # Detecta pares (Qtde, Valor)
+    # Detectar pares Qtde / Valor(R$)
     r5 = df0.iloc[ROW_HDR].astype(str).fillna("")
     r5n = r5.map(_ns)
-    pairs = []
+    pairs = []  # (col_qt, col_vl, loja_name)
+
     j = 0
     while j < df0.shape[1] - 1:
         is_q = r5n.iloc[j] == "qtde"
         is_v = r5n.iloc[j+1] in ("valor(r$)", "valor r$", "valor (r$)", "valor(r$ )", "valor r$)")
         if is_q and is_v:
+            # Capturar a loja na linha 4; se célula vazia por mescla, anda para a esquerda
             k = j
             loja = ""
             while k >= 0:
@@ -138,52 +134,48 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
                     loja = str(val).strip()
                     break
                 k -= 1
-            if loja and not _is_totalish_text(loja):
+            loja_norm_ns = _ns(loja)
+            # ignorar lojas 'total'
+            if loja and "total" not in loja_norm_ns:
                 pairs.append((j, j+1, normalizar_loja(loja)))
             j += 2
         else:
             j += 1
 
-    # Base de dados (a partir da linha 6)
+    # Base de linhas (a partir da linha 6)
     base = df0.iloc[ROW_HDR+1:].copy()
-    base = base.rename(columns={COL_B: "GrupoColB", COL_C: "Codigo", COL_D: "Material"})
+    base = base.rename(columns={
+        COL_B: "GrupoColB",
+        COL_C: "Codigo",
+        COL_D: "Material",
+    })
 
-    # Strings “ limpas ” só para material (grupo/codigo ficam com NaN quando necessário)
-    base["Material"] = base["Material"].astype(str).fillna("").str.strip()
-    # para Grupo/Codigo, não converta tudo para str aqui — preserva NaN para ffill correto
-    # mas zere textos total/subtotal antes do ffill, para não “vazar”
-    grp_txt = base["GrupoColB"].astype(str)
-    base.loc[grp_txt.map(_is_totalish_text), "GrupoColB"] = pd.NA
+    # marcar Sub.Total (coluna C) e Total Geral (em C ou D)
+    def is_subtotal_c(x):
+        s = _ns(x)
+        return "sub.total" in s or ("sub" in s and "total" in s) or s == "subtotal"
 
-    cod_txt = base["Codigo"].astype(str)
-    bad_cod = cod_txt.map(_is_totalish_text)
-    base.loc[bad_cod, "Codigo"] = pd.NA
-    base["_drop_totalish_row"] = bad_cod | base["Material"].map(_is_totalish_text)
+    def is_total_geral(row):
+        return "total geral" in _ns(row.get("Codigo", "")) or "total geral" in _ns(row.get("Material",""))
 
-    # Grupo ffill sem transformar NaN em 'nan'
-    gp = base["GrupoColB"]
-    gp = gp.where(~gp.isna() & (gp.astype(str).str.strip() != ""), pd.NA).ffill()
-    base["GrupoProduto"] = gp
+    base["_is_sub"] = base["Codigo"].apply(is_subtotal_c)
+    base["_is_total_geral"] = base.apply(is_total_geral, axis=1)
 
-    # Código ffill e padronização sem '.0'
-    cd = base["Codigo"]
-    cd = cd.where(~cd.isna() & (cd.astype(str).str.strip() != ""), pd.NA).ffill()
+    # Grupo (ffill) e Código (ffill quando houver material)
+    base["GrupoProduto"] = (
+        base["GrupoColB"]
+        .where(base["GrupoColB"].notna() & (base["GrupoColB"].astype(str).str.strip() != ""), np.nan)
+        .ffill()
+        .astype(str).str.strip()
+    )
+    base["Material"] = base["Material"].astype(str).str.strip()
 
-    def _to_intish_text(v):
-        if pd.isna(v):
-            return pd.NA
-        s = str(v).strip()
-        if s == "":
-            return pd.NA
-        try:
-            return str(int(float(s)))
-        except:
-            return s
+    # Código: se a linha tem material, precisamos de código; se vier vazio, herdamos de cima
+    base["Codigo"] = base["Codigo"].where(base["Codigo"].astype(str).str.strip() != "", np.nan).ffill()
+    base["Codigo"] = base["Codigo"].astype(str).str.strip()
 
-    base["Codigo"] = cd.map(_to_intish_text)
-
-    # remove total/subtotal e materiais vazios
-    base = base[(~base["_drop_totalish_row"]) & (base["Material"] != "")]
+    # filtrar linhas inválidas
+    base = base[(~base["_is_sub"]) & (~base["_is_total_geral"]) & (base["Material"] != "")]
     if base.empty or not pairs:
         return pd.DataFrame(columns=["Loja","GrupoProduto","Codigo","Material","Qtde","Valor"])
 
@@ -192,22 +184,18 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
         sub = base[["GrupoProduto","Codigo","Material", c_q, c_v]].copy()
         sub = sub.rename(columns={c_q: "Qtde", c_v: "Valor"})
 
+        # qtde: descarta em branco
         sub["Qtde"] = pd.to_numeric(sub["Qtde"], errors="coerce")
         sub = sub[sub["Qtde"].notna()]
 
+        # valor: parse BRL robusto
         sub["Valor"] = sub["Valor"].apply(_parse_brl)
         sub["Valor"] = pd.to_numeric(sub["Valor"], errors="coerce").fillna(0.0)
 
+        # descarta valor <= 0
         sub = sub[sub["Valor"] > 0]
 
-        # segurança extra
-        mask_bad = (
-            sub["GrupoProduto"].astype(str).map(_is_totalish_text) |
-            sub["Codigo"].astype(str).map(_is_totalish_text) |
-            sub["Material"].astype(str).map(_is_totalish_text)
-        )
-        sub = sub[~mask_bad]
-
+        # anexa loja
         sub["Loja"] = loja_nome
         if not sub.empty:
             registros.append(sub)
@@ -227,6 +215,7 @@ with c2:
     aba_empresa = st.text_input("Aba Tabela Empresa", value="Tabela Empresa")
 
 up = st.file_uploader("Envie o Excel (linha 4 = lojas, linha 5 = cabeçalhos Qtde/Valor)", type=["xlsx","xls"])
+
 if not up:
     st.info("Envie o arquivo para começar.")
     st.stop()
@@ -244,7 +233,7 @@ except Exception as e:
     st.error(f"❌ Erro ao carregar Tabela Empresa: {e}")
     st.stop()
 
-# -------- Join por loja normalizada --------
+# -------- Join por loja normalizada (padrão Tabela Empresa) --------
 df_emp["Loja"] = df_emp["Loja"].astype(str).str.strip()
 df_emp["Loja_norm"] = df_emp["Loja"].str.lower()
 
@@ -257,7 +246,7 @@ merged = df_items.merge(
     on="Loja_norm", how="left"
 )
 
-# Resolve Loja_x/Loja_y
+# Se houver colisão Loja_x/Loja_y, escolhe o nome da Tabela Empresa
 if "Loja_x" in merged.columns and "Loja_y" in merged.columns:
     merged["Loja"] = merged["Loja_y"].where(
         merged["Loja_y"].astype(str).str.strip() != "", 
@@ -265,11 +254,13 @@ if "Loja_x" in merged.columns and "Loja_y" in merged.columns:
     )
     merged.drop(columns=["Loja_x", "Loja_y"], inplace=True)
 elif "Loja_y" in merged.columns:
-    merged["Loja"] = merged["Loja_y"]; merged.drop(columns=["Loja_y"], inplace=True)
+    merged["Loja"] = merged["Loja_y"]
+    merged.drop(columns=["Loja_y"], inplace=True)
 elif "Loja_x" in merged.columns:
-    merged["Loja"] = merged["Loja_x"]; merged.drop(columns=["Loja_x"], inplace=True)
+    merged["Loja"] = merged["Loja_x"]
+    merged.drop(columns=["Loja_x"], inplace=True)
 
-# Renomeios finais
+# “Operação” = Grupo (tabela empresa) ; “Grupo Material” = GrupoProduto
 merged = merged.rename(columns={
     "Grupo": "Operação",
     "GrupoProduto": "Grupo Material",
@@ -282,7 +273,7 @@ final_cols = [
 ]
 for c in final_cols:
     if c not in merged.columns:
-        merged[c] = pd.NA
+        merged[c] = ""
 
 df_final = merged[final_cols].copy()
 
@@ -300,12 +291,8 @@ linha_total = {
 }
 df_final = pd.concat([pd.DataFrame([linha_total]), df_final], ignore_index=True)
 
-# --- Visão formatada ---
+# --- Visão formatada para tela/Excel ---
 df_view = df_final.copy()
-# mostrar vazios em vez de 'nan'/'<NA>'
-for c in ["Grupo Material","Codigo Material","Material","Loja","Operação"]:
-    df_view[c] = df_view[c].astype("string").fillna("")
-
 df_view["Valor"] = df_view["Valor"].apply(_fmt_brl)
 
 st.subheader("Prévia")
@@ -317,17 +304,14 @@ def to_excel(df_num: pd.DataFrame):
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
         df_exp = df_num.copy()
-        # também exporta sem 'nan'
-        for c in ["Grupo Material","Codigo Material","Material","Loja","Operação"]:
-            df_exp[c] = df_exp[c].astype("string").fillna("")
-        df_exp["Valor"] = df_exp["Valor"].apply(_fmt_brl)
+        df_exp["Valor"] = df_exp["Valor"].apply(_fmt_brl)  # exporta já em 1.000,00
         df_exp.to_excel(w, index=False, sheet_name="MateriaisPorLoja")
     buf.seek(0)
     return buf
 
 st.download_button(
     "⬇️ Baixar Excel",
-    data=to_excel(df_final),
+    data=to_excel(df_final),  # passa df numérico; a função formata a coluna Valor
     file_name="materiais_por_loja.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )

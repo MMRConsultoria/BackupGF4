@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import re
 from io import BytesIO
+import json
 
 # Google Sheets
 import gspread
@@ -49,48 +50,69 @@ def _to_number(x):
 # ======================
 def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa") -> pd.DataFrame:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    # secrets: GOOGLE_SERVICE_ACCOUNT (JSON)
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(
-        st.secrets["GOOGLE_SERVICE_ACCOUNT"], scope
-    )
+
+    # aceita GOOGLE_SERVICE_ACCOUNT como dict ou string JSON
+    # e também gcp_service_account (alguns projetos usam esse nome)
+    raw = None
+    try:
+        raw = st.secrets.get("GOOGLE_SERVICE_ACCOUNT", None)
+        if raw is None:
+            raw = st.secrets.get("gcp_service_account", None)
+    except Exception:
+        raw = None
+
+    if raw is None:
+        raise RuntimeError(
+            "Credenciais não encontradas em st.secrets. "
+            "Defina GOOGLE_SERVICE_ACCOUNT (ou gcp_service_account)."
+        )
+
+    # se vier string, fazer json.loads; se já for dict, usa direto
+    if isinstance(raw, str):
+        credentials_dict = json.loads(raw)
+    else:
+        credentials_dict = dict(raw)
+
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
     gc = gspread.authorize(creds)
+
     ws = gc.open(nome_planilha).worksheet(aba)
     df = pd.DataFrame(ws.get_all_records())
     if df.empty:
         return pd.DataFrame(columns=["Loja","Grupo","Código Everest","Código Grupo Everest"])
+
     df.columns = [str(c).strip() for c in df.columns]
-    # Normalização mínima
-    # Garante colunas esperadas (com tolerância a grafia)
-    def pick(cols, alvo):
-        alvo_n = _ns(alvo)
-        for c in cols:
-            if _ns(c) == alvo_n:
-                return c
-        # variações
-        alt = {
-            "código everest": ["codigo everest", "cod everest", "codigo ev", "cód everest"],
-            "código grupo everest": ["codigo grupo everest", "cod grupo everest", "codigo grupo empresas", "cod grupo empresas"],
-        }
-        if alvo_n in alt:
-            for v in alt[alvo_n]:
-                for c in cols:
-                    if _ns(c) == v:
-                        return c
+
+    # localizar colunas com tolerância de grafia
+    def _ns(s: str) -> str:
+        return re.sub(r"\s+", " ", str(s or "").strip().lower())
+
+    def pick(cols, alvo, *alts):
+        alvo_norm = _ns(alvo)
+        cand = [alvo, *alts]
+        for wanted in cand:
+            wn = _ns(wanted)
+            for c in cols:
+                if _ns(c) == wn:
+                    return c
         return None
 
-    c_loja  = pick(df.columns, "Loja") or "Loja"
-    c_grupo = pick(df.columns, "Grupo") or "Grupo"
-    c_cod   = pick(df.columns, "Código Everest") or "Código Everest"
-    c_codg  = pick(df.columns, "Código Grupo Everest") or "Código Grupo Everest"
+    c_loja  = pick(df.columns, "Loja")
+    c_grupo = pick(df.columns, "Grupo")
+    c_cod   = pick(df.columns, "Código Everest", "Codigo Everest", "Cod Everest", "Codigo Ev", "Cód Everest")
+    c_codg  = pick(df.columns, "Código Grupo Everest", "Codigo Grupo Everest", "Cod Grupo Empresas", "Codigo Grupo Empresas")
 
-    # Subset + renomeia
     keep = {c_loja:"Loja", c_grupo:"Grupo", c_cod:"Código Everest", c_codg:"Código Grupo Everest"}
+    # remove None que não foram achados
+    keep = {k:v for k,v in keep.items() if k is not None}
+
     df = df[list(keep.keys())].rename(columns=keep)
 
-    # Normalizações para join
+    # normalização para o join
     df["Loja"] = df["Loja"].astype(str).str.strip()
     df["Loja_norm"] = df["Loja"].str.lower()
     return df
+
 
 # ======================
 # Parser do Excel de Upload

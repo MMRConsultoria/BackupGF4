@@ -23,6 +23,9 @@ def normalizar_loja(txt: str) -> str:
     s = re.sub(r"^\s*\d+\s*-\s*", "", s)
     return s.strip()
 
+def loja_join_key(txt: str) -> str:
+    return normalizar_loja(txt).lower()
+
 def pick_name(cols, targets):
     m = {_ns(c): c for c in cols}
     for t in targets:
@@ -57,25 +60,6 @@ def _fmt_brl(v) -> str:
         return "R$ 0,00"
     s = f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return s  # ex.: 1.234,56
-
-def _is_totalish_text(x: str) -> bool:
-    """
-    True para qualquer variação de total/subtotal: 'total', 'total geral', 'subtotal', 'sub.total', 'sub total', etc.
-    """
-    s = _ns(x)
-    if not s:
-        return False
-    # match amplo
-    return (
-        s == "total" or
-        s.startswith("total ") or
-        " total " in f" {s} " or
-        "total geral" in s or
-        s.replace(" ", "") == "totalgeral" or
-        s == "subtotal" or
-        "sub total" in s or
-        "subtotal" in s
-    )
 
 # --------- Google Sheets: Tabela Empresa ----------
 def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa") -> pd.DataFrame:
@@ -120,8 +104,7 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
     - Linha 5 (idx 4): cabeçalhos; pares 'Qtde' e 'Valor(R$)' de cada loja.
     - Coluna B (idx 1): Grupo do produto. Só aparece ao mudar, então ffill.
     - Coluna C (idx 2): Código do material. Se vazio, herdar da linha de cima.
-    - Coluna D (idx 3): Material (nome).
-    - Excluir qualquer linha (de dados) que contenha total/subtotal em B, C ou D.
+    - Coluna D (idx 3): Material (nome). Linhas Sub.Total (col C) e Total Geral (C ou D) devem ser excluídas.
     - Linhas com Qtde vazia ou Valor <= 0 são descartadas.
     """
     df0 = pd.read_excel(uploaded_file, sheet_name=0, header=None, dtype=object)
@@ -153,7 +136,7 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
                 k -= 1
             loja_norm_ns = _ns(loja)
             # ignorar lojas 'total'
-            if loja and not _is_totalish_text(loja_norm_ns):
+            if loja and "total" not in loja_norm_ns:
                 pairs.append((j, j+1, normalizar_loja(loja)))
             j += 2
         else:
@@ -167,22 +150,21 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
         COL_D: "Material",
     })
 
-    # Prepara campos como texto
-    for col in ["GrupoColB","Codigo","Material"]:
-        base[col] = base[col].astype(str).fillna("").str.strip()
+    # marcar Sub.Total (coluna C) e Total Geral (em C ou D)
+    def is_subtotal_c(x):
+        s = _ns(x)
+        return "sub.total" in s or ("sub" in s and "total" in s) or s == "subtotal"
 
-    # Marca linhas "total-like" olhando B/C/D
-    base["_is_total_like"] = base.apply(
-        lambda r: _is_totalish_text(r.get("GrupoColB","")) or
-                  _is_totalish_text(r.get("Codigo","")) or
-                  _is_totalish_text(r.get("Material","")),
-        axis=1
-    )
+    def is_total_geral(row):
+        return "total geral" in _ns(row.get("Codigo", "")) or "total geral" in _ns(row.get("Material",""))
+
+    base["_is_sub"] = base["Codigo"].apply(is_subtotal_c)
+    base["_is_total_geral"] = base.apply(is_total_geral, axis=1)
 
     # Grupo (ffill) e Código (ffill quando houver material)
     base["GrupoProduto"] = (
         base["GrupoColB"]
-        .where(base["GrupoColB"].astype(str).str.strip() != "", np.nan)
+        .where(base["GrupoColB"].notna() & (base["GrupoColB"].astype(str).str.strip() != ""), np.nan)
         .ffill()
         .astype(str).str.strip()
     )
@@ -192,8 +174,8 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
     base["Codigo"] = base["Codigo"].where(base["Codigo"].astype(str).str.strip() != "", np.nan).ffill()
     base["Codigo"] = base["Codigo"].astype(str).str.strip()
 
-    # filtrar linhas inválidas (remove TOTAL/SUBTOTAL em qualquer coluna, e material vazio)
-    base = base[(~base["_is_total_like"]) & (base["Material"] != "")]
+    # filtrar linhas inválidas
+    base = base[(~base["_is_sub"]) & (~base["_is_total_geral"]) & (base["Material"] != "")]
     if base.empty or not pairs:
         return pd.DataFrame(columns=["Loja","GrupoProduto","Codigo","Material","Qtde","Valor"])
 
@@ -212,14 +194,6 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
 
         # descarta valor <= 0
         sub = sub[sub["Valor"] > 0]
-
-        # segurança extra: remove qualquer “total-like” que tenha passado
-        mask_bad = (
-            sub["GrupoProduto"].apply(_is_totalish_text) |
-            sub["Codigo"].apply(_is_totalish_text) |
-            sub["Material"].apply(_is_totalish_text)
-        )
-        sub = sub[~mask_bad]
 
         # anexa loja
         sub["Loja"] = loja_nome

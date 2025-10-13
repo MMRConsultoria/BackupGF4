@@ -19,8 +19,7 @@ def _ns(s: str) -> str:
 
 def normalizar_loja(txt: str) -> str:
     s = str(txt or "").strip()
-    # remove "123 - " do começo
-    s = re.sub(r"^\s*\d+\s*-\s*", "", s)
+    s = re.sub(r"^\s*\d+\s*-\s*", "", s)  # remove "123 - "
     return s.strip()
 
 def pick_name(cols, targets):
@@ -31,7 +30,6 @@ def pick_name(cols, targets):
     return None
 
 def _parse_brl(x) -> float:
-    """Converte '1.234,56', '1234,56', '0,46', '(1.234,56)' -> float (1234.56)"""
     s = str(x or "").strip()
     if s == "":
         return np.nan
@@ -40,7 +38,6 @@ def _parse_brl(x) -> float:
     s = s.replace("R$", "").replace("\u00A0", "").replace(" ", "")
     s = re.sub(r"[^0-9,.\-]", "", s)
     if s.count(",") >= 1 and s.count(".") >= 1:
-        # BR: ponto milhar, vírgula decimal
         s = s.replace(".", "").replace(",", ".")
     elif s.count(",") >= 1 and s.count(".") == 0:
         s = s.replace(",", ".")
@@ -56,11 +53,10 @@ def _fmt_brl(v) -> str:
     except:
         return "R$ 0,00"
     s = f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    return s  # ex.: 1.234,56
+    return s
 
 # --------- Google Sheets: Tabela Empresa ----------
 def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa") -> pd.DataFrame:
-    # aceita secrets como dict ou string JSON
     key = "GOOGLE_SERVICE_ACCOUNT" if "GOOGLE_SERVICE_ACCOUNT" in st.secrets else (
         "gcp_service_account" if "gcp_service_account" in st.secrets else None
     )
@@ -69,7 +65,6 @@ def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa"
 
     creds_any = st.secrets[key]
     creds_dict = json.loads(creds_any) if isinstance(creds_any, str) else creds_any
-
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     gc = gspread.authorize(credentials)
@@ -95,34 +90,21 @@ def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa"
 
 # --------- Parser do Excel de Upload ----------
 def ler_relatorio(uploaded_file) -> pd.DataFrame:
-    """
-    Regras do arquivo:
-    - Linha 4 (idx 3): nomes das Lojas (células mescladas). Ignorar lojas 'Total'.
-    - Linha 5 (idx 4): cabeçalhos; pares 'Qtde' e 'Valor(R$)' de cada loja.
-    - Coluna B (idx 1): Grupo do produto. Só aparece ao mudar, então ffill.
-    - Coluna C (idx 2): Código do material. Se vazio, herdar da linha de cima.
-    - Coluna D (idx 3): Material (nome).
-    - Linhas com Qtde vazia ou Valor <= 0 são descartadas.
-    """
     df0 = pd.read_excel(uploaded_file, sheet_name=0, header=None, dtype=object)
     if df0.shape[0] < 6:
         return pd.DataFrame()
 
-    # Constantes de posição — definidas ANTES do uso
     ROW_LOJA = 3   # linha 4 (0-based)
     ROW_HDR  = 4   # linha 5 (0-based)
     COL_B, COL_C, COL_D = 1, 2, 3  # Grupo, Código, Material
 
-    # --- Cabeçalhos da linha 5
     r5 = df0.iloc[ROW_HDR].astype(str).fillna("")
     r5n = r5.map(_ns)
 
-    # --- Linha 4 (lojas) com ffill horizontal (robusto a mesclas deslocadas)
     lojas_row = df0.iloc[ROW_LOJA].astype(str)
     lojas_row = lojas_row.replace(["", "nan", "None", "NaN"], pd.NA)
     lojas_row_ff = lojas_row.ffill()
 
-    # Funções de detecção
     def eh_qtde(tok: str) -> bool:
         return _ns(tok) == "qtde"
 
@@ -130,16 +112,15 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
     def eh_valor(tok: str) -> bool:
         return _ns(tok) in VAL_TOKS
 
-    # Detectar pares (Qtde, Valor) por loja — tolerante a desalinhamento (procura valor nas 3 próximas colunas)
     pairs = []  # (col_qt, col_vl, loja_name)
     j = 0
     ncols = df0.shape[1]
     while j < ncols:
         if eh_qtde(r5n.iloc[j]):
             vcol = None
-            limite = min(ncols, j + 4)  # procura até 3 colunas à frente
+            limite = min(ncols, j + 4)
             k = j + 1
-            while k < limite and not eh_qtde(r5n.iloc[k]):  # não atravessar outro bloco
+            while k < limite and not eh_qtde(r5n.iloc[k]):
                 if eh_valor(r5n.iloc[k]):
                     vcol = k
                     break
@@ -153,53 +134,37 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
                 continue
         j += 1
 
-    # --- Base de linhas (a partir da linha 6)
     base = df0.iloc[ROW_HDR+1:].copy()
-    base = base.rename(columns={
-        COL_B: "GrupoColB",
-        COL_C: "Codigo",
-        COL_D: "Material",
-    })
+    base = base.rename(columns={COL_B: "GrupoColB", COL_C: "Codigo", COL_D: "Material"})
 
-    # Grupo (ffill) e Código (ffill quando houver material)
     base["GrupoProduto"] = (
         base["GrupoColB"]
         .where(base["GrupoColB"].notna() & (base["GrupoColB"].astype(str).str.strip() != ""), np.nan)
-        .ffill()
-        .astype(str).str.strip()
+        .ffill().astype(str).str.strip()
     )
     base["Material"] = base["Material"].astype(str).str.strip()
-
-    # Código: se a linha tem material, precisamos de código; se vier vazio, herdamos de cima
     base["Codigo"] = base["Codigo"].where(base["Codigo"].astype(str).str.strip() != "", np.nan).ffill()
     base["Codigo"] = base["Codigo"].astype(str).str.strip()
 
     if base.empty or not pairs:
         return pd.DataFrame(columns=["Loja","GrupoProduto","Codigo","Material","Qtde","Valor"])
 
-    # Monta registros por par Loja/cols
     registros = []
     for c_q, c_v, loja_nome in pairs:
         sub = base[["GrupoProduto","Codigo","Material", c_q, c_v]].copy()
         sub = sub.rename(columns={c_q: "Qtde", c_v: "Valor"})
 
-        # Filtro leve de linhas de total/subtotal (apenas se o texto "total" aparecer explícito)
         mask_total = sub["Codigo"].astype(str).str.contains(r"\btotal\b", case=False, na=False) | \
                      sub["Material"].astype(str).str.contains(r"\btotal\b", case=False, na=False)
         sub = sub[~mask_total]
 
-        # qtde: descarta em branco
         sub["Qtde"] = pd.to_numeric(sub["Qtde"], errors="coerce")
         sub = sub[sub["Qtde"].notna()]
 
-        # valor: parse BRL robusto
         sub["Valor"] = sub["Valor"].apply(_parse_brl)
         sub["Valor"] = pd.to_numeric(sub["Valor"], errors="coerce").fillna(0.0)
-
-        # descarta valor <= 0
         sub = sub[sub["Valor"] > 0]
 
-        # anexa loja
         sub["Loja"] = loja_nome
         if not sub.empty:
             registros.append(sub)
@@ -250,21 +215,14 @@ merged = df_items.merge(
     on="Loja_norm", how="left"
 )
 
-# Se houver colisão Loja_x/Loja_y, escolhe o nome da Tabela Empresa
 if "Loja_x" in merged.columns and "Loja_y" in merged.columns:
-    merged["Loja"] = merged["Loja_y"].where(
-        merged["Loja_y"].astype(str).str.strip() != "", 
-        merged["Loja_x"]
-    )
+    merged["Loja"] = merged["Loja_y"].where(merged["Loja_y"].astype(str).str.strip() != "", merged["Loja_x"])
     merged.drop(columns=["Loja_x", "Loja_y"], inplace=True)
 elif "Loja_y" in merged.columns:
-    merged["Loja"] = merged["Loja_y"]
-    merged.drop(columns=["Loja_y"], inplace=True)
+    merged["Loja"] = merged["Loja_y"]; merged.drop(columns=["Loja_y"], inplace=True)
 elif "Loja_x" in merged.columns:
-    merged["Loja"] = merged["Loja_x"]
-    merged.drop(columns=["Loja_x"], inplace=True)
+    merged["Loja"] = merged["Loja_x"]; merged.drop(columns=["Loja_x"], inplace=True)
 
-# “Operação” = Grupo (tabela empresa) ; “Grupo Material” = GrupoProduto
 merged = merged.rename(columns={
     "Grupo": "Operação",
     "GrupoProduto": "Grupo Material",
@@ -281,7 +239,7 @@ for c in final_cols:
 
 df_final = merged[final_cols].copy()
 
-# ----- TOTAL (numérico) -----
+# ----- TOTAL numérico -----
 linha_total = {
     "Operação": "TOTAL",
     "Loja": "",
@@ -290,32 +248,52 @@ linha_total = {
     "Grupo Material": "",
     "Codigo Material": "",
     "Material": "",
-    "Qtde": df_final["Qtde"].sum(skipna=True),
-    "Valor": df_final["Valor"].sum(skipna=True),
+    "Qtde": pd.to_numeric(df_final["Qtde"], errors="coerce").sum(skipna=True),
+    "Valor": pd.to_numeric(df_final["Valor"], errors="coerce").sum(skipna=True),
 }
 df_final = pd.concat([pd.DataFrame([linha_total]), df_final], ignore_index=True)
 
-# --- Visão formatada para tela/Excel ---
+# --- Prévia (formata só na tela) ---
 df_view = df_final.copy()
 df_view["Valor"] = df_view["Valor"].apply(_fmt_brl)
-
 st.subheader("Prévia")
 st.dataframe(df_view.head(120), use_container_width=True, hide_index=True)
 st.caption(f"Linhas (com TOTAL): {len(df_view):,}".replace(",", "."))
 
-# Download
+# -------- Download: mantém número e aplica formato no Excel --------
 def to_excel(df_num: pd.DataFrame):
+    # garante numéricos
+    df_exp = df_num.copy()
+    df_exp["Qtde"] = pd.to_numeric(df_exp["Qtde"], errors="coerce")
+    df_exp["Valor"] = pd.to_numeric(df_exp["Valor"], errors="coerce")
+
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
-        df_exp = df_num.copy()
-        df_exp["Valor"] = df_exp["Valor"].apply(_fmt_brl)  # exporta já em 1.000,00
         df_exp.to_excel(w, index=False, sheet_name="MateriaisPorLoja")
+        wb = w.book
+        ws = w.sheets["MateriaisPorLoja"]
+
+        # largura + formato BR
+        fmt_money = wb.add_format({"num_format": "#.##0,00"})
+        fmt_int   = wb.add_format({"num_format": "0"})
+        # descobre índices das colunas
+        headers = list(df_exp.columns)
+        if "Valor" in headers:
+            col_v = headers.index("Valor")
+            ws.set_column(col_v, col_v, 14, fmt_money)
+        if "Qtde" in headers:
+            col_q = headers.index("Qtde")
+            ws.set_column(col_q, col_q, 10, fmt_int)
+        # ajusta um pouco as demais
+        for i, h in enumerate(headers):
+            if h not in ("Valor", "Qtde"):
+                ws.set_column(i, i, 18)
     buf.seek(0)
     return buf
 
 st.download_button(
     "⬇️ Baixar Excel",
-    data=to_excel(df_final),  # passa df numérico; a função formata a coluna Valor
+    data=to_excel(df_final),
     file_name="materiais_por_loja.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )

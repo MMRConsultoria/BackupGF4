@@ -119,32 +119,35 @@ def _to_float_brl(x):
     except:
         return pd.to_numeric(s, errors="coerce")
 
+
 def extrair_registros(df_raw: pd.DataFrame, blocos: list) -> pd.DataFrame:
     """
     A partir da linha 6 (index 5):
       - Grupo do produto: coluna B (index 1) → carry-forward
       - Ignora linhas cuja coluna B contém 'Sub.Total'/'Subtotal'
-      - Código material:  coluna C (index 2)
+      - Código material:  coluna C (index 2)  → se vazio, usa o da linha anterior (last_code)
       - Material:         coluna D (index 3)
       - Para cada loja: Qtde/Valor (só inclui se Valor > 0)
     """
     registros = []
     grupo_atual = None
+    last_code = None  # << novo: carrega o código da linha anterior (por grupo)
 
     for r in range(5, df_raw.shape[0]):
         raw_b = df_raw.iat[r, 1] if 1 < df_raw.shape[1] else None
         cel_b = "" if _is_empty_cell(raw_b) else str(raw_b).strip()
         cel_b_ns = _ns(cel_b)
 
-        # Sub.Total encerra grupo
+        # Sub.Total encerra grupo e zera carry de código
         if cel_b and RE_SUBTOTAL.search(cel_b_ns):
             grupo_atual = None
+            last_code = None
             continue
 
-        # Linha com novo Grupo (texto em B, não é subtotal)
+        # Nova linha de cabeçalho de grupo (texto em B, que não é subtotal)
         if cel_b and not RE_SUBTOTAL.search(cel_b_ns):
             grupo_atual = cel_b
-            # esta linha é de cabeçalho do grupo → não processa itens
+            last_code = None  # ao entrar num novo grupo, zera o carry de código
             continue
 
         # Linhas de item: precisam ter grupo vigente
@@ -152,15 +155,24 @@ def extrair_registros(df_raw: pd.DataFrame, blocos: list) -> pd.DataFrame:
             continue
 
         # Colunas C (código) e D (material)
-        cod_mat = df_raw.iat[r, 2] if 2 < df_raw.shape[1] else ""
-        mat     = df_raw.iat[r, 3] if 3 < df_raw.shape[1] else ""
+        cod_mat_raw = df_raw.iat[r, 2] if 2 < df_raw.shape[1] else ""
+        mat_raw     = df_raw.iat[r, 3] if 3 < df_raw.shape[1] else ""
 
-        if _is_empty_cell(cod_mat) and _is_empty_cell(mat):
+        cod_mat = "" if _is_empty_cell(cod_mat_raw) else str(cod_mat_raw).strip()
+        mat     = "" if _is_empty_cell(mat_raw)     else str(mat_raw).strip()
+
+        # <<< HERDAR CÓDIGO DA LINHA ACIMA QUANDO VAZIO >>>
+        if cod_mat == "" and last_code:
+            cod_mat = last_code
+        # se veio um código novo, passa a ser o last_code
+        if cod_mat != "":
+            last_code = cod_mat
+
+        # se não há material e nem código herdável, pula
+        if cod_mat == "" and mat == "":
             continue
 
-        cod_mat = "" if _is_empty_cell(cod_mat) else str(cod_mat).strip()
-        mat     = "" if _is_empty_cell(mat) else str(mat).strip()
-
+        # Para cada loja: ler Qtde / Valor e incluir apenas Valor > 0
         for b in blocos:
             qtde_raw  = df_raw.iat[r, b["col_qtde"]]
             valor_raw = df_raw.iat[r, b["col_valor"]]
@@ -181,6 +193,7 @@ def extrair_registros(df_raw: pd.DataFrame, blocos: list) -> pd.DataFrame:
             })
 
     return pd.DataFrame(registros)
+
 
 # ---------------- UI ----------------
 st.title("📦 Materiais por Loja — com Operação (Tabela Empresa)")

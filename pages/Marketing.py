@@ -111,36 +111,57 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
     if df0.shape[0] < 6:
         return pd.DataFrame()
 
+   
+    # === DETECÇÃO ROBUSTA DE LOJAS + PARES QTDE/VALOR ===
     ROW_LOJA = 3   # linha 4 (0-based)
     ROW_HDR  = 4   # linha 5 (0-based)
-    COL_B, COL_C, COL_D = 1, 2, 3  # Grupo, Código, Material
-
-    # Detectar pares Qtde / Valor(R$)
+    
+    # Linha 5 (cabeçalhos)
     r5 = df0.iloc[ROW_HDR].astype(str).fillna("")
     r5n = r5.map(_ns)
+    
+    # Linha 4 (lojas) com preenchimento horizontal (resolve mesclas "tortas")
+    lojas_row = df0.iloc[ROW_LOJA].astype(str)
+    # trata vazios/NaN e faz ffill à direita
+    lojas_row = lojas_row.replace(["", "nan", "None", "NaN"], pd.NA)
+    lojas_row_ff = lojas_row.ffill(axis=0)   # uma única Series; ffill já funciona na horizontal para NaN corridos
+    
     pairs = []  # (col_qt, col_vl, loja_name)
-
+    
+    def eh_qtde(tok: str) -> bool:
+        return _ns(tok) == "qtde"
+    
+    VAL_TOKS = {"valor(r$)", "valor r$", "valor (r$)", "valor(r$ )", "valor r$)", "valor"}
+    def eh_valor(tok: str) -> bool:
+        return _ns(tok) in VAL_TOKS
+    
     j = 0
-    while j < df0.shape[1] - 1:
-        is_q = r5n.iloc[j] == "qtde"
-        is_v = r5n.iloc[j+1] in ("valor(r$)", "valor r$", "valor (r$)", "valor(r$ )", "valor r$)")
-        if is_q and is_v:
-            # Capturar a loja na linha 4; se célula vazia por mescla, anda para a esquerda
-            k = j
-            loja = ""
-            while k >= 0:
-                val = str(df0.iat[ROW_LOJA, k] if k < df0.shape[1] else "")
-                if val and str(val).strip().lower() not in ("nan",):
-                    loja = str(val).strip()
+    ncols = df0.shape[1]
+    while j < ncols:
+        if eh_qtde(r5n.iloc[j]):
+            # procurar o "Valor" nas próximas 1..3 colunas (ou até antes do próximo Qtde)
+            vcol = None
+            limite = min(ncols, j + 4)
+            k = j + 1
+            while k < limite and not eh_qtde(r5n.iloc[k]):  # para não atravessar outro bloco de loja
+                if eh_valor(r5n.iloc[k]):
+                    vcol = k
                     break
-                k -= 1
-            loja_norm_ns = _ns(loja)
-            # ignorar lojas 'total'
-            if loja and "total" not in loja_norm_ns:
-                pairs.append((j, j+1, normalizar_loja(loja)))
-            j += 2
-        else:
-            j += 1
+                k += 1
+    
+            if vcol is not None:
+                # nome da loja após ffill (robusto a mescla deslocada)
+                loja_bruta = str(lojas_row_ff.iloc[j] if j < len(lojas_row_ff) else "").strip()
+                loja_bruta = normalizar_loja(loja_bruta)
+                if loja_bruta and "total" not in _ns(loja_bruta):
+                    pairs.append((j, vcol, loja_bruta))
+    
+                # avança para depois do valor encontrado (ou +1 para continuar a varrer)
+                j = vcol + 1
+                continue
+    
+        j += 1
+
 
     # Base de linhas (a partir da linha 6)
     base = df0.iloc[ROW_HDR+1:].copy()

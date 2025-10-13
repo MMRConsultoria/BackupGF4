@@ -19,7 +19,8 @@ def _ns(s: str) -> str:
 
 def normalizar_loja(txt: str) -> str:
     s = str(txt or "").strip()
-    s = re.sub(r"^\d+\s*-\s*", "", s)  # remove "123 - "
+    # remove "123 - " do começo
+    s = re.sub(r"^\s*\d+\s*-\s*", "", s)
     return s.strip()
 
 def loja_join_key(txt: str) -> str:
@@ -32,13 +33,44 @@ def pick_name(cols, targets):
             return m[_ns(t)]
     return None
 
+def _parse_brl(x) -> float:
+    """Converte '1.234,56', '1234,56', '0,46', '(1.234,56)' -> float (1234.56)"""
+    s = str(x or "").strip()
+    if s == "":
+        return np.nan
+    neg = s.startswith("(") and s.endswith(")")
+    s = s.replace("(", "").replace(")", "")
+    s = s.replace("R$", "").replace("\u00A0", "").replace(" ", "")
+    s = re.sub(r"[^0-9,.\-]", "", s)
+    if s.count(",") >= 1 and s.count(".") >= 1:
+        # BR: ponto milhar, vírgula decimal
+        s = s.replace(".", "").replace(",", ".")
+    elif s.count(",") >= 1 and s.count(".") == 0:
+        s = s.replace(",", ".")
+    try:
+        v = float(s)
+        return -v if neg else v
+    except:
+        return np.nan
+
+def _fmt_brl(v) -> str:
+    try:
+        v = float(v)
+    except:
+        return "R$ 0,00"
+    s = f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return s  # ex.: 1.234,56
+
 # --------- Google Sheets: Tabela Empresa ----------
 def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa") -> pd.DataFrame:
     # aceita secrets como dict ou string JSON
-    key = "GOOGLE_SERVICE_ACCOUNT" if "GOOGLE_SERVICE_ACCOUNT" in st.secrets else "gcp_service_account"
-    creds_any = st.secrets.get(key)
-    if creds_any is None:
+    key = "GOOGLE_SERVICE_ACCOUNT" if "GOOGLE_SERVICE_ACCOUNT" in st.secrets else (
+        "gcp_service_account" if "gcp_service_account" in st.secrets else None
+    )
+    if key is None:
         raise RuntimeError("Configure st.secrets['GOOGLE_SERVICE_ACCOUNT'] (ou 'gcp_service_account').")
+
+    creds_any = st.secrets[key]
     creds_dict = json.loads(creds_any) if isinstance(creds_any, str) else creds_any
 
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -66,6 +98,15 @@ def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa"
 
 # --------- Parser do Excel de Upload ----------
 def ler_relatorio(uploaded_file) -> pd.DataFrame:
+    """
+    Regras do arquivo:
+    - Linha 4 (idx 3): nomes das Lojas (células mescladas). Ignorar lojas 'Total'.
+    - Linha 5 (idx 4): cabeçalhos; pares 'Qtde' e 'Valor(R$)' de cada loja.
+    - Coluna B (idx 1): Grupo do produto. Só aparece ao mudar, então ffill.
+    - Coluna C (idx 2): Código do material. Se vazio, herdar da linha de cima.
+    - Coluna D (idx 3): Material (nome). Linhas Sub.Total (col C) e Total Geral (C ou D) devem ser excluídas.
+    - Linhas com Qtde vazia ou Valor <= 0 são descartadas.
+    """
     df0 = pd.read_excel(uploaded_file, sheet_name=0, header=None, dtype=object)
     if df0.shape[0] < 6:
         return pd.DataFrame()
@@ -82,7 +123,7 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
     j = 0
     while j < df0.shape[1] - 1:
         is_q = r5n.iloc[j] == "qtde"
-        is_v = r5n.iloc[j+1] in ("valor(r$)","valor r$","valor (r$)","valor(r$ )","valor r$)")
+        is_v = r5n.iloc[j+1] in ("valor(r$)", "valor r$", "valor (r$)", "valor(r$ )", "valor r$)")
         if is_q and is_v:
             # Capturar a loja na linha 4; se célula vazia por mescla, anda para a esquerda
             k = j
@@ -136,7 +177,7 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
     # filtrar linhas inválidas
     base = base[(~base["_is_sub"]) & (~base["_is_total_geral"]) & (base["Material"] != "")]
     if base.empty or not pairs:
-        return pd.DataFrame(columns=["Operacao","Loja","GrupoProduto","Codigo","Material","Qtde","Valor"])
+        return pd.DataFrame(columns=["Loja","GrupoProduto","Codigo","Material","Qtde","Valor"])
 
     registros = []
     for c_q, c_v, loja_nome in pairs:
@@ -147,11 +188,9 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
         sub["Qtde"] = pd.to_numeric(sub["Qtde"], errors="coerce")
         sub = sub[sub["Qtde"].notna()]
 
-        # valor: BRL → float
-        val = sub["Valor"].astype(str)
-        val = val.str.replace("R$", "", regex=False).str.replace("\u00A0","", regex=False)
-        val = val.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
-        sub["Valor"] = pd.to_numeric(val, errors="coerce").fillna(0.0)
+        # valor: parse BRL robusto
+        sub["Valor"] = sub["Valor"].apply(_parse_brl)
+        sub["Valor"] = pd.to_numeric(sub["Valor"], errors="coerce").fillna(0.0)
 
         # descarta valor <= 0
         sub = sub[sub["Valor"] > 0]
@@ -162,7 +201,7 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
             registros.append(sub)
 
     if not registros:
-        return pd.DataFrame(columns=["Operacao","Loja","GrupoProduto","Codigo","Material","Qtde","Valor"])
+        return pd.DataFrame(columns=["Loja","GrupoProduto","Codigo","Material","Qtde","Valor"])
 
     out = pd.concat(registros, ignore_index=True)
     out = out[["Loja","GrupoProduto","Codigo","Material","Qtde","Valor"]].copy()
@@ -194,35 +233,38 @@ except Exception as e:
     st.error(f"❌ Erro ao carregar Tabela Empresa: {e}")
     st.stop()
 
-# --- apenas acrescentado: consolidar o nome da Loja pós-merge ---
-# normalização defensiva
+# -------- Join por loja normalizada (padrão Tabela Empresa) --------
+df_emp["Loja"] = df_emp["Loja"].astype(str).str.strip()
+df_emp["Loja_norm"] = df_emp["Loja"].str.lower()
+
 df_items["Loja"] = df_items["Loja"].astype(str).str.strip()
+df_items["Loja"] = df_items["Loja"].str.replace(r"^\s*\d+\s*-\s*", "", regex=True)
 df_items["Loja_norm"] = df_items["Loja"].str.lower()
 
 merged = df_items.merge(
     df_emp[["Loja_norm","Loja","Grupo","Código Everest","Código Grupo Everest"]],
-    on="Loja_norm", how="left", suffixes=("_x","_y")
+    on="Loja_norm", how="left"
 )
 
-# usar o nome de loja da Tabela Empresa quando existir; senão mantém o do arquivo
-if "Loja_y" in merged.columns and "Loja_x" in merged.columns:
+# Se houver colisão Loja_x/Loja_y, escolhe o nome da Tabela Empresa
+if "Loja_x" in merged.columns and "Loja_y" in merged.columns:
     merged["Loja"] = merged["Loja_y"].where(
-        merged["Loja_y"].astype(str).str.strip() != "",
+        merged["Loja_y"].astype(str).str.strip() != "", 
         merged["Loja_x"]
     )
-    merged.drop(columns=["Loja_x","Loja_y"], inplace=True)
+    merged.drop(columns=["Loja_x", "Loja_y"], inplace=True)
 elif "Loja_y" in merged.columns:
-    merged["Loja"] = merged["Loja_y"]; merged.drop(columns=["Loja_y"], inplace=True)
+    merged["Loja"] = merged["Loja_y"]
+    merged.drop(columns=["Loja_y"], inplace=True)
 elif "Loja_x" in merged.columns:
-    merged["Loja"] = merged["Loja_x"]; merged.drop(columns=["Loja_x"], inplace=True)
-# --- fim ajuste Loja ---
+    merged["Loja"] = merged["Loja_x"]
+    merged.drop(columns=["Loja_x"], inplace=True)
 
 # “Operação” = Grupo (tabela empresa) ; “Grupo Material” = GrupoProduto
 merged = merged.rename(columns={
     "Grupo": "Operação",
     "GrupoProduto": "Grupo Material",
     "Codigo": "Codigo Material",
-    "Valor": "Valor",
 })
 
 final_cols = [
@@ -235,7 +277,7 @@ for c in final_cols:
 
 df_final = merged[final_cols].copy()
 
-# Primeira linha = TOTAL
+# ----- TOTAL (numérico) -----
 linha_total = {
     "Operação": "TOTAL",
     "Loja": "",
@@ -249,21 +291,27 @@ linha_total = {
 }
 df_final = pd.concat([pd.DataFrame([linha_total]), df_final], ignore_index=True)
 
+# --- Visão formatada para tela/Excel ---
+df_view = df_final.copy()
+df_view["Valor"] = df_view["Valor"].apply(_fmt_brl)
+
 st.subheader("Prévia")
-st.dataframe(df_final.head(120), use_container_width=True, hide_index=True)
-st.caption(f"Linhas (com TOTAL): {len(df_final):,}".replace(",", "."))
+st.dataframe(df_view.head(120), use_container_width=True, hide_index=True)
+st.caption(f"Linhas (com TOTAL): {len(df_view):,}".replace(",", "."))
 
 # Download
-def to_excel(df: pd.DataFrame):
+def to_excel(df_num: pd.DataFrame):
     buf = BytesIO()
     with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
-        df.to_excel(w, index=False, sheet_name="MateriaisPorLoja")
+        df_exp = df_num.copy()
+        df_exp["Valor"] = df_exp["Valor"].apply(_fmt_brl)  # exporta já em 1.000,00
+        df_exp.to_excel(w, index=False, sheet_name="MateriaisPorLoja")
     buf.seek(0)
     return buf
 
 st.download_button(
     "⬇️ Baixar Excel",
-    data=to_excel(df_final),
+    data=to_excel(df_final),  # passa df numérico; a função formata a coluna Valor
     file_name="materiais_por_loja.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )

@@ -194,12 +194,28 @@ except Exception as e:
     st.error(f"❌ Erro ao carregar Tabela Empresa: {e}")
     st.stop()
 
-# Join por loja normalizada
-df_items["Loja_norm"] = df_items["Loja"].map(lambda x: x.lower())
+# --- apenas acrescentado: consolidar o nome da Loja pós-merge ---
+# normalização defensiva
+df_items["Loja"] = df_items["Loja"].astype(str).str.strip()
+df_items["Loja_norm"] = df_items["Loja"].str.lower()
+
 merged = df_items.merge(
     df_emp[["Loja_norm","Loja","Grupo","Código Everest","Código Grupo Everest"]],
-    on="Loja_norm", how="left"
+    on="Loja_norm", how="left", suffixes=("_x","_y")
 )
+
+# usar o nome de loja da Tabela Empresa quando existir; senão mantém o do arquivo
+if "Loja_y" in merged.columns and "Loja_x" in merged.columns:
+    merged["Loja"] = merged["Loja_y"].where(
+        merged["Loja_y"].astype(str).str.strip() != "",
+        merged["Loja_x"]
+    )
+    merged.drop(columns=["Loja_x","Loja_y"], inplace=True)
+elif "Loja_y" in merged.columns:
+    merged["Loja"] = merged["Loja_y"]; merged.drop(columns=["Loja_y"], inplace=True)
+elif "Loja_x" in merged.columns:
+    merged["Loja"] = merged["Loja_x"]; merged.drop(columns=["Loja_x"], inplace=True)
+# --- fim ajuste Loja ---
 
 # “Operação” = Grupo (tabela empresa) ; “Grupo Material” = GrupoProduto
 merged = merged.rename(columns={

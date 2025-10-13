@@ -70,14 +70,33 @@ def _norm_loja(s: str) -> str:
 
 # ======= Google Sheets: Tabela Empresa =======
 def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa") -> pd.DataFrame:
-    # st.secrets["GOOGLE_SERVICE_ACCOUNT"] deve conter o JSON do service account
+    import json
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    try:
-        creds_dict = st.secrets["GOOGLE_SERVICE_ACCOUNT"]
-    except KeyError:
-        st.error("🚫 st.secrets['GOOGLE_SERVICE_ACCOUNT'] não encontrado.")
+
+    # 1) Lê as credenciais do st.secrets (pode ser dict ou string JSON)
+    creds_any = None
+    if "GOOGLE_SERVICE_ACCOUNT" in st.secrets:
+        creds_any = st.secrets["GOOGLE_SERVICE_ACCOUNT"]
+    elif "gcp_service_account" in st.secrets:
+        # fallback para outro nome que você já usou
+        creds_any = st.secrets["gcp_service_account"]
+    else:
+        st.error("🚫 Não encontrei credenciais em st.secrets['GOOGLE_SERVICE_ACCOUNT'] nem 'gcp_service_account'.")
         st.stop()
 
+    if isinstance(creds_any, str):
+        try:
+            creds_dict = json.loads(creds_any)
+        except Exception:
+            st.error("🚫 As credenciais do Google vieram como string mas não são um JSON válido.")
+            st.stop()
+    elif isinstance(creds_any, dict):
+        creds_dict = creds_any
+    else:
+        st.error("🚫 Formato de credenciais inválido em st.secrets.")
+        st.stop()
+
+    # 2) Autentica e lê a planilha
     credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     gc = gspread.authorize(credentials)
     sh = gc.open(nome_planilha)
@@ -86,7 +105,14 @@ def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa"
     if df.empty:
         return pd.DataFrame(columns=["Loja","Grupo","Código Everest","Código Grupo Everest"])
 
-    # normalizar cabeçalhos
+    # 3) Normaliza colunas (aceitando variações de nomes)
+    def _ns(s: str) -> str:
+        import unicodedata, re
+        s = str(s or "").strip().lower()
+        s = unicodedata.normalize("NFD", s)
+        s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+        return re.sub(r"\s+", " ", s)
+
     def pick(colnames, targets):
         m = {_ns(c): c for c in colnames}
         for t in targets:
@@ -99,15 +125,18 @@ def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa"
     col_loja  = pick(cols, ["Loja"])
     col_grupo = pick(cols, ["Grupo","Operação"])
     col_cod   = pick(cols, ["Código Everest","Codigo Everest","Cod Everest"])
-    col_codg  = pick(cols, ["Código Grupo Everest","Codigo Grupo Everest","Cod Grupo Empresas"])
+    col_codg  = pick(cols, [
+        "Código Grupo Everest","Codigo Grupo Everest","Cod Grupo Empresas","Código Grupo Empresas"
+    ])
 
     out = pd.DataFrame()
     out["Loja"] = df[col_loja].astype(str).str.strip() if col_loja else ""
-    out["Loja_norm"] = out["Loja"].map(_norm_loja)
+    out["Loja_norm"] = out["Loja"].str.replace(r"^\d+\s*-\s*", "", regex=True).str.strip().str.lower()
     out["Grupo"] = df[col_grupo].astype(str).str.strip() if col_grupo else ""
     out["Código Everest"] = pd.to_numeric(df[col_cod], errors="coerce") if col_cod else pd.NA
     out["Código Grupo Everest"] = pd.to_numeric(df[col_codg], errors="coerce") if col_codg else pd.NA
     return out
+
 
 # ======= Detectar blocos de loja (linha 4 = nomes; linha 5 = Qtde/Valor) =======
 RE_QTDE  = re.compile(r"\bqtde\b|\bqtd\b", re.I)

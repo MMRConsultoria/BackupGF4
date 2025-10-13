@@ -95,37 +95,41 @@ def carregar_tabela_empresa(nome_planilha="Vendas diarias", aba="Tabela Empresa"
     out["Código Everest"] = pd.to_numeric(df[col_cod], errors="coerce") if col_cod else pd.NA
     out["Código Grupo Everest"] = pd.to_numeric(df[col_codg], errors="coerce") if col_codg else pd.NA
     return out
-
+# topo do arquivo (ou logo acima de ler_relatorio)
+IGNORAR_TOTAIS = False  # <- por enquanto deixamos False (não remove Sub.Total/Total Geral)
 # --------- Parser do Excel de Upload ----------
+# topo do arquivo (ou logo acima de ler_relatorio)
+IGNORAR_TOTAIS = False  # <- por enquanto deixamos False (não remove Sub.Total/Total Geral)
+e substitua a função ler_relatorio por esta versão:
+
+python
+Copiar código
 def ler_relatorio(uploaded_file) -> pd.DataFrame:
     """
-    Regras do arquivo:
-    - Linha 4 (idx 3): nomes das Lojas (células mescladas). Ignorar lojas 'Total'.
-    - Linha 5 (idx 4): cabeçalhos; pares 'Qtde' e 'Valor(R$)' de cada loja.
-    - Coluna B (idx 1): Grupo do produto. Só aparece ao mudar, então ffill.
-    - Coluna C (idx 2): Código do material. Se vazio, herdar da linha de cima.
-    - Coluna D (idx 3): Material (nome). Linhas Sub.Total (col C) e Total Geral (C ou D) devem ser excluídas.
-    - Linhas com Qtde vazia ou Valor <= 0 são descartadas.
+    Linha 4: lojas (mescladas).
+    Linha 5: cabeçalhos; pares 'Qtde' e 'Valor(R$)' por loja.
+    Col B: Grupo do produto (ffill). Col C: Código (ffill). Col D: Material.
+    **Sem** remover Sub.Total/Total Geral quando IGNORAR_TOTAIS=False.
+    Descartar somente: qtde vazia e valor <= 0.
     """
     df0 = pd.read_excel(uploaded_file, sheet_name=0, header=None, dtype=object)
     if df0.shape[0] < 6:
         return pd.DataFrame()
 
-    ROW_LOJA = 3   # linha 4 (0-based)
-    ROW_HDR  = 4   # linha 5 (0-based)
-    COL_B, COL_C, COL_D = 1, 2, 3  # Grupo, Código, Material
+    ROW_LOJA = 3   # linha 4
+    ROW_HDR  = 4   # linha 5
+    COL_B, COL_C, COL_D = 1, 2, 3
 
-    # Detectar pares Qtde / Valor(R$)
+    # Detecta pares (Qtde, Valor)
     r5 = df0.iloc[ROW_HDR].astype(str).fillna("")
     r5n = r5.map(_ns)
-    pairs = []  # (col_qt, col_vl, loja_name)
-
+    pairs = []
     j = 0
     while j < df0.shape[1] - 1:
         is_q = r5n.iloc[j] == "qtde"
         is_v = r5n.iloc[j+1] in ("valor(r$)", "valor r$", "valor (r$)", "valor(r$ )", "valor r$)")
         if is_q and is_v:
-            # Capturar a loja na linha 4; se célula vazia por mescla, anda para a esquerda
+            # loja (linha 4), voltando pela mescla
             k = j
             loja = ""
             while k >= 0:
@@ -134,48 +138,53 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
                     loja = str(val).strip()
                     break
                 k -= 1
-            loja_norm_ns = _ns(loja)
-            # ignorar lojas 'total'
-            if loja and "total" not in loja_norm_ns:
-                pairs.append((j, j+1, normalizar_loja(loja)))
+            # mesmo que a loja seja "Total", por enquanto não filtramos
+            pairs.append((j, j+1, normalizar_loja(loja)))
             j += 2
         else:
             j += 1
 
-    # Base de linhas (a partir da linha 6)
+    # Base a partir da linha 6
     base = df0.iloc[ROW_HDR+1:].copy()
-    base = base.rename(columns={
-        COL_B: "GrupoColB",
-        COL_C: "Codigo",
-        COL_D: "Material",
-    })
+    base = base.rename(columns={COL_B: "GrupoColB", COL_C: "Codigo", COL_D: "Material"})
 
-    # marcar Sub.Total (coluna C) e Total Geral (em C ou D)
-    def is_subtotal_c(x):
-        s = _ns(x)
-        return "sub.total" in s or ("sub" in s and "total" in s) or s == "subtotal"
+    # Material como texto limpo; grupo/código preservam NaN para ffill correto
+    base["Material"] = base["Material"].astype(str).fillna("").str.strip()
 
-    def is_total_geral(row):
-        return "total geral" in _ns(row.get("Codigo", "")) or "total geral" in _ns(row.get("Material",""))
+    # (opcional) marcar textos de total/subtotal — só usado se a flag estiver True
+    def _is_totalish_text_local(x):
+        return _is_totalish_text(x)
 
-    base["_is_sub"] = base["Codigo"].apply(is_subtotal_c)
-    base["_is_total_geral"] = base.apply(is_total_geral, axis=1)
+    if IGNORAR_TOTAIS:
+        # zera textos de total/subtotal antes do ffill, se desejar ignorar
+        grp_txt = base["GrupoColB"].astype(str)
+        base.loc[grp_txt.map(_is_totalish_text_local), "GrupoColB"] = pd.NA
 
-    # Grupo (ffill) e Código (ffill quando houver material)
-    base["GrupoProduto"] = (
-        base["GrupoColB"]
-        .where(base["GrupoColB"].notna() & (base["GrupoColB"].astype(str).str.strip() != ""), np.nan)
-        .ffill()
-        .astype(str).str.strip()
-    )
-    base["Material"] = base["Material"].astype(str).str.strip()
+        cod_txt = base["Codigo"].astype(str)
+        base.loc[cod_txt.map(_is_totalish_text_local), "Codigo"] = pd.NA
 
-    # Código: se a linha tem material, precisamos de código; se vier vazio, herdamos de cima
-    base["Codigo"] = base["Codigo"].where(base["Codigo"].astype(str).str.strip() != "", np.nan).ffill()
-    base["Codigo"] = base["Codigo"].astype(str).str.strip()
+    # Grupo (ffill)
+    gp = base["GrupoColB"]
+    gp = gp.where(~gp.isna() & (gp.astype(str).str.strip() != ""), pd.NA).ffill()
+    base["GrupoProduto"] = gp
 
-    # filtrar linhas inválidas
-    base = base[(~base["_is_sub"]) & (~base["_is_total_geral"]) & (base["Material"] != "")]
+    # Código (ffill) e padronização sem '.0'
+    cd = base["Codigo"]
+    cd = cd.where(~cd.isna() & (cd.astype(str).str.strip() != ""), pd.NA).ffill()
+
+    def _to_intish_text(v):
+        if pd.isna(v):
+            return pd.NA
+        s = str(v).strip()
+        if s == "":
+            return pd.NA
+        try:
+            return str(int(float(s)))
+        except:
+            return s
+
+    base["Codigo"] = cd.map(_to_intish_text)
+
     if base.empty or not pairs:
         return pd.DataFrame(columns=["Loja","GrupoProduto","Codigo","Material","Qtde","Valor"])
 
@@ -184,18 +193,14 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
         sub = base[["GrupoProduto","Codigo","Material", c_q, c_v]].copy()
         sub = sub.rename(columns={c_q: "Qtde", c_v: "Valor"})
 
-        # qtde: descarta em branco
+        # filtros mínimos: qtde e valor
         sub["Qtde"] = pd.to_numeric(sub["Qtde"], errors="coerce")
         sub = sub[sub["Qtde"].notna()]
 
-        # valor: parse BRL robusto
         sub["Valor"] = sub["Valor"].apply(_parse_brl)
         sub["Valor"] = pd.to_numeric(sub["Valor"], errors="coerce").fillna(0.0)
-
-        # descarta valor <= 0
         sub = sub[sub["Valor"] > 0]
 
-        # anexa loja
         sub["Loja"] = loja_nome
         if not sub.empty:
             registros.append(sub)
@@ -206,7 +211,6 @@ def ler_relatorio(uploaded_file) -> pd.DataFrame:
     out = pd.concat(registros, ignore_index=True)
     out = out[["Loja","GrupoProduto","Codigo","Material","Qtde","Valor"]].copy()
     return out
-
 # --------------- UI ----------------
 c1, c2 = st.columns(2)
 with c1:

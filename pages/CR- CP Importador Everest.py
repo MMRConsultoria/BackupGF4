@@ -13,39 +13,42 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 st.set_page_config(page_title="CR-CP Importador Everest", layout="wide")
 
-# ======================
-# Estilo (similar ao seu modelo)
-# ======================
-st.markdown("""
-<style>
-.stApp { background:#f9fafb; }
-[data-testid="stToolbar"] { visibility:hidden;height:0;position:fixed; }
-/* Cabeçalho */
-.hwrap{display:flex;align-items:center;gap:12px;margin:4px 0 10px}
-.hwrap h1{margin:0;font-size:38px;font-weight:800;letter-spacing:.2px}
-/* Pill bar -> usamos botões comuns e pintamos via JS */
-.pillbar{display:flex;gap:10px;margin:14px 0 16px}
-.pill{
-  border:1px solid #e5e7eb;background:#eef2ff;color:#374151;
-  border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer;
-}
-.pill.active{background:#0b5bd3;color:#fff;box-shadow:0 1px 0 #0b5bd3}
-.pill.muted{background:#f3f4f6!important;color:#6b7280}
-.pill:hover{filter:brightness(0.96)}
-/* Linha de filtros (labels pequenas + selects grandes) */
-.frow{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:16px;margin:6px 0 8px}
-.flabel{font-size:13px;color:#6b7280;margin-bottom:6px}
-.fslot{background:#f3f6fb;border:1px solid #e5e7f0;border-radius:10px;padding:8px 10px}
-hr{border:none;height:1px;background:#e5e7eb;margin:12px 0}
-</style>
-""", unsafe_allow_html=True)
-
-# 🔒 login
+# 🔒 Bloqueio de acesso
 if not st.session_state.get("acesso_liberado"):
     st.stop()
 
+# ===== CSS (copiado do seu modelo, só com o título ajustado) =====
+st.markdown("""
+    <style>
+        [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
+        .stSpinner { visibility: visible !important; }
+        .stApp { background-color: #f9f9f9; }
+        div[data-baseweb="tab-list"] { margin-top: 20px; }
+        button[data-baseweb="tab"] {
+            background-color: #f0f2f6; border-radius: 10px;
+            padding: 10px 20px; margin-right: 10px;
+            transition: all 0.3s ease; font-size: 16px; font-weight: 600;
+        }
+        button[data-baseweb="tab"]:hover { background-color: #dce0ea; color: black; }
+        button[data-baseweb="tab"][aria-selected="true"] { background-color: #0366d6; color: white; }
+
+        /* multiselect sem tags coloridas (mantido do seu modelo) */
+        div[data-testid="stMultiSelect"] [data-baseweb="tag"] { background-color: transparent !important; border: none !important; color: black !important; }
+        div[data-testid="stMultiSelect"] [data-baseweb="tag"] * { color: black !important; fill: black !important; }
+        div[data-testid="stMultiSelect"] > div { background-color: transparent !important; }
+    </style>
+""", unsafe_allow_html=True)
+
+# ===== Cabeçalho (mesmo padrão visual) =====
+st.markdown("""
+    <div style='display: flex; align-items: center; gap: 10px; margin-bottom: 12px;'>
+        <img src='https://img.icons8.com/color/48/graph.png' width='40'/>
+        <h1 style='display: inline; margin: 0; font-size: 2.0rem;'>CR-CP Importador Everest</h1>
+    </div>
+""", unsafe_allow_html=True)
+
 # ======================
-# Helpers
+# Helpers CR-CP (não alterei lógica)
 # ======================
 def _strip_accents_keep_case(s: str) -> str:
     return unicodedata.normalize("NFKD", str(s or "")).encode("ASCII","ignore").decode("ASCII")
@@ -70,7 +73,7 @@ def _try_parse_paste(text: str) -> pd.DataFrame:
     return df
 
 # ======================
-# Google Sheets (robusto)
+# Google Sheets (robusto – igual ao que já havíamos feito)
 # ======================
 @st.cache_data(show_spinner=False)
 def gs_client():
@@ -94,28 +97,19 @@ def _open_planilha(title="Vendas diarias"):
 
 @st.cache_data(show_spinner=False)
 def carregar_empresas():
-    """
-    ⚠️ Retorna apenas objetos 'picklables': DataFrame, list, dict.
-    """
+    """Retorna apenas objetos picklables."""
     sh = _open_planilha("Vendas diarias")
     df = pd.DataFrame(sh.worksheet("Tabela Empresa").get_all_records())
-
-    # normalizações simples
     ren = {
         "Codigo Everest":"Código Everest","Codigo Grupo Everest":"Código Grupo Everest",
         "Loja Nome":"Loja","Empresa":"Loja","Grupo Nome":"Grupo",
     }
     df = df.rename(columns={k:v for k,v in ren.items() if k in df.columns})
-
     for c in ["Grupo","Loja","Código Everest","Código Grupo Everest"]:
         if c not in df.columns: df[c] = ""
         df[c] = df[c].astype(str).str.strip()
-
     df = df[df["Grupo"]!=""].copy()
-
     grupos = sorted(df["Grupo"].dropna().unique().tolist())
-
-    # mapa: {grupo: [lojas]}
     lojas_map = (
         df.groupby("Grupo")["Loja"]
           .apply(lambda s: sorted(pd.Series(s.dropna().unique()).astype(str).tolist()))
@@ -124,88 +118,24 @@ def carregar_empresas():
     return df, grupos, lojas_map
 
 df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
-
-def LOJAS_DO(grupo_nome: str):
-    return LOJAS_MAP.get(grupo_nome, [])
+def LOJAS_DO(grupo_nome: str): return LOJAS_MAP.get(grupo_nome, [])
 
 # ======================
-# Header
-# ======================
-st.markdown("""
-<div class="hwrap">
-  <img src="https://img.icons8.com/color/48/graph.png" width="40"/>
-  <h1>Relatório CR-CP Everest</h1>
-</div>
-""", unsafe_allow_html=True)
-
-# ======================
-# Pill "abas" (layout como seu print)
-# ======================
-if "view" not in st.session_state:
-    st.session_state.view = "CR"  # CR | CP | CAD
-
-colA, colB, colC = st.columns([0.22,0.22,0.56])
-with colA:
-    if st.button("💰 Analise Receber", use_container_width=True, key="pill_cr"):
-        st.session_state.view = "CR"; st.rerun()
-with colB:
-    if st.button("💸 Analise Pagar", use_container_width=True, key="pill_cp"):
-        st.session_state.view = "CP"; st.rerun()
-with colC:
-    if st.button("🧾 Cadastro", use_container_width=True, key="pill_cad"):
-        st.session_state.view = "CAD"; st.rerun()
-
-# pintar como ativo
-st.markdown(f"""
-<script>
-const pills = Array.from(parent.document.querySelectorAll('button[kind="secondary"]'));
-if (pills && pills.length>=3){{
-  const v = "{st.session_state.view}";
-  const map={{"CR":0,"CP":1,"CAD":2}};
-  pills.forEach((b,i)=>{{b.classList.add('pill'); b.classList.remove('active');}});
-  pills[map[v]].classList.add('active');
-}}
-</script>
-""", unsafe_allow_html=True)
-
-st.markdown("<hr/>", unsafe_allow_html=True)
-
-# ======================
-# Filtros em linha (Grupo/Empresa + 2 placeholders)
+# Componentes de UI reaproveitáveis (layout igual ao modelo)
 # ======================
 def filtros_grupo_empresa(prefix: str):
-    st.markdown('<div class="frow">', unsafe_allow_html=True)
-    # Grupo
-    st.markdown('<div class="fslot">', unsafe_allow_html=True)
-    st.markdown('<div class="flabel">Grupo:</div>', unsafe_allow_html=True)
-    gsel = st.selectbox("", ["— selecione —"]+GRUPOS, key=f"{prefix}_grupo", label_visibility="collapsed")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # Empresa
-    st.markdown('<div class="fslot">', unsafe_allow_html=True)
-    st.markdown('<div class="flabel">Empresa:</div>', unsafe_allow_html=True)
-    lojas = LOJAS_DO(gsel) if gsel!="— selecione —" else []
-    esel = st.selectbox("", ["— selecione —"]+lojas, key=f"{prefix}_empresa", label_visibility="collapsed")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # Placeholder 1 (Visão)
-    st.markdown('<div class="fslot">', unsafe_allow_html=True)
-    st.markdown('<div class="flabel">Visão:</div>', unsafe_allow_html=True)
-    vis = st.selectbox("", ["Por Empresa"], key=f"{prefix}_visao", label_visibility="collapsed")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # Placeholder 2 (Tipo)
-    st.markdown('<div class="fslot">', unsafe_allow_html=True)
-    st.markdown('<div class="flabel">Tipo:</div>', unsafe_allow_html=True)
-    tip = st.selectbox("", ["TODOS"], key=f"{prefix}_tipo", label_visibility="collapsed")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('</div>', unsafe_allow_html=True)
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+    with col1:
+        gsel = st.selectbox("Grupo:", ["— selecione —"]+GRUPOS, key=f"{prefix}_grupo")
+    with col2:
+        lojas = LOJAS_DO(gsel) if gsel!="— selecione —" else []
+        esel = st.selectbox("Empresa:", ["— selecione —"]+lojas, key=f"{prefix}_empresa")
+    with col3:
+        st.selectbox("Visão:", ["Por Empresa"], key=f"{prefix}_visao")
+    with col4:
+        st.selectbox("Tipo:", ["TODOS"], key=f"{prefix}_tipo")
     return gsel, esel
 
-# ======================
-# Colagem/Upload (reutilizável)
-# ======================
 def bloco_colagem(prefix: str):
     c1,c2 = st.columns([0.55,0.45])
     with c1:
@@ -238,45 +168,87 @@ def bloco_colagem(prefix: str):
     return df_raw
 
 # ======================
-# Views
+# ABAS (tabs) — apenas layout
 # ======================
-if st.session_state.view == "CR":
-    st.subheader("💰 Contas a Receber")
+aba_cr, aba_cp, aba_cad = st.tabs(["💰 Contas a Receber", "💸 Contas a Pagar", "🧾 Cadastro Cliente/Fornecedor"])
+
+# --------- 💰 CONTAS A RECEBER (lógica CR mantida) ---------
+with aba_cr:
+    st.subheader("Contas a Receber")
     gsel, esel = filtros_grupo_empresa("cr")
-    st.markdown("<hr/>", unsafe_allow_html=True)
+    st.divider()
     df_raw = bloco_colagem("cr")
-    btn_save = st.button("✅ Salvar seleção e dados (Receber)", use_container_width=True, type="primary")
-    if btn_save:
+
+    colA, colB = st.columns([0.6, 0.4])
+    with colA:
+        salvar = st.button("✅ Salvar seleção e dados (Receber)", use_container_width=True, type="primary", key="cr_save_btn")
+    with colB:
+        limpar = st.button("↩️ Limpar", use_container_width=True, key="cr_clear_btn")
+
+    if limpar:
+        for k in ["cr_df_raw", "cr_grupo_nome", "cr_empresa_nome", "cr_empresa_row"]:
+            st.session_state.pop(k, None)
+        st.experimental_rerun()
+
+    if salvar:
         if gsel=="— selecione —": st.error("Selecione o **Grupo**.")
         elif esel=="— selecione —": st.error("Selecione a **Empresa**.")
         elif df_raw.empty: st.error("Cole ou envie o arquivo.")
         else:
             st.session_state["cr_grupo_nome"]=gsel
             st.session_state["cr_empresa_nome"]=esel
+            # linha da empresa (se precisar depois)
+            mask_g = df_emp["Grupo"].astype(str).apply(_norm)==_norm(gsel)
+            mask_e = df_emp["Loja"].astype(str).apply(_norm)==_norm(esel)
+            st.session_state["cr_empresa_row"]=df_emp[mask_g & mask_e].reset_index(drop=True)
             st.session_state["cr_df_raw"]=df_raw
-            st.success("Receber salvo em sessão. Pronto para o mapeamento/integração.")
+            st.success("Receber salvo em sessão.")
 
-elif st.session_state.view == "CP":
-    st.subheader("💸 Contas a Pagar")
+# --------- 💸 CONTAS A PAGAR (lógica CP mantida) ---------
+with aba_cp:
+    st.subheader("Contas a Pagar")
     gsel, esel = filtros_grupo_empresa("cp")
-    st.markdown("<hr/>", unsafe_allow_html=True)
+    st.divider()
     df_raw = bloco_colagem("cp")
-    btn_save = st.button("✅ Salvar seleção e dados (Pagar)", use_container_width=True, type="primary")
-    if btn_save:
+
+    colA, colB = st.columns([0.6, 0.4])
+    with colA:
+        salvar = st.button("✅ Salvar seleção e dados (Pagar)", use_container_width=True, type="primary", key="cp_save_btn")
+    with colB:
+        limpar = st.button("↩️ Limpar", use_container_width=True, key="cp_clear_btn")
+
+    if limpar:
+        for k in ["cp_df_raw", "cp_grupo_nome", "cp_empresa_nome", "cp_empresa_row"]:
+            st.session_state.pop(k, None)
+        st.experimental_rerun()
+
+    if salvar:
         if gsel=="— selecione —": st.error("Selecione o **Grupo**.")
         elif esel=="— selecione —": st.error("Selecione a **Empresa**.")
         elif df_raw.empty: st.error("Cole ou envie o arquivo.")
         else:
             st.session_state["cp_grupo_nome"]=gsel
             st.session_state["cp_empresa_nome"]=esel
+            mask_g = df_emp["Grupo"].astype(str).apply(_norm)==_norm(gsel)
+            mask_e = df_emp["Loja"].astype(str).apply(_norm)==_norm(esel)
+            st.session_state["cp_empresa_row"]=df_emp[mask_g & mask_e].reset_index(drop=True)
             st.session_state["cp_df_raw"]=df_raw
-            st.success("Pagar salvo em sessão. Pronto para o mapeamento/integração.")
+            st.success("Pagar salvo em sessão.")
 
-else:
-    st.subheader("🧾 Cadastro Cliente/Fornecedor")
-    gsel, esel = filtros_grupo_empresa("cad")
-    st.markdown("<hr/>", unsafe_allow_html=True)
-    col1,col2 = st.columns(2)
+# --------- 🧾 CADASTRO (mantido minimal, só layout/fluxo) ---------
+with aba_cad:
+    st.subheader("Cadastro de Cliente / Fornecedor")
+
+    col_g1, col_g2 = st.columns(2)
+    with col_g1:
+        gsel = st.selectbox("Grupo:", ["— selecione —"]+GRUPOS, key="cad_grupo")
+    with col_g2:
+        lojas = LOJAS_DO(gsel) if gsel!="— selecione —" else []
+        esel = st.selectbox("Empresa:", ["— selecione —"]+lojas, key="cad_empresa")
+
+    st.divider()
+
+    col1, col2 = st.columns(2)
     with col1:
         tipo = st.radio("Tipo", ["Cliente","Fornecedor"], horizontal=True)
         nome = st.text_input("Nome/Razão Social")
@@ -285,14 +257,15 @@ else:
         email = st.text_input("E-mail")
         fone  = st.text_input("Telefone")
         obs   = st.text_area("Observações", height=80)
-    cA,cB = st.columns([0.6,0.4])
-    with cA:
+
+    colA, colB = st.columns([0.6,0.4])
+    with colA:
         if st.button("💾 Salvar na sessão", use_container_width=True):
             st.session_state.setdefault("cadastros", []).append(
                 {"Tipo":tipo,"Grupo":gsel,"Empresa":esel,"Nome":nome,"CPF/CNPJ":doc,"E-mail":email,"Telefone":fone,"Obs":obs}
             )
             st.success("Cadastro salvo localmente.")
-    with cB:
+    with colB:
         if st.button("🗂️ Enviar ao Google Sheets", use_container_width=True, type="primary"):
             try:
                 sh = _open_planilha("Vendas diarias")

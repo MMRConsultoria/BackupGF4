@@ -15,7 +15,7 @@ st.set_page_config(page_title="CR-CP Importador Everest", layout="wide")
 if not st.session_state.get("acesso_liberado"):
     st.stop()
 
-# ===== CSS (layout + seção compacta + “cards” iguais) =====
+# ===== CSS (layout + seção compacta; sem “cards” brancos) =====
 st.markdown("""
 <style>
     [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
@@ -35,12 +35,6 @@ st.markdown("""
     .compact [data-testid="stFileUploader"] { margin-top:8px !important; }
     .compact [data-testid="stTextArea"] { margin-top:8px !important; }
     .compact [data-testid="stVerticalBlock"] > div { margin-bottom:8px; }
-
-    /* “Cards” para igualar alturas da colagem vs upload */
-    .card {
-        background: #fff; border: 1px solid #e6e9f0; border-radius: 10px;
-        padding: 10px; min-height: 220px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -253,7 +247,6 @@ def LOJAS_DO(grupo_nome: str):
 # ======================
 def filtros_grupo_empresa(prefix, with_portador=False, with_tipo_imp=False):
     """Grupo | Empresa | Banco | Tipo de Importação (lado a lado)."""
-    # 4 colunas sempre lado a lado
     c1, c2, c3, c4 = st.columns([1,1,1,1])
 
     with c1:
@@ -275,21 +268,17 @@ def filtros_grupo_empresa(prefix, with_portador=False, with_tipo_imp=False):
     return gsel, esel
 
 def bloco_colagem(prefix: str):
+    # sem “cards” — limpo
     c1,c2 = st.columns([0.55,0.45])
     with c1:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
         txt = st.text_area("📋 Colar tabela (Ctrl+V)", height=180,
                            placeholder="Cole aqui os dados copiados do Excel/Sheets…",
                            key=f"{prefix}_paste")
-        st.markdown('</div>', unsafe_allow_html=True)
         df_paste = _try_parse_paste(txt) if (txt and txt.strip()) else pd.DataFrame()
 
     with c2:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
         up = st.file_uploader("📎 Ou enviar arquivo (.xlsx/.xlsm/.xls/.csv)",
                               type=["xlsx","xlsm","xls","csv"], key=f"{prefix}_file")
-        st.markdown('</div>', unsafe_allow_html=True)
-
         df_file = pd.DataFrame()
         if up is not None:
             try:
@@ -311,7 +300,7 @@ def bloco_colagem(prefix: str):
     if df_raw.empty:
         st.info("Cole ou envie um arquivo para visualizar.")
     else:
-        # Altura pequena ~4 linhas
+        # Altura ~4 linhas
         st.dataframe(df_raw, use_container_width=True, height=120)
     return df_raw
 
@@ -326,7 +315,14 @@ def _column_mapping_ui(prefix: str, df_raw: pd.DataFrame):
     with c3:
         st.selectbox("Coluna de **Bandeira**", cols, key=f"{prefix}_col_bandeira")
 
-# ===== monta o Importador (layout final) =====================================
+# ===== monta o Importador (mantendo ordem original + Falta CNPJ primeiro) ====
+IMPORTADOR_ORDER = [
+    "CNPJ/Cliente", "CNPJ Empresa", "Série Título", "Nº Título", "Nº Parcela",
+    "Nº Documento", "Portador", "Data Documento", "Data Vencimento", "Data",
+    "Valor Desconto", "Valor Multa", "Valor Juros Dia", "Valor Original",
+    "Observações do Título", "Cód Conta Gerencial", "Cód Centro de Custo"
+]
+
 def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: str,
                          banco_escolhido: str, tipo_imp: str):
     cd = st.session_state.get(f"{prefix}_col_data")
@@ -369,7 +365,7 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     num_documento  = "DRE"
     centro_custo   = 3
 
-    # Observação = texto exato da coluna Bandeira (pedido)
+    # Observação = texto da coluna Bandeira
     obs_list = bandeira_txt.tolist()
 
     out = pd.DataFrame({
@@ -392,10 +388,11 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
         "Cód Centro de Custo":   centro_custo
     })
 
-    # apenas linhas válidas de valor/data
+    # filtra linhas válidas
     out = out[(out["Data"].astype(str).str.strip() != "") & (out["Valor Original"].notna())]
 
-    # “Falta CNPJ?” como PRIMEIRA coluna:
+    # reordena exatamente como o importador, depois insere a flag na frente
+    out = out.reindex(columns=[c for c in IMPORTADOR_ORDER if c in out.columns])
     out.insert(0, "🔴 Falta CNPJ?", out["CNPJ/Cliente"].astype(str).str.strip().eq(""))
 
     return out
@@ -403,15 +400,6 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
 def _download_excel(df: pd.DataFrame, filename: str, label_btn: str):
     if df.empty: return
     to_save = df.copy()
-    # remover a coluna auxiliar do download? -> mantém (se quiser remover, descomente):
-    # to_save = to_save.drop(columns=["🔴 Falta CNPJ?"], errors="ignore")
-
-    # garantir tipos “limpos” nas editáveis
-    to_save["Cód Centro de Custo"] = (
-        to_save["Cód Centro de Custo"]
-        .apply(lambda x: str(x).strip() if pd.notnull(x) else "")
-    )
-
     bio = BytesIO()
     with pd.ExcelWriter(bio, engine="openpyxl") as writer:
         to_save.to_excel(writer, index=False, sheet_name="Importador")
@@ -441,30 +429,27 @@ with aba_cr:
     st.markdown('</div>', unsafe_allow_html=True)
 
     # --- Gerar / manter editor aberto usando session_state ---
-    col_gen_left, col_gen_right = st.columns([1,1])
-    with col_gen_left:
-        if st.button("🧾 Gerar Excel Importador (Receber)", use_container_width=True, key="cr_gen_btn"):
-            if st.session_state.get("cr_tipo_imp") == "Adquirente":
-                df_imp = _build_importador_df(
-                    df_raw, "cr",
-                    gsel if gsel!="— selecione —" else "",
-                    esel if esel!="— selecione —" else "",
-                    st.session_state.get("cr_portador",""),
-                    st.session_state.get("cr_tipo_imp","")
-                )
-                if not df_imp.empty:
-                    st.session_state["cr_df_imp"] = df_imp  # <- guarda para não “sumir” após edição
-            else:
-                st.info("Selecione **Tipo de Importação = Adquirente** e mapeie as colunas.")
+    if st.button("🧾 Gerar Excel Importador (Receber)", use_container_width=True, key="cr_gen_btn"):
+        if st.session_state.get("cr_tipo_imp") == "Adquirente":
+            df_imp = _build_importador_df(
+                df_raw, "cr",
+                gsel if gsel!="— selecione —" else "",
+                esel if esel!="— selecione —" else "",
+                st.session_state.get("cr_portador",""),
+                st.session_state.get("cr_tipo_imp","")
+            )
+            if not df_imp.empty:
+                st.session_state["cr_df_imp"] = df_imp
+        else:
+            st.info("Selecione **Tipo de Importação = Adquirente** e mapeie as colunas.")
 
-    # Se já gerado antes, sempre mostrar o editor (não some na edição)
     if "cr_df_imp" in st.session_state and isinstance(st.session_state["cr_df_imp"], pd.DataFrame):
         df_imp = st.session_state["cr_df_imp"]
 
         show_only_missing = st.checkbox("Mostrar apenas linhas com 🔴 Falta CNPJ", value=False, key="cr_only_missing")
         df_view = df_imp[df_imp["🔴 Falta CNPJ?"]] if show_only_missing else df_imp
 
-        # 3 colunas editáveis
+        # editáveis na visualização
         editable = {"CNPJ/Cliente","Cód Conta Gerencial","Cód Centro de Custo"}
         disabled_cols = [c for c in df_view.columns if c not in editable]
 
@@ -476,12 +461,14 @@ with aba_cr:
             key="cr_editor"
         )
 
-        # Atualiza DF completo, recalcula “Falta CNPJ?”
+        # Atualiza DF completo e reavalia a flag; mantém ordem
         edited_full = df_imp.copy()
         edited_full.update(edited_cr)
         edited_full["🔴 Falta CNPJ?"] = edited_full["CNPJ/Cliente"].astype(str).str.strip().eq("")
+        # reordenar de novo para garantir consistência (flag primeiro + ordem do importador)
+        cols = ["🔴 Falta CNPJ?"] + IMPORTADOR_ORDER
+        edited_full = edited_full.reindex(columns=[c for c in cols if c in edited_full.columns])
 
-        # Persiste no estado para manter após novos reruns
         st.session_state["cr_df_imp"] = edited_full
 
         faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
@@ -508,21 +495,19 @@ with aba_cp:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    col_gen_left, col_gen_right = st.columns([1,1])
-    with col_gen_left:
-        if st.button("🧾 Gerar Excel Importador (Pagar)", use_container_width=True, key="cp_gen_btn"):
-            if st.session_state.get("cp_tipo_imp") == "Adquirente":
-                df_imp = _build_importador_df(
-                    df_raw, "cp",
-                    gsel if gsel!="— selecione —" else "",
-                    esel if esel!="— selecione —" else "",
-                    st.session_state.get("cp_portador",""),
-                    st.session_state.get("cp_tipo_imp","")
-                )
-                if not df_imp.empty:
-                    st.session_state["cp_df_imp"] = df_imp
-            else:
-                st.info("Selecione **Tipo de Importação = Adquirente** e mapeie as colunas.")
+    if st.button("🧾 Gerar Excel Importador (Pagar)", use_container_width=True, key="cp_gen_btn"):
+        if st.session_state.get("cp_tipo_imp") == "Adquirente":
+            df_imp = _build_importador_df(
+                df_raw, "cp",
+                gsel if gsel!="— selecione —" else "",
+                esel if esel!="— selecione —" else "",
+                st.session_state.get("cp_portador",""),
+                st.session_state.get("cp_tipo_imp","")
+            )
+            if not df_imp.empty:
+                st.session_state["cp_df_imp"] = df_imp
+        else:
+            st.info("Selecione **Tipo de Importação = Adquirente** e mapeie as colunas.")
 
     if "cp_df_imp" in st.session_state and isinstance(st.session_state["cp_df_imp"], pd.DataFrame):
         df_imp = st.session_state["cp_df_imp"]
@@ -544,6 +529,8 @@ with aba_cp:
         edited_full = df_imp.copy()
         edited_full.update(edited_cp)
         edited_full["🔴 Falta CNPJ?"] = edited_full["CNPJ/Cliente"].astype(str).str.strip().eq("")
+        cols = ["🔴 Falta CNPJ?"] + IMPORTADOR_ORDER
+        edited_full = edited_full.reindex(columns=[c for c in cols if c in edited_full.columns])
         st.session_state["cp_df_imp"] = edited_full
 
         faltam = int(edited_full["🔴 Falta CNPJ?"].sum())

@@ -176,7 +176,7 @@ def bloco_colagem(prefix: str):
                            key=f"{prefix}_paste")
         df_paste = _try_parse_paste(txt) if (txt and txt.strip()) else pd.DataFrame()
     with c2:
-        up = st.file_uploader("📎 Ou enviar arquivo (.xlsx/.xlsm/.xls/.csv)", 
+        up = st.file_uploader("Ou enviar arquivo (.xlsx/.xlsm/.xls/.csv)", 
                               type=["xlsx","xlsm","xls","csv"], key=f"{prefix}_file")
         df_file = pd.DataFrame()
         if up is not None:
@@ -202,7 +202,7 @@ def bloco_colagem(prefix: str):
 # ======================
 # ABAS (layout apenas; nada específico de CR/CP alterado)
 # ======================
-aba_cr, aba_cp, aba_cad = st.tabs(["💰 Contas a Receber", "💸 Contas a Pagar", "🧾 Cadastro Cliente/Fornecedor"])
+aba_cr, aba_cp, aba_cad = st.tabs(["Contas a Receber", " Contas a Pagar", "Cadastro Cliente/Fornecedor"])
 
 # --------- 💰 CONTAS A RECEBER ---------
 with aba_cr:

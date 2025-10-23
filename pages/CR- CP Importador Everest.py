@@ -209,18 +209,33 @@ def LOJAS_DO(grupo_nome: str):
 # ======================
 # Componentes de UI (layout)
 # ======================
-def filtros_grupo_empresa(prefix: str):
-    col1, col2 = st.columns([1, 1])
+def filtros_grupo_empresa(prefix: str, with_portador: bool = False):
+    """Linha de filtros:
+       - Grupo | Empresa | (opcional) Portador (Banco)
+       Retorna (grupo_escolhido, empresa_escolhida).
+       O portador fica disponível em st.session_state[f"{prefix}_portador"].
+    """
+    if with_portador:
+        col1, col2, col3 = st.columns([1, 1, 1])
+    else:
+        col1, col2 = st.columns([1, 1])
+        col3 = None
+
     with col1:
-        gsel = st.selectbox("Grupo:", ["— selecione —"]+GRUPOS, key=f"{prefix}_grupo")
+        gsel = st.selectbox("Grupo:", ["— selecione —"] + GRUPOS, key=f"{prefix}_grupo")
+
     with col2:
-        lojas = LOJAS_DO(gsel) if gsel!="— selecione —" else []
-        esel = st.selectbox("Empresa:", ["— selecione —"]+lojas, key=f"{prefix}_empresa")
+        lojas = LOJAS_DO(gsel) if gsel != "— selecione —" else []
+        esel = st.selectbox("Empresa:", ["— selecione —"] + lojas, key=f"{prefix}_empresa")
+
+    if with_portador and col3 is not None:
+        with col3:
+            opcoes = ["Todos"] + PORTADORES if PORTADORES else ["Todos"]
+            # NÃO precisamos gravar manualmente no session_state; o widget já cuida disso
+            st.selectbox("Portador (Banco):", options=opcoes, index=0, key=f"{prefix}_portador")
+
     return gsel, esel
 
-def filtro_portador(prefix: str):
-    opcoes = ["Todos"] + PORTADORES if PORTADORES else ["Todos"]
-    return st.selectbox("Portador (Banco):", options=opcoes, index=0, key=f"{prefix}_portador")
 
 def bloco_colagem(prefix: str):
     c1,c2 = st.columns([0.55,0.45])
@@ -265,8 +280,8 @@ with aba_cr:
     # seção compacta para deixar tudo juntinho
     st.markdown('<div class="compact">', unsafe_allow_html=True)
 
-    gsel, esel = filtros_grupo_empresa("cr")
-    portador = filtro_portador("cr")
+    gsel, esel = filtros_grupo_empresa("cr", with_portador=True)
+    portador = st.session_state.get("cr_portador", "Todos")
     st.session_state["cr_portador"] = portador
 
     st.markdown('<hr class="compact">', unsafe_allow_html=True)
@@ -305,8 +320,8 @@ with aba_cp:
 
     st.markdown('<div class="compact">', unsafe_allow_html=True)
 
-    gsel, esel = filtros_grupo_empresa("cp")
-    portador = filtro_portador("cp")
+    gsel, esel = filtros_grupo_empresa("cp", with_portador=True)
+    portador = st.session_state.get("cp_portador", "Todos")
     st.session_state["cp_portador"] = portador
 
     st.markdown('<hr class="compact">', unsafe_allow_html=True)

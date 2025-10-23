@@ -46,7 +46,6 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-
 # ======================
 # Helpers
 # ======================
@@ -78,7 +77,6 @@ def _to_float_br(x):
     s = s.replace("R$","").replace(" ","").replace(".","").replace(",",".")
     try: return float(s)
     except: return None
-
 
 # ======================
 # Google Sheets
@@ -124,10 +122,8 @@ def carregar_empresas():
         st.warning(f"⚠️ Erro lendo 'Tabela Empresa': {e}")
         df = pd.DataFrame(columns=["Grupo","Loja","Código Everest","Código Grupo Everest","CNPJ"])
 
-    ren = {
-        "Codigo Everest":"Código Everest","Codigo Grupo Everest":"Código Grupo Everest",
-        "Loja Nome":"Loja","Empresa":"Loja","Grupo Nome":"Grupo"
-    }
+    ren = {"Codigo Everest":"Código Everest","Codigo Grupo Everest":"Código Grupo Everest",
+           "Loja Nome":"Loja","Empresa":"Loja","Grupo Nome":"Grupo"}
     df = df.rename(columns={k:v for k,v in ren.items() if k in df.columns})
     for c in ["Grupo","Loja","Código Everest","Código Grupo Everest","CNPJ"]:
         if c not in df.columns: df[c] = ""
@@ -141,15 +137,9 @@ def carregar_empresas():
     )
     return df, grupos, lojas_map
 
-
-# ===== Portadores (Banco -> Portador) ========================================
+# ===== Portadores (Banco -> Portador) =====
 @st.cache_data(show_spinner=False)
 def carregar_portadores():
-    """
-    Retorna:
-      - lista de Bancos (para o filtro)
-      - dict {Banco -> Portador} (para preencher a coluna 'Portador')
-    """
     sh = _open_planilha("Vendas diarias")
     if sh is None:
         return [], {}
@@ -182,17 +172,9 @@ def carregar_portadores():
             if p: mapa[b] = p
     return sorted(bancos), mapa
 
-
-# ===== Tabela Meio Pagamento (regras) ========================================
+# ===== Tabela Meio Pagamento (regras) =====
 @st.cache_data(show_spinner=False)
 def carregar_tabela_meio_pagto():
-    """
-    Constrói regras por 'Padrão Cod Gerencial':
-      - tokens (palavras para identificar a bandeira)
-      - codigo_gerencial ('Cod Gerencial Everest')
-      - cnpj_bandeira ('CNPJ Bandeira')
-      - padrao_str (texto do padrão, para Observação)
-    """
     COL_PADRAO = "Padrão Cod Gerencial"
     COL_COD    = "Cod Gerencial Everest"
     COL_CNPJ   = "CNPJ Bandeira"
@@ -209,7 +191,6 @@ def carregar_tabela_meio_pagto():
 
     df = pd.DataFrame(ws.get_all_records())
 
-    # normaliza possíveis nomes
     ren = {}
     for c in df.columns:
         n = _norm(c)
@@ -219,13 +200,11 @@ def carregar_tabela_meio_pagto():
             ren[c] = COL_COD
         elif n in {"cnpj bandeira","cnpj da bandeira","cnpj_bandeira"}:
             ren[c] = COL_CNPJ
-    if ren:
-        df = df.rename(columns=ren)
+    if ren: df = df.rename(columns=ren)
 
     for c in ["Meio de Pagamento", COL_PADRAO, COL_COD, COL_CNPJ]:
-        if c not in df.columns:
-            df[c] = ""
-        df[c] = df[c].astype(str).str.strip()
+        if c not in df.columns: df[c] = ""
+        df[c] = df[c].astype(str).str.trim() if hasattr(str, "trim") else df[c].astype(str).str.strip()
 
     rules = []
     for _, row in df.iterrows():
@@ -245,7 +224,6 @@ def carregar_tabela_meio_pagto():
         })
     return df, rules
 
-
 def _match_bandeira_to_gerencial(band_value: str):
     if not band_value or not MEIO_RULES:
         return "", "", ""
@@ -256,7 +234,6 @@ def _match_bandeira_to_gerencial(band_value: str):
                 return rule["codigo_gerencial"], rule.get("cnpj_bandeira",""), rule.get("padrao_str","")
     return "", "", ""
 
-
 # ===== Carregamentos base =====
 df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
 PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
@@ -265,12 +242,11 @@ DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
 def LOJAS_DO(grupo_nome: str):
     return LOJAS_MAP.get(grupo_nome, [])
 
-
 # ======================
 # UI Components
 # ======================
 def filtros_grupo_empresa(prefix, with_portador=False, with_tipo_imp=False):
-    """Linha com Grupo | Empresa | Banco | Tipo de Importação (lado a lado)."""
+    """Grupo | Empresa | Banco | Tipo de Importação (lado a lado)."""
     if with_portador and with_tipo_imp:
         c1,c2,c3,c4 = st.columns([1,1,1,1])
     elif with_portador:
@@ -292,7 +268,6 @@ def filtros_grupo_empresa(prefix, with_portador=False, with_tipo_imp=False):
         st.selectbox("Tipo de Importação:", ["Todos","Adquirente","Cliente","Outros"], index=0, key=f"{prefix}_tipo_imp")
 
     return gsel, esel
-
 
 def bloco_colagem(prefix: str):
     c1,c2 = st.columns([0.55,0.45])
@@ -325,7 +300,6 @@ def bloco_colagem(prefix: str):
     else: st.dataframe(df_raw, use_container_width=True, height=320)
     return df_raw
 
-
 def _column_mapping_ui(prefix: str, df_raw: pd.DataFrame):
     st.markdown("##### Mapear colunas para **Adquirente**")
     cols = ["— selecione —"] + list(df_raw.columns)
@@ -337,11 +311,9 @@ def _column_mapping_ui(prefix: str, df_raw: pd.DataFrame):
     with c3:
         st.selectbox("Coluna de **Bandeira**", cols, key=f"{prefix}_col_bandeira")
 
-
 # ===== monta o Importador (layout final) =====================================
 def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: str,
                          banco_escolhido: str, tipo_imp: str):
-    # colunas escolhidas pelo usuário
     cd = st.session_state.get(f"{prefix}_col_data")
     cv = st.session_state.get(f"{prefix}_col_valor")
     cb = st.session_state.get(f"{prefix}_col_bandeira")
@@ -350,7 +322,7 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
         st.error("Defina **Data**, **Valor** e **Bandeira** para gerar o importador.")
         return pd.DataFrame()
 
-    # CNPJ da loja (Tabela Empresa)
+    # CNPJ da loja
     cnpj_loja = ""
     if not df_emp.empty and loja:
         row = df_emp[
@@ -368,30 +340,34 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     valor_original = pd.to_numeric(df_raw[cv].apply(_to_float_br), errors="coerce").round(2)
     bandeira_txt   = df_raw[cb].astype(str).str.strip()
 
-    # mapeamento por bandeira usando os tokens do padrão
-    cod_conta_list, cnpj_cli_list, obs_padroes = [], [], []
+    # mapeamento por bandeira usando tokens do Padrão
+    cod_conta_list, cnpj_cli_list, obs_list = [], [], []
     for b in bandeira_txt:
         cod, cnpj_band, padrao_str = _match_bandeira_to_gerencial(b)
-        cod_conta_list.append(cod)
-        cnpj_cli_list.append(cnpj_band)
-        obs_padroes.append((padrao_str or "").strip() + (" - Erro Integração" if padrao_str else "Erro Integração"))
+        cod_conta_list.append(cod)            # Cod Gerencial Everest
+        cnpj_cli_list.append(cnpj_band)       # CNPJ da Bandeira
+        if (cnpj_band or "").strip():
+            # quando achou CNPJ → mantém sua regra antiga
+            obs_list.append(((padrao_str or "").strip() + " - Erro Integração").strip())
+        else:
+            # quando NÃO achou CNPJ → observação deve ser exatamente o texto da **Bandeira**
+            obs_list.append(str(b or "").strip())
 
     # campos fixos
-    serie_titulo   = "DRE"          # (no lugar de TITULO; sua regra)
-    num_titulo     = ""             # em branco
+    serie_titulo   = "DRE"
+    num_titulo     = ""
     num_parcela    = 1
     num_documento  = "DRE"
     centro_custo   = 3
 
-    # monta exatamente até 'Cód Centro de Custo' (sem colunas extras)
     out = pd.DataFrame({
         "CNPJ Empresa":          cnpj_loja,
         "Série Título":          serie_titulo,
         "Nº Título":             num_titulo,
         "Nº Parcela":            num_parcela,
         "Nº Documento":          num_documento,
-        "CNPJ/Cliente":          cnpj_cli_list,          # CNPJ Bandeira
-        "Portador":              portador_nome,          # nome do Portador
+        "CNPJ/Cliente":          cnpj_cli_list,
+        "Portador":              portador_nome,
         "Data Documento":        data_original,
         "Data Vencimento":       data_original,
         "Data":                  data_original,
@@ -399,15 +375,13 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
         "Valor Multa":           0.00,
         "Valor Juros Dia":       0.00,
         "Valor Original":        valor_original,
-        "Observações do Título": obs_padroes,            # Padrão + " - Erro Integração"
-        "Cód Conta Gerencial":   cod_conta_list,         # Cod Gerencial Everest
-        "Cód Centro de Custo":   centro_custo            # 3
+        "Observações do Título": obs_list,
+        "Cód Conta Gerencial":   cod_conta_list,
+        "Cód Centro de Custo":   centro_custo
     })
 
-    # remove linhas sem data ou sem valor
     out = out[(out["Data"].astype(str).str.strip() != "") & (out["Valor Original"].notna())]
 
-    # ordem final
     col_order = [
         "CNPJ Empresa","Série Título","Nº Título","Nº Parcela","Nº Documento",
         "CNPJ/Cliente","Portador",
@@ -418,10 +392,8 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     out = out[col_order]
     return out
 
-
 def _download_excel(df: pd.DataFrame, filename: str, label_btn: str):
-    if df.empty:
-        return
+    if df.empty: return
     bio = BytesIO()
     with pd.ExcelWriter(bio, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Importador")
@@ -429,7 +401,6 @@ def _download_excel(df: pd.DataFrame, filename: str, label_btn: str):
     st.download_button(label_btn, data=bio,
                        file_name=filename,
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
 
 # ======================
 # ABAS
@@ -446,33 +417,13 @@ with aba_cr:
 
     df_raw = bloco_colagem("cr")
 
-    # Se Adquirente, pedir o mapeamento de colunas
     if st.session_state.get("cr_tipo_imp") == "Adquirente" and not df_raw.empty:
         _column_mapping_ui("cr", df_raw)
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    colA, colB, colC = st.columns([0.45, 0.25, 0.30])
-    with colA:
-        salvar = st.button("✅ Salvar seleção e dados (Receber)", use_container_width=True, type="primary", key="cr_save_btn")
-    with colB:
-        limpar = st.button("↩️ Limpar", use_container_width=True, key="cr_clear_btn")
-    with colC:
-        gerar = st.button("🧾 Gerar Excel Importador", use_container_width=True, key="cr_gen_btn")
-
-    if limpar:
-        for k in ["cr_df_raw","cr_grupo_nome","cr_empresa_nome","cr_empresa_row","cr_portador","cr_tipo_imp",
-                  "cr_col_data","cr_col_valor","cr_col_bandeira"]:
-            st.session_state.pop(k, None)
-        st.experimental_rerun()
-
-    if salvar and not df_raw.empty:
-        st.session_state["cr_grupo_nome"] = gsel
-        st.session_state["cr_empresa_nome"] = esel
-        st.session_state["cr_df_raw"] = df_raw
-        st.success("Receber salvo em sessão.")
-
-    if gerar:
+    # só botão de gerar
+    if st.button("🧾 Gerar Excel Importador (Receber)", use_container_width=True, key="cr_gen_btn"):
         if st.session_state.get("cr_tipo_imp") == "Adquirente":
             df_imp = _build_importador_df(
                 df_raw, "cr",
@@ -486,7 +437,6 @@ with aba_cr:
                 _download_excel(df_imp, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)")
         else:
             st.info("Para gerar o importador, selecione **Tipo de Importação = Adquirente** e mapeie as colunas.")
-
 
 # --------- 💸 CONTAS A PAGAR ---------
 with aba_cp:
@@ -503,27 +453,7 @@ with aba_cp:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    colA, colB, colC = st.columns([0.45, 0.25, 0.30])
-    with colA:
-        salvar = st.button("✅ Salvar seleção e dados (Pagar)", use_container_width=True, type="primary", key="cp_save_btn")
-    with colB:
-        limpar = st.button("↩️ Limpar", use_container_width=True, key="cp_clear_btn")
-    with colC:
-        gerar = st.button("🧾 Gerar Excel Importador", use_container_width=True, key="cp_gen_btn")
-
-    if limpar:
-        for k in ["cp_df_raw","cp_grupo_nome","cp_empresa_nome","cp_empresa_row","cp_portador","cp_tipo_imp",
-                  "cp_col_data","cp_col_valor","cp_col_bandeira"]:
-            st.session_state.pop(k, None)
-        st.experimental_rerun()
-
-    if salvar and not df_raw.empty:
-        st.session_state["cp_grupo_nome"] = gsel
-        st.session_state["cp_empresa_nome"] = esel
-        st.session_state["cp_df_raw"] = df_raw
-        st.success("Pagar salvo em sessão.")
-
-    if gerar:
+    if st.button("🧾 Gerar Excel Importador (Pagar)", use_container_width=True, key="cp_gen_btn"):
         if st.session_state.get("cp_tipo_imp") == "Adquirente":
             df_imp = _build_importador_df(
                 df_raw, "cp",
@@ -537,7 +467,6 @@ with aba_cp:
                 _download_excel(df_imp, "Importador_Pagar.xlsx", "📥 Baixar Importador (Pagar)")
         else:
             st.info("Para gerar o importador, selecione **Tipo de Importação = Adquirente** e mapeie as colunas.")
-
 
 # --------- 🧾 CADASTRO Cliente/Fornecedor ---------
 with aba_cad:
@@ -573,8 +502,7 @@ with aba_cad:
         if st.button("🗂️ Enviar ao Google Sheets", use_container_width=True, type="primary"):
             try:
                 sh = _open_planilha("Vendas diarias")
-                if sh is None:
-                    raise RuntimeError("Planilha indisponível")
+                if sh is None: raise RuntimeError("Planilha indisponível")
                 aba = "Cadastro Clientes" if tipo=="Cliente" else "Cadastro Fornecedores"
                 try:
                     ws = sh.worksheet(aba)

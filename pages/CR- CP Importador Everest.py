@@ -151,6 +151,7 @@ def carregar_empresas():
     )
     return df, grupos, lojas_map
 
+# ===== Portadores (Banco -> Portador) =========================================
 @st.cache_data(show_spinner=False)
 def carregar_portadores():
     """
@@ -161,7 +162,6 @@ def carregar_portadores():
     sh = _open_planilha("Vendas diarias")
     if sh is None:
         return [], {}
-
     try:
         ws = sh.worksheet("Portador")
     except Exception:
@@ -194,13 +194,16 @@ def carregar_portadores():
 
     return sorted(bancos), mapa
 
+
+# ===== Tabela Meio Pagamento (regras) =========================================
 @st.cache_data(show_spinner=False)
 def carregar_tabela_meio_pagto():
     """
-    Lê 'Tabela Meio Pagamento' e cria regras:
-      - 'Padrão Cod Gerencial' -> tokens (palavras-chave para procurar na Bandeira)
-      - 'Cod Gerencial Everest' -> valor para 'Cód Conta Gerencial'
-      - 'CNPJ Bandeira' -> CNPJ a gravar em 'CNPJ/Cliente'
+    Lê 'Tabela Meio Pagamento' e monta regras por 'Padrão Cod Gerencial':
+      - tokens: lista de palavras para detectar a bandeira
+      - codigo_gerencial: 'Cod Gerencial Everest' (para 'Cód Conta Gerencial')
+      - cnpj_bandeira: 'CNPJ Bandeira' (para 'CNPJ/Cliente')
+      - padrao_str: string original do 'Padrão Cod Gerencial' (para Observação)
     """
     COL_PADRAO = "Padrão Cod Gerencial"
     COL_COD    = "Cod Gerencial Everest"
@@ -208,16 +211,18 @@ def carregar_tabela_meio_pagto():
 
     sh = _open_planilha("Vendas diarias")
     if not sh:
+        st.warning("⚠️ Sem planilha para Tabela Meio Pagamento.")
         return pd.DataFrame(), []
 
     try:
         ws = sh.worksheet("Tabela Meio Pagamento")
     except WorksheetNotFound:
+        st.warning("⚠️ Aba 'Tabela Meio Pagamento' não encontrada.")
         return pd.DataFrame(), []
 
     df = pd.DataFrame(ws.get_all_records())
 
-    # normaliza cabeçalhos alternativos
+    # normaliza possíveis nomes de colunas
     ren = {}
     for c in df.columns:
         n = _norm(c)
@@ -240,7 +245,6 @@ def carregar_tabela_meio_pagto():
         padrao = row[COL_PADRAO]
         codigo = row[COL_COD]
         cnpj   = row[COL_CNPJ]
-        meio   = row["Meio de Pagamento"]
         if not padrao or not codigo:
             continue
         tokens = [_norm(t) for t in re.split(r"[;,/|]", padrao) if str(t).strip()]
@@ -250,23 +254,114 @@ def carregar_tabela_meio_pagto():
             "tokens": tokens,
             "codigo_gerencial": codigo,
             "cnpj_bandeira": cnpj,
-            "meio": meio
+            "padrao_str": padrao
         })
     return df, rules
 
+
+# ===== util: converte moeda pt-BR p/ float ===================================
+def _to_float_br(x):
+    s = str(x or "").strip()
+    s = s.replace("R$", "").replace(" ", "").replace(".", "").replace(",", ".")
+    try:
+        return float(s)
+    except:
+        return None
+
+
+# ===== matching: bandeira -> (codigo, cnpj, padrao_str) ======================
 def _match_bandeira_to_gerencial(band_value: str):
-    """
-    Procura tokens de MEIO_RULES dentro do texto da bandeira.
-    Retorna (codigo_gerencial, cnpj_bandeira, meio)
-    """
     if not band_value or not MEIO_RULES:
         return "", "", ""
     txt = _norm(band_value)
     for rule in MEIO_RULES:
         for tok in rule["tokens"]:
             if tok and tok in txt:
-                return rule["codigo_gerencial"], rule.get("cnpj_bandeira",""), rule.get("meio","")
+                return rule["codigo_gerencial"], rule.get("cnpj_bandeira",""), rule.get("padrao_str","")
     return "", "", ""
+
+
+# ===== monta o Importador (layout final) =====================================
+def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: str,
+                         banco_escolhido: str, tipo_imp: str):
+    # colunas escolhidas pelo usuário
+    cd = st.session_state.get(f"{prefix}_col_data")
+    cv = st.session_state.get(f"{prefix}_col_valor")
+    cb = st.session_state.get(f"{prefix}_col_bandeira")
+
+    if not cd or not cv or not cb or "— selecione —" in (cd, cv, cb):
+        st.error("Defina **Data**, **Valor** e **Bandeira** para gerar o importador.")
+        return pd.DataFrame()
+
+    # CNPJ da loja (Tabela Empresa)
+    cnpj_loja = ""
+    if not df_emp.empty and loja:
+        row = df_emp[
+            (df_emp["Loja"].astype(str).str.strip() == loja) &
+            (df_emp["Grupo"].astype(str).str.strip() == grupo)
+        ]
+        if not row.empty:
+            cnpj_loja = str(row.iloc[0].get("CNPJ", "") or "")
+
+    # Portador (nome) a partir do Banco selecionado
+    portador_nome = MAPA_BANCO_PARA_PORTADOR.get(banco_escolhido, banco_escolhido or "")
+
+    # dados do usuário (mantém a data exatamente como veio)
+    data_original  = df_raw[cd].astype(str)
+    valor_original = pd.to_numeric(df_raw[cv].apply(_to_float_br), errors="coerce").round(2)
+    bandeira_txt   = df_raw[cb].astype(str).str.strip()
+
+    # mapeamento por bandeira usando os tokens do padrão
+    cod_conta_list, cnpj_cli_list, obs_padroes = [], [], []
+    for b in bandeira_txt:
+        cod, cnpj_band, padrao_str = _match_bandeira_to_gerencial(b)
+        cod_conta_list.append(cod)
+        cnpj_cli_list.append(cnpj_band)
+        # Observação = Padrão Cod Gerencial + " - Erro Integração"
+        obs_padroes.append((padrao_str or "").strip() + (" - Erro Integração" if padrao_str else "Erro Integração"))
+
+    # campos fixos
+    serie_titulo   = "DRE"          # (no lugar de TITULO; sua regra)
+    num_titulo     = ""             # em branco
+    num_parcela    = 1
+    num_documento  = "DRE"
+    centro_custo   = 3
+
+    # monta exatamente até 'Cód Centro de Custo' (sem colunas extras)
+    out = pd.DataFrame({
+        "CNPJ Empresa":          cnpj_loja,
+        "Série Título":          serie_titulo,
+        "Nº Título":             num_titulo,
+        "Nº Parcela":            num_parcela,
+        "Nº Documento":          num_documento,
+        "CNPJ/Cliente":          cnpj_cli_list,          # CNPJ Bandeira
+        "Portador":              portador_nome,          # nome do Portador
+        "Data Documento":        data_original,
+        "Data Vencimento":       data_original,
+        "Data":                  data_original,
+        "Valor Desconto":        0.00,
+        "Valor Multa":           0.00,
+        "Valor Juros Dia":       0.00,
+        "Valor Original":        valor_original,
+        "Observações do Título": obs_padroes,            # Padrão + " - Erro Integração"
+        "Cód Conta Gerencial":   cod_conta_list,         # Cod Gerencial Everest
+        "Cód Centro de Custo":   centro_custo            # 3
+    })
+
+    # remove linhas sem data ou sem valor
+    out = out[(out["Data"].astype(str).str.strip() != "") & (out["Valor Original"].notna())]
+
+    # ordem final (sem nada depois de Cód Centro de Custo)
+    col_order = [
+        "CNPJ Empresa","Série Título","Nº Título","Nº Parcela","Nº Documento",
+        "CNPJ/Cliente","Portador",
+        "Data Documento","Data Vencimento","Data",
+        "Valor Desconto","Valor Multa","Valor Juros Dia","Valor Original",
+        "Observações do Título","Cód Conta Gerencial","Cód Centro de Custo",
+    ]
+    out = out[col_order]
+    return out
+
 
 # ===== Carregamentos base =====
 df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()

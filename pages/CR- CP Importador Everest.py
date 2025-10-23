@@ -38,7 +38,20 @@ st.markdown("""
         div[data-testid="stMultiSelect"] > div { background-color: transparent !important; }
     </style>
 """, unsafe_allow_html=True)
-
+    st.markdown("""
+    <style>
+    /* separador mais fino e com pouco espaço */
+    hr.compact { height:1px; background:#e6e9f0; border:none; margin:8px 0 10px; }
+    
+    /* encurta o espaço vertical entre controles dentro da área 'compact' */
+    .compact [data-testid="stSelectbox"] { margin-bottom:6px !important; }
+    .compact [data-testid="stFileUploader"] { margin-top:8px !important; }
+    .compact [data-testid="stTextArea"] { margin-top:8px !important; }
+    
+    /* reduz espaço padrão entre blocos verticais nessa seção */
+    .compact [data-testid="stVerticalBlock"] > div { margin-bottom:8px; }
+    </style>
+    """, unsafe_allow_html=True)
 # ===== Cabeçalho =====
 st.markdown("""
     <div style='display: flex; align-items: center; gap: 10px; margin-bottom: 12px;'>
@@ -206,16 +219,27 @@ aba_cr, aba_cp, aba_cad = st.tabs(["Contas a Receber", " Contas a Pagar", "Cadas
 
 # --------- 💰 CONTAS A RECEBER ---------
 with aba_cr:
-    #st.subheader("Contas a Receber")
+    st.subheader("Contas a Receber")
+
+    # ↓↓↓ abre uma seção "compact" para reduzir os espaços verticais
+    st.markdown('<div class="compact">', unsafe_allow_html=True)
+
     gsel, esel = filtros_grupo_empresa("cr")
-    st.divider()
+
+    # em vez de st.divider():
+    st.markdown('<hr class="compact">', unsafe_allow_html=True)
+
     df_raw = bloco_colagem("cr")
+
+    # fecha a seção "compact"
+    st.markdown('</div>', unsafe_allow_html=True)
 
     colA, colB = st.columns([0.6, 0.4])
     with colA:
         salvar = st.button("✅ Salvar seleção e dados (Receber)", use_container_width=True, type="primary", key="cr_save_btn")
     with colB:
         limpar = st.button("↩️ Limpar", use_container_width=True, key="cr_clear_btn")
+
 
     if limpar:
         for k in ["cr_df_raw", "cr_grupo_nome", "cr_empresa_nome", "cr_empresa_row"]:

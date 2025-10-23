@@ -34,6 +34,15 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+st.markdown("""
+    <style>
+    /* linha de filtros super compacta, sempre 4 colunas lado a lado (em telas normais) */
+    .filters-row [data-testid="column"] { padding-right: 8px !important; }
+    .filters-row .lbl { font-size: 12px; font-weight: 600; margin: 0 0 4px 2px; color: #333; }
+    .filters-row [data-testid="stSelectbox"] { margin-bottom: 0 !important; }
+    </style>
+""", unsafe_allow_html=True)
+
 # ======= Helpers =======
 def _strip_accents_keep_case(s): 
     return unicodedata.normalize("NFKD", str(s or "")).encode("ASCII","ignore").decode("ASCII")
@@ -99,25 +108,60 @@ PORTADORES=carregar_portadores()
 def LOJAS_DO(g): return LOJAS_MAP.get(g,[])
 
 # ======= Filtros linha única =======
-def filtros_grupo_empresa(prefix,with_portador=False,with_tipo_imp=False):
-    if with_portador and with_tipo_imp:
-        c1,c2,c3,c4=st.columns([1,1,1,1])
-    elif with_portador:
-        c1,c2,c3=st.columns([1,1,1]);c4=None
-    elif with_tipo_imp:
-        c1,c2,c4=st.columns([1,1,1]);c3=None
-    else:
-        c1,c2=st.columns([1,1]);c3=c4=None
-    with c1:
-        gsel=st.selectbox("Grupo:",["— selecione —"]+GRUPOS,key=f"{prefix}_grupo")
-    with c2:
-        lojas=LOJAS_DO(gsel) if gsel!="— selecione —" else []
-        esel=st.selectbox("Empresa:",["— selecione —"]+lojas,key=f"{prefix}_empresa")
-    if with_portador and c3:
-        st.selectbox("Portador (Banco):",["Todos"]+PORTADORES,index=0,key=f"{prefix}_portador")
-    if with_tipo_imp and c4:
-        st.selectbox("Tipo de Importação:",["Todos","Adquirente","Cliente","Outros"],index=0,key=f"{prefix}_tipo_imp")
-    return gsel,esel
+def filtros_grupo_empresa(prefix, with_portador=False, with_tipo_imp=False):
+    """
+    Linha de filtros 100% horizontal:
+    Grupo | Empresa | Portador (Banco) | Tipo de Importação
+    """
+    # Define a proporção igual entre todos os filtros (mais compacto)
+    num_cols = 2 + int(with_portador) + int(with_tipo_imp)
+    col_sizes = [1] * num_cols
+
+    cols = st.columns(col_sizes)
+    col_index = 0
+
+    # === Grupo ===
+    with cols[col_index]:
+        gsel = st.selectbox(
+            "Grupo:",
+            ["— selecione —"] + GRUPOS,
+            key=f"{prefix}_grupo",
+        )
+    col_index += 1
+
+    # === Empresa ===
+    with cols[col_index]:
+        lojas = LOJAS_DO(gsel) if gsel != "— selecione —" else []
+        esel = st.selectbox(
+            "Empresa:",
+            ["— selecione —"] + lojas,
+            key=f"{prefix}_empresa",
+        )
+    col_index += 1
+
+    # === Portador (Banco) ===
+    if with_portador:
+        with cols[col_index]:
+            st.selectbox(
+                "Portador (Banco):",
+                ["Todos"] + PORTADORES,
+                index=0,
+                key=f"{prefix}_portador",
+            )
+        col_index += 1
+
+    # === Tipo de Importação ===
+    if with_tipo_imp:
+        with cols[col_index]:
+            st.selectbox(
+                "Tipo de Importação:",
+                ["Todos", "Adquirente", "Cliente", "Outros"],
+                index=0,
+                key=f"{prefix}_tipo_imp",
+            )
+
+    return gsel, esel
+
 
 # ======= bloco colagem/upload =======
 def bloco_colagem(prefix):

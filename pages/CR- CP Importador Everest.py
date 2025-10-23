@@ -14,7 +14,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 st.set_page_config(page_title="CR-CP Importador Everest", layout="wide")
 
 # ======================
-# Estilo (replica o visual do seu modelo)
+# Estilo (similar ao seu modelo)
 # ======================
 st.markdown("""
 <style>
@@ -23,7 +23,7 @@ st.markdown("""
 /* Cabeçalho */
 .hwrap{display:flex;align-items:center;gap:12px;margin:4px 0 10px}
 .hwrap h1{margin:0;font-size:38px;font-weight:800;letter-spacing:.2px}
-/* Pill bar */
+/* Pill bar -> usamos botões comuns e pintamos via JS */
 .pillbar{display:flex;gap:10px;margin:14px 0 16px}
 .pill{
   border:1px solid #e5e7eb;background:#eef2ff;color:#374151;
@@ -76,6 +76,9 @@ def _try_parse_paste(text: str) -> pd.DataFrame:
 def gs_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     secret = st.secrets.get("GOOGLE_SERVICE_ACCOUNT")
+    if secret is None:
+        st.error("❌ st.secrets['GOOGLE_SERVICE_ACCOUNT'] não encontrado.")
+        st.stop()
     credentials_dict = json.loads(secret) if isinstance(secret,str) else dict(secret)
     creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
     return gspread.authorize(creds)
@@ -91,26 +94,39 @@ def _open_planilha(title="Vendas diarias"):
 
 @st.cache_data(show_spinner=False)
 def carregar_empresas():
+    """
+    ⚠️ Retorna apenas objetos 'picklables': DataFrame, list, dict.
+    """
     sh = _open_planilha("Vendas diarias")
     df = pd.DataFrame(sh.worksheet("Tabela Empresa").get_all_records())
+
     # normalizações simples
     ren = {
         "Codigo Everest":"Código Everest","Codigo Grupo Everest":"Código Grupo Everest",
         "Loja Nome":"Loja","Empresa":"Loja","Grupo Nome":"Grupo",
     }
     df = df.rename(columns={k:v for k,v in ren.items() if k in df.columns})
-    for c in ["Grupo","Loja","Código Everest","Código Grupo Everest"]:
-        if c not in df.columns: df[c]=""
-        df[c]=df[c].astype(str).str.strip()
-    df = df[df["Grupo"]!=""]
-    # listas prontas
-    grupos = sorted(df["Grupo"].dropna().unique().tolist())
-    def lojas_do_grupo(g):
-        m = df["Grupo"].astype(str).apply(_norm)==_norm(g)
-        return sorted(df.loc[m,"Loja"].astype(str).dropna().unique().tolist())
-    return df, grupos, lojas_do_grupo
 
-df_emp, GRUPOS, LOJAS_DO = carregar_empresas()
+    for c in ["Grupo","Loja","Código Everest","Código Grupo Everest"]:
+        if c not in df.columns: df[c] = ""
+        df[c] = df[c].astype(str).str.strip()
+
+    df = df[df["Grupo"]!=""].copy()
+
+    grupos = sorted(df["Grupo"].dropna().unique().tolist())
+
+    # mapa: {grupo: [lojas]}
+    lojas_map = (
+        df.groupby("Grupo")["Loja"]
+          .apply(lambda s: sorted(pd.Series(s.dropna().unique()).astype(str).tolist()))
+          .to_dict()
+    )
+    return df, grupos, lojas_map
+
+df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
+
+def LOJAS_DO(grupo_nome: str):
+    return LOJAS_MAP.get(grupo_nome, [])
 
 # ======================
 # Header
@@ -123,27 +139,21 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ======================
-# Pill "abas" (um layout, sem st.tabs)
+# Pill "abas" (layout como seu print)
 # ======================
 if "view" not in st.session_state:
     st.session_state.view = "CR"  # CR | CP | CAD
 
 colA, colB, colC = st.columns([0.22,0.22,0.56])
 with colA:
-    if st.button("💰 Analise Receber", use_container_width=True,
-                 key="pill_cr"):
-        st.session_state.view = "CR"
-        st.rerun()
+    if st.button("💰 Analise Receber", use_container_width=True, key="pill_cr"):
+        st.session_state.view = "CR"; st.rerun()
 with colB:
-    if st.button("💸 Analise Pagar", use_container_width=True,
-                 key="pill_cp"):
-        st.session_state.view = "CP"
-        st.rerun()
+    if st.button("💸 Analise Pagar", use_container_width=True, key="pill_cp"):
+        st.session_state.view = "CP"; st.rerun()
 with colC:
-    if st.button("🧾 Cadastro", use_container_width=True,
-                 key="pill_cad"):
-        st.session_state.view = "CAD"
-        st.rerun()
+    if st.button("🧾 Cadastro", use_container_width=True, key="pill_cad"):
+        st.session_state.view = "CAD"; st.rerun()
 
 # pintar como ativo
 st.markdown(f"""
@@ -161,7 +171,7 @@ if (pills && pills.length>=3){{
 st.markdown("<hr/>", unsafe_allow_html=True)
 
 # ======================
-# Filtros linha (layout como seu print)
+# Filtros em linha (Grupo/Empresa + 2 placeholders)
 # ======================
 def filtros_grupo_empresa(prefix: str):
     st.markdown('<div class="frow">', unsafe_allow_html=True)
@@ -190,11 +200,11 @@ def filtros_grupo_empresa(prefix: str):
     tip = st.selectbox("", ["TODOS"], key=f"{prefix}_tipo", label_visibility="collapsed")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown('</div>', unsafe_allow_html=True)  # fecha frow
+    st.markdown('</div>', unsafe_allow_html=True)
     return gsel, esel
 
 # ======================
-# Views
+# Colagem/Upload (reutilizável)
 # ======================
 def bloco_colagem(prefix: str):
     c1,c2 = st.columns([0.55,0.45])
@@ -210,7 +220,6 @@ def bloco_colagem(prefix: str):
         if up is not None:
             try:
                 if up.name.lower().endswith(".csv"):
-                    import pandas as pd
                     try:
                         df_file = pd.read_csv(up, sep=";", dtype=str, engine="python")
                     except Exception:
@@ -228,7 +237,9 @@ def bloco_colagem(prefix: str):
     else: st.dataframe(df_raw, use_container_width=True, height=320)
     return df_raw
 
-# --- Receber ---
+# ======================
+# Views
+# ======================
 if st.session_state.view == "CR":
     st.subheader("💰 Contas a Receber")
     gsel, esel = filtros_grupo_empresa("cr")
@@ -245,7 +256,6 @@ if st.session_state.view == "CR":
             st.session_state["cr_df_raw"]=df_raw
             st.success("Receber salvo em sessão. Pronto para o mapeamento/integração.")
 
-# --- Pagar ---
 elif st.session_state.view == "CP":
     st.subheader("💸 Contas a Pagar")
     gsel, esel = filtros_grupo_empresa("cp")
@@ -262,7 +272,6 @@ elif st.session_state.view == "CP":
             st.session_state["cp_df_raw"]=df_raw
             st.success("Pagar salvo em sessão. Pronto para o mapeamento/integração.")
 
-# --- Cadastro ---
 else:
     st.subheader("🧾 Cadastro Cliente/Fornecedor")
     gsel, esel = filtros_grupo_empresa("cad")

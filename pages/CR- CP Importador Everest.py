@@ -206,7 +206,7 @@ aba_cr, aba_cp, aba_cad = st.tabs(["Contas a Receber", " Contas a Pagar", "Cadas
 
 # --------- 💰 CONTAS A RECEBER ---------
 with aba_cr:
-    st.subheader("Contas a Receber")
+    #st.subheader("Contas a Receber")
     gsel, esel = filtros_grupo_empresa("cr")
     st.divider()
     df_raw = bloco_colagem("cr")
@@ -238,7 +238,7 @@ with aba_cr:
 
 # --------- 💸 CONTAS A PAGAR ---------
 with aba_cp:
-    st.subheader("Contas a Pagar")
+    #st.subheader("Contas a Pagar")
     gsel, esel = filtros_grupo_empresa("cp")
     st.divider()
     df_raw = bloco_colagem("cp")

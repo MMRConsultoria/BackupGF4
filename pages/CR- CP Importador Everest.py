@@ -84,7 +84,11 @@ def _try_parse_paste(text: str) -> pd.DataFrame:
     df = df.dropna(how="all")
     df.columns = [str(c).strip() if str(c).strip() else f"col_{i}" for i,c in enumerate(df.columns)]
     return df
-
+def filtro_portador(prefix: str):
+    """Selectbox para Portador (Banco). Retorna o valor escolhido."""
+    opcoes = ["Todos"] + PORTADORES if PORTADORES else ["Todos"]
+    sel = st.selectbox("Portador (Banco):", options=opcoes, index=0, key=f"{prefix}_portador")
+    return sel
 # ======================
 # Google Sheets (NÃO cachear cliente; funções resilientes)
 # ======================
@@ -127,7 +131,47 @@ def _open_planilha(title="Vendas diarias"):
                 return None
         st.warning(f"⚠️ Não consegui abrir a planilha por título. Detalhes: {e_title}")
         return None
+@st.cache_data(show_spinner=False)
+def carregar_portadores():
+    """
+    Lê a ABA 'Portador' da planilha 'Vendas diarias' e retorna
+    os valores únicos da coluna 'Banco' (tolerante a variações de nome).
+    """
+    sh = _open_planilha("Vendas diarias")
+    if sh is None:
+        return []
 
+    try:
+        ws = sh.worksheet("Portador")   # <-- usa a aba específica
+        rows = ws.get_all_values()
+        if not rows:
+            return []
+        header = [str(h).strip() for h in rows[0]]
+
+        # Localiza a coluna "Banco" com tolerância (Banco / Portador / Nome Banco...)
+        def _find_col_idx(hdr):
+            targets = {"banco", "portador", "nome banco", "banco/portador"}
+            for i, h in enumerate(hdr):
+                if _norm(h) in targets:
+                    return i
+            # fallback estrito
+            return hdr.index("Banco") if "Banco" in hdr else None
+
+        col_idx = _find_col_idx(header)
+        if col_idx is None:
+            st.warning("⚠️ Na aba 'Portador' não encontrei a coluna 'Banco'.")
+            return []
+
+        bancos = {
+            str(r[col_idx]).strip()
+            for r in rows[1:] if col_idx < len(r) and str(r[col_idx]).strip() != ""
+        }
+        return sorted(bancos)
+    except Exception as e:
+        st.warning(f"⚠️ Erro ao ler a aba 'Portador': {e}")
+        return []
+
+PORTADORES = carregar_portadores()
 @st.cache_data(show_spinner=False)
 def carregar_empresas():
     """

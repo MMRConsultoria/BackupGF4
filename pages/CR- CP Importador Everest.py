@@ -150,7 +150,7 @@ def carregar_empresas():
     for c in ["Grupo","Loja","Código Everest","Código Grupo Everest","CNPJ"]:
         if c not in df.columns:
             df[c] = ""
-        df[c] = df[c].astype(str).strip()
+        df[c] = df[c].astype(str).str.strip()
 
     grupos = sorted([g for g in df["Grupo"].dropna().unique() if str(g).strip()])
     lojas_map = (

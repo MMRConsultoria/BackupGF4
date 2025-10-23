@@ -192,8 +192,8 @@ st.markdown('<div class="h-title">Relatório Vendas Diarias</div>', unsafe_allow
 st.markdown('<div class="h-sub">Módulo: CR-CP Importador Everest</div>', unsafe_allow_html=True)
 st.markdown(
     '<div class="pillbar">'
-    '<span class="pill">📥 Upload e Processamento</span>'
-    '<span class="pill muted">📤 Atualizar Google Sheets</span>'
+    '<span class="pill">📥 Contas a Receber</span>'
+    '<span class="pill muted">📤 Contas a Pagar</span>'
     '<span class="pill muted">📊 Auditar integração Everest</span>'
     '<span class="pill muted">📈 Auditar Faturamento X Meio Pagamento</span>'
     '</div>', unsafe_allow_html=True

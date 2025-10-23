@@ -1,4 +1,4 @@
-# pages/CR_CP_Importador_Everest.py
+# pages/CR-CP Importador Everest.py
 # -*- coding: utf-8 -*-
 
 import streamlit as st
@@ -13,7 +13,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 st.set_page_config(page_title="CR-CP Importador Everest • Contas a Receber", layout="wide")
 
-# ====== MESMO VISUAL DO SEU APP ======
+# ====== VISUAL BÁSICO (igual ao seu padrão) ======
 st.markdown("""
     <style>
     .stApp { background-color: #f9f9f9; }
@@ -55,17 +55,48 @@ def _try_parse_paste(text: str) -> pd.DataFrame:
     df.columns = [str(c).strip() if str(c).strip() != "" else f"col_{i}" for i, c in enumerate(df.columns)]
     return df
 
+# ====== GOOGLE SHEETS ROBUSTO ======
 @st.cache_data(show_spinner=False)
 def gs_client():
+    """
+    Aceita GOOGLE_SERVICE_ACCOUNT como string JSON ou dict.
+    """
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+
+    secret = st.secrets.get("GOOGLE_SERVICE_ACCOUNT")
+    if secret is None:
+        st.error("❌ st.secrets['GOOGLE_SERVICE_ACCOUNT'] não encontrado.")
+        st.stop()
+
+    # pode vir string JSON ou dict
+    if isinstance(secret, str):
+        credentials_dict = json.loads(secret)
+    else:
+        credentials_dict = dict(secret)
+
     credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
     return gspread.authorize(credentials)
 
 @st.cache_data(show_spinner=False)
+def _open_planilha(gc, nome_titulo="Vendas diarias"):
+    """
+    Tenta abrir por título; se falhar, tenta por ID via st.secrets['VENDAS_DIARIAS_SHEET_ID'].
+    """
+    try:
+        return gc.open(nome_titulo)
+    except Exception as e1:
+        sheet_id = st.secrets.get("VENDAS_DIARIAS_SHEET_ID")
+        if sheet_id:
+            try:
+                return gc.open_by_key(sheet_id)
+            except Exception as e2:
+                raise RuntimeError(f"Falha abrindo planilha por título e por ID. Título erro: {e1} | ID erro: {e2}")
+        raise RuntimeError(f"Falha abrindo planilha por título '{nome_titulo}': {e1}")
+
+@st.cache_data(show_spinner=False)
 def carregar_tabela_empresa(planilha_nome="Vendas diarias", aba_nome="Tabela Empresa") -> pd.DataFrame:
     gc = gs_client()
-    planilha = gc.open(planilha_nome)
+    planilha = _open_planilha(gc, planilha_nome)
     df_emp = pd.DataFrame(planilha.worksheet(aba_nome).get_all_records())
 
     # normaliza cabeçalhos e garante campos
@@ -86,7 +117,7 @@ def carregar_tabela_empresa(planilha_nome="Vendas diarias", aba_nome="Tabela Emp
             df_emp[col] = ""
 
     for c in df_emp.columns:
-        df_emp[c] = df_emp[c].astype(str).strip()
+        df_emp[c] = df_emp[c].astype(str).str.strip()
 
     # remove .0 em códigos
     for c in ["Código Grupo Everest", "Código Everest"]:
@@ -124,10 +155,12 @@ with col_g:
     grupo_nome = st.selectbox("Grupo (nome)", ["— selecione —"] + grupos, index=0)
 
 with col_e:
-    empresa_nome = "—"
+    empresa_nome = "— selecione —"
     if grupo_nome != "— selecione —":
+        # ✅ CORREÇÃO: aplicar _norm na Series com .apply
+        mask_grupo = df_emp["Grupo"].astype(str).apply(_norm) == _norm(grupo_nome)
         lojas = (
-            df_emp.loc[_norm(df_emp["Grupo"]) == _norm(grupo_nome), "Loja"]
+            df_emp.loc[mask_grupo, "Loja"]
                   .astype(str).str.strip().drop_duplicates().sort_values().tolist()
         )
         empresa_nome = st.selectbox("Empresa (nome)", ["— selecione —"] + lojas, index=0)
@@ -202,10 +235,9 @@ if salvar:
         st.session_state["cr_empresa_nome"] = empresa_nome
 
         # linha (ou linhas) da empresa selecionada — útil para obter Código Everest depois
-        df_empresa_row = df_emp[
-            (_norm(df_emp["Grupo"]) == _norm(grupo_nome)) &
-            (_norm(df_emp["Loja"])  == _norm(empresa_nome))
-        ].copy()
+        mask_grupo = df_emp["Grupo"].astype(str).apply(_norm) == _norm(grupo_nome)
+        mask_loja  = df_emp["Loja"].astype(str).apply(_norm) == _norm(empresa_nome)
+        df_empresa_row = df_emp[mask_grupo & mask_loja].copy()
         st.session_state["cr_empresa_row"] = df_empresa_row.reset_index(drop=True)
 
         # dados colados/enviados
@@ -214,7 +246,7 @@ if salvar:
         st.success("✅ Seleção e dados salvos. Pronto para o mapeamento do layout do Importador (próxima etapa).")
 
 # ==============================
-# Nota de próxima etapa
+# Dica do próximo passo
 # ==============================
 st.caption(
     "Próximo passo: mapear as colunas do arquivo colado (ex.: Data, Complemento, Valor, Sinal) "

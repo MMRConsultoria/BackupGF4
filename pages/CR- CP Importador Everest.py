@@ -13,7 +13,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 st.set_page_config(page_title="CR-CP Importador Everest • Contas a Receber", layout="wide")
 
-# ====== VISUAL BÁSICO (igual ao seu padrão) ======
+# ====== VISUAL BÁSICO ======
 st.markdown("""
     <style>
     .stApp { background-color: #f9f9f9; }
@@ -26,7 +26,9 @@ st.markdown("""
 if not st.session_state.get("acesso_liberado"):
     st.stop()
 
-# ====== HELPERS ======
+# ======================
+# Helpers
+# ======================
 def _strip_accents_keep_case(s: str) -> str:
     return unicodedata.normalize("NFKD", str(s or "")).encode("ASCII", "ignore").decode("ASCII")
 
@@ -55,7 +57,9 @@ def _try_parse_paste(text: str) -> pd.DataFrame:
     df.columns = [str(c).strip() if str(c).strip() != "" else f"col_{i}" for i, c in enumerate(df.columns)]
     return df
 
-# ====== GOOGLE SHEETS ROBUSTO ======
+# ======================
+# Google Sheets (robusto)
+# ======================
 @st.cache_data(show_spinner=False)
 def gs_client():
     """
@@ -68,22 +72,18 @@ def gs_client():
         st.error("❌ st.secrets['GOOGLE_SERVICE_ACCOUNT'] não encontrado.")
         st.stop()
 
-    # pode vir string JSON ou dict
-    if isinstance(secret, str):
-        credentials_dict = json.loads(secret)
-    else:
-        credentials_dict = dict(secret)
-
+    credentials_dict = json.loads(secret) if isinstance(secret, str) else dict(secret)
     credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
     return gspread.authorize(credentials)
 
-@st.cache_data(show_spinner=False)
-def _open_planilha(gc, nome_titulo="Vendas diarias"):
+def _open_planilha(planilha_nome="Vendas diarias"):
     """
+    NÃO cacheia e NÃO recebe objetos não-hashable.
     Tenta abrir por título; se falhar, tenta por ID via st.secrets['VENDAS_DIARIAS_SHEET_ID'].
     """
+    gc = gs_client()
     try:
-        return gc.open(nome_titulo)
+        return gc.open(planilha_nome)
     except Exception as e1:
         sheet_id = st.secrets.get("VENDAS_DIARIAS_SHEET_ID")
         if sheet_id:
@@ -91,12 +91,11 @@ def _open_planilha(gc, nome_titulo="Vendas diarias"):
                 return gc.open_by_key(sheet_id)
             except Exception as e2:
                 raise RuntimeError(f"Falha abrindo planilha por título e por ID. Título erro: {e1} | ID erro: {e2}")
-        raise RuntimeError(f"Falha abrindo planilha por título '{nome_titulo}': {e1}")
+        raise RuntimeError(f"Falha abrindo planilha por título '{planilha_nome}': {e1}")
 
 @st.cache_data(show_spinner=False)
 def carregar_tabela_empresa(planilha_nome="Vendas diarias", aba_nome="Tabela Empresa") -> pd.DataFrame:
-    gc = gs_client()
-    planilha = _open_planilha(gc, planilha_nome)
+    planilha = _open_planilha(planilha_nome)  # <- agora só passa strings (hashable)
     df_emp = pd.DataFrame(planilha.worksheet(aba_nome).get_all_records())
 
     # normaliza cabeçalhos e garante campos
@@ -157,7 +156,7 @@ with col_g:
 with col_e:
     empresa_nome = "— selecione —"
     if grupo_nome != "— selecione —":
-        # ✅ CORREÇÃO: aplicar _norm na Series com .apply
+        # aplica _norm na Series com .apply (para comparar sem acento/caixa)
         mask_grupo = df_emp["Grupo"].astype(str).apply(_norm) == _norm(grupo_nome)
         lojas = (
             df_emp.loc[mask_grupo, "Loja"]
@@ -234,7 +233,7 @@ if salvar:
         st.session_state["cr_grupo_nome"]   = grupo_nome
         st.session_state["cr_empresa_nome"] = empresa_nome
 
-        # linha (ou linhas) da empresa selecionada — útil para obter Código Everest depois
+        # pega a linha da empresa (útil para obter Código Everest depois)
         mask_grupo = df_emp["Grupo"].astype(str).apply(_norm) == _norm(grupo_nome)
         mask_loja  = df_emp["Loja"].astype(str).apply(_norm) == _norm(empresa_nome)
         df_empresa_row = df_emp[mask_grupo & mask_loja].copy()

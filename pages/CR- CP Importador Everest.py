@@ -219,7 +219,7 @@ aba_cr, aba_cp, aba_cad = st.tabs(["Contas a Receber", " Contas a Pagar", "Cadas
 
 # --------- 💰 CONTAS A RECEBER ---------
 with aba_cr:
-    st.subheader("Contas a Receber")
+  
 
     # ↓↓↓ abre uma seção "compact" para reduzir os espaços verticais
     st.markdown('<div class="compact">', unsafe_allow_html=True)

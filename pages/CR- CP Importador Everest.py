@@ -17,7 +17,7 @@ st.set_page_config(page_title="CR-CP Importador Everest", layout="wide")
 if not st.session_state.get("acesso_liberado"):
     st.stop()
 
-# ===== CSS (layout igual ao seu PainelResultados.py) =====
+# ===== CSS (layout igual ao seu PainelResultados.py) + seção compacta =====
 st.markdown("""
     <style>
         [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
@@ -36,22 +36,16 @@ st.markdown("""
         div[data-testid="stMultiSelect"] [data-baseweb="tag"] { background-color: transparent !important; border: none !important; color: black !important; }
         div[data-testid="stMultiSelect"] [data-baseweb="tag"] * { color: black !important; fill: black !important; }
         div[data-testid="stMultiSelect"] > div { background-color: transparent !important; }
+
+        /* ===== seção compacta para reduzir espaços entre filtros/colagem ===== */
+        hr.compact { height:1px; background:#e6e9f0; border:none; margin:8px 0 10px; }
+        .compact [data-testid="stSelectbox"] { margin-bottom:6px !important; }
+        .compact [data-testid="stFileUploader"] { margin-top:8px !important; }
+        .compact [data-testid="stTextArea"] { margin-top:8px !important; }
+        .compact [data-testid="stVerticalBlock"] > div { margin-bottom:8px; }
     </style>
 """, unsafe_allow_html=True)
-st.markdown("""
-    <style>
-    /* separador mais fino e com pouco espaço */
-    hr.compact { height:1px; background:#e6e9f0; border:none; margin:8px 0 10px; }
-    
-    /* encurta o espaço vertical entre controles dentro da área 'compact' */
-    .compact [data-testid="stSelectbox"] { margin-bottom:6px !important; }
-    .compact [data-testid="stFileUploader"] { margin-top:8px !important; }
-    .compact [data-testid="stTextArea"] { margin-top:8px !important; }
-    
-    /* reduz espaço padrão entre blocos verticais nessa seção */
-    .compact [data-testid="stVerticalBlock"] > div { margin-bottom:8px; }
-    </style>
-""", unsafe_allow_html=True)
+
 # ===== Cabeçalho =====
 st.markdown("""
     <div style='display: flex; align-items: center; gap: 10px; margin-bottom: 12px;'>
@@ -84,11 +78,7 @@ def _try_parse_paste(text: str) -> pd.DataFrame:
     df = df.dropna(how="all")
     df.columns = [str(c).strip() if str(c).strip() else f"col_{i}" for i,c in enumerate(df.columns)]
     return df
-def filtro_portador(prefix: str):
-    """Selectbox para Portador (Banco). Retorna o valor escolhido."""
-    opcoes = ["Todos"] + PORTADORES if PORTADORES else ["Todos"]
-    sel = st.selectbox("Portador (Banco):", options=opcoes, index=0, key=f"{prefix}_portador")
-    return sel
+
 # ======================
 # Google Sheets (NÃO cachear cliente; funções resilientes)
 # ======================
@@ -104,7 +94,7 @@ def gs_client():
 
 def _open_planilha(title="Vendas diarias"):
     """
-    Tenta abrir por título e, se falhar, tenta por ID.
+    Tenta abrir por título e, se falhar, por ID.
     Nunca levanta exceção: retorna None e mostra aviso.
     """
     try:
@@ -113,11 +103,9 @@ def _open_planilha(title="Vendas diarias"):
         st.warning(f"⚠️ Falha ao criar o cliente do Google. Verifique as credenciais. Detalhes: {e}")
         return None
 
-    # 1) Título
     try:
         return gc.open(title)
     except Exception as e_title:
-        # 2) ID (se existir em secrets)
         sid = st.secrets.get("VENDAS_DIARIAS_SHEET_ID")
         if sid:
             try:
@@ -131,6 +119,45 @@ def _open_planilha(title="Vendas diarias"):
                 return None
         st.warning(f"⚠️ Não consegui abrir a planilha por título. Detalhes: {e_title}")
         return None
+
+@st.cache_data(show_spinner=False)
+def carregar_empresas():
+    """
+    Retorna (df_empresas, grupos, lojas_map) — picklable.
+    Se falhar, devolve estruturas vazias e mantém o layout.
+    """
+    sh = _open_planilha("Vendas diarias")
+    if sh is None:
+        df_vazio = pd.DataFrame(columns=["Grupo","Loja","Código Everest","Código Grupo Everest"])
+        return df_vazio, [], {}
+
+    try:
+        ws = sh.worksheet("Tabela Empresa")
+        df = pd.DataFrame(ws.get_all_records())
+    except Exception as e:
+        st.warning(f"⚠️ Não consegui ler a aba 'Tabela Empresa'. Detalhes: {e}")
+        df = pd.DataFrame(columns=["Grupo","Loja","Código Everest","Código Grupo Everest"])
+
+    # normalizações
+    ren = {
+        "Codigo Everest":"Código Everest","Codigo Grupo Everest":"Código Grupo Everest",
+        "Loja Nome":"Loja","Empresa":"Loja","Grupo Nome":"Grupo",
+    }
+    df = df.rename(columns={k:v for k,v in ren.items() if k in df.columns})
+    for c in ["Grupo","Loja","Código Everest","Código Grupo Everest"]:
+        if c not in df.columns: df[c] = ""
+        df[c] = df[c].astype(str).str.strip()
+    df = df[df["Grupo"]!=""].copy()
+
+    grupos = sorted(df["Grupo"].dropna().unique().tolist())
+    lojas_map = (
+        df.groupby("Grupo")["Loja"]
+          .apply(lambda s: sorted(pd.Series(s.dropna().unique()).astype(str).tolist()))
+          .to_dict()
+    )
+    return df, grupos, lojas_map
+
+# ====== Portadores (Banco) ======
 @st.cache_data(show_spinner=False)
 def carregar_portadores():
     """
@@ -171,59 +198,29 @@ def carregar_portadores():
         st.warning(f"⚠️ Erro ao ler a aba 'Portador': {e}")
         return []
 
-PORTADORES = carregar_portadores()
-@st.cache_data(show_spinner=False)
-def carregar_empresas():
-    """
-    Retorna (df_empresas, grupos, lojas_map) — só objetos pickláveis.
-    Se não conseguir conectar/lêr, devolve estruturas vazias e mantém o layout.
-    """
-    sh = _open_planilha("Vendas diarias")
-    if sh is None:
-        df_vazio = pd.DataFrame(columns=["Grupo","Loja","Código Everest","Código Grupo Everest"])
-        return df_vazio, [], {}
 
-    try:
-        ws = sh.worksheet("Tabela Empresa")
-        df = pd.DataFrame(ws.get_all_records())
-    except Exception as e:
-        st.warning(f"⚠️ Não consegui ler a aba 'Tabela Empresa'. Detalhes: {e}")
-        df = pd.DataFrame(columns=["Grupo","Loja","Código Everest","Código Grupo Everest"])
-
-    # normalizações
-    ren = {
-        "Codigo Everest":"Código Everest","Codigo Grupo Everest":"Código Grupo Everest",
-        "Loja Nome":"Loja","Empresa":"Loja","Grupo Nome":"Grupo",
-    }
-    df = df.rename(columns={k:v for k,v in ren.items() if k in df.columns})
-    for c in ["Grupo","Loja","Código Everest","Código Grupo Everest"]:
-        if c not in df.columns: df[c] = ""
-        df[c] = df[c].astype(str).str.strip()
-    df = df[df["Grupo"]!=""].copy()
-
-    grupos = sorted(df["Grupo"].dropna().unique().tolist())
-    lojas_map = (
-        df.groupby("Grupo")["Loja"]
-          .apply(lambda s: sorted(pd.Series(s.dropna().unique()).astype(str).tolist()))
-          .to_dict()
-    )
-    return df, grupos, lojas_map
-
+# ===== Carregamentos base =====
 df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
-def LOJAS_DO(grupo_nome: str): return LOJAS_MAP.get(grupo_nome, [])
+PORTADORES = carregar_portadores()
+
+def LOJAS_DO(grupo_nome: str): 
+    return LOJAS_MAP.get(grupo_nome, [])
 
 # ======================
 # Componentes de UI (layout)
 # ======================
 def filtros_grupo_empresa(prefix: str):
-    col1, col2,  = st.columns([1, 1 ])
+    col1, col2 = st.columns([1, 1])
     with col1:
         gsel = st.selectbox("Grupo:", ["— selecione —"]+GRUPOS, key=f"{prefix}_grupo")
     with col2:
         lojas = LOJAS_DO(gsel) if gsel!="— selecione —" else []
         esel = st.selectbox("Empresa:", ["— selecione —"]+lojas, key=f"{prefix}_empresa")
-    
     return gsel, esel
+
+def filtro_portador(prefix: str):
+    opcoes = ["Todos"] + PORTADORES if PORTADORES else ["Todos"]
+    return st.selectbox("Portador (Banco):", options=opcoes, index=0, key=f"{prefix}_portador")
 
 def bloco_colagem(prefix: str):
     c1,c2 = st.columns([0.55,0.45])
@@ -233,7 +230,7 @@ def bloco_colagem(prefix: str):
                            key=f"{prefix}_paste")
         df_paste = _try_parse_paste(txt) if (txt and txt.strip()) else pd.DataFrame()
     with c2:
-        up = st.file_uploader("Ou enviar arquivo (.xlsx/.xlsm/.xls/.csv)", 
+        up = st.file_uploader("📎 Ou enviar arquivo (.xlsx/.xlsm/.xls/.csv)", 
                               type=["xlsx","xlsm","xls","csv"], key=f"{prefix}_file")
         df_file = pd.DataFrame()
         if up is not None:
@@ -257,25 +254,25 @@ def bloco_colagem(prefix: str):
     return df_raw
 
 # ======================
-# ABAS (layout apenas; nada específico de CR/CP alterado)
+# ABAS (layout)
 # ======================
-aba_cr, aba_cp, aba_cad = st.tabs(["Contas a Receber", " Contas a Pagar", "Cadastro Cliente/Fornecedor"])
+aba_cr, aba_cp, aba_cad = st.tabs(["💰 Contas a Receber", "💸 Contas a Pagar", "🧾 Cadastro Cliente/Fornecedor"])
 
 # --------- 💰 CONTAS A RECEBER ---------
 with aba_cr:
-  
+    st.subheader("Contas a Receber")
 
-    # ↓↓↓ abre uma seção "compact" para reduzir os espaços verticais
+    # seção compacta para deixar tudo juntinho
     st.markdown('<div class="compact">', unsafe_allow_html=True)
 
     gsel, esel = filtros_grupo_empresa("cr")
+    portador = filtro_portador("cr")
+    st.session_state["cr_portador"] = portador
 
-    # em vez de st.divider():
     st.markdown('<hr class="compact">', unsafe_allow_html=True)
 
     df_raw = bloco_colagem("cr")
 
-    # fecha a seção "compact"
     st.markdown('</div>', unsafe_allow_html=True)
 
     colA, colB = st.columns([0.6, 0.4])
@@ -284,9 +281,8 @@ with aba_cr:
     with colB:
         limpar = st.button("↩️ Limpar", use_container_width=True, key="cr_clear_btn")
 
-
     if limpar:
-        for k in ["cr_df_raw", "cr_grupo_nome", "cr_empresa_nome", "cr_empresa_row"]:
+        for k in ["cr_df_raw", "cr_grupo_nome", "cr_empresa_nome", "cr_empresa_row", "cr_portador"]:
             st.session_state.pop(k, None)
         st.experimental_rerun()
 
@@ -297,7 +293,6 @@ with aba_cr:
         else:
             st.session_state["cr_grupo_nome"]=gsel
             st.session_state["cr_empresa_nome"]=esel
-            # linha da empresa (se precisar depois)
             mask_g = df_emp["Grupo"].astype(str).apply(_norm)==_norm(gsel)
             mask_e = df_emp["Loja"].astype(str).apply(_norm)==_norm(esel)
             st.session_state["cr_empresa_row"]=df_emp[mask_g & mask_e].reset_index(drop=True)
@@ -306,10 +301,19 @@ with aba_cr:
 
 # --------- 💸 CONTAS A PAGAR ---------
 with aba_cp:
-    #st.subheader("Contas a Pagar")
+    st.subheader("Contas a Pagar")
+
+    st.markdown('<div class="compact">', unsafe_allow_html=True)
+
     gsel, esel = filtros_grupo_empresa("cp")
-    st.divider()
+    portador = filtro_portador("cp")
+    st.session_state["cp_portador"] = portador
+
+    st.markdown('<hr class="compact">', unsafe_allow_html=True)
+
     df_raw = bloco_colagem("cp")
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
     colA, colB = st.columns([0.6, 0.4])
     with colA:
@@ -318,7 +322,7 @@ with aba_cp:
         limpar = st.button("↩️ Limpar", use_container_width=True, key="cp_clear_btn")
 
     if limpar:
-        for k in ["cp_df_raw", "cp_grupo_nome", "cp_empresa_nome", "cp_empresa_row"]:
+        for k in ["cp_df_raw", "cp_grupo_nome", "cp_empresa_nome", "cp_empresa_row", "cp_portador"]:
             st.session_state.pop(k, None)
         st.experimental_rerun()
 

@@ -38,7 +38,7 @@ st.markdown("""
         div[data-testid="stMultiSelect"] > div { background-color: transparent !important; }
     </style>
 """, unsafe_allow_html=True)
-    st.markdown("""
+st.markdown("""
     <style>
     /* separador mais fino e com pouco espaço */
     hr.compact { height:1px; background:#e6e9f0; border:none; margin:8px 0 10px; }
@@ -51,7 +51,7 @@ st.markdown("""
     /* reduz espaço padrão entre blocos verticais nessa seção */
     .compact [data-testid="stVerticalBlock"] > div { margin-bottom:8px; }
     </style>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 # ===== Cabeçalho =====
 st.markdown("""
     <div style='display: flex; align-items: center; gap: 10px; margin-bottom: 12px;'>

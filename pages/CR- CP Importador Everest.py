@@ -204,7 +204,7 @@ def carregar_tabela_meio_pagto():
 
     for c in ["Meio de Pagamento", COL_PADRAO, COL_COD, COL_CNPJ]:
         if c not in df.columns: df[c] = ""
-        df[c] = df[c].astype(str).str.trim() if hasattr(str, "trim") else df[c].astype(str).str.strip()
+        df[c] = df[c].astype(str).str.strip()
 
     rules = []
     for _, row in df.iterrows():
@@ -346,12 +346,8 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
         cod, cnpj_band, padrao_str = _match_bandeira_to_gerencial(b)
         cod_conta_list.append(cod)            # Cod Gerencial Everest
         cnpj_cli_list.append(cnpj_band)       # CNPJ da Bandeira
-        if (cnpj_band or "").strip():
-            # quando achou CNPJ → mantém sua regra antiga
-            obs_list.append(((padrao_str or "").strip() + " - Erro Integração").strip())
-        else:
-            # quando NÃO achou CNPJ → observação deve ser exatamente o texto da **Bandeira**
-            obs_list.append(str(b or "").strip())
+        # 🔴 Observação SEMPRE = texto da coluna Bandeira
+        obs_list.append(str(b or "").strip())
 
     # campos fixos
     serie_titulo   = "DRE"
@@ -402,6 +398,17 @@ def _download_excel(df: pd.DataFrame, filename: str, label_btn: str):
                        file_name=filename,
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+def _styled_missing(df: pd.DataFrame):
+    """Pré-visualização com linhas faltantes em vermelho (somente visual)."""
+    if df.empty:
+        return df
+    mask = df["CNPJ/Cliente"].astype(str).str.strip() == ""
+    def _row_style(row):
+        if row.name in df[mask].index:
+            return ["background-color: #ffe6e6"] * len(row)  # vermelho claro
+        return ["" for _ in row]
+    return df.style.apply(_row_style, axis=1)
+
 # ======================
 # ABAS
 # ======================
@@ -422,7 +429,6 @@ with aba_cr:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # só botão de gerar
     if st.button("🧾 Gerar Excel Importador (Receber)", use_container_width=True, key="cr_gen_btn"):
         if st.session_state.get("cr_tipo_imp") == "Adquirente":
             df_imp = _build_importador_df(
@@ -433,8 +439,32 @@ with aba_cr:
                 st.session_state.get("cr_tipo_imp","")
             )
             if not df_imp.empty:
-                st.dataframe(df_imp, use_container_width=True, height=360)
-                _download_excel(df_imp, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)")
+                # contagem faltantes
+                missing = df_imp["CNPJ/Cliente"].astype(str).str.strip() == ""
+                faltam = int(missing.sum())
+                total  = int(len(df_imp))
+                if faltam:
+                    st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente. As linhas faltantes aparecem em vermelho na prévia e podem ser editadas no editor abaixo.")
+                else:
+                    st.success("✅ Todos os CNPJs foram encontrados.")
+
+                # 1) prévia estilizada (vermelho nas faltantes)
+                st.markdown("**Pré-visualização (faltantes em vermelho):**")
+                st.dataframe(_styled_missing(df_imp), use_container_width=True, height=260)
+
+                # 2) editor: apenas CNPJ/Cliente é editável
+                st.markdown("**Editar CNPJ/Cliente (somente esta coluna é editável):**")
+                disabled_cols = [c for c in df_imp.columns if c != "CNPJ/Cliente"]
+                edited_cr = st.data_editor(
+                    df_imp,
+                    disabled=disabled_cols,
+                    use_container_width=True,
+                    height=360,
+                    key="cr_editor"
+                )
+
+                # download usa o que está no editor
+                _download_excel(edited_cr, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)")
         else:
             st.info("Para gerar o importador, selecione **Tipo de Importação = Adquirente** e mapeie as colunas.")
 
@@ -463,8 +493,27 @@ with aba_cp:
                 st.session_state.get("cp_tipo_imp","")
             )
             if not df_imp.empty:
-                st.dataframe(df_imp, use_container_width=True, height=360)
-                _download_excel(df_imp, "Importador_Pagar.xlsx", "📥 Baixar Importador (Pagar)")
+                missing = df_imp["CNPJ/Cliente"].astype(str).str.strip() == ""
+                faltam = int(missing.sum()); total = int(len(df_imp))
+                if faltam:
+                    st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente. As linhas faltantes aparecem em vermelho na prévia e podem ser editadas no editor abaixo.")
+                else:
+                    st.success("✅ Todos os CNPJs foram encontrados.")
+
+                st.markdown("**Pré-visualização (faltantes em vermelho):**")
+                st.dataframe(_styled_missing(df_imp), use_container_width=True, height=260)
+
+                st.markdown("**Editar CNPJ/Cliente (somente esta coluna é editável):**")
+                disabled_cols = [c for c in df_imp.columns if c != "CNPJ/Cliente"]
+                edited_cp = st.data_editor(
+                    df_imp,
+                    disabled=disabled_cols,
+                    use_container_width=True,
+                    height=360,
+                    key="cp_editor"
+                )
+
+                _download_excel(edited_cp, "Importador_Pagar.xlsx", "📥 Baixar Importador (Pagar)")
         else:
             st.info("Para gerar o importador, selecione **Tipo de Importação = Adquirente** e mapeie as colunas.")
 

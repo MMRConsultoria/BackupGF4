@@ -282,7 +282,7 @@ with aba_cr:
 
     gsel, esel = filtros_grupo_empresa("cr", with_portador=True)
     portador = st.session_state.get("cr_portador", "Todos")
-    st.session_state["cr_portador"] = portador
+    
 
     st.markdown('<hr class="compact">', unsafe_allow_html=True)
 
@@ -322,7 +322,7 @@ with aba_cp:
 
     gsel, esel = filtros_grupo_empresa("cp", with_portador=True)
     portador = st.session_state.get("cp_portador", "Todos")
-    st.session_state["cp_portador"] = portador
+    
 
     st.markdown('<hr class="compact">', unsafe_allow_html=True)
 

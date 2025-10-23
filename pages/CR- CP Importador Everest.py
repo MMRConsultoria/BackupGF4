@@ -313,7 +313,7 @@ def _column_mapping_ui(prefix: str, df_raw: pd.DataFrame):
     with c3:
         st.selectbox("Coluna de **Bandeira**", cols, key=f"{prefix}_col_bandeira")
 
-# ===== Ordem de saída (importador) =====
+# ===== Ordem de saída =====
 IMPORTADOR_ORDER = [
     "CNPJ/Cliente", "CNPJ Empresa", "Série Título", "Nº Título", "Nº Parcela",
     "Nº Documento", "Portador", "Data Documento", "Data Vencimento", "Data",
@@ -393,13 +393,16 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     out = out.reindex(columns=[c for c in IMPORTADOR_ORDER if c in out.columns])
     out.insert(0, "🔴 Falta CNPJ?", out["CNPJ/Cliente"].astype(str).str.strip().eq(""))
 
-    # garantia EXTRA de ordem correta
-    out = out[["🔴 Falta CNPJ?"] + [c for c in IMPORTADOR_ORDER if c in out.columns]]
+    # TRAVA a ordem final, incluindo CNPJ/Cliente em 2º (após a flag)
+    final_cols = ["🔴 Falta CNPJ?"] + [c for c in IMPORTADOR_ORDER if c in out.columns]
+    out = out[final_cols]
 
     return out
 
-def _download_excel(df: pd.DataFrame, filename: str, label_btn: str):
-    if df.empty: return
+def _download_excel(df: pd.DataFrame, filename: str, label_btn: str, disabled=False):
+    if df.empty:
+        st.button(label_btn, disabled=True, use_container_width=True)
+        return
     to_save = df.copy()
     bio = BytesIO()
     with pd.ExcelWriter(bio, engine="openpyxl") as writer:
@@ -407,7 +410,9 @@ def _download_excel(df: pd.DataFrame, filename: str, label_btn: str):
     bio.seek(0)
     st.download_button(label_btn, data=bio,
                        file_name=filename,
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       use_container_width=True,
+                       disabled=disabled)
 
 # ======================
 # ABAS
@@ -429,12 +434,12 @@ with aba_cr:
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # botão gerar — RESETA estado antes de gravar novo DF
+    # gerar
     if st.button("🧾 Gerar Excel Importador (Receber)", use_container_width=True, key="cr_gen_btn"):
-        # reset de view/keys para não “colar” com edição anterior
         st.session_state["cr_only_missing"] = False
         st.session_state["cr_rev"] = st.session_state.get("cr_rev", 0) + 1
         st.session_state.pop("cr_df_imp", None)
+        st.session_state["cr_edited_once"] = False   # novo: só libera download após editar
 
         if st.session_state.get("cr_tipo_imp") == "Adquirente":
             df_imp = _build_importador_df(
@@ -445,7 +450,6 @@ with aba_cr:
                 st.session_state.get("cr_tipo_imp","")
             )
             if not df_imp.empty:
-                # força ordem correta no momento da gravação
                 cols_final = ["🔴 Falta CNPJ?"] + [c for c in IMPORTADOR_ORDER if c in df_imp.columns]
                 st.session_state["cr_df_imp"] = df_imp.reindex(columns=cols_final)
         else:
@@ -453,7 +457,6 @@ with aba_cr:
 
     if "cr_df_imp" in st.session_state and isinstance(st.session_state["cr_df_imp"], pd.DataFrame):
         df_imp = st.session_state["cr_df_imp"]
-        # Garante ordem antes de mostrar
         cols_final = ["🔴 Falta CNPJ?"] + [c for c in IMPORTADOR_ORDER if c in df_imp.columns]
         df_imp = df_imp.reindex(columns=cols_final)
 
@@ -472,7 +475,12 @@ with aba_cr:
             key=editor_key
         )
 
-        # Atualiza DF completo e reavalia flag; mantém ordem
+        # Detecta mudanças vs df_view para liberar o download
+        changed = not edited_cr.equals(df_view)
+        if changed:
+            st.session_state["cr_edited_once"] = True
+
+        # Atualiza DF completo, reavalia flag e mantém ordem
         edited_full = st.session_state["cr_df_imp"].copy()
         edited_full.update(edited_cr)
         edited_full["🔴 Falta CNPJ?"] = edited_full["CNPJ/Cliente"].astype(str).str.strip().eq("")
@@ -486,7 +494,12 @@ with aba_cr:
         else:
             st.success("✅ Todos os CNPJs foram preenchidos.")
 
-        _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)")
+        _download_excel(
+            edited_full,
+            "Importador_Receber.xlsx",
+            "📥 Baixar Importador (Receber)",
+            disabled=not st.session_state.get("cr_edited_once", False)
+        )
 
 # --------- 💸 CONTAS A PAGAR ---------
 with aba_cp:
@@ -507,6 +520,7 @@ with aba_cp:
         st.session_state["cp_only_missing"] = False
         st.session_state["cp_rev"] = st.session_state.get("cp_rev", 0) + 1
         st.session_state.pop("cp_df_imp", None)
+        st.session_state["cp_edited_once"] = False
 
         if st.session_state.get("cp_tipo_imp") == "Adquirente":
             df_imp = _build_importador_df(
@@ -542,6 +556,10 @@ with aba_cp:
             key=editor_key
         )
 
+        changed = not edited_cp.equals(df_view)
+        if changed:
+            st.session_state["cp_edited_once"] = True
+
         edited_full = st.session_state["cp_df_imp"].copy()
         edited_full.update(edited_cp)
         edited_full["🔴 Falta CNPJ?"] = edited_full["CNPJ/Cliente"].astype(str).str.strip().eq("")
@@ -555,7 +573,12 @@ with aba_cp:
         else:
             st.success("✅ Todos os CNPJs foram preenchidos.")
 
-        _download_excel(edited_full, "Importador_Pagar.xlsx", "📥 Baixar Importador (Pagar)")
+        _download_excel(
+            edited_full,
+            "Importador_Pagar.xlsx",
+            "📥 Baixar Importador (Pagar)",
+            disabled=not st.session_state.get("cp_edited_once", False)
+        )
 
 # --------- 🧾 CADASTRO Cliente/Fornecedor ---------
 with aba_cad:

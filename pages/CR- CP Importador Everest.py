@@ -3,9 +3,7 @@
 
 import streamlit as st
 import pandas as pd
-import re
-import json
-import unicodedata
+import re, json, unicodedata
 from io import StringIO, BytesIO
 import gspread
 from gspread.exceptions import WorksheetNotFound
@@ -17,33 +15,27 @@ st.set_page_config(page_title="CR-CP Importador Everest", layout="wide")
 if not st.session_state.get("acesso_liberado"):
     st.stop()
 
-# ===== CSS (layout do seu modelo) + seção compacta =====
+# ===== CSS (layout + seção compacta) =====
 st.markdown("""
-    <style>
-        [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
-        .stSpinner { visibility: visible !important; }
-        .stApp { background-color: #f9f9f9; }
-        div[data-baseweb="tab-list"] { margin-top: 20px; }
-        button[data-baseweb="tab"] {
-            background-color: #f0f2f6; border-radius: 10px;
-            padding: 10px 20px; margin-right: 10px;
-            transition: all 0.3s ease; font-size: 16px; font-weight: 600;
-        }
-        button[data-baseweb="tab"]:hover { background-color: #dce0ea; color: black; }
-        button[data-baseweb="tab"][aria-selected="true"] { background-color: #0366d6; color: white; }
+<style>
+    [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
+    .stSpinner { visibility: visible !important; }
+    .stApp { background-color: #f9f9f9; }
+    div[data-baseweb="tab-list"] { margin-top: 20px; }
+    button[data-baseweb="tab"] {
+        background-color: #f0f2f6; border-radius: 10px;
+        padding: 10px 20px; margin-right: 10px;
+        transition: all 0.3s ease; font-size: 16px; font-weight: 600;
+    }
+    button[data-baseweb="tab"]:hover { background-color: #dce0ea; color: black; }
+    button[data-baseweb="tab"][aria-selected="true"] { background-color: #0366d6; color: white; }
 
-        /* multiselect sem tags coloridas (igual seu layout) */
-        div[data-testid="stMultiSelect"] [data-baseweb="tag"] { background-color: transparent !important; border: none !important; color: black !important; }
-        div[data-testid="stMultiSelect"] [data-baseweb="tag"] * { color: black !important; fill: black !important; }
-        div[data-testid="stMultiSelect"] > div { background-color: transparent !important; }
-
-        /* seção compacta para deixar tudo juntinho */
-        hr.compact { height:1px; background:#e6e9f0; border:none; margin:8px 0 10px; }
-        .compact [data-testid="stSelectbox"] { margin-bottom:6px !important; }
-        .compact [data-testid="stFileUploader"] { margin-top:8px !important; }
-        .compact [data-testid="stTextArea"] { margin-top:8px !important; }
-        .compact [data-testid="stVerticalBlock"] > div { margin-bottom:8px; }
-    </style>
+    hr.compact { height:1px; background:#e6e9f0; border:none; margin:8px 0 10px; }
+    .compact [data-testid="stSelectbox"] { margin-bottom:6px !important; }
+    .compact [data-testid="stFileUploader"] { margin-top:8px !important; }
+    .compact [data-testid="stTextArea"] { margin-top:8px !important; }
+    .compact [data-testid="stVerticalBlock"] > div { margin-bottom:8px; }
+</style>
 """, unsafe_allow_html=True)
 
 # ===== Cabeçalho =====
@@ -53,6 +45,7 @@ st.markdown("""
         <h1 style='display: inline; margin: 0; font-size: 2.0rem;'>CR-CP Importador Everest</h1>
     </div>
 """, unsafe_allow_html=True)
+
 
 # ======================
 # Helpers
@@ -65,17 +58,11 @@ def _norm(s: str) -> str:
     s = re.sub(r"\s+"," ", s).strip().lower()
     return s
 
-def _to_float_br(x) -> float:
-    s = str(x or "").strip().replace("R$","").replace(" ", "").replace(".", "").replace(",", ".")
-    try:
-        return float(s)
-    except:
-        return 0.0
-
 def _try_parse_paste(text: str) -> pd.DataFrame:
     text = (text or "").strip("\n\r ")
     if not text: return pd.DataFrame()
-    if "\t" in text.splitlines()[0]:
+    first = text.splitlines()[0] if text else ""
+    if "\t" in first:
         df = pd.read_csv(StringIO(text), sep="\t", dtype=str, engine="python")
     else:
         try:
@@ -85,6 +72,13 @@ def _try_parse_paste(text: str) -> pd.DataFrame:
     df = df.dropna(how="all")
     df.columns = [str(c).strip() if str(c).strip() else f"col_{i}" for i,c in enumerate(df.columns)]
     return df
+
+def _to_float_br(x):
+    s = str(x or "").strip()
+    s = s.replace("R$","").replace(" ","").replace(".","").replace(",",".")
+    try: return float(s)
+    except: return None
+
 
 # ======================
 # Google Sheets
@@ -102,7 +96,7 @@ def _open_planilha(title="Vendas diarias"):
     try:
         gc = gs_client()
     except Exception as e:
-        st.warning(f"⚠️ Falha ao criar o cliente do Google: {e}")
+        st.warning(f"⚠️ Falha ao criar cliente Google: {e}")
         return None
     try:
         return gc.open(title)
@@ -112,9 +106,9 @@ def _open_planilha(title="Vendas diarias"):
             try:
                 return gc.open_by_key(sid)
             except Exception as e_id:
-                st.warning(f"⚠️ Erro abrindo planilha: {e_title} | {e_id}")
+                st.warning(f"⚠️ Não consegui abrir a planilha. Erros: {e_title} | {e_id}")
                 return None
-        st.warning(f"⚠️ Não consegui abrir a planilha por título. Detalhes: {e_title}")
+        st.warning(f"⚠️ Não consegui abrir por título. Detalhes: {e_title}")
         return None
 
 @st.cache_data(show_spinner=False)
@@ -123,25 +117,21 @@ def carregar_empresas():
     if sh is None:
         df_vazio = pd.DataFrame(columns=["Grupo","Loja","Código Everest","Código Grupo Everest","CNPJ"])
         return df_vazio, [], {}
-
     try:
         ws = sh.worksheet("Tabela Empresa")
         df = pd.DataFrame(ws.get_all_records())
     except Exception as e:
-        st.warning(f"⚠️ Não consegui ler a aba 'Tabela Empresa'. Detalhes: {e}")
+        st.warning(f"⚠️ Erro lendo 'Tabela Empresa': {e}")
         df = pd.DataFrame(columns=["Grupo","Loja","Código Everest","Código Grupo Everest","CNPJ"])
 
-    # normalizações de nomes
     ren = {
         "Codigo Everest":"Código Everest","Codigo Grupo Everest":"Código Grupo Everest",
-        "Loja Nome":"Loja","Empresa":"Loja","Grupo Nome":"Grupo",
-        "CNPJ da Loja":"CNPJ","Cnpj":"CNPJ"
+        "Loja Nome":"Loja","Empresa":"Loja","Grupo Nome":"Grupo"
     }
     df = df.rename(columns={k:v for k,v in ren.items() if k in df.columns})
     for c in ["Grupo","Loja","Código Everest","Código Grupo Everest","CNPJ"]:
         if c not in df.columns: df[c] = ""
         df[c] = df[c].astype(str).str.strip()
-    df = df[df["Grupo"]!=""].copy()
 
     grupos = sorted(df["Grupo"].dropna().unique().tolist())
     lojas_map = (
@@ -151,13 +141,14 @@ def carregar_empresas():
     )
     return df, grupos, lojas_map
 
-# ===== Portadores (Banco -> Portador) =========================================
+
+# ===== Portadores (Banco -> Portador) ========================================
 @st.cache_data(show_spinner=False)
 def carregar_portadores():
     """
-    Lê a aba 'Portador' e retorna:
+    Retorna:
       - lista de Bancos (para o filtro)
-      - dict {Banco -> Portador} (para preencher o campo 'Portador')
+      - dict {Banco -> Portador} (para preencher a coluna 'Portador')
     """
     sh = _open_planilha("Vendas diarias")
     if sh is None:
@@ -166,7 +157,6 @@ def carregar_portadores():
         ws = sh.worksheet("Portador")
     except Exception:
         return [], {}
-
     rows = ws.get_all_values()
     if not rows:
         return [], {}
@@ -179,8 +169,8 @@ def carregar_portadores():
                 return i
         return None
 
-    i_banco = idx_of({"banco", "banco/portador", "nome banco"})
-    i_porta = idx_of({"portador", "nome portador"})
+    i_banco = idx_of({"banco","banco/portador","nome banco"})
+    i_porta = idx_of({"portador","nome portador"})
 
     bancos = set()
     mapa = {}
@@ -189,21 +179,19 @@ def carregar_portadores():
         p = str(r[i_porta]).strip()  if (i_porta is not None  and i_porta  < len(r)) else ""
         if b:
             bancos.add(b)
-            if p:
-                mapa[b] = p
-
+            if p: mapa[b] = p
     return sorted(bancos), mapa
 
 
-# ===== Tabela Meio Pagamento (regras) =========================================
+# ===== Tabela Meio Pagamento (regras) ========================================
 @st.cache_data(show_spinner=False)
 def carregar_tabela_meio_pagto():
     """
-    Lê 'Tabela Meio Pagamento' e monta regras por 'Padrão Cod Gerencial':
-      - tokens: lista de palavras para detectar a bandeira
-      - codigo_gerencial: 'Cod Gerencial Everest' (para 'Cód Conta Gerencial')
-      - cnpj_bandeira: 'CNPJ Bandeira' (para 'CNPJ/Cliente')
-      - padrao_str: string original do 'Padrão Cod Gerencial' (para Observação)
+    Constrói regras por 'Padrão Cod Gerencial':
+      - tokens (palavras para identificar a bandeira)
+      - codigo_gerencial ('Cod Gerencial Everest')
+      - cnpj_bandeira ('CNPJ Bandeira')
+      - padrao_str (texto do padrão, para Observação)
     """
     COL_PADRAO = "Padrão Cod Gerencial"
     COL_COD    = "Cod Gerencial Everest"
@@ -211,7 +199,6 @@ def carregar_tabela_meio_pagto():
 
     sh = _open_planilha("Vendas diarias")
     if not sh:
-        st.warning("⚠️ Sem planilha para Tabela Meio Pagamento.")
         return pd.DataFrame(), []
 
     try:
@@ -222,7 +209,7 @@ def carregar_tabela_meio_pagto():
 
     df = pd.DataFrame(ws.get_all_records())
 
-    # normaliza possíveis nomes de colunas
+    # normaliza possíveis nomes
     ren = {}
     for c in df.columns:
         n = _norm(c)
@@ -259,17 +246,6 @@ def carregar_tabela_meio_pagto():
     return df, rules
 
 
-# ===== util: converte moeda pt-BR p/ float ===================================
-def _to_float_br(x):
-    s = str(x or "").strip()
-    s = s.replace("R$", "").replace(" ", "").replace(".", "").replace(",", ".")
-    try:
-        return float(s)
-    except:
-        return None
-
-
-# ===== matching: bandeira -> (codigo, cnpj, padrao_str) ======================
 def _match_bandeira_to_gerencial(band_value: str):
     if not band_value or not MEIO_RULES:
         return "", "", ""
@@ -279,6 +255,87 @@ def _match_bandeira_to_gerencial(band_value: str):
             if tok and tok in txt:
                 return rule["codigo_gerencial"], rule.get("cnpj_bandeira",""), rule.get("padrao_str","")
     return "", "", ""
+
+
+# ===== Carregamentos base =====
+df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
+PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
+DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
+
+def LOJAS_DO(grupo_nome: str):
+    return LOJAS_MAP.get(grupo_nome, [])
+
+
+# ======================
+# UI Components
+# ======================
+def filtros_grupo_empresa(prefix, with_portador=False, with_tipo_imp=False):
+    """Linha com Grupo | Empresa | Banco | Tipo de Importação (lado a lado)."""
+    if with_portador and with_tipo_imp:
+        c1,c2,c3,c4 = st.columns([1,1,1,1])
+    elif with_portador:
+        c1,c2,c3 = st.columns([1,1,1]); c4 = None
+    elif with_tipo_imp:
+        c1,c2,c4 = st.columns([1,1,1]); c3 = None
+    else:
+        c1,c2 = st.columns([1,1]); c3 = c4 = None
+
+    with c1:
+        gsel = st.selectbox("Grupo:", ["— selecione —"] + GRUPOS, key=f"{prefix}_grupo")
+    with c2:
+        lojas = LOJAS_DO(gsel) if gsel!="— selecione —" else []
+        esel = st.selectbox("Empresa:", ["— selecione —"] + lojas, key=f"{prefix}_empresa")
+
+    if with_portador and c3:
+        st.selectbox("Banco:", ["Todos"] + PORTADORES, index=0, key=f"{prefix}_portador")
+    if with_tipo_imp and c4:
+        st.selectbox("Tipo de Importação:", ["Todos","Adquirente","Cliente","Outros"], index=0, key=f"{prefix}_tipo_imp")
+
+    return gsel, esel
+
+
+def bloco_colagem(prefix: str):
+    c1,c2 = st.columns([0.55,0.45])
+    with c1:
+        txt = st.text_area("📋 Colar tabela (Ctrl+V)", height=220,
+                           placeholder="Cole aqui os dados copiados do Excel/Sheets…",
+                           key=f"{prefix}_paste")
+        df_paste = _try_parse_paste(txt) if (txt and txt.strip()) else pd.DataFrame()
+    with c2:
+        up = st.file_uploader("📎 Ou enviar arquivo (.xlsx/.xlsm/.xls/.csv)",
+                              type=["xlsx","xlsm","xls","csv"], key=f"{prefix}_file")
+        df_file = pd.DataFrame()
+        if up is not None:
+            try:
+                if up.name.lower().endswith(".csv"):
+                    try:
+                        df_file = pd.read_csv(up, sep=";", dtype=str, engine="python")
+                    except Exception:
+                        up.seek(0); df_file = pd.read_csv(up, sep=",", dtype=str, engine="python")
+                else:
+                    df_file = pd.read_excel(up, dtype=str)
+                df_file = df_file.dropna(how="all")
+                df_file.columns = [str(c).strip() if str(c).strip() else f"col_{i}" for i,c in enumerate(df_file.columns)]
+            except Exception as e:
+                st.error(f"Erro ao ler arquivo: {e}")
+    df_raw = df_paste if not df_paste.empty else df_file
+
+    st.markdown("#### Pré-visualização")
+    if df_raw.empty: st.info("Cole ou envie um arquivo para visualizar.")
+    else: st.dataframe(df_raw, use_container_width=True, height=320)
+    return df_raw
+
+
+def _column_mapping_ui(prefix: str, df_raw: pd.DataFrame):
+    st.markdown("##### Mapear colunas para **Adquirente**")
+    cols = ["— selecione —"] + list(df_raw.columns)
+    c1,c2,c3 = st.columns(3)
+    with c1:
+        st.selectbox("Coluna de **Data**", cols, key=f"{prefix}_col_data")
+    with c2:
+        st.selectbox("Coluna de **Valor**", cols, key=f"{prefix}_col_valor")
+    with c3:
+        st.selectbox("Coluna de **Bandeira**", cols, key=f"{prefix}_col_bandeira")
 
 
 # ===== monta o Importador (layout final) =====================================
@@ -317,7 +374,6 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
         cod, cnpj_band, padrao_str = _match_bandeira_to_gerencial(b)
         cod_conta_list.append(cod)
         cnpj_cli_list.append(cnpj_band)
-        # Observação = Padrão Cod Gerencial + " - Erro Integração"
         obs_padroes.append((padrao_str or "").strip() + (" - Erro Integração" if padrao_str else "Erro Integração"))
 
     # campos fixos
@@ -351,7 +407,7 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     # remove linhas sem data ou sem valor
     out = out[(out["Data"].astype(str).str.strip() != "") & (out["Valor Original"].notna())]
 
-    # ordem final (sem nada depois de Cód Centro de Custo)
+    # ordem final
     col_order = [
         "CNPJ Empresa","Série Título","Nº Título","Nº Parcela","Nº Documento",
         "CNPJ/Cliente","Portador",
@@ -363,194 +419,17 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     return out
 
 
-# ===== Carregamentos base =====
-df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
-PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
-DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
-
-def LOJAS_DO(grupo_nome: str):
-    return LOJAS_MAP.get(grupo_nome, [])
-
-# ======================
-# UI Blocks
-# ======================
-def filtros_grupo_empresa(prefix, with_portador=False, with_tipo_imp=False):
-    """Grupo | Empresa | (Portador/Banco) | (Tipo de Importação)"""
-    if with_portador and with_tipo_imp:
-        c1, c2, c3, c4 = st.columns([1,1,1,1])
-    elif with_portador:
-        c1, c2, c3 = st.columns([1,1,1]); c4 = None
-    elif with_tipo_imp:
-        c1, c2, c4 = st.columns([1,1,1]); c3 = None
-    else:
-        c1, c2 = st.columns([1,1]); c3 = c4 = None
-
-    with c1:
-        gsel = st.selectbox("Grupo:", ["— selecione —"] + GRUPOS, key=f"{prefix}_grupo")
-    with c2:
-        lojas = LOJAS_DO(gsel) if gsel != "— selecione —" else []
-        esel = st.selectbox("Empresa:", ["— selecione —"] + lojas, key=f"{prefix}_empresa")
-
-    if with_portador and c3:
-        st.selectbox("Portador (Banco):", ["Todos"] + PORTADORES, index=0, key=f"{prefix}_portador")
-
-    if with_tipo_imp and c4:
-        st.selectbox("Tipo de Importação:", ["Todos", "Adquirente", "Cliente", "Outros"], index=0, key=f"{prefix}_tipo_imp")
-
-    return gsel, esel
-
-def bloco_colagem(prefix: str):
-    c1, c2 = st.columns([0.55, 0.45])
-    with c1:
-        txt = st.text_area("📋 Colar tabela (Ctrl+V)", height=220,
-                           placeholder="Cole aqui os dados copiados do Excel/Sheets…",
-                           key=f"{prefix}_paste")
-        df_paste = _try_parse_paste(txt) if (txt and txt.strip()) else pd.DataFrame()
-    with c2:
-        up = st.file_uploader("📎 Ou enviar arquivo (.xlsx/.xlsm/.xls/.csv)",
-                              type=["xlsx","xlsm","xls","csv"], key=f"{prefix}_file")
-        df_file = pd.DataFrame()
-        if up is not None:
-            try:
-                if up.name.lower().endswith(".csv"):
-                    try:
-                        df_file = pd.read_csv(up, sep=";", dtype=str, engine="python")
-                    except Exception:
-                        up.seek(0); df_file = pd.read_csv(up, sep=",", dtype=str, engine="python")
-                else:
-                    df_file = pd.read_excel(up, dtype=str)
-                df_file = df_file.dropna(how="all")
-                df_file.columns = [str(c).strip() if str(c).strip() else f"col_{i}" for i,c in enumerate(df_file.columns)]
-            except Exception as e:
-                st.error(f"Erro ao ler arquivo: {e}")
-    df_raw = df_paste if not df_paste.empty else df_file
-
-    st.markdown("#### Pré-visualização")
-    if df_raw.empty: st.info("Cole ou envie um arquivo para visualizar.")
-    else: st.dataframe(df_raw, use_container_width=True, height=320)
-    return df_raw
-
-def bloco_mapeamento_minimo(prefix: str, df_raw: pd.DataFrame):
-    """
-    Exibe selects para o usuário apontar: Data, Valor, Bandeira.
-    Só aparece quando Tipo de Importação = Adquirente.
-    """
-    if df_raw.empty:
-        return
-    cols = ["— selecione —"] + list(df_raw.columns.astype(str))
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.selectbox("🗓️ Coluna Data", options=cols, key=f"{prefix}_col_data")
-    with c2:
-        st.selectbox("💵 Coluna Valor", options=cols, key=f"{prefix}_col_valor")
-    with c3:
-        st.selectbox("🏳️ Coluna Bandeiras (Visa/Amex…)", options=cols, key=f"{prefix}_col_bandeira")
-
-# ======================
-# Importador (geração)
-# ======================
-def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: str, banco_escolhido: str, tipo_imp: str):
-    # colunas mapeadas pelo usuário
-    cd = st.session_state.get(f"{prefix}_col_data")
-    cv = st.session_state.get(f"{prefix}_col_valor")
-    cb = st.session_state.get(f"{prefix}_col_bandeira")
-
-    if not cd or not cv or not cb or "— selecione —" in (cd, cv, cb):
-        st.error("Defina **Data**, **Valor** e **Bandeira** para gerar o importador.")
-        return pd.DataFrame()
-
-    # ====== Empresa (CNPJ Loja) ======
-    cnpj_loja = ""
-    if not df_emp.empty and loja:
-        row = df_emp[
-            (df_emp["Loja"].astype(str).str.strip() == loja) &
-            (df_emp["Grupo"].astype(str).str.strip() == grupo)
-        ]
-        if not row.empty:
-            cnpj_loja = str(row.iloc[0].get("CNPJ", "") or "")
-
-    # ====== Portador (do Banco escolhido) ======
-    portador_nome = MAPA_BANCO_PARA_PORTADOR.get(banco_escolhido, banco_escolhido or "")
-
-    # ====== Dados do arquivo (mantendo datas exatamente como vieram) ======
-    data_original  = df_raw[cd].astype(str)
-    valor_original = pd.to_numeric(df_raw[cv].apply(_to_float_br), errors="coerce").round(2)
-    bandeira_txt   = df_raw[cb].astype(str).str.strip()
-
-    # ====== Bandeira → (Cód Conta Gerencial, CNPJ Bandeira) ======
-    cod_conta_list, cnpj_bandeira_list, meio_ref = [], [], []
-    for b in bandeira_txt:
-        cod, cnpj_band, meio = _match_bandeira_to_gerencial(b)
-        cod_conta_list.append(cod)
-        cnpj_bandeira_list.append(cnpj_band)
-        meio_ref.append(meio)
-
-    # ====== Regras específicas ======
-    titulo_val       = "DRE" if str(tipo_imp).strip().lower() == "adquirente" else ""
-    num_titulo_val   = ""       # em branco
-    num_parcela_val  = 1
-    num_documento    = "DRE"
-    obs_val          = bandeira_txt + " - Erro Integração"
-    centro_custo_val = 3
-
-    # ====== montar DataFrame no layout ======
-    out = pd.DataFrame({
-        "CNPJ Empresa":          cnpj_loja,
-        "TITULO":                titulo_val,
-        "Série Título":          "",
-        "Nº Título":             num_titulo_val,
-        "Nº Parcela":            num_parcela_val,
-        "Nº Documento":          num_documento,
-        "CNPJ/Cliente":          cnpj_bandeira_list,
-        "Portador":              portador_nome,
-        "Data Documento":        data_original,
-        "Data Vencimento":       data_original,
-        "Data":                  data_original,
-        "Valor Desconto":        0.00,
-        "Valor Multa":           0.00,
-        "Valor Juros Dia":       0.00,
-        "Valor Original":        valor_original,
-        "Observações do Título": obs_val,
-        "Cód Conta Gerencial":   cod_conta_list,
-        "Cód Centro de Custo":   centro_custo_val,
-    })
-
-    # metadados para conferência
-    out["_Grupo"]           = grupo or ""
-    out["_Empresa"]         = loja or ""
-    out["_Banco"]           = banco_escolhido or ""
-    out["_Portador Nome"]   = portador_nome or ""
-    out["_Tipo Importação"] = tipo_imp or ""
-    out["_Meio Mapeado"]    = meio_ref
-
-    # limpa vazios
-    out = out[(out["Data"].astype(str).str.strip() != "") & (out["Valor Original"].notna())]
-
-    # ordem principal
-    col_order = [
-        "CNPJ Empresa","TITULO","Série Título","Nº Título","Nº Parcela","Nº Documento",
-        "CNPJ/Cliente","Portador",
-        "Data Documento","Data Vencimento","Data",
-        "Valor Desconto","Valor Multa","Valor Juros Dia","Valor Original",
-        "Observações do Título","Cód Conta Gerencial","Cód Centro de Custo",
-    ]
-    out = out[col_order + [c for c in out.columns if c.startswith("_")]]
-    return out
-
-def _download_excel(df: pd.DataFrame, filename: str, btn_key: str):
+def _download_excel(df: pd.DataFrame, filename: str, label_btn: str):
     if df.empty:
         return
-    buff = BytesIO()
-    with pd.ExcelWriter(buff, engine="openpyxl") as writer:
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Importador")
-    buff.seek(0)
-    st.download_button(
-        "📥 Baixar Importador (Excel)",
-        data=buff,
-        file_name=filename,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key=btn_key
-    )
+    bio.seek(0)
+    st.download_button(label_btn, data=bio,
+                       file_name=filename,
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
 
 # ======================
 # ABAS
@@ -567,51 +446,47 @@ with aba_cr:
 
     df_raw = bloco_colagem("cr")
 
-    # Quando for Adquirente, pedir mapeamento mínimo
-    if st.session_state.get("cr_tipo_imp","") == "Adquirente" and not df_raw.empty:
-        st.info("🔧 Informe onde estão **Data**, **Valor** e **Bandeira** no arquivo (Adquirente).")
-        bloco_mapeamento_minimo("cr", df_raw)
+    # Se Adquirente, pedir o mapeamento de colunas
+    if st.session_state.get("cr_tipo_imp") == "Adquirente" and not df_raw.empty:
+        _column_mapping_ui("cr", df_raw)
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    colA, colB, colC = st.columns([0.45, 0.2, 0.35])
+    colA, colB, colC = st.columns([0.45, 0.25, 0.30])
     with colA:
         salvar = st.button("✅ Salvar seleção e dados (Receber)", use_container_width=True, type="primary", key="cr_save_btn")
     with colB:
         limpar = st.button("↩️ Limpar", use_container_width=True, key="cr_clear_btn")
-
-    # gerar importador (prévia e download)
-    if st.session_state.get("cr_tipo_imp","") == "Adquirente" and not df_raw.empty:
-        df_imp = _build_importador_df(
-            df_raw, "cr",
-            gsel if gsel!="— selecione —" else "",
-            esel if esel!="— selecione —" else "",
-            st.session_state.get("cr_portador",""),
-            st.session_state.get("cr_tipo_imp","")
-        )
-        if not df_imp.empty:
-            st.markdown("#### Importador (pré-visualização)")
-            st.dataframe(df_imp, use_container_width=True, height=360)
-            _download_excel(df_imp, "Importador_Receber.xlsx", "dl_cr_imp_btn")
+    with colC:
+        gerar = st.button("🧾 Gerar Excel Importador", use_container_width=True, key="cr_gen_btn")
 
     if limpar:
-        for k in ["cr_df_raw","cr_grupo_nome","cr_empresa_nome","cr_empresa_row","cr_portador",
-                  "cr_col_data","cr_col_valor","cr_col_bandeira","cr_tipo_imp"]:
+        for k in ["cr_df_raw","cr_grupo_nome","cr_empresa_nome","cr_empresa_row","cr_portador","cr_tipo_imp",
+                  "cr_col_data","cr_col_valor","cr_col_bandeira"]:
             st.session_state.pop(k, None)
         st.experimental_rerun()
 
-    if salvar:
-        if gsel=="— selecione —": st.error("Selecione o **Grupo**.")
-        elif esel=="— selecione —": st.error("Selecione a **Empresa**.")
-        elif df_raw.empty: st.error("Cole ou envie o arquivo.")
+    if salvar and not df_raw.empty:
+        st.session_state["cr_grupo_nome"] = gsel
+        st.session_state["cr_empresa_nome"] = esel
+        st.session_state["cr_df_raw"] = df_raw
+        st.success("Receber salvo em sessão.")
+
+    if gerar:
+        if st.session_state.get("cr_tipo_imp") == "Adquirente":
+            df_imp = _build_importador_df(
+                df_raw, "cr",
+                gsel if gsel!="— selecione —" else "",
+                esel if esel!="— selecione —" else "",
+                st.session_state.get("cr_portador",""),
+                st.session_state.get("cr_tipo_imp","")
+            )
+            if not df_imp.empty:
+                st.dataframe(df_imp, use_container_width=True, height=360)
+                _download_excel(df_imp, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)")
         else:
-            st.session_state["cr_grupo_nome"]=gsel
-            st.session_state["cr_empresa_nome"]=esel
-            mask_g = df_emp["Grupo"].astype(str).apply(_norm)==_norm(gsel)
-            mask_e = df_emp["Loja"].astype(str).apply(_norm)==_norm(esel)
-            st.session_state["cr_empresa_row"]=df_emp[mask_g & mask_e].reset_index(drop=True)
-            st.session_state["cr_df_raw"]=df_raw
-            st.success("Receber salvo em sessão.")
+            st.info("Para gerar o importador, selecione **Tipo de Importação = Adquirente** e mapeie as colunas.")
+
 
 # --------- 💸 CONTAS A PAGAR ---------
 with aba_cp:
@@ -623,49 +498,46 @@ with aba_cp:
 
     df_raw = bloco_colagem("cp")
 
-    if st.session_state.get("cp_tipo_imp","") == "Adquirente" and not df_raw.empty:
-        st.info("🔧 Informe onde estão **Data**, **Valor** e **Bandeira** no arquivo (Adquirente).")
-        bloco_mapeamento_minimo("cp", df_raw)
+    if st.session_state.get("cp_tipo_imp") == "Adquirente" and not df_raw.empty:
+        _column_mapping_ui("cp", df_raw)
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    colA, colB, colC = st.columns([0.45, 0.2, 0.35])
+    colA, colB, colC = st.columns([0.45, 0.25, 0.30])
     with colA:
         salvar = st.button("✅ Salvar seleção e dados (Pagar)", use_container_width=True, type="primary", key="cp_save_btn")
     with colB:
         limpar = st.button("↩️ Limpar", use_container_width=True, key="cp_clear_btn")
-
-    if st.session_state.get("cp_tipo_imp","") == "Adquirente" and not df_raw.empty:
-        df_imp = _build_importador_df(
-            df_raw, "cp",
-            gsel if gsel!="— selecione —" else "",
-            esel if esel!="— selecione —" else "",
-            st.session_state.get("cp_portador",""),
-            st.session_state.get("cp_tipo_imp","")
-        )
-        if not df_imp.empty:
-            st.markdown("#### Importador (pré-visualização)")
-            st.dataframe(df_imp, use_container_width=True, height=360)
-            _download_excel(df_imp, "Importador_Pagar.xlsx", "dl_cp_imp_btn")
+    with colC:
+        gerar = st.button("🧾 Gerar Excel Importador", use_container_width=True, key="cp_gen_btn")
 
     if limpar:
-        for k in ["cp_df_raw","cp_grupo_nome","cp_empresa_nome","cp_empresa_row","cp_portador",
-                  "cp_col_data","cp_col_valor","cp_col_bandeira","cp_tipo_imp"]:
+        for k in ["cp_df_raw","cp_grupo_nome","cp_empresa_nome","cp_empresa_row","cp_portador","cp_tipo_imp",
+                  "cp_col_data","cp_col_valor","cp_col_bandeira"]:
             st.session_state.pop(k, None)
         st.experimental_rerun()
 
-    if salvar:
-        if gsel=="— selecione —": st.error("Selecione o **Grupo**.")
-        elif esel=="— selecione —": st.error("Selecione a **Empresa**.")
-        elif df_raw.empty: st.error("Cole ou envie o arquivo.")
+    if salvar and not df_raw.empty:
+        st.session_state["cp_grupo_nome"] = gsel
+        st.session_state["cp_empresa_nome"] = esel
+        st.session_state["cp_df_raw"] = df_raw
+        st.success("Pagar salvo em sessão.")
+
+    if gerar:
+        if st.session_state.get("cp_tipo_imp") == "Adquirente":
+            df_imp = _build_importador_df(
+                df_raw, "cp",
+                gsel if gsel!="— selecione —" else "",
+                esel if esel!="— selecione —" else "",
+                st.session_state.get("cp_portador",""),
+                st.session_state.get("cp_tipo_imp","")
+            )
+            if not df_imp.empty:
+                st.dataframe(df_imp, use_container_width=True, height=360)
+                _download_excel(df_imp, "Importador_Pagar.xlsx", "📥 Baixar Importador (Pagar)")
         else:
-            st.session_state["cp_grupo_nome"]=gsel
-            st.session_state["cp_empresa_nome"]=esel
-            mask_g = df_emp["Grupo"].astype(str).apply(_norm)==_norm(gsel)
-            mask_e = df_emp["Loja"].astype(str).apply(_norm)==_norm(esel)
-            st.session_state["cp_empresa_row"]=df_emp[mask_g & mask_e].reset_index(drop=True)
-            st.session_state["cp_df_raw"]=df_raw
-            st.success("Pagar salvo em sessão.")
+            st.info("Para gerar o importador, selecione **Tipo de Importação = Adquirente** e mapeie as colunas.")
+
 
 # --------- 🧾 CADASTRO Cliente/Fornecedor ---------
 with aba_cad:

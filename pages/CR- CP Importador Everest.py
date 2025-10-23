@@ -159,16 +159,13 @@ def LOJAS_DO(grupo_nome: str): return LOJAS_MAP.get(grupo_nome, [])
 # Componentes de UI (layout)
 # ======================
 def filtros_grupo_empresa(prefix: str):
-    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+    col1, col2,  = st.columns([1, 1 ])
     with col1:
         gsel = st.selectbox("Grupo:", ["— selecione —"]+GRUPOS, key=f"{prefix}_grupo")
     with col2:
         lojas = LOJAS_DO(gsel) if gsel!="— selecione —" else []
         esel = st.selectbox("Empresa:", ["— selecione —"]+lojas, key=f"{prefix}_empresa")
-    with col3:
-        st.selectbox("Visão:", ["Por Empresa"], key=f"{prefix}_visao")
-    with col4:
-        st.selectbox("Tipo:", ["TODOS"], key=f"{prefix}_tipo")
+    
     return gsel, esel
 
 def bloco_colagem(prefix: str):

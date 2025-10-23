@@ -17,7 +17,7 @@ st.set_page_config(page_title="CR-CP Importador Everest", layout="wide")
 if not st.session_state.get("acesso_liberado"):
     st.stop()
 
-# ===== CSS (copiado do seu modelo, só com o título ajustado) =====
+# ===== CSS (layout igual ao seu PainelResultados.py) =====
 st.markdown("""
     <style>
         [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
@@ -39,7 +39,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ===== Cabeçalho (mesmo padrão visual) =====
+# ===== Cabeçalho =====
 st.markdown("""
     <div style='display: flex; align-items: center; gap: 10px; margin-bottom: 12px;'>
         <img src='https://img.icons8.com/color/48/graph.png' width='40'/>
@@ -48,7 +48,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ======================
-# Helpers CR-CP (não alterei lógica)
+# Helpers (mantidos)
 # ======================
 def _strip_accents_keep_case(s: str) -> str:
     return unicodedata.normalize("NFKD", str(s or "")).encode("ASCII","ignore").decode("ASCII")
@@ -73,33 +73,67 @@ def _try_parse_paste(text: str) -> pd.DataFrame:
     return df
 
 # ======================
-# Google Sheets (robusto – igual ao que já havíamos feito)
+# Google Sheets (NÃO cachear cliente; funções resilientes)
 # ======================
-@st.cache_data(show_spinner=False)
 def gs_client():
+    """Cria o client do Google (não cachear!)."""
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     secret = st.secrets.get("GOOGLE_SERVICE_ACCOUNT")
     if secret is None:
-        st.error("❌ st.secrets['GOOGLE_SERVICE_ACCOUNT'] não encontrado.")
-        st.stop()
-    credentials_dict = json.loads(secret) if isinstance(secret,str) else dict(secret)
+        raise RuntimeError("st.secrets['GOOGLE_SERVICE_ACCOUNT'] não encontrado.")
+    credentials_dict = json.loads(secret) if isinstance(secret, str) else dict(secret)
     creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
     return gspread.authorize(creds)
 
 def _open_planilha(title="Vendas diarias"):
-    gc = gs_client()
+    """
+    Tenta abrir por título e, se falhar, tenta por ID.
+    Nunca levanta exceção: retorna None e mostra aviso.
+    """
+    try:
+        gc = gs_client()
+    except Exception as e:
+        st.warning(f"⚠️ Falha ao criar o cliente do Google. Verifique as credenciais. Detalhes: {e}")
+        return None
+
+    # 1) Título
     try:
         return gc.open(title)
-    except Exception:
+    except Exception as e_title:
+        # 2) ID (se existir em secrets)
         sid = st.secrets.get("VENDAS_DIARIAS_SHEET_ID")
-        if sid: return gc.open_by_key(sid)
-        raise
+        if sid:
+            try:
+                return gc.open_by_key(sid)
+            except Exception as e_id:
+                st.warning(
+                    "⚠️ Não consegui abrir a planilha ‘Vendas diarias’. "
+                    "Confira o compartilhamento com o service account e a variável VENDAS_DIARIAS_SHEET_ID.\n\n"
+                    f"Erro por título: {e_title}\nErro por ID: {e_id}"
+                )
+                return None
+        st.warning(f"⚠️ Não consegui abrir a planilha por título. Detalhes: {e_title}")
+        return None
 
 @st.cache_data(show_spinner=False)
 def carregar_empresas():
-    """Retorna apenas objetos picklables."""
+    """
+    Retorna (df_empresas, grupos, lojas_map) — só objetos pickláveis.
+    Se não conseguir conectar/lêr, devolve estruturas vazias e mantém o layout.
+    """
     sh = _open_planilha("Vendas diarias")
-    df = pd.DataFrame(sh.worksheet("Tabela Empresa").get_all_records())
+    if sh is None:
+        df_vazio = pd.DataFrame(columns=["Grupo","Loja","Código Everest","Código Grupo Everest"])
+        return df_vazio, [], {}
+
+    try:
+        ws = sh.worksheet("Tabela Empresa")
+        df = pd.DataFrame(ws.get_all_records())
+    except Exception as e:
+        st.warning(f"⚠️ Não consegui ler a aba 'Tabela Empresa'. Detalhes: {e}")
+        df = pd.DataFrame(columns=["Grupo","Loja","Código Everest","Código Grupo Everest"])
+
+    # normalizações
     ren = {
         "Codigo Everest":"Código Everest","Codigo Grupo Everest":"Código Grupo Everest",
         "Loja Nome":"Loja","Empresa":"Loja","Grupo Nome":"Grupo",
@@ -109,6 +143,7 @@ def carregar_empresas():
         if c not in df.columns: df[c] = ""
         df[c] = df[c].astype(str).str.strip()
     df = df[df["Grupo"]!=""].copy()
+
     grupos = sorted(df["Grupo"].dropna().unique().tolist())
     lojas_map = (
         df.groupby("Grupo")["Loja"]
@@ -121,7 +156,7 @@ df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
 def LOJAS_DO(grupo_nome: str): return LOJAS_MAP.get(grupo_nome, [])
 
 # ======================
-# Componentes de UI reaproveitáveis (layout igual ao modelo)
+# Componentes de UI (layout)
 # ======================
 def filtros_grupo_empresa(prefix: str):
     col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
@@ -142,7 +177,7 @@ def bloco_colagem(prefix: str):
         txt = st.text_area("📋 Colar tabela (Ctrl+V)", height=220,
                            placeholder="Cole aqui os dados copiados do Excel/Sheets…",
                            key=f"{prefix}_paste")
-        df_paste = _try_parse_paste(txt) if txt.strip() else pd.DataFrame()
+        df_paste = _try_parse_paste(txt) if (txt and txt.strip()) else pd.DataFrame()
     with c2:
         up = st.file_uploader("📎 Ou enviar arquivo (.xlsx/.xlsm/.xls/.csv)", 
                               type=["xlsx","xlsm","xls","csv"], key=f"{prefix}_file")
@@ -168,11 +203,11 @@ def bloco_colagem(prefix: str):
     return df_raw
 
 # ======================
-# ABAS (tabs) — apenas layout
+# ABAS (layout apenas; nada específico de CR/CP alterado)
 # ======================
 aba_cr, aba_cp, aba_cad = st.tabs(["💰 Contas a Receber", "💸 Contas a Pagar", "🧾 Cadastro Cliente/Fornecedor"])
 
-# --------- 💰 CONTAS A RECEBER (lógica CR mantida) ---------
+# --------- 💰 CONTAS A RECEBER ---------
 with aba_cr:
     st.subheader("Contas a Receber")
     gsel, esel = filtros_grupo_empresa("cr")
@@ -204,7 +239,7 @@ with aba_cr:
             st.session_state["cr_df_raw"]=df_raw
             st.success("Receber salvo em sessão.")
 
-# --------- 💸 CONTAS A PAGAR (lógica CP mantida) ---------
+# --------- 💸 CONTAS A PAGAR ---------
 with aba_cp:
     st.subheader("Contas a Pagar")
     gsel, esel = filtros_grupo_empresa("cp")
@@ -235,7 +270,7 @@ with aba_cp:
             st.session_state["cp_df_raw"]=df_raw
             st.success("Pagar salvo em sessão.")
 
-# --------- 🧾 CADASTRO (mantido minimal, só layout/fluxo) ---------
+# --------- 🧾 CADASTRO Cliente/Fornecedor ---------
 with aba_cad:
     st.subheader("Cadastro de Cliente / Fornecedor")
 
@@ -269,6 +304,8 @@ with aba_cad:
         if st.button("🗂️ Enviar ao Google Sheets", use_container_width=True, type="primary"):
             try:
                 sh = _open_planilha("Vendas diarias")
+                if sh is None:
+                    raise RuntimeError("Planilha indisponível")
                 aba = "Cadastro Clientes" if tipo=="Cliente" else "Cadastro Fornecedores"
                 try:
                     ws = sh.worksheet(aba)

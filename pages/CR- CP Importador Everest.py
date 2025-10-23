@@ -412,7 +412,7 @@ def _download_excel(df: pd.DataFrame, filename: str, label_btn: str):
 # ======================
 # ABAS
 # ======================
-aba_cr, aba_cp, aba_cad = st.tabs(["💰 Contas a Receber", "💸 Contas a Pagar", "🧾 Cadastro Cliente/Fornecedor"])
+aba_cr, aba_cp, aba_cad = st.tabs(["Contas a Receber", "Contas a Pagar", "🧾 Cadastro Cliente/Fornecedor"])
 
 # --------- 💰 CONTAS A RECEBER ---------
 with aba_cr:

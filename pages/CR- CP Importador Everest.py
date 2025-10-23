@@ -209,17 +209,26 @@ def LOJAS_DO(grupo_nome: str):
 # ======================
 # Componentes de UI (layout)
 # ======================
-def filtros_grupo_empresa(prefix: str, with_portador: bool = False):
+def filtros_grupo_empresa(prefix: str, with_portador: bool = False, with_tipo_imp: bool = False):
     """Linha de filtros:
-       - Grupo | Empresa | (opcional) Portador (Banco)
+       - Grupo | Empresa | (opcional) Portador (Banco) | (opcional) Tipo de Importação
        Retorna (grupo_escolhido, empresa_escolhida).
-       O portador fica disponível em st.session_state[f"{prefix}_portador"].
+       Os valores ficam em:
+         st.session_state[f"{prefix}_portador"]
+         st.session_state[f"{prefix}_tipo_imp"]
     """
-    if with_portador:
+    # define layout de colunas conforme flags
+    if with_portador and with_tipo_imp:
+        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+    elif with_portador:
         col1, col2, col3 = st.columns([1, 1, 1])
+        col4 = None
+    elif with_tipo_imp:
+        col1, col2, col4 = st.columns([1, 1, 1])
+        col3 = None
     else:
         col1, col2 = st.columns([1, 1])
-        col3 = None
+        col3 = col4 = None
 
     with col1:
         gsel = st.selectbox("Grupo:", ["— selecione —"] + GRUPOS, key=f"{prefix}_grupo")
@@ -230,9 +239,13 @@ def filtros_grupo_empresa(prefix: str, with_portador: bool = False):
 
     if with_portador and col3 is not None:
         with col3:
-            opcoes = ["Todos"] + PORTADORES if PORTADORES else ["Todos"]
-            # NÃO precisamos gravar manualmente no session_state; o widget já cuida disso
-            st.selectbox("Portador (Banco):", options=opcoes, index=0, key=f"{prefix}_portador")
+            opcoes_port = ["Todos"] + PORTADORES if PORTADORES else ["Todos"]
+            st.selectbox("Portador (Banco):", options=opcoes_port, index=0, key=f"{prefix}_portador")
+
+    if with_tipo_imp and col4 is not None:
+        with col4:
+            opcoes_tipo = ["Todos", "Adquirente", "Cliente", "Outros"]
+            st.selectbox("Tipo de Importação:", options=opcoes_tipo, index=0, key=f"{prefix}_tipo_imp")
 
     return gsel, esel
 
@@ -280,8 +293,9 @@ with aba_cr:
     # seção compacta para deixar tudo juntinho
     st.markdown('<div class="compact">', unsafe_allow_html=True)
 
-    gsel, esel = filtros_grupo_empresa("cr", with_portador=True)
-    portador = st.session_state.get("cr_portador", "Todos")
+    gsel, esel = filtros_grupo_empresa("cr", with_portador=True, with_tipo_imp=True)
+    portador = st.session_state.get("cr_portador", "Todos")     # só ler
+    tipo_imp = st.session_state.get("cr_tipo_imp", "Todos")     # só ler
     
 
     st.markdown('<hr class="compact">', unsafe_allow_html=True)
@@ -320,9 +334,9 @@ with aba_cp:
 
     st.markdown('<div class="compact">', unsafe_allow_html=True)
 
-    gsel, esel = filtros_grupo_empresa("cp", with_portador=True)
-    portador = st.session_state.get("cp_portador", "Todos")
-    
+    gsel, esel = filtros_grupo_empresa("cp", with_portador=True, with_tipo_imp=True)
+    portador = st.session_state.get("cp_portador", "Todos")     # só ler
+    tipo_imp = st.session_state.get("cp_tipo_imp", "Todos")     # só ler
 
     st.markdown('<hr class="compact">', unsafe_allow_html=True)
 

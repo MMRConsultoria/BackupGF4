@@ -369,12 +369,13 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     obs_list = bandeira_txt.tolist()
 
     out = pd.DataFrame({
-        "CNPJ/Cliente":          cnpj_cli_list,
+       
         "CNPJ Empresa":          cnpj_loja,
         "Série Título":          serie_titulo,
         "Nº Título":             num_titulo,
         "Nº Parcela":            num_parcela,
         "Nº Documento":          num_documento,
+        "CNPJ/Cliente":          cnpj_cli_list,
         "Portador":              portador_nome,
         "Data Documento":        data_original,
         "Data Vencimento":       data_original,

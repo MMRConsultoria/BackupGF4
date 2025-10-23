@@ -315,8 +315,8 @@ def _column_mapping_ui(prefix: str, df_raw: pd.DataFrame):
 
 # ===== Ordem de saída =====
 IMPORTADOR_ORDER = [
-    "CNPJ/Cliente", "CNPJ Empresa", "Série Título", "Nº Título", "Nº Parcela",
-    "Nº Documento", "Portador", "Data Documento", "Data Vencimento", "Data",
+     "CNPJ Empresa", "Série Título", "Nº Título", "Nº Parcela",
+    "Nº Documento","CNPJ/Cliente", "Portador", "Data Documento", "Data Vencimento", "Data",
     "Valor Desconto", "Valor Multa", "Valor Juros Dia", "Valor Original",
     "Observações do Título", "Cód Conta Gerencial", "Cód Centro de Custo"
 ]
@@ -367,12 +367,13 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     obs_list = bandeira_txt.tolist()
 
     out = pd.DataFrame({
-        "CNPJ/Cliente":          cnpj_cli_list,
+       
         "CNPJ Empresa":          cnpj_loja,
         "Série Título":          serie_titulo,
         "Nº Título":             num_titulo,
         "Nº Parcela":            num_parcela,
         "Nº Documento":          num_documento,
+        "CNPJ/Cliente":          cnpj_cli_list,
         "Portador":              portador_nome,
         "Data Documento":        data_original,
         "Data Vencimento":       data_original,
@@ -390,14 +391,15 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     out = out[(out["Data"].astype(str).str.strip() != "") & (out["Valor Original"].notna())]
 
     # reordena exatamente como o importador, depois insere a flag na frente
+    # reordena conforme o importador, então insere a flag no início
     out = out.reindex(columns=[c for c in IMPORTADOR_ORDER if c in out.columns])
     out.insert(0, "🔴 Falta CNPJ?", out["CNPJ/Cliente"].astype(str).str.strip().eq(""))
-
-    # TRAVA a ordem final, incluindo CNPJ/Cliente em 2º (após a flag)
+    
+    # ordem final com a flag na frente
     final_cols = ["🔴 Falta CNPJ?"] + [c for c in IMPORTADOR_ORDER if c in out.columns]
     out = out[final_cols]
-
     return out
+
 
 def _download_excel(df: pd.DataFrame, filename: str, label_btn: str, disabled=False):
     if df.empty:
@@ -485,7 +487,7 @@ with aba_cr:
         edited_full.update(edited_cr)
         edited_full["🔴 Falta CNPJ?"] = edited_full["CNPJ/Cliente"].astype(str).str.strip().eq("")
         edited_full = edited_full.reindex(columns=cols_final)
-        st.session_state["cr_df_imp"] = edited_full
+        st.session_state["cr_df_imp"] = edited_full   # (ou "cp_df_imp" na aba de Pagar)
 
         faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
         total  = int(len(edited_full))
@@ -564,7 +566,7 @@ with aba_cp:
         edited_full.update(edited_cp)
         edited_full["🔴 Falta CNPJ?"] = edited_full["CNPJ/Cliente"].astype(str).str.strip().eq("")
         edited_full = edited_full.reindex(columns=cols_final)
-        st.session_state["cp_df_imp"] = edited_full
+        st.session_state["cr_df_imp"] = edited_full   # (ou "cp_df_imp" na aba de Pagar)
 
         faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
         total  = int(len(edited_full))

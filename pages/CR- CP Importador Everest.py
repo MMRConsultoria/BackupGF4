@@ -32,7 +32,6 @@ st.markdown("""
 
   hr.compact { height:1px; background:#e6e9f0; border:none; margin:8px 0 10px; }
   .compact [data-testid="stSelectbox"] { margin-bottom:6px !important; }
-  .compact [data-testid="stFileUploader"] { margin-top:8px !important; }
   .compact [data-testid="stTextArea"] { margin-top:8px !important; }
   .compact [data-testid="stVerticalBlock"] > div { margin-bottom:8px; }
 </style>
@@ -171,6 +170,12 @@ def carregar_portadores():
             if p: mapa[b] = p
     return sorted(bancos), mapa
 
+# ---- tokenização mais forte para “Padrão” / “Meio de Pagamento”
+def _tokenize_pattern(txt: str):
+    # normaliza e quebra em palavras alfanuméricas (PIX QRS -> ["pix","qrs"])
+    words = re.findall(r"[0-9a-zA-Z]+", _norm(txt))
+    return sorted(set(w for w in words if w))
+
 @st.cache_data(show_spinner=False)
 def carregar_tabela_meio_pagto():
     COL_PADRAO = "Padrão Cod Gerencial"
@@ -211,27 +216,48 @@ def carregar_tabela_meio_pagto():
         padrao = row[COL_PADRAO]
         codigo = row[COL_COD]
         cnpj   = row[COL_CNPJ]
-        if not padrao or not codigo:
+        meio   = row.get("Meio de Pagamento", "")
+
+        if not padrao and not meio:
             continue
-        tokens = [_norm(t) for t in re.split(r"[;,/|]", padrao) if str(t).strip()]
-        if not tokens:
+        if not codigo:
             continue
+
+        toks = set()
+        toks.update(_tokenize_pattern(padrao))
+        toks.update(_tokenize_pattern(meio))
+        # mantém também a frase inteira para match por substring
+        padrao_norm = _norm(padrao)
+        meio_norm = _norm(meio)
+
         rules.append({
-            "tokens": tokens,
+            "tokens": sorted(toks),                 # palavras (PIX, QRS, ALELO, …)
+            "padrao_full": padrao_norm,             # frase completa
+            "meio_full": meio_norm,                 # frase completa
             "codigo_gerencial": codigo,
-            "cnpj_bandeira": cnpj,
-            "padrao_str": padrao
+            "cnpj_bandeira": cnpj
         })
     return df, rules
 
 def _match_bandeira_to_gerencial(band_value: str):
+    """Casa por tokens (palavras) e fallback por substring.
+       Trata bem casos como PIX, PIX QRS, PIX TRANSF ALELO…"""
     if not band_value or not MEIO_RULES:
         return "", "", ""
     txt = _norm(band_value)
+
+    # 1) prioridade para tokens (palavra PIX, QRS, ALELO etc.)
     for rule in MEIO_RULES:
-        for tok in rule["tokens"]:
-            if tok and tok in txt:
-                return rule["codigo_gerencial"], rule.get("cnpj_bandeira",""), rule.get("padrao_str","")
+        if any(t and re.search(rf"\\b{re.escape(t)}\\b", txt) for t in rule["tokens"]):
+            return rule["codigo_gerencial"], rule.get("cnpj_bandeira",""), rule.get("padrao_full","")
+
+    # 2) fallback por substring nas frases completas
+    for rule in MEIO_RULES:
+        if rule["padrao_full"] and rule["padrao_full"] in txt:
+            return rule["codigo_gerencial"], rule.get("cnpj_bandeira",""), rule.get("padrao_full","")
+        if rule["meio_full"] and rule["meio_full"] in txt:
+            return rule["codigo_gerencial"], rule.get("cnpj_bandeira",""), rule.get("meio_full","")
+
     return "", "", ""
 
 # ===== Dados base =====
@@ -288,43 +314,35 @@ def filtros_grupo_empresa(prefix, with_portador=False, with_tipo_imp=False):
 
     return gsel, esel
 
+# limpa DF gerado quando o usuário apaga a colagem
+def _on_paste_change(prefix: str):
+    txt = st.session_state.get(f"{prefix}_paste", "")
+    if not str(txt).strip():
+        st.session_state.pop(f"{prefix}_df_imp", None)
+        st.session_state.pop(f"{prefix}_edited_once", None)
+
 def bloco_colagem(prefix: str):
-    """Cola/Upload + preview opcional (oculto por padrão)."""
-    c1,c2 = st.columns([0.55,0.45])
+    """Apenas colagem + pré-visualização opcional."""
+    c1,c2 = st.columns([0.65,0.35])
     with c1:
-        txt = st.text_area("📋 Colar tabela (Ctrl+V)", height=180,
-                           placeholder="Cole aqui os dados copiados do Excel/Sheets…",
-                           key=f"{prefix}_paste")
-        df_paste = _try_parse_paste(txt) if (txt and txt.strip()) else pd.DataFrame()
+        txt = st.text_area(
+            "📋 Colar tabela (Ctrl+V)",
+            height=180,
+            placeholder="Cole aqui os dados copiados do Excel/Sheets…",
+            key=f"{prefix}_paste",
+            on_change=_on_paste_change,
+            args=(prefix,)
+        )
+        df_paste = _try_parse_paste(txt) if (txt and str(txt).strip()) else pd.DataFrame()
 
     with c2:
-        up = st.file_uploader("📎 Ou enviar arquivo (.xlsx/.xlsm/.xls/.csv)",
-                              type=["xlsx","xlsm","xls","csv"], key=f"{prefix}_file")
-        df_file = pd.DataFrame()
-        if up is not None:
-            try:
-                if up.name.lower().endswith(".csv"):
-                    try:
-                        df_file = pd.read_csv(up, sep=";", dtype=str, engine="python")
-                    except Exception:
-                        up.seek(0); df_file = pd.read_csv(up, sep=",", dtype=str, engine="python")
-                else:
-                    df_file = pd.read_excel(up, dtype=str)
-                df_file = df_file.dropna(how="all")
-                df_file.columns = [str(c).strip() if str(c).strip() else f"col_{i}" for i,c in enumerate(df_file.columns)]
-            except Exception as e:
-                st.error(f"Erro ao ler arquivo: {e}")
+        show_prev = st.checkbox("Mostrar pré-visualização da colagem", value=False, key=f"{prefix}_show_prev")
+        if show_prev and not df_paste.empty:
+            st.dataframe(df_paste, use_container_width=True, height=120)
+        elif df_paste.empty:
+            st.info("Cole dados para prosseguir.")
 
-    df_raw = df_paste if not df_paste.empty else df_file
-
-    # Pré-visualização opcional (oculta por padrão)
-    show_prev = st.checkbox("Mostrar pré-visualização do arquivo colado/enviado", value=False, key=f"{prefix}_show_prev")
-    if show_prev and not df_raw.empty:
-        st.dataframe(df_raw, use_container_width=True, height=120)  # ~4 linhas
-    elif df_raw.empty:
-        st.info("Cole ou envie um arquivo para prosseguir.")
-
-    return df_raw
+    return df_paste
 
 def _column_mapping_ui(prefix: str, df_raw: pd.DataFrame):
     st.markdown("##### Mapear colunas para **Adquirente**")
@@ -335,7 +353,7 @@ def _column_mapping_ui(prefix: str, df_raw: pd.DataFrame):
     with c2:
         st.selectbox("Coluna de **Valor**", cols, key=f"{prefix}_col_valor")
     with c3:
-        st.selectbox("Coluna de **Bandeira**", cols, key=f"{prefix}_col_bandeira")
+        st.selectbox("Coluna de **Referência/Bandeira**", cols, key=f"{prefix}_col_bandeira")
 
 def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: str,
                          banco_escolhido: str):
@@ -365,7 +383,7 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     valor_original = pd.to_numeric(df_raw[cv].apply(_to_float_br), errors="coerce").round(2)
     bandeira_txt   = df_raw[cb].astype(str).str.strip()
 
-    # mapeamento por bandeira usando tokens do Padrão
+    # mapeamento por bandeira usando tokens do Padrão/Meio de Pagamento
     cod_conta_list, cnpj_cli_list = [], []
     for b in bandeira_txt:
         cod, cnpj_band, _ = _match_bandeira_to_gerencial(b)
@@ -379,7 +397,7 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     num_documento  = "DRE"
     centro_custo   = 3
 
-    # Observação = texto da coluna Bandeira (sempre)
+    # Observação = texto da coluna de referência (sempre)
     obs_list = bandeira_txt.tolist()
 
     out = pd.DataFrame({
@@ -468,9 +486,10 @@ with aba_cr:
         st.session_state["cr_edited_once"] = False
         st.session_state["cr_df_imp"] = df_imp.copy()
 
-    # Editor + Download (download só após editar)
-    if isinstance(st.session_state.get("cr_df_imp"), pd.DataFrame) and not st.session_state["cr_df_imp"].empty:
-        df_imp = st.session_state["cr_df_imp"]
+    # Editor + Download (download só após edição)
+    df_imp_state = st.session_state.get("cr_df_imp")
+    if isinstance(df_imp_state, pd.DataFrame) and not df_imp_state.empty:
+        df_imp = df_imp_state
         # checkbox para filtrar apenas faltantes
         show_only_missing = st.checkbox("Mostrar apenas linhas com 🔴 Falta CNPJ", value=st.session_state.get("cr_only_missing", False), key="cr_only_missing")
         df_view = df_imp[df_imp["🔴 Falta CNPJ?"]] if show_only_missing else df_imp
@@ -518,8 +537,9 @@ with aba_cr:
             disabled=not st.session_state.get("cr_edited_once", False)
         )
     else:
+        # se não há DF (ex.: colagem apagada), não mostra editor/baixa
         if st.session_state.get("cr_tipo_imp") == "Adquirente" and not df_raw.empty:
-            st.info("Mapeie as colunas (Data, Valor, Bandeira) e selecione Grupo/Empresa para gerar.")
+            st.info("Mapeie as colunas (Data, Valor, Referência) e selecione Grupo/Empresa para gerar.")
 
 # --------- 💸 CONTAS A PAGAR ---------
 with aba_cp:
@@ -553,8 +573,9 @@ with aba_cp:
         st.session_state["cp_edited_once"] = False
         st.session_state["cp_df_imp"] = df_imp.copy()
 
-    if isinstance(st.session_state.get("cp_df_imp"), pd.DataFrame) and not st.session_state["cp_df_imp"].empty:
-        df_imp = st.session_state["cp_df_imp"]
+    df_imp_state = st.session_state.get("cp_df_imp")
+    if isinstance(df_imp_state, pd.DataFrame) and not df_imp_state.empty:
+        df_imp = df_imp_state
 
         show_only_missing = st.checkbox("Mostrar apenas linhas com 🔴 Falta CNPJ", value=st.session_state.get("cp_only_missing", False), key="cp_only_missing")
         df_view = df_imp[df_imp["🔴 Falta CNPJ?"]] if show_only_missing else df_imp
@@ -599,7 +620,7 @@ with aba_cp:
         )
     else:
         if st.session_state.get("cp_tipo_imp") == "Adquirente" and not df_raw.empty:
-            st.info("Mapeie as colunas (Data, Valor, Bandeira) e selecione Grupo/Empresa para gerar.")
+            st.info("Mapeie as colunas (Data, Valor, Referência) e selecione Grupo/Empresa para gerar.")
 
 # --------- 🧾 CADASTRO Cliente/Fornecedor ---------
 with aba_cad:

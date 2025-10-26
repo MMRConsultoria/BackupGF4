@@ -170,22 +170,18 @@ def carregar_portadores():
             if p: mapa[b] = p
     return sorted(bancos), mapa
 
-# -------- utilidades para "frases exatas" --------
+# -------- utilidades para "frases exatas" (apenas Padrão Cod Gerencial) --------
 def _tokenize_pattern(txt: str):
-    # palavras alfanuméricas normalizadas
     return [w for w in re.findall(r"[0-9a-zA-Z]+", _norm(txt)) if w]
 
-def _extract_phrases(txt: str):
-    """Extrai possíveis frases do campo 'Padrão Cod Gerencial' / 'Meio de Pagamento'."""
+def _extract_phrases_from_padrao(txt: str):
+    """Extrai frases do campo 'Padrão Cod Gerencial' e inclui o conteúdo completo normalizado."""
     if not txt: return []
-    # separadores comuns: ; , / | hífens — e “ - ”
     parts = re.split(r"[;,/|]|(?:\s*[-–—]\s*)", str(txt))
     parts = [ _norm(p) for p in parts if str(p).strip() ]
-    # inclui o conteúdo completo também (já normalizado)
     full = _norm(txt)
     if full and full not in parts:
         parts.append(full)
-    # remove duplicadas e muito curtas
     uniq = []
     seen = set()
     for p in parts:
@@ -194,15 +190,14 @@ def _extract_phrases(txt: str):
     return uniq
 
 def _phrase_to_regex(phrase_norm: str):
-    """Transforma 'pix qrs vanessa' → regex com limites de palavra e tolerância a espaços."""
+    """'pix qrs vanessa' -> regex com limites de palavra e tolerância a espaços."""
     words = [re.escape(w) for w in _tokenize_pattern(phrase_norm)]
     if not words:
         return None, 0
-    # \bPIX\b\s+\bQRS\b\s+\bVANESSA\b (em minúsculo pois normalizamos)
     pattern = r"\b" + r"\s+".join(words) + r"\b"
     try:
         rgx = re.compile(pattern)
-        return rgx, len(" ".join(words))  # comprimento usado para priorizar frases mais longas
+        return rgx, len(" ".join(words))
     except re.error:
         return None, 0
 
@@ -233,11 +228,9 @@ def carregar_tabela_meio_pagto():
             ren[c] = COL_COD
         elif n in {"cnpj bandeira","cnpj da bandeira","cnpj_bandeira"}:
             ren[c] = COL_CNPJ
-        elif n == "meio de pagamento":
-            ren[c] = "Meio de Pagamento"
     if ren: df = df.rename(columns=ren)
 
-    for c in ["Meio de Pagamento", COL_PADRAO, COL_COD, COL_CNPJ]:
+    for c in [COL_PADRAO, COL_COD, COL_CNPJ]:
         if c not in df.columns: df[c] = ""
         df[c] = df[c].astype(str).str.strip()
 
@@ -246,24 +239,21 @@ def carregar_tabela_meio_pagto():
         padrao = row[COL_PADRAO]
         codigo = row[COL_COD]
         cnpj   = row[COL_CNPJ]
-        meio   = row.get("Meio de Pagamento", "")
-
         if not codigo:
             continue
 
-        # frases exatas (prioridade 1)
+        # frases exatas somente a partir do PADRÃO
         phrases = []
-        for source in (padrao, meio):
-            for ph in _extract_phrases(source):
-                rgx, plen = _phrase_to_regex(ph)
-                if rgx:
-                    phrases.append({"regex": rgx, "len": plen, "src": ph})
+        for ph in _extract_phrases_from_padrao(padrao):
+            rgx, plen = _phrase_to_regex(ph)
+            if rgx:
+                phrases.append({"regex": rgx, "len": plen, "src": ph})
 
-        # tokens (fallback, prioridade 2)
-        toks = set(_tokenize_pattern(padrao)) | set(_tokenize_pattern(meio))
+        # tokens (fallback) apenas do PADRÃO
+        toks = set(_tokenize_pattern(padrao))
 
         rules.append({
-            "phrases": sorted(phrases, key=lambda d: d["len"], reverse=True),  # frases maiores primeiro
+            "phrases": sorted(phrases, key=lambda d: d["len"], reverse=True),
             "tokens": sorted([t for t in toks if t]),
             "codigo_gerencial": codigo,
             "cnpj_bandeira": cnpj
@@ -271,9 +261,9 @@ def carregar_tabela_meio_pagto():
     return df, rules
 
 def _match_bandeira_to_gerencial(band_value: str):
-    """1) Frases exatas (com prioridade para as mais longas)
-       2) Fallback por tokens (qualquer token que apareça)
-    """
+    """Matching usando apenas 'Padrão Cod Gerencial':
+       1) Frases exatas (prioriza as mais longas)
+       2) Tokens (fallback)"""
     if not band_value or not MEIO_RULES:
         return "", "", ""
     txt = _norm(band_value)
@@ -287,7 +277,7 @@ def _match_bandeira_to_gerencial(band_value: str):
                 if ph["len"] > best_len:
                     best = rule
                     best_len = ph["len"]
-                break  # já achou uma frase desse rule; segue para o próximo rule
+                break
     if best:
         return best["codigo_gerencial"], best.get("cnpj_bandeira",""), ""
 
@@ -388,7 +378,7 @@ def _column_mapping_ui(prefix: str, df_raw: pd.DataFrame):
     with c2:
         st.selectbox("Coluna de **Valor**", cols, key=f"{prefix}_col_valor")
     with c3:
-        st.selectbox("Coluna de **Referência/Bandeira**", cols, key=f"{prefix}_col_bandeira")
+        st.selectbox("Coluna de **Referência (texto do extrato)**", cols, key=f"{prefix}_col_bandeira")
 
 def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: str,
                          banco_escolhido: str):
@@ -416,16 +406,15 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     # dados do usuário
     data_original  = df_raw[cd].astype(str)
     valor_original = pd.to_numeric(df_raw[cv].apply(_to_float_br), errors="coerce").round(2)
-    bandeira_txt   = df_raw[cb].astype(str).str.strip()
+    ref_txt        = df_raw[cb].astype(str).str.strip()
 
-    # mapeamento
+    # mapeamento via Padrão Cod Gerencial
     cod_conta_list, cnpj_cli_list = [], []
-    for b in bandeira_txt:
+    for b in ref_txt:
         cod, cnpj_band, _ = _match_bandeira_to_gerencial(b)
         cod_conta_list.append(cod)
         cnpj_cli_list.append(cnpj_band)
 
-    # campos fixos
     out = pd.DataFrame({
         "CNPJ Empresa":          cnpj_loja,
         "Série Título":          "DRE",
@@ -441,7 +430,7 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
         "Valor Multa":           0.00,
         "Valor Juros Dia":       0.00,
         "Valor Original":        valor_original,
-        "Observações do Título": bandeira_txt.tolist(),
+        "Observações do Título": ref_txt.tolist(),
         "Cód Conta Gerencial":   cod_conta_list,
         "Cód Centro de Custo":   3
     })

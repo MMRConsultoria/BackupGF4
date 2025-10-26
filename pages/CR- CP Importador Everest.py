@@ -51,7 +51,7 @@ st.markdown("""
 def _strip_accents_keep_case(s: str) -> str:
     return unicodedata.normalize("NFKD", str(s or "")).encode("ASCII","ignore").decode("ASCII")
 
-def _norm(s: str) -> str:
+def _norm_basic(s: str) -> str:
     s = _strip_accents_keep_case(s)
     s = re.sub(r"\s+"," ", s).strip().lower()
     return s
@@ -76,6 +76,11 @@ def _to_float_br(x):
     s = s.replace("R$","").replace(" ","").replace(".","").replace(",",".")
     try: return float(s)
     except: return None
+
+# -------- utilidades p/ palavras-chave (apenas Padrão Cod Gerencial) --------
+def _tokenize(txt: str):
+    # normaliza e separa por palavras/nums
+    return [w for w in re.findall(r"[0-9a-zA-Z]+", _norm_basic(txt)) if w]
 
 # ======================
 # Google Sheets
@@ -153,7 +158,7 @@ def carregar_portadores():
 
     def idx_of(names):
         for i, h in enumerate(header):
-            if _norm(h) in names:
+            if _norm_basic(h) in names:
                 return i
         return None
 
@@ -169,37 +174,6 @@ def carregar_portadores():
             bancos.add(b)
             if p: mapa[b] = p
     return sorted(bancos), mapa
-
-# -------- utilidades para "frases exatas" (apenas Padrão Cod Gerencial) --------
-def _tokenize_pattern(txt: str):
-    return [w for w in re.findall(r"[0-9a-zA-Z]+", _norm(txt)) if w]
-
-def _extract_phrases_from_padrao(txt: str):
-    """Extrai frases do campo 'Padrão Cod Gerencial' e inclui o conteúdo completo normalizado."""
-    if not txt: return []
-    parts = re.split(r"[;,/|]|(?:\s*[-–—]\s*)", str(txt))
-    parts = [ _norm(p) for p in parts if str(p).strip() ]
-    full = _norm(txt)
-    if full and full not in parts:
-        parts.append(full)
-    uniq = []
-    seen = set()
-    for p in parts:
-        if p and p not in seen:
-            seen.add(p); uniq.append(p)
-    return uniq
-
-def _phrase_to_regex(phrase_norm: str):
-    """'pix qrs vanessa' -> regex com limites de palavra e tolerância a espaços."""
-    words = [re.escape(w) for w in _tokenize_pattern(phrase_norm)]
-    if not words:
-        return None, 0
-    pattern = r"\b" + r"\s+".join(words) + r"\b"
-    try:
-        rgx = re.compile(pattern)
-        return rgx, len(" ".join(words))
-    except re.error:
-        return None, 0
 
 @st.cache_data(show_spinner=False)
 def carregar_tabela_meio_pagto():
@@ -219,9 +193,10 @@ def carregar_tabela_meio_pagto():
 
     df = pd.DataFrame(ws.get_all_records())
 
+    # renomeia cabeçalhos conhecidos
     ren = {}
     for c in df.columns:
-        n = _norm(c)
+        n = _norm_basic(c)
         if n in {"padrao cod gerencial","padrão cod gerencial","padrao","padrao gerencial"}:
             ren[c] = COL_PADRAO
         elif n in {"cod gerencial everest","codigo gerencial everest","cod_gerencial_everest"}:
@@ -239,52 +214,51 @@ def carregar_tabela_meio_pagto():
         padrao = row[COL_PADRAO]
         codigo = row[COL_COD]
         cnpj   = row[COL_CNPJ]
-        if not codigo:
+        if not codigo or not padrao:
             continue
 
-        # frases exatas somente a partir do PADRÃO
-        phrases = []
-        for ph in _extract_phrases_from_padrao(padrao):
-            rgx, plen = _phrase_to_regex(ph)
-            if rgx:
-                phrases.append({"regex": rgx, "len": plen, "src": ph})
-
-        # tokens (fallback) apenas do PADRÃO
-        toks = set(_tokenize_pattern(padrao))
+        tokens = sorted(set(_tokenize(padrao)))   # palavras-chave da linha
+        if not tokens:
+            continue
 
         rules.append({
-            "phrases": sorted(phrases, key=lambda d: d["len"], reverse=True),
-            "tokens": sorted([t for t in toks if t]),
+            "tokens": tokens,
             "codigo_gerencial": codigo,
-            "cnpj_bandeira": cnpj
+            "cnpj_bandeira": cnpj,
         })
+
     return df, rules
 
-def _match_bandeira_to_gerencial(band_value: str):
-    """Matching usando apenas 'Padrão Cod Gerencial':
-       1) Frases exatas (prioriza as mais longas)
-       2) Tokens (fallback)"""
-    if not band_value or not MEIO_RULES:
+def _match_bandeira_to_gerencial(ref_text: str):
+    """
+    Matching por palavras-chave (tokens) usando apenas 'Padrão Cod Gerencial'.
+    - Conta quantos tokens de cada regra aparecem na referência
+    - Escolhe a regra com MAIOR número de acertos
+    - Empate: escolhe a regra com MAIS tokens totais (mais específica)
+    """
+    if not ref_text or not MEIO_RULES:
         return "", "", ""
-    txt = _norm(band_value)
 
-    # 1) frases exatas — escolhe a mais longa que casar
+    ref_tokens = set(_tokenize(ref_text))
+    if not ref_tokens:
+        return "", "", ""
+
     best = None
-    best_len = 0
+    best_hits = 0
+    best_tokens_len = 0
+
     for rule in MEIO_RULES:
-        for ph in rule["phrases"]:
-            if ph["regex"].search(txt):
-                if ph["len"] > best_len:
-                    best = rule
-                    best_len = ph["len"]
-                break
+        tokens = rule["tokens"]
+        hits = sum(1 for t in tokens if t in ref_tokens)
+        if hits == 0:
+            continue
+        if (hits > best_hits) or (hits == best_hits and len(tokens) > best_tokens_len):
+            best = rule
+            best_hits = hits
+            best_tokens_len = len(tokens)
+
     if best:
         return best["codigo_gerencial"], best.get("cnpj_bandeira",""), ""
-
-    # 2) tokens (palavras isoladas)
-    for rule in MEIO_RULES:
-        if any(t and re.search(rf"\b{re.escape(t)}\b", txt) for t in rule["tokens"]):
-            return rule["codigo_gerencial"], rule.get("cnpj_bandeira",""), ""
 
     return "", "", ""
 
@@ -321,6 +295,7 @@ IMPORTADOR_ORDER = [
 # UI Components
 # ======================
 def filtros_grupo_empresa(prefix, with_portador=False, with_tipo_imp=False):
+    """Grupo | Empresa | Banco | Tipo de Importação (lado a lado)."""
     c1, c2, c3, c4 = st.columns([1,1,1,1])
 
     with c1:
@@ -338,6 +313,7 @@ def filtros_grupo_empresa(prefix, with_portador=False, with_tipo_imp=False):
             st.selectbox("Tipo de Importação:", ["Todos","Adquirente","Cliente","Outros"], index=0, key=f"{prefix}_tipo_imp")
         else:
             st.empty()
+
     return gsel, esel
 
 # limpa DF gerado quando o usuário apaga a colagem
@@ -367,6 +343,7 @@ def bloco_colagem(prefix: str):
             st.dataframe(df_paste, use_container_width=True, height=120)
         elif df_paste.empty:
             st.info("Cole dados para prosseguir.")
+
     return df_paste
 
 def _column_mapping_ui(prefix: str, df_raw: pd.DataFrame):
@@ -403,18 +380,19 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     banco_escolhido = banco_escolhido or ""
     portador_nome = MAPA_BANCO_PARA_PORTADOR.get(banco_escolhido, banco_escolhido)
 
-    # dados do usuário
+    # dados do usuário (mantém a data exatamente como veio)
     data_original  = df_raw[cd].astype(str)
     valor_original = pd.to_numeric(df_raw[cv].apply(_to_float_br), errors="coerce").round(2)
     ref_txt        = df_raw[cb].astype(str).str.strip()
 
-    # mapeamento via Padrão Cod Gerencial
+    # mapeamento por tokens do Padrão Cod Gerencial
     cod_conta_list, cnpj_cli_list = [], []
     for b in ref_txt:
         cod, cnpj_band, _ = _match_bandeira_to_gerencial(b)
-        cod_conta_list.append(cod)
-        cnpj_cli_list.append(cnpj_band)
+        cod_conta_list.append(cod)            # Cod Gerencial Everest
+        cnpj_cli_list.append(cnpj_band)       # CNPJ da Bandeira
 
+    # campos fixos
     out = pd.DataFrame({
         "CNPJ Empresa":          cnpj_loja,
         "Série Título":          "DRE",
@@ -435,10 +413,14 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
         "Cód Centro de Custo":   3
     })
 
+    # filtra linhas válidas
     out = out[(out["Data"].astype(str).str.strip() != "") & (out["Valor Original"].notna())]
+
+    # reordena conforme importador e coloca flag no início
     out = out.reindex(columns=[c for c in IMPORTADOR_ORDER if c in out.columns])
     out.insert(0, "🔴 Falta CNPJ?", out["CNPJ/Cliente"].astype(str).str.strip().eq(""))
 
+    # ordem final (flag + IMPORTADOR_ORDER)
     final_cols = ["🔴 Falta CNPJ?"] + [c for c in IMPORTADOR_ORDER if c in out.columns]
     out = out[final_cols]
     return out
@@ -471,11 +453,13 @@ with aba_cr:
     st.markdown('<hr class="compact">', unsafe_allow_html=True)
     df_raw = bloco_colagem("cr")
 
+    # Mapeamento (apenas se Adquirente)
     if st.session_state.get("cr_tipo_imp") == "Adquirente" and not df_raw.empty:
         _column_mapping_ui("cr", df_raw)
 
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # ===== Auto-geração do importador (sem botão) =====
     cr_ready = (
         st.session_state.get("cr_tipo_imp") == "Adquirente"
         and not df_raw.empty
@@ -487,14 +471,19 @@ with aba_cr:
 
     if cr_ready:
         df_imp = _build_importador_df(
-            df_raw, "cr", gsel, esel, st.session_state.get("cr_portador","")
+            df_raw, "cr",
+            gsel, esel,
+            st.session_state.get("cr_portador","")
         )
+        # sempre que regera, reseta "editado"
         st.session_state["cr_edited_once"] = False
         st.session_state["cr_df_imp"] = df_imp.copy()
 
+    # Editor + Download (download só após edição)
     df_imp_state = st.session_state.get("cr_df_imp")
     if isinstance(df_imp_state, pd.DataFrame) and not df_imp_state.empty:
         df_imp = df_imp_state
+        # checkbox para filtrar apenas faltantes
         show_only_missing = st.checkbox("Mostrar apenas linhas com 🔴 Falta CNPJ", value=st.session_state.get("cr_only_missing", False), key="cr_only_missing")
         df_view = df_imp[df_imp["🔴 Falta CNPJ?"]] if show_only_missing else df_imp
 
@@ -502,23 +491,44 @@ with aba_cr:
         disabled_cols = [c for c in df_view.columns if c not in editable]
 
         editor_key = f"cr_editor_{gsel}_{esel}_{st.session_state.get('cr_col_data')}_{st.session_state.get('cr_col_valor')}_{st.session_state.get('cr_col_bandeira')}"
-        edited_cr = st.data_editor(df_view, disabled=disabled_cols, use_container_width=True, height=420, key=editor_key)
+        edited_cr = st.data_editor(
+            df_view,
+            disabled=disabled_cols,
+            use_container_width=True,
+            height=420,
+            key=editor_key
+        )
 
-        if not edited_cr.equals(df_view):
+        # houve mudanças?
+        changed = not edited_cr.equals(df_view)
+        if changed:
             st.session_state["cr_edited_once"] = True
 
+        # aplica as mudanças no DF completo
         edited_full = df_imp.copy()
         edited_full.update(edited_cr)
         edited_full["🔴 Falta CNPJ?"] = edited_full["CNPJ/Cliente"].astype(str).str.strip().eq("")
+
+        # reforça a ordem de colunas
         cols_final = ["🔴 Falta CNPJ?"] + [c for c in IMPORTADOR_ORDER if c in edited_full.columns]
         edited_full = edited_full.reindex(columns=cols_final)
+
         st.session_state["cr_df_imp"] = edited_full
 
         faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
         total  = int(len(edited_full))
-        st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.") if faltam else st.success("✅ Todos os CNPJs foram preenchidos.")
+        if faltam:
+            st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.")
+        else:
+            st.success("✅ Todos os CNPJs foram preenchidos.")
 
-        _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=not st.session_state.get("cr_edited_once", False))
+        # download só após edição
+        _download_excel(
+            edited_full,
+            "Importador_Receber.xlsx",
+            "📥 Baixar Importador (Receber)",
+            disabled=not st.session_state.get("cr_edited_once", False)
+        )
     else:
         if st.session_state.get("cr_tipo_imp") == "Adquirente" and not df_raw.empty:
             st.info("Mapeie as colunas (Data, Valor, Referência) e selecione Grupo/Empresa para gerar.")
@@ -548,7 +558,9 @@ with aba_cp:
 
     if cp_ready:
         df_imp = _build_importador_df(
-            df_raw, "cp", gsel, esel, st.session_state.get("cp_portador","")
+            df_raw, "cp",
+            gsel, esel,
+            st.session_state.get("cp_portador","")
         )
         st.session_state["cp_edited_once"] = False
         st.session_state["cp_df_imp"] = df_imp.copy()
@@ -556,6 +568,7 @@ with aba_cp:
     df_imp_state = st.session_state.get("cp_df_imp")
     if isinstance(df_imp_state, pd.DataFrame) and not df_imp_state.empty:
         df_imp = df_imp_state
+
         show_only_missing = st.checkbox("Mostrar apenas linhas com 🔴 Falta CNPJ", value=st.session_state.get("cp_only_missing", False), key="cp_only_missing")
         df_view = df_imp[df_imp["🔴 Falta CNPJ?"]] if show_only_missing else df_imp
 
@@ -563,23 +576,40 @@ with aba_cp:
         disabled_cols = [c for c in df_view.columns if c not in editable]
 
         editor_key = f"cp_editor_{gsel}_{esel}_{st.session_state.get('cp_col_data')}_{st.session_state.get('cp_col_valor')}_{st.session_state.get('cp_col_bandeira')}"
-        edited_cp = st.data_editor(df_view, disabled=disabled_cols, use_container_width=True, height=420, key=editor_key)
+        edited_cp = st.data_editor(
+            df_view,
+            disabled=disabled_cols,
+            use_container_width=True,
+            height=420,
+            key=editor_key
+        )
 
-        if not edited_cp.equals(df_view):
+        changed = not edited_cp.equals(df_view)
+        if changed:
             st.session_state["cp_edited_once"] = True
 
         edited_full = df_imp.copy()
         edited_full.update(edited_cp)
         edited_full["🔴 Falta CNPJ?"] = edited_full["CNPJ/Cliente"].astype(str).str.strip().eq("")
+
         cols_final = ["🔴 Falta CNPJ?"] + [c for c in IMPORTADOR_ORDER if c in edited_full.columns]
         edited_full = edited_full.reindex(columns=cols_final)
+
         st.session_state["cp_df_imp"] = edited_full
 
         faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
         total  = int(len(edited_full))
-        st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.") if faltam else st.success("✅ Todos os CNPJs foram preenchidos.")
+        if faltam:
+            st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.")
+        else:
+            st.success("✅ Todos os CNPJs foram preenchidos.")
 
-        _download_excel(edited_full, "Importador_Pagar.xlsx", "📥 Baixar Importador (Pagar)", disabled=not st.session_state.get("cp_edited_once", False))
+        _download_excel(
+            edited_full,
+            "Importador_Pagar.xlsx",
+            "📥 Baixar Importador (Pagar)",
+            disabled=not st.session_state.get("cp_edited_once", False)
+        )
     else:
         if st.session_state.get("cp_tipo_imp") == "Adquirente" and not df_raw.empty:
             st.info("Mapeie as colunas (Data, Valor, Referência) e selecione Grupo/Empresa para gerar.")

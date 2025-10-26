@@ -77,7 +77,7 @@ def _to_float_br(x):
     try: return float(s)
     except: return None
 
-# -------- utilidades p/ palavras-chave (apenas Padrão Cod Gerencial) --------
+# -------- utilidades p/ palavras-chave (estrito em "Padrão Cod Gerencial") --------
 def _tokenize(txt: str):
     # normaliza e separa por palavras/nums
     return [w for w in re.findall(r"[0-9a-zA-Z]+", _norm_basic(txt)) if w]
@@ -177,6 +177,13 @@ def carregar_portadores():
 
 @st.cache_data(show_spinner=False)
 def carregar_tabela_meio_pagto():
+    """
+    LÊ APENAS as colunas EXATAS:
+      - 'Padrão Cod Gerencial'
+      - 'Cod Gerencial Everest'
+      - 'CNPJ Bandeira'
+    Não tenta adivinhar nomes alternativos.
+    """
     COL_PADRAO = "Padrão Cod Gerencial"
     COL_COD    = "Cod Gerencial Everest"
     COL_CNPJ   = "CNPJ Bandeira"
@@ -192,29 +199,30 @@ def carregar_tabela_meio_pagto():
         return pd.DataFrame(), []
 
     df = pd.DataFrame(ws.get_all_records())
+    df = df.astype(str)
 
-    # renomeia cabeçalhos conhecidos
-    ren = {}
-    for c in df.columns:
-        n = _norm_basic(c)
-        if n in {"padrao cod gerencial","padrão cod gerencial","padrao","padrao gerencial"}:
-            ren[c] = COL_PADRAO
-        elif n in {"cod gerencial everest","codigo gerencial everest","cod_gerencial_everest"}:
-            ren[c] = COL_COD
-        elif n in {"cnpj bandeira","cnpj da bandeira","cnpj_bandeira"}:
-            ren[c] = COL_CNPJ
-    if ren: df = df.rename(columns=ren)
+    # valida cabeçalhos EXATOS
+    missing = [c for c in [COL_PADRAO, COL_COD, COL_CNPJ] if c not in df.columns]
+    if missing:
+        st.error(
+            "Aba 'Tabela Meio Pagamento' está faltando colunas obrigatórias: "
+            + ", ".join(missing)
+            + ". Use exatamente esses nomes (com acentos e espaços)."
+        )
+        return pd.DataFrame(), []
 
+    # normaliza campos
     for c in [COL_PADRAO, COL_COD, COL_CNPJ]:
-        if c not in df.columns: df[c] = ""
         df[c] = df[c].astype(str).str.strip()
 
+    # monta regras SOMENTE do Padrão
     rules = []
     for _, row in df.iterrows():
         padrao = row[COL_PADRAO]
         codigo = row[COL_COD]
         cnpj   = row[COL_CNPJ]
-        if not codigo or not padrao:
+
+        if not padrao or not codigo:
             continue
 
         tokens = sorted(set(_tokenize(padrao)))   # palavras-chave da linha

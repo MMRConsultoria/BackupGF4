@@ -330,11 +330,11 @@ if st.session_state.get("editor_on_meio"):
             df_rules_raw.to_excel(w, index=False, sheet_name="Tabela Meio Pagamento")
         backup.seek(0)
 
-        st.download_button(
-            "Backup (.xlsx)", backup,
-            file_name="Tabela_Meio_Pagamento_backup.xlsx",
-            use_container_width=True
-        )
+        #st.download_button(
+        #    "Backup (.xlsx)", backup,
+        #    file_name="Tabela_Meio_Pagamento_backup.xlsx",
+        #    use_container_width=True
+        #)
 
         edited = st.data_editor(
             df_rules_raw,
@@ -372,11 +372,11 @@ if st.session_state.get("editor_on_portador"):
             df_port_raw.to_excel(w, index=False, sheet_name="Portador")
         backup2.seek(0)
 
-        st.download_button(
-            "Backup Portador (.xlsx)", backup2,
-            file_name="Portador_backup.xlsx",
-            use_container_width=True
-        )
+        #st.download_button(
+        #    "Backup Portador (.xlsx)", backup2,
+        #    file_name="Portador_backup.xlsx",
+        #    use_container_width=True
+        #)
 
         edited_port = st.data_editor(
             df_port_raw,

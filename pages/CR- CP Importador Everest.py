@@ -186,35 +186,36 @@ def carregar_portadores():
 @st.cache_data(show_spinner=False)
 def carregar_tabela_meio_pagto():
     """
-    Lê SOMENTE as colunas EXATAS para o matching:
+    Lê:
       - 'Padrão Cod Gerencial'
       - 'Cod Gerencial Everest'
       - 'CNPJ Bandeira'
+      - 'PIX Padrão Cod Gerencial' (novo)
     """
     COL_PADRAO = "Padrão Cod Gerencial"
     COL_COD    = "Cod Gerencial Everest"
     COL_CNPJ   = "CNPJ Bandeira"
+    COL_PIXPAD = "PIX Padrão Cod Gerencial"
 
     sh = _open_planilha("Vendas diarias")
     if not sh:
-        return pd.DataFrame(), []
+        return pd.DataFrame(), [], None
 
     try:
         ws = sh.worksheet("Tabela Meio Pagamento")
     except WorksheetNotFound:
         st.warning("⚠️ Aba 'Tabela Meio Pagamento' não encontrada.")
-        return pd.DataFrame(), []
+        return pd.DataFrame(), [], None
 
     df = pd.DataFrame(ws.get_all_records()).astype(str)
 
-    missing = [c for c in [COL_PADRAO, COL_COD, COL_CNPJ] if c not in df.columns]
-    if missing:
-        st.error("Faltando colunas obrigatórias: " + ", ".join(missing))
-        return pd.DataFrame(), []
-
-    for c in [COL_PADRAO, COL_COD, COL_CNPJ]:
+    # garante colunas e limpa espaços
+    for c in [COL_PADRAO, COL_COD, COL_CNPJ, COL_PIXPAD]:
+        if c not in df.columns:
+            df[c] = ""
         df[c] = df[c].astype(str).str.strip()
 
+    # regras (matching por tokens do 'Padrão Cod Gerencial')
     rules = []
     for _, row in df.iterrows():
         padrao = row[COL_PADRAO]
@@ -226,7 +227,12 @@ def carregar_tabela_meio_pagto():
         if not tokens:
             continue
         rules.append({"tokens": tokens, "codigo_gerencial": codigo, "cnpj_bandeira": cnpj})
-    return df, rules
+
+    # padrão do PIX: pega o primeiro não-vazio (se houver)
+    pix_vals = [v for v in df[COL_PIXPAD].tolist() if str(v).strip()]
+    pix_default = pix_vals[0].strip() if pix_vals else None
+
+    return df, rules, pix_default
 
 def _best_rule_for_tokens(ref_tokens: set):
     best = None
@@ -256,11 +262,62 @@ def _match_bandeira_to_gerencial(ref_text: str):
     if best:
         return best["codigo_gerencial"], best.get("cnpj_bandeira",""), ""
     return "", "", ""
+# ======================
+# Regra PIX (detecção simples por referência) — NÃO sobrescreve códigos já preenchidos
+# ======================
+
+# Padrões comuns em referências de PIX
+PIX_PATTERNS = [
+    r"\bpix\b",
+    r"\bqr\b",
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",  # TXID UUID
+    r"[A-Z0-9]{25,}",  # payloads longos vistos em comprovantes
+]
+
+def _is_pix_reference(ref_text: str) -> bool:
+    if not ref_text:
+        return False
+    t = _norm_basic(ref_text)
+    for pat in PIX_PATTERNS:
+        if re.search(pat, t):
+            return True
+    # termos usuais
+    if any(w in t for w in ["chave", "txid", "qr code", "qrcode", "pagamento instantaneo", "instantaneo"]):
+        return True
+    return False
+
+def _classificar_pix_em_df(df_importador: pd.DataFrame) -> pd.DataFrame:
+    """
+    Se a referência indicar PIX e 'Cód Conta Gerencial' estiver vazio,
+    aplica o 'PIX_DEFAULT_CODE' lido da 'Tabela Meio Pagamento'.
+    Não mexe no que já estiver preenchido.
+    """
+    if df_importador.empty:
+        return df_importador
+    if not PIX_DEFAULT_CODE:
+        # não há padrão PIX definido — simplesmente não faz nada
+        return df_importador
+
+    df = df_importador.copy()
+    col_ref = "Observações do Título"
+    col_cod = "Cód Conta Gerencial"
+
+    if col_ref not in df.columns:
+        return df
+    if col_cod not in df.columns:
+        df[col_cod] = ""
+
+    # aplica só quando é PIX e o código está vazio
+    mask_pix = df[col_ref].astype(str).apply(_is_pix_reference)
+    mask_vazio = df[col_cod].astype(str).str.strip().eq("")
+    df.loc[mask_pix & mask_vazio, col_cod] = PIX_DEFAULT_CODE
+
+    return df
 
 # ===== Dados base (carrega ANTES de montar a UI) =====
 df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
 PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
-DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
+DF_MEIO, MEIO_RULES, PIX_DEFAULT_CODE = carregar_tabela_meio_pagto()
 
 # fallbacks na sessão (evita NameError em re-runs)
 st.session_state["_grupos"] = GRUPOS
@@ -344,7 +401,8 @@ if st.session_state.get("editor_on_meio"):
                     _save_sheet_full(edited, ws_rules)
                     # recarrega regras do app
                     st.cache_data.clear()
-                    DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
+                    DF_MEIO, MEIO_RULES, PIX_DEFAULT_CODE = carregar_tabela_meio_pagto()
+                    #DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
                     st.session_state["editor_on_meio"] = False
                     st.success("Alterações salvas, regras atualizadas e editor fechado.")
                 except Exception as e:
@@ -609,6 +667,7 @@ with aba_cr:
             gsel, esel,
             st.session_state.get("cr_portador","")
         )
+        df_imp = _classificar_pix_em_df(df_imp)
         st.session_state["cr_edited_once"] = False
         st.session_state["cr_df_imp"] = df_imp.copy()
 
@@ -673,6 +732,8 @@ with aba_cp:
             gsel, esel,
             st.session_state.get("cp_portador","")
         )
+        df_imp = _classificar_pix_em_df(df_imp)
+
         st.session_state["cp_edited_once"] = False
         st.session_state["cp_df_imp"] = df_imp.copy()
 

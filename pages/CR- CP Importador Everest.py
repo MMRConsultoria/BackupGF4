@@ -1,4 +1,6 @@
+# pages/CR- CP Importador Everest.py
 # -*- coding: utf-8 -*-
+
 import streamlit as st
 import pandas as pd
 import re, json, unicodedata
@@ -6,22 +8,17 @@ from io import StringIO, BytesIO
 import gspread
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
-
-# --- Bloqueio help() ---
+# --- fusível anti-help: evita que qualquer help() imprima no app ---
 try:
     import builtins
-    def _noop_help(*args, **kwargs): return None
+    def _noop_help(*args, **kwargs):
+        return None
     builtins.help = _noop_help
-except Exception:
-    pass
-try:
-    st.help = lambda *a, **k: None
 except Exception:
     pass
 
 st.set_page_config(page_title="CR-CP Importador Everest", layout="wide")
 st.set_option("client.showErrorDetails", False)
-
 # 🔒 Bloqueio de acesso
 if not st.session_state.get("acesso_liberado"):
     st.stop()
@@ -29,30 +26,31 @@ if not st.session_state.get("acesso_liberado"):
 # ===== CSS =====
 st.markdown("""
 <style>
-[data-testid="stToolbar"] {visibility: hidden; height: 0%; position: fixed;}
-.stSpinner {visibility: visible !important;}
-.stApp {background-color: #f9f9f9;}
-div[data-baseweb="tab-list"] {margin-top: 20px;}
-button[data-baseweb="tab"] {
-    background-color: #f0f2f6; border-radius: 10px;
-    padding: 10px 20px; margin-right: 10px;
-    transition: all 0.3s ease; font-size: 16px; font-weight: 600;
-}
-button[data-baseweb="tab"]:hover {background-color: #dce0ea; color: black;}
-button[data-baseweb="tab"][aria-selected="true"] {background-color: #0366d6; color: white;}
-hr.compact {height:1px; background:#e6e9f0; border:none; margin:8px 0 10px;}
-.compact [data-testid="stSelectbox"] {margin-bottom:6px !important;}
-.compact [data-testid="stTextArea"] {margin-top:8px !important;}
-.compact [data-testid="stVerticalBlock"] > div {margin-bottom:8px;}
+  [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
+  .stSpinner { visibility: visible !important; }
+  .stApp { background-color: #f9f9f9; }
+  div[data-baseweb="tab-list"] { margin-top: 20px; }
+  button[data-baseweb="tab"] {
+      background-color: #f0f2f6; border-radius: 10px;
+      padding: 10px 20px; margin-right: 10px;
+      transition: all 0.3s ease; font-size: 16px; font-weight: 600;
+  }
+  button[data-baseweb="tab"]:hover { background-color: #dce0ea; color: black; }
+  button[data-baseweb="tab"][aria-selected="true"] { background-color: #0366d6; color: white; }
+
+  hr.compact { height:1px; background:#e6e9f0; border:none; margin:8px 0 10px; }
+  .compact [data-testid="stSelectbox"] { margin-bottom:6px !important; }
+  .compact [data-testid="stTextArea"] { margin-top:8px !important; }
+  .compact [data-testid="stVerticalBlock"] > div { margin-bottom:8px; }
 </style>
 """, unsafe_allow_html=True)
 
 # ===== Cabeçalho =====
 st.markdown("""
-<div style='display: flex; align-items: center; gap: 10px; margin-bottom: 12px;'>
-  <img src='https://img.icons8.com/color/48/graph.png' width='40'/>
-  <h1 style='display: inline; margin: 0; font-size: 2.0rem;'>CR-CP Importador Everest</h1>
-</div>
+  <div style='display: flex; align-items: center; gap: 10px; margin-bottom: 12px;'>
+      <img src='https://img.icons8.com/color/48/graph.png' width='40'/>
+      <h1 style='display: inline; margin: 0; font-size: 2.0rem;'>CR-CP Importador Everest</h1>
+  </div>
 """, unsafe_allow_html=True)
 
 # ======================
@@ -88,6 +86,7 @@ def _to_float_br(x):
     except: return None
 
 def _tokenize(txt: str):
+    # normaliza e separa por palavras/nums
     return [w for w in re.findall(r"[0-9a-zA-Z]+", _norm_basic(txt)) if w]
 
 # ======================
@@ -105,14 +104,20 @@ def gs_client():
 def _open_planilha(title="Vendas diarias"):
     try:
         gc = gs_client()
+    except Exception as e:
+        st.warning(f"⚠️ Falha ao criar cliente Google: {e}")
+        return None
+    try:
         return gc.open(title)
-    except Exception:
+    except Exception as e_title:
         sid = st.secrets.get("VENDAS_DIARIAS_SHEET_ID")
         if sid:
             try:
                 return gc.open_by_key(sid)
-            except Exception:
+            except Exception as e_id:
+                st.warning(f"⚠️ Não consegui abrir a planilha. Erros: {e_title} | {e_id}")
                 return None
+        st.warning(f"⚠️ Não consegui abrir por título. Detalhes: {e_title}")
         return None
 
 @st.cache_data(show_spinner=False)
@@ -124,14 +129,17 @@ def carregar_empresas():
     try:
         ws = sh.worksheet("Tabela Empresa")
         df = pd.DataFrame(ws.get_all_records())
-    except Exception:
+    except Exception as e:
+        st.warning(f"⚠️ Erro lendo 'Tabela Empresa': {e}")
         df = pd.DataFrame(columns=["Grupo","Loja","Código Everest","Código Grupo Everest","CNPJ"])
+
     ren = {"Codigo Everest":"Código Everest","Codigo Grupo Everest":"Código Grupo Everest",
            "Loja Nome":"Loja","Empresa":"Loja","Grupo Nome":"Grupo"}
     df = df.rename(columns={k:v for k,v in ren.items() if k in df.columns})
     for c in ["Grupo","Loja","Código Everest","Código Grupo Everest","CNPJ"]:
         if c not in df.columns: df[c] = ""
         df[c] = df[c].astype(str).str.strip()
+
     grupos = sorted(df["Grupo"].dropna().unique().tolist())
     lojas_map = (
         df.groupby("Grupo")["Loja"]
@@ -143,13 +151,16 @@ def carregar_empresas():
 @st.cache_data(show_spinner=False)
 def carregar_portadores():
     sh = _open_planilha("Vendas diarias")
-    if sh is None: return [], {}
+    if sh is None:
+        return [], {}
     try:
         ws = sh.worksheet("Portador")
     except Exception:
         return [], {}
     rows = ws.get_all_values()
-    if not rows: return [], {}
+    if not rows:
+        return [], {}
+
     header = [str(h).strip() for h in rows[0]]
 
     def idx_of(names):
@@ -165,59 +176,93 @@ def carregar_portadores():
     mapa = {}
     for r in rows[1:]:
         b = str(r[i_banco]).strip() if (i_banco is not None and i_banco < len(r)) else ""
-        p = str(r[i_porta]).strip() if (i_porta is not None and i_porta < len(r)) else ""
+        p = str(r[i_porta]).strip()  if (i_porta is not None  and i_porta  < len(r)) else ""
         if b:
             bancos.add(b)
             if p: mapa[b] = p
     return sorted(bancos), mapa
 
-# ====== CARREGAMENTO DAS REGRAS ======
+# ====== CARREGAMENTO DAS REGRAS (para o matching) ======
 @st.cache_data(show_spinner=False)
 def carregar_tabela_meio_pagto():
+    """
+    Lê SOMENTE as colunas EXATAS para o matching:
+      - 'Padrão Cod Gerencial'
+      - 'Cod Gerencial Everest'
+      - 'CNPJ Bandeira'
+    """
     COL_PADRAO = "Padrão Cod Gerencial"
-    COL_COD = "Cod Gerencial Everest"
-    COL_CNPJ = "CNPJ Bandeira"
+    COL_COD    = "Cod Gerencial Everest"
+    COL_CNPJ   = "CNPJ Bandeira"
+
     sh = _open_planilha("Vendas diarias")
-    if not sh: return pd.DataFrame(), []
+    if not sh:
+        return pd.DataFrame(), []
+
     try:
         ws = sh.worksheet("Tabela Meio Pagamento")
     except WorksheetNotFound:
+        st.warning("⚠️ Aba 'Tabela Meio Pagamento' não encontrada.")
         return pd.DataFrame(), []
+
     df = pd.DataFrame(ws.get_all_records()).astype(str)
+
+    missing = [c for c in [COL_PADRAO, COL_COD, COL_CNPJ] if c not in df.columns]
+    if missing:
+        st.error("Faltando colunas obrigatórias: " + ", ".join(missing))
+        return pd.DataFrame(), []
+
     for c in [COL_PADRAO, COL_COD, COL_CNPJ]:
-        if c not in df.columns: df[c] = ""
         df[c] = df[c].astype(str).str.strip()
+
     rules = []
     for _, row in df.iterrows():
-        padrao, codigo, cnpj = row[COL_PADRAO], row[COL_COD], row[COL_CNPJ]
-        if not padrao or not codigo: continue
+        padrao = row[COL_PADRAO]
+        codigo = row[COL_COD]
+        cnpj   = row[COL_CNPJ]
+        if not padrao or not codigo:
+            continue
         tokens = sorted(set(_tokenize(padrao)))
-        if not tokens: continue
+        if not tokens:
+            continue
         rules.append({"tokens": tokens, "codigo_gerencial": codigo, "cnpj_bandeira": cnpj})
     return df, rules
 
 def _best_rule_for_tokens(ref_tokens: set):
-    best, best_hits, best_tokens_len = None, 0, 0
+    best = None
+    best_hits = 0
+    best_tokens_len = 0
+    best_matched = set()
     for rule in MEIO_RULES:
         tokens = set(rule["tokens"])
-        hits = len(tokens & ref_tokens)
-        if hits > best_hits or (hits == best_hits and len(tokens) > best_tokens_len):
-            best, best_hits, best_tokens_len = rule, hits, len(tokens)
-    return best
+        matched = tokens & ref_tokens
+        hits = len(matched)
+        if hits == 0:
+            continue
+        if (hits > best_hits) or (hits == best_hits and len(tokens) > best_tokens_len):
+            best = rule
+            best_hits = hits
+            best_tokens_len = len(tokens)
+            best_matched = matched
+    return best, best_hits, best_matched
 
 def _match_bandeira_to_gerencial(ref_text: str):
-    if not ref_text or not MEIO_RULES: return "", "", ""
+    if not ref_text or not MEIO_RULES:
+        return "", "", ""
     ref_tokens = set(_tokenize(ref_text))
-    best = _best_rule_for_tokens(ref_tokens)
+    if not ref_tokens:
+        return "", "", ""
+    best, _, _ = _best_rule_for_tokens(ref_tokens)
     if best:
         return best["codigo_gerencial"], best.get("cnpj_bandeira",""), ""
     return "", "", ""
 
-# ===== Dados base =====
+# ===== Dados base (carrega ANTES de montar a UI) =====
 df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
 PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
 DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
 
+# fallbacks na sessão (evita NameError em re-runs)
 st.session_state["_grupos"] = GRUPOS
 st.session_state["_lojas_map"] = LOJAS_MAP
 st.session_state["_portadores"] = PORTADORES
@@ -226,81 +271,130 @@ def LOJAS_DO(grupo_nome: str):
     lojas_map = globals().get("LOJAS_MAP") or st.session_state.get("_lojas_map", {})
     return lojas_map.get(grupo_nome, [])
 
-# ======= BOTÕES ESQ =======
+# ======= BOTÕES DISCRETOS (ESQ) + EDITORES: MEIO DE PAGAMENTO e PORTADOR =======
+
 def _load_sheet_raw_full(sheet_name: str):
+    """Lê a aba informada exatamente como está (todas as colunas/ordem)."""
     sh = _open_planilha("Vendas diarias")
-    if not sh: raise RuntimeError("Planilha 'Vendas diarias' indisponível.")
-    ws = sh.worksheet(sheet_name)
+    if not sh:
+        raise RuntimeError("Planilha 'Vendas diarias' indisponível.")
+    try:
+        ws = sh.worksheet(sheet_name)
+    except WorksheetNotFound:
+        raise RuntimeError(f"Aba '{sheet_name}' não encontrada.")
     values = ws.get_all_values()
-    if not values: return pd.DataFrame(), ws
-    header, rows = values[0], values[1:]
-    df = pd.DataFrame(rows, columns=header)
+    if not values:
+        return pd.DataFrame(), ws
+    header = values[0]
+    rows = values[1:]
+    max_cols = len(header)
+    norm_rows = [r + [""] * (max_cols - len(r)) for r in rows]
+    df = pd.DataFrame(norm_rows, columns=header)
     return df, ws
 
 def _save_sheet_full(df_edit: pd.DataFrame, ws):
+    """Salva de volta o conteúdo exatamente como está no grid (inclui cabeçalhos)."""
     ws.clear()
-    if not df_edit.empty:
-        header = list(df_edit.columns)
-        data = [header] + df_edit.astype(str).values.tolist()
-        ws.update(data)
+    if df_edit.empty:
+        return
+    header = list(df_edit.columns)
+    data = [header] + df_edit.astype(str).values.tolist()
+    ws.update(data)
 
-# --- Botões de acesso ---
+# --- barra discreta à esquerda com os dois botões ---
 left, _ = st.columns([0.22, 0.78])
 with left:
     c1, c2 = st.columns([1, 1])
     with c1:
-        if st.button("TB MeioPag", use_container_width=True):
+        if st.button("TB MeioPag", use_container_width=True, help="Abrir/editar aba Tabela Meio Pagamento"):
             st.session_state["editor_on_meio"] = True
     with c2:
-        if st.button("TB Portador", use_container_width=True):
+        if st.button("TB Portador", use_container_width=True, help="Abrir/editar aba Portador"):
             st.session_state["editor_on_portador"] = True
 
 # --- EDITOR: Tabela Meio Pagamento ---
 if st.session_state.get("editor_on_meio"):
-    editor = st.empty()
-    with editor.container():
-        try:
-            df_rules_raw, ws_rules = _load_sheet_raw_full("Tabela Meio Pagamento")
-        except Exception:
-            st.session_state["editor_on_meio"] = False
-            st.stop()
+    st.markdown("Meio de Pagamento")
+    try:
+        df_rules_raw, ws_rules = _load_sheet_raw_full("Tabela Meio Pagamento")
+    except Exception as e:
+        st.error(f"Não foi possível abrir a tabela: {e}")
+        st.session_state["editor_on_meio"] = False
+    else:
+        backup = BytesIO()
+        with pd.ExcelWriter(backup, engine="openpyxl") as w:
+            df_rules_raw.to_excel(w, index=False, sheet_name="Tabela Meio Pagamento")
+        backup.seek(0)
+        st.download_button("Backup (.xlsx)", backup,
+                           file_name="Tabela_Meio_Pagamento_backup.xlsx",
+                           use_container_width=True)
 
-        edited = st.data_editor(df_rules_raw, num_rows="dynamic", use_container_width=True, height=520)
-        if st.button("Salvar e Fechar", type="primary", use_container_width=True):
-            try:
-                _save_sheet_full(edited, ws_rules)
-                st.cache_data.clear()
-                global DF_MEIO, MEIO_RULES
-                DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
-            finally:
+        st.info("Edite livremente; ao **Salvar e Fechar**, a aba será sobrescrita e as regras serão recarregadas.")
+        edited = st.data_editor(
+            df_rules_raw,
+            num_rows="dynamic",
+            use_container_width=True,
+            height=520,
+        )
+
+        col_actions = st.columns([0.25, 0.25, 0.5])
+        with col_actions[0]:
+            if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="meio_save"):
+                try:
+                    _save_sheet_full(edited, ws_rules)
+                    # recarrega regras do app
+                    st.cache_data.clear()
+                    DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
+                    st.session_state["editor_on_meio"] = False
+                    st.success("Alterações salvas, regras atualizadas e editor fechado.")
+                except Exception as e:
+                    st.error(f"Falha ao salvar: {e}")
+        with col_actions[1]:
+            if st.button("Fechar sem salvar", use_container_width=True, key="meio_close"):
                 st.session_state["editor_on_meio"] = False
-                editor.empty()
-                st.stop()
 
 # --- EDITOR: Portador ---
 if st.session_state.get("editor_on_portador"):
-    editor = st.empty()
-    with editor.container():
-        try:
-            df_port_raw, ws_port = _load_sheet_raw_full("Portador")
-        except Exception:
-            st.session_state["editor_on_portador"] = False
-            st.stop()
+    st.markdown("Portador")
+    try:
+        df_port_raw, ws_port = _load_sheet_raw_full("Portador")
+    except Exception as e:
+        st.error(f"Não foi possível abrir a aba Portador: {e}")
+        st.session_state["editor_on_portador"] = False
+    else:
+        backup2 = BytesIO()
+        with pd.ExcelWriter(backup2, engine="openpyxl") as w:
+            df_port_raw.to_excel(w, index=False, sheet_name="Portador")
+        backup2.seek(0)
+        st.download_button("Backup Portador (.xlsx)", backup2,
+                           file_name="Portador_backup.xlsx",
+                           use_container_width=True)
 
-        edited_port = st.data_editor(df_port_raw, num_rows="dynamic", use_container_width=True, height=520)
-        if st.button("Salvar e Fechar", type="primary", use_container_width=True):
-            try:
-                _save_sheet_full(edited_port, ws_port)
-                st.cache_data.clear()
-                global PORTADORES, MAPA_BANCO_PARA_PORTADOR
-                PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
-                st.session_state["_portadores"] = PORTADORES
-            finally:
+        st.info("Edite livremente; ao **Salvar e Fechar**, a aba será sobrescrita e o mapa de portadores será recarregado.")
+        edited_port = st.data_editor(
+            df_port_raw,
+            num_rows="dynamic",
+            use_container_width=True,
+            height=520,
+        )
+
+        col_actions2 = st.columns([0.25, 0.25, 0.5])
+        with col_actions2[0]:
+            if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="port_save"):
+                try:
+                    _save_sheet_full(edited_port, ws_port)
+                    # recarrega portadores do app
+                    st.cache_data.clear()
+                    PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
+                    # atualiza fallbacks em sessão
+                    st.session_state["_portadores"] = PORTADORES
+                    st.session_state["editor_on_portador"] = False
+                    st.success("Alterações salvas, portadores atualizados e editor fechado.")
+                except Exception as e:
+                    st.error(f"Falha ao salvar: {e}")
+        with col_actions2[1]:
+            if st.button("Fechar sem salvar", use_container_width=True, key="port_close"):
                 st.session_state["editor_on_portador"] = False
-                editor.empty()
-                st.stop()
-
-
 
 
 

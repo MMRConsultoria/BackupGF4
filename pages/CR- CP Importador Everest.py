@@ -16,7 +16,11 @@ try:
     builtins.help = _noop_help
 except Exception:
     pass
-
+try:
+    # Streamlit também tem st.help; anulamos por segurança
+    st.help = lambda *a, **k: None
+except Exception:
+    pass
 st.set_page_config(page_title="CR-CP Importador Everest", layout="wide")
 st.set_option("client.showErrorDetails", False)
 # 🔒 Bloqueio de acesso

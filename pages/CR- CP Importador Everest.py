@@ -326,6 +326,13 @@ def _apply_pix_fallback_on_errors(df_importador: pd.DataFrame) -> pd.DataFrame:
                 df.at[i, col_cnpj] = best.get("cnpj_bandeira", "")
     return df
 
+
+def _issues_summary(df: pd.DataFrame):
+    miss_cnpj = int(df["CNPJ/Cliente"].astype(str).str.strip().eq("").sum()) if "CNPJ/Cliente" in df else 0
+    miss_cod  = int(df["Cód Conta Gerencial"].astype(str).str.strip().eq("").sum()) if "Cód Conta Gerencial" in df else 0
+    total     = len(df)
+    return miss_cnpj, miss_cod, total
+
 # ===== Dados base (carrega ANTES de montar a UI) =====
 df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
 PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
@@ -679,6 +686,16 @@ with aba_cr:
             st.session_state.get("cr_portador","")
         )
         df_imp = _apply_pix_fallback_on_errors(df_imp)
+        # 👉 Recalcula a flag SÓ AGORA (depois de PIX e demais regras)
+        df_imp["🔴 Falta CNPJ?"] = df_imp["CNPJ/Cliente"].astype(str).str.strip().eq("")
+        df_imp = df_imp[ ["🔴 Falta CNPJ?"] + [c for c in df_imp.columns if c != "🔴 Falta CNPJ?"] ]
+        
+        # 👉 Alerta de pendências (não bloqueia o download)
+        m_cnpj, m_cod, tot = _issues_summary(df_imp)
+        if m_cnpj or m_cod:
+            st.warning(f"⚠️ Atenção: {m_cnpj} linha(s) sem CNPJ e {m_cod} sem Cód Conta Gerencial. "
+                       "Revise antes de gerar o Excel (você ainda pode baixar).")
+
         st.session_state["cr_edited_once"] = False
         st.session_state["cr_df_imp"] = df_imp.copy()
 
@@ -702,12 +719,20 @@ with aba_cr:
         edited_full["🔴 Falta CNPJ?"] = edited_full["CNPJ/Cliente"].astype(str).str.strip().eq("")
         cols_final = ["🔴 Falta CNPJ?"] + [c for c in edited_full.columns if c != "🔴 Falta CNPJ?"]
         edited_full = edited_full.reindex(columns=cols_final)
-
+        # 👉 Alerta de pendências com base no que está na tela
+        m_cnpj, m_cod, tot = _issues_summary(edited_full)
+        if m_cnpj or m_cod:
+            st.warning(f"⚠️ Existem {m_cnpj} linha(s) sem CNPJ e {m_cod} sem Cód Conta Gerencial. "
+                       "Você pode baixar mesmo assim, mas recomenda-se revisar.")
         st.session_state["cr_df_imp"] = edited_full
 
         faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
         total  = int(len(edited_full))
         #st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.") if faltam else st.success("✅ Todos os CNPJs foram preenchidos.")
+        m_cnpj, m_cod, tot = _issues_summary(edited_full)
+        if m_cnpj or m_cod:
+            st.warning(f"⚠️ Existem {m_cnpj} linha(s) sem CNPJ e {m_cod} sem Cód Conta Gerencial. "
+                       "Você pode baixar mesmo assim, mas recomenda-se revisar.")
 
         _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=not st.session_state.get("cr_edited_once", False))
     else:

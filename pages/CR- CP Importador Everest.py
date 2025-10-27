@@ -756,4 +756,3 @@ with aba_cad:
     if st.session_state.get("cadastros"):
         st.markdown("#### Cadastros na sessão (não enviados)")
         st.dataframe(pd.DataFrame(st.session_state["cadastros"]), use_container_width=True, height=220)
-

@@ -77,7 +77,6 @@ def _to_float_br(x):
     try: return float(s)
     except: return None
 
-# -------- utilidades p/ palavras-chave (estrito em "Padrão Cod Gerencial") --------
 def _tokenize(txt: str):
     # normaliza e separa por palavras/nums
     return [w for w in re.findall(r"[0-9a-zA-Z]+", _norm_basic(txt)) if w]
@@ -175,13 +174,98 @@ def carregar_portadores():
             if p: mapa[b] = p
     return sorted(bancos), mapa
 
-# ======= BOTÃO PARA RECARREGAR REGRAS (limpa cache) =======
-# ======= REGRAS: recarregar + editar inline no Streamlit =======
-def _load_rules_sheet_raw():
-    """Lê a aba 'Tabela Meio Pagamento' como está (sem cache) e retorna DataFrame."""
+# ====== CARREGAMENTO DAS REGRAS (para o matching) ======
+@st.cache_data(show_spinner=False)
+def carregar_tabela_meio_pagto():
+    """
+    Lê SOMENTE as colunas EXATAS para o matching:
+      - 'Padrão Cod Gerencial'
+      - 'Cod Gerencial Everest'
+      - 'CNPJ Bandeira'
+    """
     COL_PADRAO = "Padrão Cod Gerencial"
     COL_COD    = "Cod Gerencial Everest"
     COL_CNPJ   = "CNPJ Bandeira"
+
+    sh = _open_planilha("Vendas diarias")
+    if not sh:
+        return pd.DataFrame(), []
+
+    try:
+        ws = sh.worksheet("Tabela Meio Pagamento")
+    except WorksheetNotFound:
+        st.warning("⚠️ Aba 'Tabela Meio Pagamento' não encontrada.")
+        return pd.DataFrame(), []
+
+    df = pd.DataFrame(ws.get_all_records()).astype(str)
+
+    missing = [c for c in [COL_PADRAO, COL_COD, COL_CNPJ] if c not in df.columns]
+    if missing:
+        st.error("Faltando colunas obrigatórias: " + ", ".join(missing))
+        return pd.DataFrame(), []
+
+    for c in [COL_PADRAO, COL_COD, COL_CNPJ]:
+        df[c] = df[c].astype(str).str.strip()
+
+    rules = []
+    for _, row in df.iterrows():
+        padrao = row[COL_PADRAO]
+        codigo = row[COL_COD]
+        cnpj   = row[COL_CNPJ]
+        if not padrao or not codigo:
+            continue
+        tokens = sorted(set(_tokenize(padrao)))
+        if not tokens:
+            continue
+        rules.append({"tokens": tokens, "codigo_gerencial": codigo, "cnpj_bandeira": cnpj})
+    return df, rules
+
+def _best_rule_for_tokens(ref_tokens: set):
+    best = None
+    best_hits = 0
+    best_tokens_len = 0
+    best_matched = set()
+    for rule in MEIO_RULES:
+        tokens = set(rule["tokens"])
+        matched = tokens & ref_tokens
+        hits = len(matched)
+        if hits == 0:
+            continue
+        if (hits > best_hits) or (hits == best_hits and len(tokens) > best_tokens_len):
+            best = rule
+            best_hits = hits
+            best_tokens_len = len(tokens)
+            best_matched = matched
+    return best, best_hits, best_matched
+
+def _match_bandeira_to_gerencial(ref_text: str):
+    if not ref_text or not MEIO_RULES:
+        return "", "", ""
+    ref_tokens = set(_tokenize(ref_text))
+    if not ref_tokens:
+        return "", "", ""
+    best, _, _ = _best_rule_for_tokens(ref_tokens)
+    if best:
+        return best["codigo_gerencial"], best.get("cnpj_bandeira",""), ""
+    return "", "", ""
+
+# ===== Dados base (carrega ANTES de montar a UI) =====
+df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
+PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
+DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
+
+# fallbacks na sessão (evita NameError em re-runs)
+st.session_state["_grupos"] = GRUPOS
+st.session_state["_lojas_map"] = LOJAS_MAP
+st.session_state["_portadores"] = PORTADORES
+
+def LOJAS_DO(grupo_nome: str):
+    lojas_map = globals().get("LOJAS_MAP") or st.session_state.get("_lojas_map", {})
+    return lojas_map.get(grupo_nome, [])
+
+# ======= EDITOR/ATUALIZAÇÃO DO BANCO DE REGRAS (sheet completo) =======
+def _load_rules_sheet_raw_full():
+    """Lê a aba 'Tabela Meio Pagamento' exatamente como está (todas as colunas/ordem)."""
     sh = _open_planilha("Vendas diarias")
     if not sh:
         raise RuntimeError("Planilha 'Vendas diarias' indisponível.")
@@ -189,61 +273,47 @@ def _load_rules_sheet_raw():
         ws = sh.worksheet("Tabela Meio Pagamento")
     except WorksheetNotFound:
         raise RuntimeError("Aba 'Tabela Meio Pagamento' não encontrada.")
-    df = pd.DataFrame(ws.get_all_records())
-    # garanta as colunas obrigatórias
-    for c in [COL_PADRAO, COL_COD, COL_CNPJ]:
-        if c not in df.columns:
-            df[c] = ""
-    # mantém apenas as 3 colunas essenciais (e em ordem)
-    df = df[[COL_PADRAO, COL_COD, COL_CNPJ]].astype(str)
+    values = ws.get_all_values()
+    if not values:
+        return pd.DataFrame(), ws
+    header = values[0]
+    rows = values[1:]
+    max_cols = len(header)
+    norm_rows = [r + [""] * (max_cols - len(r)) for r in rows]
+    df = pd.DataFrame(norm_rows, columns=header)
     return df, ws
 
-def _save_rules_to_sheet(df_edit: pd.DataFrame, ws):
-    """Salva o DataFrame de volta à planilha (sobrescreve a aba, preservando cabeçalhos)."""
-    COL_PADRAO = "Padrão Cod Gerencial"
-    COL_COD    = "Cod Gerencial Everest"
-    COL_CNPJ   = "CNPJ Bandeira"
-
-    # normalização mínima
-    df = df_edit.copy()
-    for c in [COL_PADRAO, COL_COD, COL_CNPJ]:
-        if c not in df.columns:
-            raise RuntimeError(f"Coluna obrigatória ausente: {c}")
-        df[c] = df[c].astype(str).str.strip()
-
-    # remove linhas totalmente vazias
-    df = df[~(df[[COL_PADRAO, COL_COD, COL_CNPJ]] == "").all(axis=1)]
-
-    # validações simples
-    faltando_codigo = df[(df[COL_PADRAO] != "") & (df[COL_COD] == "")]
-    if not faltando_codigo.empty:
-        raise RuntimeError("Há linhas com 'Padrão Cod Gerencial' preenchido mas sem 'Cod Gerencial Everest'.")
-
-    # escreve
+def _save_rules_to_sheet_full(df_edit: pd.DataFrame, ws):
+    """Salva de volta o conteúdo exatamente como está no grid (inclui cabeçalhos)."""
     ws.clear()
-    ws.update([ [COL_PADRAO, COL_COD, COL_CNPJ] ] + df[[COL_PADRAO, COL_COD, COL_CNPJ]].values.tolist())
+    if df_edit.empty:
+        return
+    header = list(df_edit.columns)
+    data = [header] + df_edit.astype(str).values.tolist()
+    ws.update(data)
 
-# Barra com botões
+# Barra com botões (atualizar + editor)
 col_btn1, _ = st.columns([0.35, 0.65])
 with col_btn1:
     if st.button("🔄 Atualizar regras (recarregar planilha)", use_container_width=True):
         st.cache_data.clear()
-        st.success("Regras recarregadas! Gere novamente o importador.")
+        # recarrega imediatamente para evitar confusão
+        DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
+        st.success("Regras recarregadas!")
 
-    # toggle do editor
     if st.button("✏️ Editar banco de regras", use_container_width=True):
         st.session_state["regras_editor_on"] = True
 
-# UI do editor (simples)
+# UI do editor completo
 if st.session_state.get("regras_editor_on"):
-    st.markdown("#### ✏️ Edição rápida — Tabela Meio Pagamento")
+    st.markdown("#### ✏️ Edição — Tabela Meio Pagamento (visualização completa)")
     try:
-        df_rules_raw, ws_rules = _load_rules_sheet_raw()
+        df_rules_raw, ws_rules = _load_rules_sheet_raw_full()
     except Exception as e:
         st.error(f"Não foi possível abrir a tabela: {e}")
         st.session_state["regras_editor_on"] = False
     else:
-        # backup
+        # backup (sheet completo)
         backup = BytesIO()
         with pd.ExcelWriter(backup, engine="openpyxl") as w:
             df_rules_raw.to_excel(w, index=False, sheet_name="Tabela Meio Pagamento")
@@ -252,21 +322,23 @@ if st.session_state.get("regras_editor_on"):
                            file_name="Tabela_Meio_Pagamento_backup.xlsx",
                            use_container_width=True)
 
-        st.info("Edite as linhas abaixo. Use apenas as colunas: **Padrão Cod Gerencial**, **Cod Gerencial Everest**, **CNPJ Bandeira**.")
+        st.info("Você está vendo **todas as colunas** exatamente como estão na planilha. "
+                "Edite livremente; ao salvar, a aba será sobrescrita com o conteúdo mostrado.")
         edited = st.data_editor(
             df_rules_raw,
             num_rows="dynamic",
             use_container_width=True,
-            height=420,
+            height=500,
         )
 
         col_actions = st.columns([0.2, 0.2, 0.6])
         with col_actions[0]:
             if st.button("💾 Salvar alterações", type="primary", use_container_width=True):
                 try:
-                    _save_rules_to_sheet(edited, ws_rules)
-                    st.cache_data.clear()   # garante que novas regras entram em vigor
-                    st.success("Alterações salvas na planilha e cache atualizado.")
+                    _save_rules_to_sheet_full(edited, ws_rules)
+                    st.cache_data.clear()
+                    DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
+                    st.success("Alterações salvas e regras recarregadas.")
                 except Exception as e:
                     st.error(f"Falha ao salvar: {e}")
         with col_actions[1]:
@@ -298,19 +370,29 @@ IMPORTADOR_ORDER = [
 # UI Components
 # ======================
 def filtros_grupo_empresa(prefix, with_portador=False, with_tipo_imp=False):
-    """Grupo | Empresa | Banco | Tipo de Importação (lado a lado)."""
+    """Grupo | Empresa | Banco | Tipo de Importação (lado a lado) com fallback seguro."""
     c1, c2, c3, c4 = st.columns([1,1,1,1])
 
+    grupos = globals().get("GRUPOS") or st.session_state.get("_grupos", [])
+    try:
+        grupos = list(grupos)
+    except Exception:
+        grupos = []
+
     with c1:
-        gsel = st.selectbox("Grupo:", ["— selecione —"] + GRUPOS, key=f"{prefix}_grupo")
+        gsel = st.selectbox("Grupo:", ["— selecione —"] + grupos, key=f"{prefix}_grupo")
+
     with c2:
-        lojas = LOJAS_DO(gsel) if gsel!="— selecione —" else []
+        lojas = LOJAS_DO(gsel) if gsel and gsel != "— selecione —" else []
         esel = st.selectbox("Empresa:", ["— selecione —"] + lojas, key=f"{prefix}_empresa")
+
     with c3:
         if with_portador:
-            st.selectbox("Banco:", ["Todos"] + PORTADORES, index=0, key=f"{prefix}_portador")
+            portadores = globals().get("PORTADORES") or st.session_state.get("_portadores", [])
+            st.selectbox("Banco:", ["Todos"] + list(portadores), index=0, key=f"{prefix}_portador")
         else:
             st.empty()
+
     with c4:
         if with_tipo_imp:
             st.selectbox("Tipo de Importação:", ["Todos","Adquirente","Cliente","Outros"], index=0, key=f"{prefix}_tipo_imp")
@@ -327,13 +409,13 @@ def _on_paste_change(prefix: str):
         st.session_state.pop(f"{prefix}_edited_once", None)
 
 def bloco_colagem(prefix: str):
-    """Apenas colagem + pré-visualização opcional e debug."""
+    """Apenas colagem + pré-visualização opcional."""
     c1,c2 = st.columns([0.65,0.35])
     with c1:
         txt = st.text_area(
             "📋 Colar tabela (Ctrl+V)",
             height=180,
-            placeholder="Cole aqui os dados copiados do Excel/Sheets… (ex.: selecione a coluna 'Complemento')",
+            placeholder="Cole aqui os dados copiados do Excel/Sheets… (ex.: a coluna 'Complemento')",
             key=f"{prefix}_paste",
             on_change=_on_paste_change,
             args=(prefix,)
@@ -341,12 +423,12 @@ def bloco_colagem(prefix: str):
         df_paste = _try_parse_paste(txt) if (txt and str(txt).strip()) else pd.DataFrame()
 
     with c2:
-        st.checkbox("🔎 Mostrar diagnóstico de matching", key=f"{prefix}_debug", value=False)
         show_prev = st.checkbox("Mostrar pré-visualização da colagem", value=False, key=f"{prefix}_show_prev")
         if show_prev and not df_paste.empty:
             st.dataframe(df_paste, use_container_width=True, height=120)
         elif df_paste.empty:
             st.info("Cole dados para prosseguir.")
+
     return df_paste
 
 def _column_mapping_ui(prefix: str, df_raw: pd.DataFrame):
@@ -388,28 +470,12 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     valor_original = pd.to_numeric(df_raw[cv].apply(_to_float_br), errors="coerce").round(2)
     ref_txt        = df_raw[cb].astype(str).str.strip()
 
-    # mapeamento por tokens do Padrão Cod Gerencial + (opcional) diagnóstico
+    # mapeamento por tokens do Padrão Cod Gerencial
     cod_conta_list, cnpj_cli_list = [], []
-    dbg_hits, dbg_rule, dbg_tokens = [], [], []
-    debug_on = st.session_state.get(f"{prefix}_debug", False)
-
     for b in ref_txt:
-        ref_tokens = set(_tokenize(b))
-        rule, hits, matched = _best_rule_for_tokens(ref_tokens)
-        if rule:
-            cod_conta_list.append(rule["codigo_gerencial"])
-            cnpj_cli_list.append(rule.get("cnpj_bandeira",""))
-            if debug_on:
-                dbg_hits.append(hits)
-                dbg_rule.append(" ".join(rule["tokens"]))
-                dbg_tokens.append(" ".join(sorted(matched)))
-        else:
-            cod_conta_list.append("")
-            cnpj_cli_list.append("")
-            if debug_on:
-                dbg_hits.append(0)
-                dbg_rule.append("")
-                dbg_tokens.append("")
+        cod, cnpj_band, _ = _match_bandeira_to_gerencial(b)
+        cod_conta_list.append(cod)
+        cnpj_cli_list.append(cnpj_band)
 
     out = pd.DataFrame({
         "CNPJ Empresa":          cnpj_loja,
@@ -431,24 +497,15 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
         "Cód Centro de Custo":   3
     })
 
-    if debug_on:
-        out["⚙️ Matching: acertos"] = dbg_hits
-        out["⚙️ Matching: regra (tokens)"] = dbg_rule
-        out["⚙️ Matching: tokens batidos"] = dbg_tokens
-
     # filtra linhas válidas
     out = out[(out["Data"].astype(str).str.strip() != "") & (out["Valor Original"].notna())]
 
     # reordena conforme importador e coloca flag no início
-    cols_base = [c for c in IMPORTADOR_ORDER if c in out.columns]
-    # insere colunas de debug antes do flag, se existirem
-    debug_cols = [c for c in out.columns if c.startswith("⚙️ Matching")]
-    ordered = cols_base + debug_cols
-    out = out.reindex(columns=ordered)
+    out = out.reindex(columns=[c for c in IMPORTADOR_ORDER if c in out.columns])
     out.insert(0, "🔴 Falta CNPJ?", out["CNPJ/Cliente"].astype(str).str.strip().eq(""))
 
-    # ordem final (flag + outras)
-    out = out[["🔴 Falta CNPJ?"] + ordered]
+    final_cols = ["🔴 Falta CNPJ?"] + [c for c in IMPORTADOR_ORDER if c in out.columns]
+    out = out[final_cols]
     return out
 
 def _download_excel(df: pd.DataFrame, filename: str, label_btn: str, disabled=False):
@@ -520,7 +577,7 @@ with aba_cr:
         edited_full = df_imp.copy()
         edited_full.update(edited_cr)
         edited_full["🔴 Falta CNPJ?"] = edited_full["CNPJ/Cliente"].astype(str).str.strip().eq("")
-        cols_final = ["🔴 Falta CNPJ?"] + [c for c in df_imp.columns if c != "🔴 Falta CNPJ?"]
+        cols_final = ["🔴 Falta CNPJ?"] + [c for c in edited_full.columns if c != "🔴 Falta CNPJ?"]
         edited_full = edited_full.reindex(columns=cols_final)
 
         st.session_state["cr_df_imp"] = edited_full
@@ -585,7 +642,7 @@ with aba_cp:
         edited_full = df_imp.copy()
         edited_full.update(edited_cp)
         edited_full["🔴 Falta CNPJ?"] = edited_full["CNPJ/Cliente"].astype(str).str.strip().eq("")
-        cols_final = ["🔴 Falta CNPJ?"] + [c for c in df_imp.columns if c != "🔴 Falta CNPJ?"]
+        cols_final = ["🔴 Falta CNPJ?"] + [c for c in edited_full.columns if c != "🔴 Falta CNPJ?"]
         edited_full = edited_full.reindex(columns=cols_final)
 
         st.session_state["cp_df_imp"] = edited_full
@@ -605,7 +662,7 @@ with aba_cad:
 
     col_g1, col_g2 = st.columns(2)
     with col_g1:
-        gsel = st.selectbox("Grupo:", ["— selecione —"]+GRUPOS, key="cad_grupo")
+        gsel = st.selectbox("Grupo:", ["— selecione —"]+ (globals().get("GRUPOS") or st.session_state.get("_grupos", [])), key="cad_grupo")
     with col_g2:
         lojas = LOJAS_DO(gsel) if gsel!="— selecione —" else []
         esel = st.selectbox("Empresa:", ["— selecione —"]+lojas, key="cad_empresa")

@@ -47,6 +47,50 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+# ... seus imports ...
+import json
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import pandas as pd
+import streamlit as st
+
+st.set_page_config(page_title="Importador Everest (CR-CP)", layout="wide")
+
+# ===== CSS (sem forçar .stSpinner) =====
+st.markdown("""
+<style>
+  [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
+  .stApp { background-color: #f9f9f9; }
+</style>
+""", unsafe_allow_html=True)
+
+# ======================
+# ⚡ Cache nas leituras do Google Sheets
+# ======================
+@st.cache_data(ttl=300, show_spinner=False)
+def carregar_planilha(nome: str):
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+    credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+    gc = gspread.authorize(credentials)
+    return gc.open(nome)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def ler_aba(planilha, nome_aba: str) -> pd.DataFrame:
+    ws = planilha.worksheet(nome_aba)
+    return pd.DataFrame(ws.get_all_records())
+
+# ======================
+# 🔌 Use assim onde você lia as abas (no lugar do seu código antigo)
+# ======================
+with st.spinner("🔌 Conectando e lendo Google Sheets..."):
+    planilha = carregar_planilha("Vendas diarias")
+    df_empresa = ler_aba(planilha, "Tabela Empresa")
+    df_meio_pgto_raw = ler_aba(planilha, "Tabela Meio Pagamento")
+
+# >>> a partir daqui, use df_empresa e df_meio_pgto_raw normalmente
+
+
 # ===== Cabeçalho =====
 st.markdown("""
   <div style='display: flex; align-items: center; gap: 10px; margin-bottom: 12px;'>

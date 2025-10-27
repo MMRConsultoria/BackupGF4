@@ -736,41 +736,59 @@ with aba_cr:
         
             df_export = df.copy()
         
-            # 1) tira a coluna de flag do Excel
+            # 1) Remove a flag da exportação
             if "🔴 Falta CNPJ?" in df_export.columns:
                 df_export = df_export.drop(columns=["🔴 Falta CNPJ?"], errors="ignore")
         
-            # 2) colunas que devem ficar como número com casas decimais
+            # 2) Regras de tipos
             DEC_COLS = {"Valor Desconto", "Valor Multa", "Valor Juros Dia", "Valor Original"}
-            # 3) colunas que podem ser inteiras se forem só dígitos
             INT_PREF = {"Portador", "Cód Conta Gerencial", "Cód Centro de Custo", "Nº Parcela"}
         
-            # --- Regras de conversão célula-a-célula:
-            # - CNPJ/Cliente: SEMPRE texto (preserva zeros/pontuação)
-            # - Colunas decimais: converte só as células 100% numéricas
-            # - Colunas inteiras: converte só as células 100% numéricas
             for col in df_export.columns:
+                # ===== CNPJ/Cliente =====
                 if col == "CNPJ/Cliente":
-                    df_export[col] = df_export[col].astype(str).str.strip()
+                    s_raw = df_export[col].astype(str).str.strip()
+                    s_digits = s_raw.str.replace(r"\D", "", regex=True)
+                    mask_cnpj = s_digits.str.len() == 14
+                    mask_only_digits = s_raw.str.match(r"^\d+$")
+        
+                    # CNPJ (14 dígitos) => manter TEXTO exatamente como veio
+                    if mask_cnpj.any():
+                        df_export.loc[mask_cnpj, col] = s_raw[mask_cnpj]
+        
+                    # Não CNPJ mas só dígitos => NÚMERO
+                    to_num_mask = (~mask_cnpj) & mask_only_digits
+                    if to_num_mask.any():
+                        df_export.loc[to_num_mask, col] = pd.to_numeric(
+                            s_raw[to_num_mask], errors="coerce", downcast="integer"
+                        )
+        
+                    # Demais casos (tem letra/símbolo e não é CNPJ): mantém texto como está
                     continue
         
+                # ===== Decimais (R$ etc.) =====
                 if col in DEC_COLS:
                     s = df_export[col].astype(str).str.strip()
                     s_norm = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
                     mask_num = s_norm.str.match(r"^\d+(\.\d+)?$")
-                    # converte só onde for número; resto permanece texto
-                    df_export.loc[mask_num, col] = pd.to_numeric(s_norm[mask_num], errors="coerce")
+                    if mask_num.any():
+                        df_export.loc[mask_num, col] = pd.to_numeric(s_norm[mask_num], errors="coerce")
                     continue
         
+                # ===== Inteiros preferenciais =====
                 if col in INT_PREF:
                     s = df_export[col].astype(str).str.strip()
                     mask_int = s.str.match(r"^\d+$")
-                    df_export.loc[mask_int, col] = pd.to_numeric(s[mask_int], downcast="integer", errors="coerce")
+                    if mask_int.any():
+                        df_export.loc[mask_int, col] = pd.to_numeric(
+                            s[mask_int], errors="coerce", downcast="integer"
+                        )
+                    # se não for só dígitos, mantém texto (não força)
                     continue
         
-                # outras colunas: não forçamos tipo
+                # Demais colunas: não forçar tipo
         
-            # 3) gerar Excel
+            # 3) Gerar Excel
             bio = BytesIO()
             with pd.ExcelWriter(bio, engine="openpyxl") as writer:
                 df_export.to_excel(writer, index=False, sheet_name="Importador")

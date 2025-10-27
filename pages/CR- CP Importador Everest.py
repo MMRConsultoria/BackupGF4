@@ -318,83 +318,90 @@ with left:
 
 # --- EDITOR: Tabela Meio Pagamento ---
 if st.session_state.get("editor_on_meio"):
-    st.markdown("Meio de Pagamento")
-    try:
-        df_rules_raw, ws_rules = _load_sheet_raw_full("Tabela Meio Pagamento")
-    except Exception as e:
-        st.error(f"Não foi possível abrir a tabela: {e}")
-        st.session_state["editor_on_meio"] = False
-    else:
+    editor_ph = st.empty()
+    with editor_ph.container():
+        st.markdown("Meio de Pagamento")
+        try:
+            df_rules_raw, ws_rules = _load_sheet_raw_full("Tabela Meio Pagamento")
+        except Exception:
+            # falhou: apenas fecha silenciosamente
+            st.session_state["editor_on_meio"] = False
+            editor_ph.empty()
+            st.stop()
+
         backup = BytesIO()
         with pd.ExcelWriter(backup, engine="openpyxl") as w:
             df_rules_raw.to_excel(w, index=False, sheet_name="Tabela Meio Pagamento")
         backup.seek(0)
-
-        #st.download_button(
-        #    "Backup (.xlsx)", backup,
-        #    file_name="Tabela_Meio_Pagamento_backup.xlsx",
-        #    use_container_width=True
-        #)
+        st.download_button("Backup (.xlsx)", backup,
+                           file_name="Tabela_Meio_Pagamento_backup.xlsx",
+                           use_container_width=True)
 
         edited = st.data_editor(
             df_rules_raw,
             num_rows="dynamic",
             use_container_width=True,
             height=520,
+            key="meio_editor_grid"
         )
 
+        # ÚNICO BOTÃO
         if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="meio_save"):
             try:
                 _save_sheet_full(edited, ws_rules)
+                # recarrega regras no cache e em memória, sem recarregar o app
                 st.cache_data.clear()
-                # Atualiza regras em memória, sem recarregar tudo
+                global DF_MEIO, MEIO_RULES
                 DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
-            except Exception as e:
-                st.error(f"Falha ao salvar: {e}")
             finally:
-                # Fecha o editor instantaneamente
+                # fecha imediatamente
                 st.session_state["editor_on_meio"] = False
-                st.experimental_rerun = False
+                editor_ph.empty()
+                st.stop()
+
 
 
 
 # --- EDITOR: Portador ---
 if st.session_state.get("editor_on_portador"):
-    st.markdown("Portador")
-    try:
-        df_port_raw, ws_port = _load_sheet_raw_full("Portador")
-    except Exception as e:
-        st.error(f"Não foi possível abrir a aba Portador: {e}")
-        st.session_state["editor_on_portador"] = False
-    else:
+    editor_port_ph = st.empty()
+    with editor_port_ph.container():
+        st.markdown("Portador")
+        try:
+            df_port_raw, ws_port = _load_sheet_raw_full("Portador")
+        except Exception:
+            st.session_state["editor_on_portador"] = False
+            editor_port_ph.empty()
+            st.stop()
+
         backup2 = BytesIO()
         with pd.ExcelWriter(backup2, engine="openpyxl") as w:
             df_port_raw.to_excel(w, index=False, sheet_name="Portador")
         backup2.seek(0)
-
-        #st.download_button(
-        #    "Backup Portador (.xlsx)", backup2,
-        #    file_name="Portador_backup.xlsx",
-        #    use_container_width=True
-        #)
+        st.download_button("Backup Portador (.xlsx)", backup2,
+                           file_name="Portador_backup.xlsx",
+                           use_container_width=True)
 
         edited_port = st.data_editor(
             df_port_raw,
             num_rows="dynamic",
             use_container_width=True,
             height=520,
+            key="port_editor_grid"
         )
 
+        # ÚNICO BOTÃO
         if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="port_save"):
             try:
                 _save_sheet_full(edited_port, ws_port)
                 st.cache_data.clear()
+                global PORTADORES, MAPA_BANCO_PARA_PORTADOR
                 PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
                 st.session_state["_portadores"] = PORTADORES
-            except Exception as e:
-                st.error(f"Falha ao salvar: {e}")
             finally:
                 st.session_state["editor_on_portador"] = False
+                editor_port_ph.empty()
+                st.stop()
 
 
 

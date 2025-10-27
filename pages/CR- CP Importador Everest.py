@@ -329,13 +329,7 @@ if st.session_state.get("editor_on_meio"):
                            file_name="Tabela_Meio_Pagamento_backup.xlsx",
                            use_container_width=True)
 
-        st.info("Edite livremente; ao **Salvar e Fechar**, a aba será sobrescrita e as regras serão recarregadas.")
-        edited = st.data_editor(
-            df_rules_raw,
-            num_rows="dynamic",
-            use_container_width=True,
-            height=520,
-        )
+        
 
         col_actions = st.columns([0.25, 0.25, 0.5])
         with col_actions[0]:
@@ -371,14 +365,7 @@ if st.session_state.get("editor_on_portador"):
                            file_name="Portador_backup.xlsx",
                            use_container_width=True)
 
-        st.info("Edite livremente; ao **Salvar e Fechar**, a aba será sobrescrita e o mapa de portadores será recarregado.")
-        edited_port = st.data_editor(
-            df_port_raw,
-            num_rows="dynamic",
-            use_container_width=True,
-            height=520,
-        )
-
+        
         col_actions2 = st.columns([0.25, 0.25, 0.5])
         with col_actions2[0]:
             if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="port_save"):

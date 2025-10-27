@@ -263,7 +263,8 @@ def LOJAS_DO(grupo_nome: str):
     lojas_map = globals().get("LOJAS_MAP") or st.session_state.get("_lojas_map", {})
     return lojas_map.get(grupo_nome, [])
 
-# ======= EDITOR/ATUALIZAÇÃO DO BANCO DE REGRAS (sheet completo) =======
+# ======= TABELA MEIO DE PAGAMENTO — botão único (abrir/editar/salvar) =======
+
 def _load_rules_sheet_raw_full():
     """Lê a aba 'Tabela Meio Pagamento' exatamente como está (todas as colunas/ordem)."""
     sh = _open_planilha("Vendas diarias")
@@ -292,28 +293,21 @@ def _save_rules_to_sheet_full(df_edit: pd.DataFrame, ws):
     data = [header] + df_edit.astype(str).values.tolist()
     ws.update(data)
 
-# Barra com botões (atualizar + editor)
-col_btn1, _ = st.columns([0.35, 0.65])
-with col_btn1:
-    if st.button("🔄 Atualizar regras (recarregar planilha)", use_container_width=True):
-        st.cache_data.clear()
-        # recarrega imediatamente para evitar confusão
-        DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
-        st.success("Regras recarregadas!")
-
-    if st.button("✏️ Editar banco de regras", use_container_width=True):
+# botão único para abrir o editor
+if not st.session_state.get("regras_editor_on"):
+    # Coloque onde você quer o botão (fica aqui, antes das abas)
+    if st.button("🧮 Tabela Meio de Pagamento", use_container_width=True):
         st.session_state["regras_editor_on"] = True
-
-# UI do editor completo
-if st.session_state.get("regras_editor_on"):
-    st.markdown("#### ✏️ Edição — Tabela Meio Pagamento (visualização completa)")
+else:
+    # Modo edição
+    st.markdown("#### 🧮 Tabela Meio de Pagamento — edição")
     try:
         df_rules_raw, ws_rules = _load_rules_sheet_raw_full()
     except Exception as e:
         st.error(f"Não foi possível abrir a tabela: {e}")
         st.session_state["regras_editor_on"] = False
     else:
-        # backup (sheet completo)
+        # backup do sheet completo
         backup = BytesIO()
         with pd.ExcelWriter(backup, engine="openpyxl") as w:
             df_rules_raw.to_excel(w, index=False, sheet_name="Tabela Meio Pagamento")
@@ -322,28 +316,31 @@ if st.session_state.get("regras_editor_on"):
                            file_name="Tabela_Meio_Pagamento_backup.xlsx",
                            use_container_width=True)
 
-        st.info("Você está vendo **todas as colunas** exatamente como estão na planilha. "
-                "Edite livremente; ao salvar, a aba será sobrescrita com o conteúdo mostrado.")
+        st.info("Edite livremente; ao **Salvar e Fechar**, a aba será sobrescrita e as regras serão recarregadas.")
+
         edited = st.data_editor(
             df_rules_raw,
             num_rows="dynamic",
             use_container_width=True,
-            height=500,
+            height=520,
         )
 
-        col_actions = st.columns([0.2, 0.2, 0.6])
+        col_actions = st.columns([0.25, 0.25, 0.5])
         with col_actions[0]:
-            if st.button("💾 Salvar alterações", type="primary", use_container_width=True):
+            if st.button("💾 Salvar e Fechar", type="primary", use_container_width=True):
                 try:
                     _save_rules_to_sheet_full(edited, ws_rules)
+                    # atualiza regras do app
                     st.cache_data.clear()
                     DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
-                    st.success("Alterações salvas e regras recarregadas.")
+                    st.session_state["regras_editor_on"] = False
+                    st.success("Alterações salvas, regras atualizadas e editor fechado.")
                 except Exception as e:
                     st.error(f"Falha ao salvar: {e}")
         with col_actions[1]:
-            if st.button("Cancelar", use_container_width=True):
+            if st.button("Fechar sem salvar", use_container_width=True):
                 st.session_state["regras_editor_on"] = False
+
 
 # ===== Ordem de saída (sem a flag; a flag entra na frente) =====
 IMPORTADOR_ORDER = [

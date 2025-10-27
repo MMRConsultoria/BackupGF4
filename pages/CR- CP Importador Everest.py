@@ -8,6 +8,7 @@ from io import StringIO, BytesIO
 import gspread
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
+
 # --- fusível anti-help: evita que qualquer help() imprima no app ---
 try:
     import builtins
@@ -21,8 +22,10 @@ try:
     st.help = lambda *a, **k: None
 except Exception:
     pass
+
 st.set_page_config(page_title="CR-CP Importador Everest", layout="wide")
 st.set_option("client.showErrorDetails", False)
+
 # 🔒 Bloqueio de acesso
 if not st.session_state.get("acesso_liberado"):
     st.stop()
@@ -41,7 +44,6 @@ st.markdown("""
   }
   button[data-baseweb="tab"]:hover { background-color: #dce0ea; color: black; }
   button[data-baseweb="tab"][aria-selected="true"] { background-color: #0366d6; color: white; }
-
   hr.compact { height:1px; background:#e6e9f0; border:none; margin:8px 0 10px; }
   .compact [data-testid="stSelectbox"] { margin-bottom:6px !important; }
   .compact [data-testid="stTextArea"] { margin-top:8px !important; }
@@ -70,7 +72,8 @@ def _norm_basic(s: str) -> str:
 
 def _try_parse_paste(text: str) -> pd.DataFrame:
     text = (text or "").strip("\n\r ")
-    if not text: return pd.DataFrame()
+    if not text:
+        return pd.DataFrame()
     first = text.splitlines()[0] if text else ""
     if "\t" in first:
         df = pd.read_csv(StringIO(text), sep="\t", dtype=str, engine="python")
@@ -86,8 +89,10 @@ def _try_parse_paste(text: str) -> pd.DataFrame:
 def _to_float_br(x):
     s = str(x or "").strip()
     s = s.replace("R$","").replace(" ","").replace(".","").replace(",",".")
-    try: return float(s)
-    except: return None
+    try:
+        return float(s)
+    except:
+        return None
 
 def _tokenize(txt: str):
     # normaliza e separa por palavras/nums
@@ -141,7 +146,8 @@ def carregar_empresas():
            "Loja Nome":"Loja","Empresa":"Loja","Grupo Nome":"Grupo"}
     df = df.rename(columns={k:v for k,v in ren.items() if k in df.columns})
     for c in ["Grupo","Loja","Código Everest","Código Grupo Everest","CNPJ"]:
-        if c not in df.columns: df[c] = ""
+        if c not in df.columns:
+            df[c] = ""
         df[c] = df[c].astype(str).str.strip()
 
     grupos = sorted(df["Grupo"].dropna().unique().tolist())
@@ -183,7 +189,8 @@ def carregar_portadores():
         p = str(r[i_porta]).strip()  if (i_porta is not None  and i_porta  < len(r)) else ""
         if b:
             bancos.add(b)
-            if p: mapa[b] = p
+            if p:
+                mapa[b] = p
     return sorted(bancos), mapa
 
 # ====== CARREGAMENTO DAS REGRAS (para o matching) ======
@@ -275,7 +282,7 @@ def LOJAS_DO(grupo_nome: str):
     lojas_map = globals().get("LOJAS_MAP") or st.session_state.get("_lojas_map", {})
     return lojas_map.get(grupo_nome, [])
 
-# ======= BOTÕES DISCRETOS (ESQ) + EDITORES: MEIO DE PAGAMENTO e PORTADOR =======
+# ======= BOTÕES DISCRETOS (ESQ) + EDITORES =======
 
 def _load_sheet_raw_full(sheet_name: str):
     """Lê a aba informada exatamente como está (todas as colunas/ordem)."""
@@ -316,10 +323,10 @@ with left:
         if st.button("TB Portador", use_container_width=True, help="Abrir/editar aba Portador"):
             st.session_state["editor_on_portador"] = True
 
-# --- EDITOR: Tabela Meio Pagamento ---
+# --- EDITOR: Tabela Meio Pagamento (um botão, sem mensagens, fecha de 1ª) ---
 if st.session_state.get("editor_on_meio"):
-    editor_meio = st.empty()
-    with editor_meio.container():
+    holder_meio = st.empty()
+    with holder_meio.container():
         st.markdown("Meio de Pagamento")
 
         try:
@@ -327,22 +334,18 @@ if st.session_state.get("editor_on_meio"):
         except Exception as e:
             st.error(f"Erro ao abrir aba: {e}")
             st.session_state["editor_on_meio"] = False
-            editor_meio.empty()
-            st.stop()
+            holder_meio.empty()
+            st.rerun()
 
-        # backup download
+        # (opcional) backup para segurança
         backup = BytesIO()
         with pd.ExcelWriter(backup, engine="openpyxl") as w:
             df_rules_raw.to_excel(w, index=False, sheet_name="Tabela Meio Pagamento")
         backup.seek(0)
-        st.download_button(
-            "Backup (.xlsx)",
-            backup,
-            file_name="Tabela_Meio_Pagamento_backup.xlsx",
-            use_container_width=True
-        )
+        st.download_button("Backup (.xlsx)", backup,
+                           file_name="Tabela_Meio_Pagamento_backup.xlsx",
+                           use_container_width=True)
 
-        # editor grid
         edited = st.data_editor(
             df_rules_raw,
             num_rows="dynamic",
@@ -351,27 +354,24 @@ if st.session_state.get("editor_on_meio"):
             key="editor_meio_grid"
         )
 
-        # único botão
         if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="meio_save"):
             try:
                 _save_sheet_full(edited, ws_rules)
                 st.cache_data.clear()
+                # recarrega para sessão atual (sem mensagens)
                 global DF_MEIO, MEIO_RULES
                 DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
             # fecha imediatamente
             st.session_state["editor_on_meio"] = False
-            editor_meio.empty()
-            st.stop()
+            holder_meio.empty()
+            st.rerun()
 
-
-
-
-# --- EDITOR: Portador ---
+# --- EDITOR: Portador (um botão, sem mensagens, fecha de 1ª) ---
 if st.session_state.get("editor_on_portador"):
-    editor_port = st.empty()
-    with editor_port.container():
+    holder_port = st.empty()
+    with holder_port.container():
         st.markdown("Portador")
 
         try:
@@ -379,22 +379,17 @@ if st.session_state.get("editor_on_portador"):
         except Exception as e:
             st.error(f"Erro ao abrir aba: {e}")
             st.session_state["editor_on_portador"] = False
-            editor_port.empty()
-            st.stop()
+            holder_port.empty()
+            st.rerun()
 
-        # backup download
         backup2 = BytesIO()
         with pd.ExcelWriter(backup2, engine="openpyxl") as w:
             df_port_raw.to_excel(w, index=False, sheet_name="Portador")
         backup2.seek(0)
-        st.download_button(
-            "Backup Portador (.xlsx)",
-            backup2,
-            file_name="Portador_backup.xlsx",
-            use_container_width=True
-        )
+        st.download_button("Backup Portador (.xlsx)", backup2,
+                           file_name="Portador_backup.xlsx",
+                           use_container_width=True)
 
-        # editor grid
         edited_port = st.data_editor(
             df_port_raw,
             num_rows="dynamic",
@@ -403,7 +398,6 @@ if st.session_state.get("editor_on_portador"):
             key="editor_port_grid"
         )
 
-        # único botão
         if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="port_save"):
             try:
                 _save_sheet_full(edited_port, ws_port)
@@ -413,10 +407,9 @@ if st.session_state.get("editor_on_portador"):
                 st.session_state["_portadores"] = PORTADORES
             except Exception as e:
                 st.error(f"Erro ao salvar: {e}")
-            # fecha imediatamente
             st.session_state["editor_on_portador"] = False
-            editor_port.empty()
-            st.stop()
+            holder_port.empty()
+            st.rerun()
 
 
 # ===== Ordem de saída (sem a flag; a flag entra na frente) =====

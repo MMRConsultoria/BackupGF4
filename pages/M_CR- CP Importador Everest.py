@@ -24,10 +24,11 @@ if not st.session_state.get("acesso_liberado"):
     st.stop()
 
 # ===== CSS =====
+# ===== CSS =====
 st.markdown("""
 <style>
   [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
-  .stSpinner { visibility: visible !important; }
+  /* REMOVIDO: .stSpinner { visibility: visible !important; } */
   .stApp { background-color: #f9f9f9; }
   div[data-baseweb="tab-list"] { margin-top: 20px; }
   button[data-baseweb="tab"] {
@@ -44,6 +45,7 @@ st.markdown("""
   .compact [data-testid="stVerticalBlock"] > div { margin-bottom:8px; }
 </style>
 """, unsafe_allow_html=True)
+
 
 # ===== Cabeçalho =====
 st.markdown("""

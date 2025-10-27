@@ -8,6 +8,8 @@ from io import StringIO, BytesIO
 import gspread
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime
+
 # --- fusível anti-help: evita que qualquer help() imprima no app ---
 try:
     import builtins
@@ -86,7 +88,6 @@ def _to_float_br(x):
     except: return None
 
 def _tokenize(txt: str):
-    # normaliza e separa por palavras/nums
     return [w for w in re.findall(r"[0-9a-zA-Z]+", _norm_basic(txt)) if w]
 
 # ======================
@@ -186,35 +187,39 @@ def carregar_portadores():
 @st.cache_data(show_spinner=False)
 def carregar_tabela_meio_pagto():
     """
-    Lê SOMENTE as colunas EXATAS para o matching:
+    Lê colunas necessárias:
       - 'Padrão Cod Gerencial'
       - 'Cod Gerencial Everest'
       - 'CNPJ Bandeira'
+      - 'PIX Padrão Cod Gerencial'   (NOVO)
     """
     COL_PADRAO = "Padrão Cod Gerencial"
     COL_COD    = "Cod Gerencial Everest"
     COL_CNPJ   = "CNPJ Bandeira"
+    COL_PIXPAD = "PIX Padrão Cod Gerencial"
 
     sh = _open_planilha("Vendas diarias")
     if not sh:
-        return pd.DataFrame(), []
+        return pd.DataFrame(), [], None
 
     try:
         ws = sh.worksheet("Tabela Meio Pagamento")
     except WorksheetNotFound:
         st.warning("⚠️ Aba 'Tabela Meio Pagamento' não encontrada.")
-        return pd.DataFrame(), []
+        return pd.DataFrame(), [], None
 
     df = pd.DataFrame(ws.get_all_records()).astype(str)
 
-    missing = [c for c in [COL_PADRAO, COL_COD, COL_CNPJ] if c not in df.columns]
-    if missing:
-        st.error("Faltando colunas obrigatórias: " + ", ".join(missing))
-        return pd.DataFrame(), []
+    # Garantir colunas
+    for c in [COL_PADRAO, COL_COD, COL_CNPJ, COL_PIXPAD]:
+        if c not in df.columns:
+            df[c] = ""
 
-    for c in [COL_PADRAO, COL_COD, COL_CNPJ]:
+    # Normaliza
+    for c in [COL_PADRAO, COL_COD, COL_CNPJ, COL_PIXPAD]:
         df[c] = df[c].astype(str).str.strip()
 
+    # Regras de token para bandeira/gerencial
     rules = []
     for _, row in df.iterrows():
         padrao = row[COL_PADRAO]
@@ -226,7 +231,15 @@ def carregar_tabela_meio_pagto():
         if not tokens:
             continue
         rules.append({"tokens": tokens, "codigo_gerencial": codigo, "cnpj_bandeira": cnpj})
-    return df, rules
+
+    # PIX padrão (se houver múltiplos diferentes, ficamos com o primeiro e logamos em tela)
+    pix_vals = [v for v in df[COL_PIXPAD].tolist() if str(v).strip()]
+    pix_default = pix_vals[0].strip() if pix_vals else ""
+    if pix_vals and len(set(pix_vals)) > 1:
+        st.warning("⚠️ Existem múltiplos valores diferentes em 'PIX Padrão Cod Gerencial'. Usando o primeiro encontrado.")
+
+    pix_default = pix_default if pix_default else None
+    return df, rules, pix_default
 
 def _best_rule_for_tokens(ref_tokens: set):
     best = None
@@ -260,9 +273,9 @@ def _match_bandeira_to_gerencial(ref_text: str):
 # ===== Dados base (carrega ANTES de montar a UI) =====
 df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
 PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
-DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
+DF_MEIO, MEIO_RULES, PIX_DEFAULT_CODE = carregar_tabela_meio_pagto()
 
-# fallbacks na sessão (evita NameError em re-runs)
+# fallbacks na sessão
 st.session_state["_grupos"] = GRUPOS
 st.session_state["_lojas_map"] = LOJAS_MAP
 st.session_state["_portadores"] = PORTADORES
@@ -271,10 +284,168 @@ def LOJAS_DO(grupo_nome: str):
     lojas_map = globals().get("LOJAS_MAP") or st.session_state.get("_lojas_map", {})
     return lojas_map.get(grupo_nome, [])
 
+# ======================
+# LOGS DE CLASSIFICAÇÃO PIX (sessão)
+# ======================
+def _init_logs():
+    st.session_state.setdefault("pix_log_ok", [])
+    st.session_state.setdefault("pix_log_err", [])
+
+def _add_log_ok(**kwargs):
+    _init_logs()
+    st.session_state["pix_log_ok"].append(kwargs)
+
+def _add_log_err(**kwargs):
+    _init_logs()
+    st.session_state["pix_log_err"].append(kwargs)
+
+def _logs_to_df():
+    ok = pd.DataFrame(st.session_state.get("pix_log_ok", []))
+    err = pd.DataFrame(st.session_state.get("pix_log_err", []))
+    # Ordena colunas amigáveis
+    cols = ["Quando","Módulo","Grupo","Empresa","Banco/Portador","Data","Valor","Referência",
+            "CNPJ Empresa","CNPJ/Cliente","Cod Antes","Cod Depois","Motivo/Regra"]
+    ok = ok.reindex(columns=cols, fill_value="")
+    err = err.reindex(columns=cols, fill_value="")
+    return ok, err
+
+def _now():
+    # timestamp amigável
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def _save_logs_to_sheet():
+    """Grava (append) os logs na aba 'Log Classificação PIX'."""
+    ok_df, err_df = _logs_to_df()
+    if ok_df.empty and err_df.empty:
+        st.info("Não há logs a gravar.")
+        return
+
+    sh = _open_planilha("Vendas diarias")
+    if not sh:
+        st.error("Planilha 'Vendas diarias' indisponível.")
+        return
+    ws = None
+    try:
+        ws = sh.worksheet("Log Classificação PIX")
+    except WorksheetNotFound:
+        ws = sh.add_worksheet("Log Classificação PIX", rows=1000, cols=30)
+        ws.append_row(["Quando","Módulo","Grupo","Empresa","Banco/Portador","Data","Valor","Referência",
+                       "CNPJ Empresa","CNPJ/Cliente","Cod Antes","Cod Depois","Motivo/Regra","Tipo Log"])
+
+    def _append(df, tipo):
+        if df.empty: return
+        values = df.values.tolist()
+        for r in values:
+            ws.append_row(r + [tipo])
+
+    _append(ok_df, "OK")
+    _append(err_df, "ERRO")
+    st.success("Logs gravados na aba 'Log Classificação PIX'.")
+
+# ======================
+# Detector de PIX e Classificador
+# ======================
+PIX_PATTERNS = [
+    r"\bpix\b",                         # palavra pix
+    r"\bqr\b",                          # muitas adquirentes colocam 'qr'
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",  # GUID comum em QR
+    r"[A-Z0-9]{25,}",                   # chaves/txid longos
+]
+
+def _is_pix_reference(ref_text: str) -> bool:
+    if not ref_text: return False
+    t = _norm_basic(ref_text)
+    for pat in PIX_PATTERNS:
+        if re.search(pat, t):
+            return True
+    # pistas adicionais
+    if any(w in t for w in ["chave","txid","qr code","qrcode","pagamento instantaneo","instantaneo"]):
+        return True
+    return False
+
+def _classificar_pix_em_df(df_importador: pd.DataFrame, modulo: str, grupo: str, empresa: str, banco_nome: str):
+    """
+    - NÃO sobrescreve 'Cód Conta Gerencial' (só preenche se vier vazio).
+    - Usa PIX_DEFAULT_CODE (da tabela) para linhas cuja referência é PIX.
+    - Gera logs (ok/erro).
+    """
+    if df_importador.empty:
+        return df_importador
+
+    _init_logs()
+
+    if not PIX_DEFAULT_CODE:
+        st.info("ℹ️ Nenhum 'PIX Padrão Cod Gerencial' definido na Tabela Meio Pagamento. Sem preenchimento automático de PIX.")
+        # Mesmo sem código padrão, ainda registramos erros quando detectar PIX sem código
+    # Trabalha em cópia para segurança
+    df = df_importador.copy()
+
+    # Colunas base seguras
+    col_ref = "Observações do Título"
+    col_cod = "Cód Conta Gerencial"
+
+    if col_ref not in df.columns:
+        return df
+    if col_cod not in df.columns:
+        df[col_cod] = ""
+
+    # Loop para log granular
+    for idx, row in df.iterrows():
+        ref = str(row.get(col_ref, "") or "")
+        cod_antes = str(row.get(col_cod, "") or "").strip()
+        is_pix = _is_pix_reference(ref)
+
+        if not is_pix:
+            # não é pix -> nada a fazer
+            continue
+
+        if cod_antes:
+            # já classificado (regra antiga/bandeira). Não mexer.
+            _add_log_ok(
+                Quando=_now(), Módulo=modulo, Grupo=grupo, Empresa=empresa, Banco/Portador=banco_nome,
+                Data=str(row.get("Data","")), Valor=row.get("Valor Original",""),
+                Referência=ref, **{"CNPJ Empresa":str(row.get("CNPJ Empresa",""))},
+                **{"CNPJ/Cliente":str(row.get("CNPJ/Cliente",""))},
+                **{"Cod Antes":cod_antes}, **{"Cod Depois":cod_antes},
+                **{"Motivo/Regra":"PIX detectado, mas já havia classificação anterior — mantido"}
+            )
+            continue
+
+        if not PIX_DEFAULT_CODE:
+            # é pix mas não temos padrão -> erro
+            _add_log_err(
+                Quando=_now(), Módulo=modulo, Grupo=grupo, Empresa=empresa, Banco/Portador=banco_nome,
+                Data=str(row.get("Data","")), Valor=row.get("Valor Original",""),
+                Referência=ref, **{"CNPJ Empresa":str(row.get("CNPJ Empresa",""))},
+                **{"CNPJ/Cliente":str(row.get("CNPJ/Cliente",""))},
+                **{"Cod Antes":cod_antes}, **{"Cod Depois":""},
+                **{"Motivo/Regra":"PIX detectado, porém 'PIX Padrão Cod Gerencial' está vazio"}
+            )
+            continue
+
+        # aplicar padrão
+        df.at[idx, col_cod] = PIX_DEFAULT_CODE
+        _add_log_ok(
+            Quando=_now(), Módulo=modulo, Grupo=grupo, Empresa=empresa, Banco/Portador=banco_nome,
+            Data=str(row.get("Data","")), Valor=row.get("Valor Original",""),
+            Referência=ref, **{"CNPJ Empresa":str(row.get("CNPJ Empresa",""))},
+            **{"CNPJ/Cliente":str(row.get("CNPJ/Cliente",""))},
+            **{"Cod Antes":cod_antes}, **{"Cod Depois":PIX_DEFAULT_CODE},
+            **{"Motivo/Regra":"Classificado via 'PIX Padrão Cod Gerencial'"}
+        )
+
+    # Atualiza flag de Falta CNPJ
+    if "CNPJ/Cliente" in df.columns:
+        df["🔴 Falta CNPJ?"] = df["CNPJ/Cliente"].astype(str).str.strip().eq("")
+        # reordenar com a flag primeiro (mantém seu padrão)
+        flag = df.pop("🔴 Falta CNPJ?")
+        df.insert(0, "🔴 Falta CNPJ?", flag)
+
+    return df
+
 # ======= BOTÕES DISCRETOS (ESQ) + EDITORES: MEIO DE PAGAMENTO e PORTADOR =======
 
 def _load_sheet_raw_full(sheet_name: str):
-    """Lê a aba informada exatamente como está (todas as colunas/ordem)."""
     sh = _open_planilha("Vendas diarias")
     if not sh:
         raise RuntimeError("Planilha 'Vendas diarias' indisponível.")
@@ -293,7 +464,6 @@ def _load_sheet_raw_full(sheet_name: str):
     return df, ws
 
 def _save_sheet_full(df_edit: pd.DataFrame, ws):
-    """Salva de volta o conteúdo exatamente como está no grid (inclui cabeçalhos)."""
     ws.clear()
     if df_edit.empty:
         return
@@ -301,7 +471,6 @@ def _save_sheet_full(df_edit: pd.DataFrame, ws):
     data = [header] + df_edit.astype(str).values.tolist()
     ws.update(data)
 
-# --- barra discreta à esquerda com os dois botões ---
 left, _ = st.columns([0.22, 0.78])
 with left:
     c1, c2 = st.columns([1, 1])
@@ -342,11 +511,12 @@ if st.session_state.get("editor_on_meio"):
             if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="meio_save"):
                 try:
                     _save_sheet_full(edited, ws_rules)
-                    # recarrega regras do app
                     st.cache_data.clear()
-                    DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
+                    # recarrega globais
+                    global DF_MEIO, MEIO_RULES, PIX_DEFAULT_CODE
+                    DF_MEIO, MEIO_RULES, PIX_DEFAULT_CODE = carregar_tabela_meio_pagto()
                     st.session_state["editor_on_meio"] = False
-                    st.success("Alterações salvas, regras atualizadas e editor fechado.")
+                    st.success("Alterações salvas, regras/PIX atualizados e editor fechado.")
                 except Exception as e:
                     st.error(f"Falha ao salvar: {e}")
         with col_actions[1]:
@@ -383,10 +553,9 @@ if st.session_state.get("editor_on_portador"):
             if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="port_save"):
                 try:
                     _save_sheet_full(edited_port, ws_port)
-                    # recarrega portadores do app
                     st.cache_data.clear()
+                    global PORTADORES, MAPA_BANCO_PARA_PORTADOR
                     PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
-                    # atualiza fallbacks em sessão
                     st.session_state["_portadores"] = PORTADORES
                     st.session_state["editor_on_portador"] = False
                     st.success("Alterações salvas, portadores atualizados e editor fechado.")
@@ -396,9 +565,7 @@ if st.session_state.get("editor_on_portador"):
             if st.button("Fechar sem salvar", use_container_width=True, key="port_close"):
                 st.session_state["editor_on_portador"] = False
 
-
-
-# ===== Ordem de saída (sem a flag; a flag entra na frente) =====
+# ===== Ordem de saída =====
 IMPORTADOR_ORDER = [
     "CNPJ Empresa",
     "Série Título",
@@ -423,7 +590,6 @@ IMPORTADOR_ORDER = [
 # UI Components
 # ======================
 def filtros_grupo_empresa(prefix, with_portador=False, with_tipo_imp=False):
-    """Grupo | Empresa | Banco | Tipo de Importação (lado a lado) com fallback seguro."""
     c1, c2, c3, c4 = st.columns([1,1,1,1])
 
     grupos = globals().get("GRUPOS") or st.session_state.get("_grupos", [])
@@ -454,7 +620,6 @@ def filtros_grupo_empresa(prefix, with_portador=False, with_tipo_imp=False):
 
     return gsel, esel
 
-# limpa DF gerado quando o usuário apaga a colagem
 def _on_paste_change(prefix: str):
     txt = st.session_state.get(f"{prefix}_paste", "")
     if not str(txt).strip():
@@ -462,7 +627,6 @@ def _on_paste_change(prefix: str):
         st.session_state.pop(f"{prefix}_edited_once", None)
 
 def bloco_colagem(prefix: str):
-    """Apenas colagem + pré-visualização opcional."""
     c1,c2 = st.columns([0.65,0.35])
     with c1:
         txt = st.text_area(
@@ -514,16 +678,14 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
         if not row.empty:
             cnpj_loja = str(row.iloc[0].get("CNPJ", "") or "")
 
-    # Portador (nome) a partir do Banco selecionado
     banco_escolhido = banco_escolhido or ""
     portador_nome = MAPA_BANCO_PARA_PORTADOR.get(banco_escolhido, banco_escolhido)
 
-    # dados do usuário (mantém a data exatamente como veio)
     data_original  = df_raw[cd].astype(str)
     valor_original = pd.to_numeric(df_raw[cv].apply(_to_float_br), errors="coerce").round(2)
     ref_txt        = df_raw[cb].astype(str).str.strip()
 
-    # mapeamento por tokens do Padrão Cod Gerencial
+    # mapeamento por tokens
     cod_conta_list, cnpj_cli_list = [], []
     for b in ref_txt:
         cod, cnpj_band, _ = _match_bandeira_to_gerencial(b)
@@ -550,10 +712,7 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
         "Cód Centro de Custo":   3
     })
 
-    # filtra linhas válidas
     out = out[(out["Data"].astype(str).str.strip() != "") & (out["Valor Original"].notna())]
-
-    # reordena conforme importador e coloca flag no início
     out = out.reindex(columns=[c for c in IMPORTADOR_ORDER if c in out.columns])
     out.insert(0, "🔴 Falta CNPJ?", out["CNPJ/Cliente"].astype(str).str.strip().eq(""))
 
@@ -603,12 +762,51 @@ with aba_cr:
         and esel not in (None, "", "— selecione —")
     )
 
+    # ⚙️ Opções de PIX/LOG para CR
+    with st.expander("⚙️ Opções de classificação PIX (CR)"):
+        do_pix_cr = st.checkbox("Aplicar classificação automática de PIX (CR)", value=True, key="do_pix_cr")
+        colx1, colx2, colx3 = st.columns([0.38,0.38,0.24])
+        with colx1:
+            if st.button("📥 Baixar Log (OK/Erro) – CR", use_container_width=True):
+                ok_df, err_df = _logs_to_df()
+                with pd.ExcelWriter(BytesIO(), engine="openpyxl") as w:
+                    pass
+            # Baixar dois arquivos (OK e ERRO)
+            ok_df, err_df = _logs_to_df()
+            if not ok_df.empty:
+                bio_ok = BytesIO()
+                with pd.ExcelWriter(bio_ok, engine="openpyxl") as w:
+                    ok_df.to_excel(w, index=False, sheet_name="Log_OK")
+                bio_ok.seek(0)
+                st.download_button("⬇️ Baixar Log OK (CR/CP)", bio_ok, file_name="Log_PIX_OK.xlsx", use_container_width=True)
+            if not err_df.empty:
+                bio_er = BytesIO()
+                with pd.ExcelWriter(bio_er, engine="openpyxl") as w:
+                    err_df.to_excel(w, index=False, sheet_name="Log_ERRO")
+                bio_er.seek(0)
+                st.download_button("⬇️ Baixar Log ERRO (CR/CP)", bio_er, file_name="Log_PIX_ERRO.xlsx", use_container_width=True)
+        with colx2:
+            if st.button("📝 Gravar logs no Google Sheets", use_container_width=True):
+                _save_logs_to_sheet()
+        with colx3:
+            if st.button("🧹 Limpar logs (sessão)", use_container_width=True):
+                st.session_state["pix_log_ok"] = []
+                st.session_state["pix_log_err"] = []
+                st.success("Logs da sessão limpos.")
+
     if cr_ready:
         df_imp = _build_importador_df(
             df_raw, "cr",
             gsel, esel,
             st.session_state.get("cr_portador","")
         )
+        # aplica PIX (sem mexer no que já tem código)
+        if do_pix_cr:
+            df_imp = _classificar_pix_em_df(
+                df_imp, modulo="CR", grupo=gsel, empresa=esel,
+                banco_nome=st.session_state.get("cr_portador","")
+            )
+
         st.session_state["cr_edited_once"] = False
         st.session_state["cr_df_imp"] = df_imp.copy()
 
@@ -634,10 +832,6 @@ with aba_cr:
         edited_full = edited_full.reindex(columns=cols_final)
 
         st.session_state["cr_df_imp"] = edited_full
-
-        faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
-        total  = int(len(edited_full))
-        #st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.") if faltam else st.success("✅ Todos os CNPJs foram preenchidos.")
 
         _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=not st.session_state.get("cr_edited_once", False))
     else:
@@ -667,12 +861,45 @@ with aba_cp:
         and esel not in (None, "", "— selecione —")
     )
 
+    # ⚙️ Opções de PIX/LOG para CP
+    with st.expander("⚙️ Opções de classificação PIX (CP)"):
+        do_pix_cp = st.checkbox("Aplicar classificação automática de PIX (CP)", value=True, key="do_pix_cp")
+        coly1, coly2, coly3 = st.columns([0.5,0.25,0.25])
+        with coly1:
+            ok_df, err_df = _logs_to_df()
+            if not ok_df.empty:
+                bio_ok2 = BytesIO()
+                with pd.ExcelWriter(bio_ok2, engine="openpyxl") as w:
+                    ok_df.to_excel(w, index=False, sheet_name="Log_OK")
+                bio_ok2.seek(0)
+                st.download_button("⬇️ Baixar Log OK (CR/CP)", bio_ok2, file_name="Log_PIX_OK.xlsx", use_container_width=True)
+            if not err_df.empty:
+                bio_er2 = BytesIO()
+                with pd.ExcelWriter(bio_er2, engine="openpyxl") as w:
+                    err_df.to_excel(w, index=False, sheet_name="Log_ERRO")
+                bio_er2.seek(0)
+                st.download_button("⬇️ Baixar Log ERRO (CR/CP)", bio_er2, file_name="Log_PIX_ERRO.xlsx", use_container_width=True)
+        with coly2:
+            if st.button("📝 Gravar logs no Google Sheets (CP)", use_container_width=True):
+                _save_logs_to_sheet()
+        with coly3:
+            if st.button("🧹 Limpar logs (sessão) (CP)", use_container_width=True):
+                st.session_state["pix_log_ok"] = []
+                st.session_state["pix_log_err"] = []
+                st.success("Logs da sessão limpos.")
+
     if cp_ready:
         df_imp = _build_importador_df(
             df_raw, "cp",
             gsel, esel,
             st.session_state.get("cp_portador","")
         )
+        if do_pix_cp:
+            df_imp = _classificar_pix_em_df(
+                df_imp, modulo="CP", grupo=gsel, empresa=esel,
+                banco_nome=st.session_state.get("cp_portador","")
+            )
+
         st.session_state["cp_edited_once"] = False
         st.session_state["cp_df_imp"] = df_imp.copy()
 
@@ -699,10 +926,6 @@ with aba_cp:
         edited_full = edited_full.reindex(columns=cols_final)
 
         st.session_state["cp_df_imp"] = edited_full
-
-        faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
-        total  = int(len(edited_full))
-        #st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.") if faltam else st.success("✅ Todos os CNPJs foram preenchidos.")
 
         _download_excel(edited_full, "Importador_Pagar.xlsx", "📥 Baixar Importador (Pagar)", disabled=not st.session_state.get("cp_edited_once", False))
     else:

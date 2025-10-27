@@ -418,9 +418,9 @@ if st.session_state.get("editor_on_meio"):
                     st.success("Alterações salvas, regras atualizadas e editor fechado.")
                 except Exception as e:
                     st.error(f"Falha ao salvar: {e}")
-        with col_actions[1]:
-            if st.button("Fechar sem salvar", use_container_width=True, key="meio_close"):
-                st.session_state["editor_on_meio"] = False
+        #with col_actions[1]:
+        #    if st.button("Fechar sem salvar", use_container_width=True, key="meio_close"):
+        #        st.session_state["editor_on_meio"] = False
 
 # --- EDITOR: Portador ---
 if st.session_state.get("editor_on_portador"):
@@ -461,9 +461,9 @@ if st.session_state.get("editor_on_portador"):
                     st.success("Alterações salvas, portadores atualizados e editor fechado.")
                 except Exception as e:
                     st.error(f"Falha ao salvar: {e}")
-        with col_actions2[1]:
-            if st.button("Fechar sem salvar", use_container_width=True, key="port_close"):
-                st.session_state["editor_on_portador"] = False
+        #with col_actions2[1]:
+        #    if st.button("Fechar sem salvar", use_container_width=True, key="port_close"):
+        #        st.session_state["editor_on_portador"] = False
 
 
 

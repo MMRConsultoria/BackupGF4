@@ -22,14 +22,6 @@ st.set_page_config(page_title="CR-CP Importador Everest", layout="wide")
 # 🔒 Bloqueio de acesso
 if not st.session_state.get("acesso_liberado"):
     st.stop()
-# --- fusível anti-help: neutraliza prints de help() acidentais ---
-try:
-    import builtins
-    def _noop_help(*args, **kwargs): 
-        return None
-    builtins.help = _noop_help
-except Exception:
-    pass
 
 # ===== CSS =====
 st.markdown("""

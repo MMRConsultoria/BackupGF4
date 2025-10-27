@@ -419,7 +419,7 @@ if st.session_state.get("editor_on_meio"):
                     _save_sheet_full(edited, ws_rules)
                     # recarrega regras do app
                     st.cache_data.clear()
-                    DF_MEIO, MEIO_RULES, PIX_DEFAULT_CODE = carregar_tabela_meio_pagto()
+                    DF_MEIO, MEIO_RULES, PIX_DEFAULT_CODE, PIX_DEFAULT_CNPJ = carregar_tabela_meio_pagto()
                     #DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
                     st.session_state["editor_on_meio"] = False
                     st.success("Alterações salvas, regras atualizadas e editor fechado.")

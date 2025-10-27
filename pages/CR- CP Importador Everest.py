@@ -398,7 +398,7 @@ if st.session_state.get("editor_on_meio"):
                            file_name="Tabela_Meio_Pagamento_backup.xlsx",
                            use_container_width=True)
 
-        st.info("Edite livremente; ao **Salvar e Fechar**, a aba será sobrescrita e as regras serão recarregadas.")
+        #st.info("Edite livremente; ao **Salvar e Fechar**, a aba será sobrescrita e as regras serão recarregadas.")
         edited = st.data_editor(
             df_rules_raw,
             num_rows="dynamic",

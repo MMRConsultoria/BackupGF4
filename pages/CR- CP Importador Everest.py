@@ -729,7 +729,43 @@ with aba_cr:
         #faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
         #total  = int(len(edited_full))
         
-        _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=False)
+       # _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=False)
+        def _download_excel(df: pd.DataFrame, filename: str, label_btn: str, disabled=False):
+            if df.empty:
+                st.button(label_btn, disabled=True, use_container_width=True)
+                return
+        
+            # --- faz cópia para não alterar o DataFrame original
+            df_export = df.copy()
+        
+            # 1️⃣ remove a coluna de flag "Falta CNPJ" da exportação
+            if "🔴 Falta CNPJ?" in df_export.columns:
+                df_export = df_export.drop(columns=["🔴 Falta CNPJ?"], errors="ignore")
+        
+            # 2️⃣ tenta converter colunas numéricas que vieram como texto
+            for col in ["CNPJ/Cliente", "Portador", "Cód Conta Gerencial"]:
+                if col in df_export.columns:
+                    df_export[col] = (
+                        pd.to_numeric(df_export[col].astype(str).str.replace(r"[^0-9]", "", regex=True), errors="coerce")
+                        .fillna(0)
+                        .astype(int)
+                    )
+        
+            # 3️⃣ gera o Excel
+            bio = BytesIO()
+            with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+                df_export.to_excel(writer, index=False, sheet_name="Importador")
+            bio.seek(0)
+        
+            # 4️⃣ botão de download
+            st.download_button(
+                label_btn,
+                data=bio,
+                file_name=filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                disabled=disabled
+            )
 
     else:
         if st.session_state.get("cr_tipo_imp") == "Adquirente" and not df_raw.empty:

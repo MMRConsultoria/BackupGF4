@@ -68,7 +68,8 @@ def _norm_basic(s: str) -> str:
 
 def _try_parse_paste(text: str) -> pd.DataFrame:
     text = (text or "").strip("\n\r ")
-    if not text: return pd.DataFrame()
+    if not text:
+        return pd.DataFrame()
     first = text.splitlines()[0] if text else ""
     if "\t" in first:
         df = pd.read_csv(StringIO(text), sep="\t", dtype=str, engine="python")
@@ -84,8 +85,10 @@ def _try_parse_paste(text: str) -> pd.DataFrame:
 def _to_float_br(x):
     s = str(x or "").strip()
     s = s.replace("R$","").replace(" ","").replace(".","").replace(",",".")
-    try: return float(s)
-    except: return None
+    try:
+        return float(s)
+    except:
+        return None
 
 def _tokenize(txt: str):
     return [w for w in re.findall(r"[0-9a-zA-Z]+", _norm_basic(txt)) if w]
@@ -218,6 +221,7 @@ def carregar_tabela_meio_pagto():
     for c in [COL_PADRAO, COL_COD, COL_CNPJ, COL_PIXPAD]:
         df[c] = df[c].astype(str).str.strip()
 
+    # Regras por tokens para bandeira/gerencial
     rules = []
     for _, row in df.iterrows():
         padrao = row[COL_PADRAO]
@@ -230,11 +234,11 @@ def carregar_tabela_meio_pagto():
             continue
         rules.append({"tokens": tokens, "codigo_gerencial": codigo, "cnpj_bandeira": cnpj})
 
+    # PIX padrão global
     pix_vals = [v for v in df[COL_PIXPAD].tolist() if str(v).strip()]
     pix_default = pix_vals[0].strip() if pix_vals else ""
     if pix_vals and len(set(pix_vals)) > 1:
         st.warning("⚠️ Existem múltiplos valores diferentes em 'PIX Padrão Cod Gerencial'. Usando o primeiro encontrado.")
-
     pix_default = pix_default if pix_default else None
     return df, rules, pix_default
 
@@ -296,6 +300,27 @@ def _add_log_err(**kwargs):
     _init_logs()
     st.session_state["pix_log_err"].append(kwargs)
 
+def _now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def _log_pack(modulo, grupo, empresa, banco_nome, row, cod_antes, cod_depois, ref, motivo):
+    # chaves do dicionário podem ter espaços/acentos/barra; não são kwargs
+    return {
+        "Quando": _now(),
+        "Módulo": modulo,
+        "Grupo": grupo,
+        "Empresa": empresa,
+        "Banco/Portador": banco_nome,
+        "Data": str(row.get("Data","")),
+        "Valor": row.get("Valor Original",""),
+        "Referência": ref,
+        "CNPJ Empresa": str(row.get("CNPJ Empresa","")),
+        "CNPJ/Cliente": str(row.get("CNPJ/Cliente","")),
+        "Cod Antes": cod_antes,
+        "Cod Depois": cod_depois,
+        "Motivo/Regra": motivo,
+    }
+
 def _logs_to_df():
     ok = pd.DataFrame(st.session_state.get("pix_log_ok", []))
     err = pd.DataFrame(st.session_state.get("pix_log_err", []))
@@ -304,9 +329,6 @@ def _logs_to_df():
     ok = ok.reindex(columns=cols, fill_value="")
     err = err.reindex(columns=cols, fill_value="")
     return ok, err
-
-def _now():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def _save_logs_to_sheet():
     ok_df, err_df = _logs_to_df()
@@ -382,39 +404,28 @@ def _classificar_pix_em_df(df_importador: pd.DataFrame, modulo: str, grupo: str,
             continue
 
         if cod_antes:
-            _add_log_ok(**{
-                "Quando": _now(), "Módulo": modulo, "Grupo": grupo, "Empresa": empresa,
-                "Banco/Portador": banco_nome, "Data": str(row.get("Data","")),
-                "Valor": row.get("Valor Original",""), "Referência": ref,
-                "CNPJ Empresa": str(row.get("CNPJ Empresa","")),
-                "CNPJ/Cliente": str(row.get("CNPJ/Cliente","")),
-                "Cod Antes": cod_antes, "Cod Depois": cod_antes,
-                "Motivo/Regra": "PIX detectado, mas já havia classificação anterior — mantido"
-            })
+            _add_log_ok(**_log_pack(
+                modulo, grupo, empresa, banco_nome, row,
+                cod_antes=cod_antes, cod_depois=cod_antes, ref=ref,
+                motivo="PIX detectado, mas já havia classificação anterior — mantido"
+            ))
             continue
 
         if not PIX_DEFAULT_CODE:
-            _add_log_err(**{
-                "Quando": _now(), "Módulo": modulo, "Grupo": grupo, "Empresa": empresa,
-                "Banco/Portador": banco_nome, "Data": str(row.get("Data","")),
-                "Valor": row.get("Valor Original",""), "Referência": ref,
-                "CNPJ Empresa": str(row.get("CNPJ Empresa","")),
-                "CNPJ/Cliente": str(row.get("CNPJ/Cliente","")),
-                "Cod Antes": cod_antes, "Cod Depois": "",
-                "Motivo/Regra": "PIX detectado, porém 'PIX Padrão Cod Gerencial' está vazio"
-            })
+            _add_log_err(**_log_pack(
+                modulo, grupo, empresa, banco_nome, row,
+                cod_antes=cod_antes, cod_depois="", ref=ref,
+                motivo="PIX detectado, porém 'PIX Padrão Cod Gerencial' está vazio"
+            ))
             continue
 
+        # aplica padrão
         df.at[idx, col_cod] = PIX_DEFAULT_CODE
-        _add_log_ok(**{
-            "Quando": _now(), "Módulo": modulo, "Grupo": grupo, "Empresa": empresa,
-            "Banco/Portador": banco_nome, "Data": str(row.get("Data","")),
-            "Valor": row.get("Valor Original",""), "Referência": ref,
-            "CNPJ Empresa": str(row.get("CNPJ Empresa","")),
-            "CNPJ/Cliente": str(row.get("CNPJ/Cliente","")),
-            "Cod Antes": cod_antes, "Cod Depois": PIX_DEFAULT_CODE,
-            "Motivo/Regra": "Classificado via 'PIX Padrão Cod Gerencial'"
-        })
+        _add_log_ok(**_log_pack(
+            modulo, grupo, empresa, banco_nome, row,
+            cod_antes=cod_antes, cod_depois=PIX_DEFAULT_CODE, ref=ref,
+            motivo="Classificado via 'PIX Padrão Cod Gerencial'"
+        ))
 
     if "CNPJ/Cliente" in df.columns:
         df["🔴 Falta CNPJ?"] = df["CNPJ/Cliente"].astype(str).str.strip().eq("")
@@ -491,6 +502,7 @@ if st.session_state.get("editor_on_meio"):
                 try:
                     _save_sheet_full(edited, ws_rules)
                     st.cache_data.clear()
+                    # recarrega globais
                     global DF_MEIO, MEIO_RULES, PIX_DEFAULT_CODE
                     DF_MEIO, MEIO_RULES, PIX_DEFAULT_CODE = carregar_tabela_meio_pagto()
                     st.session_state["editor_on_meio"] = False
@@ -663,6 +675,7 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     valor_original = pd.to_numeric(df_raw[cv].apply(_to_float_br), errors="coerce").round(2)
     ref_txt        = df_raw[cb].astype(str).str.strip()
 
+    # mapeamento por tokens
     cod_conta_list, cnpj_cli_list = [], []
     for b in ref_txt:
         cod, cnpj_band, _ = _match_bandeira_to_gerencial(b)
@@ -739,6 +752,7 @@ with aba_cr:
         and esel not in (None, "", "— selecione —")
     )
 
+    # ⚙️ Opções de PIX/LOG para CR
     with st.expander("⚙️ Opções de classificação PIX (CR)"):
         do_pix_cr = st.checkbox("Aplicar classificação automática de PIX (CR)", value=True, key="do_pix_cr")
         colx1, colx2, colx3 = st.columns([0.38,0.38,0.24])
@@ -771,6 +785,7 @@ with aba_cr:
             gsel, esel,
             st.session_state.get("cr_portador","")
         )
+        # aplica PIX (sem mexer no que já tem código)
         if do_pix_cr:
             df_imp = _classificar_pix_em_df(
                 df_imp, modulo="CR", grupo=gsel, empresa=esel,
@@ -831,6 +846,7 @@ with aba_cp:
         and esel not in (None, "", "— selecione —")
     )
 
+    # ⚙️ Opções de PIX/LOG para CP
     with st.expander("⚙️ Opções de classificação PIX (CP)"):
         do_pix_cp = st.checkbox("Aplicar classificação automática de PIX (CP)", value=True, key="do_pix_cp")
         coly1, coly2, coly3 = st.columns([0.5,0.25,0.25])

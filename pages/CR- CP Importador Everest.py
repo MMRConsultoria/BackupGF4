@@ -175,13 +175,6 @@ def carregar_portadores():
             if p: mapa[b] = p
     return sorted(bancos), mapa
 
-# ======= BOTÃO PARA RECARREGAR REGRAS (limpa cache) =======
-col_btn1, _ = st.columns([0.25,0.75])
-with col_btn1:
-    if st.button("🔄 Atualizar regras (recarregar planilha)", use_container_width=True):
-        st.cache_data.clear()
-        st.success("Regras recarregadas! Gere novamente o importador.")
-
 @st.cache_data(show_spinner=False)
 def carregar_tabela_meio_pagto():
     """
@@ -244,27 +237,6 @@ def carregar_tabela_meio_pagto():
 
     return df, rules
 
-def _best_rule_for_tokens(ref_tokens: set):
-    """Retorna (rule, hits, matched_tokens) ou (None, 0, set())"""
-    best = None
-    best_hits = 0
-    best_tokens_len = 0
-    best_matched = set()
-
-    for rule in MEIO_RULES:
-        tokens = set(rule["tokens"])
-        matched = tokens & ref_tokens
-        hits = len(matched)
-        if hits == 0:
-            continue
-        if (hits > best_hits) or (hits == best_hits and len(tokens) > best_tokens_len):
-            best = rule
-            best_hits = hits
-            best_tokens_len = len(tokens)
-            best_matched = matched
-
-    return best, best_hits, best_matched
-
 def _match_bandeira_to_gerencial(ref_text: str):
     """
     Matching por palavras-chave (tokens) usando apenas 'Padrão Cod Gerencial'.
@@ -279,7 +251,19 @@ def _match_bandeira_to_gerencial(ref_text: str):
     if not ref_tokens:
         return "", "", ""
 
-    best, _, _ = _best_rule_for_tokens(ref_tokens)
+    best = None
+    best_hits = 0
+    best_tokens_len = 0
+
+    for rule in MEIO_RULES:
+        tokens = rule["tokens"]
+        hits = sum(1 for t in tokens if t in ref_tokens)
+        if hits == 0:
+            continue
+        if (hits > best_hits) or (hits == best_hits and len(tokens) > best_tokens_len):
+            best = rule
+            best_hits = hits
+            best_tokens_len = len(tokens)
 
     if best:
         return best["codigo_gerencial"], best.get("cnpj_bandeira",""), ""
@@ -348,13 +332,13 @@ def _on_paste_change(prefix: str):
         st.session_state.pop(f"{prefix}_edited_once", None)
 
 def bloco_colagem(prefix: str):
-    """Apenas colagem + pré-visualização opcional e debug."""
+    """Apenas colagem + pré-visualização opcional."""
     c1,c2 = st.columns([0.65,0.35])
     with c1:
         txt = st.text_area(
             "📋 Colar tabela (Ctrl+V)",
             height=180,
-            placeholder="Cole aqui os dados copiados do Excel/Sheets… (ex.: selecione a coluna 'Complemento')",
+            placeholder="Cole aqui os dados copiados do Excel/Sheets…",
             key=f"{prefix}_paste",
             on_change=_on_paste_change,
             args=(prefix,)
@@ -362,12 +346,12 @@ def bloco_colagem(prefix: str):
         df_paste = _try_parse_paste(txt) if (txt and str(txt).strip()) else pd.DataFrame()
 
     with c2:
-        st.checkbox("🔎 Mostrar diagnóstico de matching", key=f"{prefix}_debug", value=False)
         show_prev = st.checkbox("Mostrar pré-visualização da colagem", value=False, key=f"{prefix}_show_prev")
         if show_prev and not df_paste.empty:
             st.dataframe(df_paste, use_container_width=True, height=120)
         elif df_paste.empty:
             st.info("Cole dados para prosseguir.")
+
     return df_paste
 
 def _column_mapping_ui(prefix: str, df_raw: pd.DataFrame):
@@ -409,29 +393,14 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     valor_original = pd.to_numeric(df_raw[cv].apply(_to_float_br), errors="coerce").round(2)
     ref_txt        = df_raw[cb].astype(str).str.strip()
 
-    # mapeamento por tokens do Padrão Cod Gerencial + (opcional) diagnóstico
+    # mapeamento por tokens do Padrão Cod Gerencial
     cod_conta_list, cnpj_cli_list = [], []
-    dbg_hits, dbg_rule, dbg_tokens = [], [], []
-    debug_on = st.session_state.get(f"{prefix}_debug", False)
-
     for b in ref_txt:
-        ref_tokens = set(_tokenize(b))
-        rule, hits, matched = _best_rule_for_tokens(ref_tokens)
-        if rule:
-            cod_conta_list.append(rule["codigo_gerencial"])
-            cnpj_cli_list.append(rule.get("cnpj_bandeira",""))
-            if debug_on:
-                dbg_hits.append(hits)
-                dbg_rule.append(" ".join(rule["tokens"]))
-                dbg_tokens.append(" ".join(sorted(matched)))
-        else:
-            cod_conta_list.append("")
-            cnpj_cli_list.append("")
-            if debug_on:
-                dbg_hits.append(0)
-                dbg_rule.append("")
-                dbg_tokens.append("")
+        cod, cnpj_band, _ = _match_bandeira_to_gerencial(b)
+        cod_conta_list.append(cod)            # Cod Gerencial Everest
+        cnpj_cli_list.append(cnpj_band)       # CNPJ da Bandeira
 
+    # campos fixos
     out = pd.DataFrame({
         "CNPJ Empresa":          cnpj_loja,
         "Série Título":          "DRE",
@@ -452,24 +421,16 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
         "Cód Centro de Custo":   3
     })
 
-    if debug_on:
-        out["⚙️ Matching: acertos"] = dbg_hits
-        out["⚙️ Matching: regra (tokens)"] = dbg_rule
-        out["⚙️ Matching: tokens batidos"] = dbg_tokens
-
     # filtra linhas válidas
     out = out[(out["Data"].astype(str).str.strip() != "") & (out["Valor Original"].notna())]
 
     # reordena conforme importador e coloca flag no início
-    cols_base = [c for c in IMPORTADOR_ORDER if c in out.columns]
-    # insere colunas de debug antes do flag, se existirem
-    debug_cols = [c for c in out.columns if c.startswith("⚙️ Matching")]
-    ordered = cols_base + debug_cols
-    out = out.reindex(columns=ordered)
+    out = out.reindex(columns=[c for c in IMPORTADOR_ORDER if c in out.columns])
     out.insert(0, "🔴 Falta CNPJ?", out["CNPJ/Cliente"].astype(str).str.strip().eq(""))
 
-    # ordem final (flag + outras)
-    out = out[["🔴 Falta CNPJ?"] + ordered]
+    # ordem final (flag + IMPORTADOR_ORDER)
+    final_cols = ["🔴 Falta CNPJ?"] + [c for c in IMPORTADOR_ORDER if c in out.columns]
+    out = out[final_cols]
     return out
 
 def _download_excel(df: pd.DataFrame, filename: str, label_btn: str, disabled=False):
@@ -500,11 +461,13 @@ with aba_cr:
     st.markdown('<hr class="compact">', unsafe_allow_html=True)
     df_raw = bloco_colagem("cr")
 
+    # Mapeamento (apenas se Adquirente)
     if st.session_state.get("cr_tipo_imp") == "Adquirente" and not df_raw.empty:
         _column_mapping_ui("cr", df_raw)
 
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # ===== Auto-geração do importador (sem botão) =====
     cr_ready = (
         st.session_state.get("cr_tipo_imp") == "Adquirente"
         and not df_raw.empty
@@ -520,12 +483,15 @@ with aba_cr:
             gsel, esel,
             st.session_state.get("cr_portador","")
         )
+        # sempre que regera, reseta "editado"
         st.session_state["cr_edited_once"] = False
         st.session_state["cr_df_imp"] = df_imp.copy()
 
+    # Editor + Download (download só após edição)
     df_imp_state = st.session_state.get("cr_df_imp")
     if isinstance(df_imp_state, pd.DataFrame) and not df_imp_state.empty:
         df_imp = df_imp_state
+        # checkbox para filtrar apenas faltantes
         show_only_missing = st.checkbox("Mostrar apenas linhas com 🔴 Falta CNPJ", value=st.session_state.get("cr_only_missing", False), key="cr_only_missing")
         df_view = df_imp[df_imp["🔴 Falta CNPJ?"]] if show_only_missing else df_imp
 
@@ -533,24 +499,44 @@ with aba_cr:
         disabled_cols = [c for c in df_view.columns if c not in editable]
 
         editor_key = f"cr_editor_{gsel}_{esel}_{st.session_state.get('cr_col_data')}_{st.session_state.get('cr_col_valor')}_{st.session_state.get('cr_col_bandeira')}"
-        edited_cr = st.data_editor(df_view, disabled=disabled_cols, use_container_width=True, height=420, key=editor_key)
+        edited_cr = st.data_editor(
+            df_view,
+            disabled=disabled_cols,
+            use_container_width=True,
+            height=420,
+            key=editor_key
+        )
 
-        if not edited_cr.equals(df_view):
+        # houve mudanças?
+        changed = not edited_cr.equals(df_view)
+        if changed:
             st.session_state["cr_edited_once"] = True
 
+        # aplica as mudanças no DF completo
         edited_full = df_imp.copy()
         edited_full.update(edited_cr)
         edited_full["🔴 Falta CNPJ?"] = edited_full["CNPJ/Cliente"].astype(str).str.strip().eq("")
-        cols_final = ["🔴 Falta CNPJ?"] + [c for c in df_imp.columns if c != "🔴 Falta CNPJ?"]
+
+        # reforça a ordem de colunas
+        cols_final = ["🔴 Falta CNPJ?"] + [c for c in IMPORTADOR_ORDER if c in edited_full.columns]
         edited_full = edited_full.reindex(columns=cols_final)
 
         st.session_state["cr_df_imp"] = edited_full
 
         faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
         total  = int(len(edited_full))
-        st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.") if faltam else st.success("✅ Todos os CNPJs foram preenchidos.")
+        if faltam:
+            st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.")
+        else:
+            st.success("✅ Todos os CNPJs foram preenchidos.")
 
-        _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=not st.session_state.get("cr_edited_once", False))
+        # download só após edição
+        _download_excel(
+            edited_full,
+            "Importador_Receber.xlsx",
+            "📥 Baixar Importador (Receber)",
+            disabled=not st.session_state.get("cr_edited_once", False)
+        )
     else:
         if st.session_state.get("cr_tipo_imp") == "Adquirente" and not df_raw.empty:
             st.info("Mapeie as colunas (Data, Valor, Referência) e selecione Grupo/Empresa para gerar.")
@@ -598,24 +584,40 @@ with aba_cp:
         disabled_cols = [c for c in df_view.columns if c not in editable]
 
         editor_key = f"cp_editor_{gsel}_{esel}_{st.session_state.get('cp_col_data')}_{st.session_state.get('cp_col_valor')}_{st.session_state.get('cp_col_bandeira')}"
-        edited_cp = st.data_editor(df_view, disabled=disabled_cols, use_container_width=True, height=420, key=editor_key)
+        edited_cp = st.data_editor(
+            df_view,
+            disabled=disabled_cols,
+            use_container_width=True,
+            height=420,
+            key=editor_key
+        )
 
-        if not edited_cp.equals(df_view):
+        changed = not edited_cp.equals(df_view)
+        if changed:
             st.session_state["cp_edited_once"] = True
 
         edited_full = df_imp.copy()
         edited_full.update(edited_cp)
         edited_full["🔴 Falta CNPJ?"] = edited_full["CNPJ/Cliente"].astype(str).str.strip().eq("")
-        cols_final = ["🔴 Falta CNPJ?"] + [c for c in df_imp.columns if c != "🔴 Falta CNPJ?"]
+
+        cols_final = ["🔴 Falta CNPJ?"] + [c for c in IMPORTADOR_ORDER if c in edited_full.columns]
         edited_full = edited_full.reindex(columns=cols_final)
 
         st.session_state["cp_df_imp"] = edited_full
 
         faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
         total  = int(len(edited_full))
-        st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.") if faltam else st.success("✅ Todos os CNPJs foram preenchidos.")
+        if faltam:
+            st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.")
+        else:
+            st.success("✅ Todos os CNPJs foram preenchidos.")
 
-        _download_excel(edited_full, "Importador_Pagar.xlsx", "📥 Baixar Importador (Pagar)", disabled=not st.session_state.get("cp_edited_once", False))
+        _download_excel(
+            edited_full,
+            "Importador_Pagar.xlsx",
+            "📥 Baixar Importador (Pagar)",
+            disabled=not st.session_state.get("cp_edited_once", False)
+        )
     else:
         if st.session_state.get("cp_tipo_imp") == "Adquirente" and not df_raw.empty:
             st.info("Mapeie as colunas (Data, Valor, Referência) e selecione Grupo/Empresa para gerar.")

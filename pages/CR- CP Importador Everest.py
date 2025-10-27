@@ -312,7 +312,7 @@ with left:
         if st.button("TB Portador", use_container_width=True, help="Abrir/editar aba Portador"):
             st.session_state["editor_on_portador"] = True
 
-# --- dentro do bloco do EDITOR: Tabela Meio Pagamento ---
+# --- EDITOR: Tabela Meio Pagamento ---
 if st.session_state.get("editor_on_meio"):
     st.markdown("Meio de Pagamento")
     try:
@@ -329,26 +329,31 @@ if st.session_state.get("editor_on_meio"):
                            file_name="Tabela_Meio_Pagamento_backup.xlsx",
                            use_container_width=True)
 
-        
+        st.info("Edite livremente; ao **Salvar e Fechar**, a aba será sobrescrita e as regras serão recarregadas.")
+        edited = st.data_editor(
+            df_rules_raw,
+            num_rows="dynamic",
+            use_container_width=True,
+            height=520,
+        )
 
         col_actions = st.columns([0.25, 0.25, 0.5])
         with col_actions[0]:
             if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="meio_save"):
                 try:
                     _save_sheet_full(edited, ws_rules)
+                    # recarrega regras do app
                     st.cache_data.clear()
                     DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
                     st.session_state["editor_on_meio"] = False
-                    st.success("Alterações salvas e editor fechado.")
-                    st.rerun()  # 🔹 força atualização imediata
+                    st.success("Alterações salvas, regras atualizadas e editor fechado.")
                 except Exception as e:
                     st.error(f"Falha ao salvar: {e}")
         with col_actions[1]:
             if st.button("Fechar sem salvar", use_container_width=True, key="meio_close"):
                 st.session_state["editor_on_meio"] = False
-                st.rerun()  # 🔹 idem para fechar sem salvar
 
-# --- dentro do bloco do EDITOR: Portador ---
+# --- EDITOR: Portador ---
 if st.session_state.get("editor_on_portador"):
     st.markdown("Portador")
     try:
@@ -365,24 +370,31 @@ if st.session_state.get("editor_on_portador"):
                            file_name="Portador_backup.xlsx",
                            use_container_width=True)
 
-        
+        st.info("Edite livremente; ao **Salvar e Fechar**, a aba será sobrescrita e o mapa de portadores será recarregado.")
+        edited_port = st.data_editor(
+            df_port_raw,
+            num_rows="dynamic",
+            use_container_width=True,
+            height=520,
+        )
+
         col_actions2 = st.columns([0.25, 0.25, 0.5])
         with col_actions2[0]:
             if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="port_save"):
                 try:
                     _save_sheet_full(edited_port, ws_port)
+                    # recarrega portadores do app
                     st.cache_data.clear()
                     PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
+                    # atualiza fallbacks em sessão
                     st.session_state["_portadores"] = PORTADORES
                     st.session_state["editor_on_portador"] = False
-                    st.success("Alterações salvas e editor fechado.")
-                    st.rerun()  # 🔹 fecha no primeiro clique
+                    st.success("Alterações salvas, portadores atualizados e editor fechado.")
                 except Exception as e:
                     st.error(f"Falha ao salvar: {e}")
         with col_actions2[1]:
             if st.button("Fechar sem salvar", use_container_width=True, key="port_close"):
                 st.session_state["editor_on_portador"] = False
-                st.rerun()  # 🔹 idem
 
 
 

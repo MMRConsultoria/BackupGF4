@@ -394,9 +394,9 @@ if st.session_state.get("editor_on_meio"):
         with pd.ExcelWriter(backup, engine="openpyxl") as w:
             df_rules_raw.to_excel(w, index=False, sheet_name="Tabela Meio Pagamento")
         backup.seek(0)
-        st.download_button("Backup (.xlsx)", backup,
-                           file_name="Tabela_Meio_Pagamento_backup.xlsx",
-                           use_container_width=True)
+        #st.download_button("Backup (.xlsx)", backup,
+        #                   file_name="Tabela_Meio_Pagamento_backup.xlsx",
+        #                   use_container_width=True)
 
         #st.info("Edite livremente; ao **Salvar e Fechar**, a aba será sobrescrita e as regras serão recarregadas.")
         edited = st.data_editor(
@@ -435,11 +435,11 @@ if st.session_state.get("editor_on_portador"):
         with pd.ExcelWriter(backup2, engine="openpyxl") as w:
             df_port_raw.to_excel(w, index=False, sheet_name="Portador")
         backup2.seek(0)
-        st.download_button("Backup Portador (.xlsx)", backup2,
-                           file_name="Portador_backup.xlsx",
-                           use_container_width=True)
+        #st.download_button("Backup Portador (.xlsx)", backup2,
+        #                   file_name="Portador_backup.xlsx",
+        #                   use_container_width=True)
 
-        st.info("Edite livremente; ao **Salvar e Fechar**, a aba será sobrescrita e o mapa de portadores será recarregado.")
+       #st.info("Edite livremente; ao **Salvar e Fechar**, a aba será sobrescrita e o mapa de portadores será recarregado.")
         edited_port = st.data_editor(
             df_port_raw,
             num_rows="dynamic",

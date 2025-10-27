@@ -18,7 +18,7 @@ except Exception:
     pass
 
 st.set_page_config(page_title="CR-CP Importador Everest", layout="wide")
-
+st.set_option("client.showErrorDetails", False)
 # 🔒 Bloqueio de acesso
 if not st.session_state.get("acesso_liberado"):
     st.stop()

@@ -367,11 +367,13 @@ if st.session_state.get("editor_on_portador"):
         with pd.ExcelWriter(backup2, engine="openpyxl") as w:
             df_port_raw.to_excel(w, index=False, sheet_name="Portador")
         backup2.seek(0)
-        st.download_button("Backup Portador (.xlsx)", backup2,
-                           file_name="Portador_backup.xlsx",
-                           use_container_width=True)
 
-        st.info("Edite livremente; ao **Salvar e Fechar**, a aba será sobrescrita e o mapa de portadores será recarregado.")
+        st.download_button(
+            "Backup Portador (.xlsx)", backup2,
+            file_name="Portador_backup.xlsx",
+            use_container_width=True
+        )
+
         edited_port = st.data_editor(
             df_port_raw,
             num_rows="dynamic",
@@ -379,23 +381,17 @@ if st.session_state.get("editor_on_portador"):
             height=520,
         )
 
-        col_actions2 = st.columns([0.25, 0.25, 0.5])
-        with col_actions2[0]:
-            if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="port_save"):
-                try:
-                    _save_sheet_full(edited_port, ws_port)
-                    # recarrega portadores do app
-                    st.cache_data.clear()
-                    PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
-                    # atualiza fallbacks em sessão
-                    st.session_state["_portadores"] = PORTADORES
-                    st.session_state["editor_on_portador"] = False
-                    st.success("Alterações salvas, portadores atualizados e editor fechado.")
-                except Exception as e:
-                    st.error(f"Falha ao salvar: {e}")
-        with col_actions2[1]:
-            if st.button("Fechar sem salvar", use_container_width=True, key="port_close"):
+        if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="port_save"):
+            try:
+                _save_sheet_full(edited_port, ws_port)
+                st.cache_data.clear()
+                PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
+                st.session_state["_portadores"] = PORTADORES
+            except Exception as e:
+                st.error(f"Falha ao salvar: {e}")
+            finally:
                 st.session_state["editor_on_portador"] = False
+
 
 
 

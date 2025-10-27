@@ -329,6 +329,7 @@ if st.session_state.get("editor_on_meio"):
         with pd.ExcelWriter(backup, engine="openpyxl") as w:
             df_rules_raw.to_excel(w, index=False, sheet_name="Tabela Meio Pagamento")
         backup.seek(0)
+
         st.download_button(
             "Backup (.xlsx)", backup,
             file_name="Tabela_Meio_Pagamento_backup.xlsx",
@@ -342,15 +343,19 @@ if st.session_state.get("editor_on_meio"):
             height=520,
         )
 
-        # Um único botão: salva, recarrega regras, fecha e força rerender imediato
         if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="meio_save"):
             try:
                 _save_sheet_full(edited, ws_rules)
                 st.cache_data.clear()
+                # Atualiza regras em memória, sem recarregar tudo
                 DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
+            except Exception as e:
+                st.error(f"Falha ao salvar: {e}")
             finally:
+                # Fecha o editor instantaneamente
                 st.session_state["editor_on_meio"] = False
-                st.rerun()
+                st.experimental_rerun = False
+
 
 
 # --- EDITOR: Portador ---
@@ -366,6 +371,7 @@ if st.session_state.get("editor_on_portador"):
         with pd.ExcelWriter(backup2, engine="openpyxl") as w:
             df_port_raw.to_excel(w, index=False, sheet_name="Portador")
         backup2.seek(0)
+
         st.download_button(
             "Backup Portador (.xlsx)", backup2,
             file_name="Portador_backup.xlsx",
@@ -379,16 +385,16 @@ if st.session_state.get("editor_on_portador"):
             height=520,
         )
 
-        # Um único botão: salva, recarrega mapa de portadores, fecha e força rerender
         if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="port_save"):
             try:
                 _save_sheet_full(edited_port, ws_port)
                 st.cache_data.clear()
                 PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
                 st.session_state["_portadores"] = PORTADORES
+            except Exception as e:
+                st.error(f"Falha ao salvar: {e}")
             finally:
                 st.session_state["editor_on_portador"] = False
-                st.rerun()
 
 
 

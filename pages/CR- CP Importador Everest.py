@@ -9,15 +9,9 @@ import gspread
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
 
-# Desativa help() para evitar prints acidentais no app
-try:
-    import builtins
-    def _noop_help(*args, **kwargs):
-        return None
-    builtins.help = _noop_help
-except Exception:
-    pass
-
+# ======================
+# Configuracao basica
+# ======================
 st.set_page_config(page_title="CR-CP Importador Everest", layout="wide")
 st.set_option("client.showErrorDetails", False)
 
@@ -25,7 +19,25 @@ st.set_option("client.showErrorDetails", False)
 if not st.session_state.get("acesso_liberado"):
     st.stop()
 
-# ===== CSS =====
+# ======================
+# Flash message (mostra uma unica vez apos st.rerun)
+# ======================
+_flash = st.session_state.pop("_flash_msg", None)
+if _flash:
+    kind = _flash.get("kind", "info")
+    msg = _flash.get("msg", "")
+    if kind == "success":
+        st.success(msg)
+    elif kind == "warning":
+        st.warning(msg)
+    elif kind == "error":
+        st.error(msg)
+    else:
+        st.info(msg)
+
+# ======================
+# CSS limpo (ASCII)
+# ======================
 st.markdown(
     "<style>"
     "[data-testid='stToolbar'] { visibility: hidden; height: 0%; position: fixed; }"
@@ -196,7 +208,6 @@ def carregar_portadores():
 
 @st.cache_data(show_spinner=False)
 def carregar_tabela_meio_pagto():
-    # Lê colunas: Padrao Cod Gerencial, Cod Gerencial Everest, CNPJ Bandeira
     COL_PADRAO = "Padrao Cod Gerencial"
     COL_COD    = "Cod Gerencial Everest"
     COL_CNPJ   = "CNPJ Bandeira"
@@ -277,7 +288,9 @@ def LOJAS_DO(grupo_nome: str):
     lojas_map = globals().get("LOJAS_MAP") or st.session_state.get("_lojas_map", {})
     return lojas_map.get(grupo_nome, [])
 
-# ===== Editores (Meio de Pagamento / Portador) =====
+# ======================
+# Read/Write em abas cruas
+# ======================
 def _load_sheet_raw_full(sheet_name: str):
     sh = _open_planilha("Vendas diarias")
     if not sh:
@@ -304,88 +317,105 @@ def _save_sheet_full(df_edit: pd.DataFrame, ws):
     data = [header] + df_edit.astype(str).values.tolist()
     ws.update(data)
 
+# ======================
+# Barra de botoes para abrir editores
+# ======================
 left, _ = st.columns([0.22, 0.78])
 with left:
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        if st.button("TB MeioPag", use_container_width=True, help="Abrir/editar aba Tabela Meio Pagamento"):
-            st.session_state["editor_on_meio"] = True
-    with c2:
-        if st.button("TB Portador", use_container_width=True, help="Abrir/editar aba Portador"):
-            st.session_state["editor_on_portador"] = True
+    b1, b2 = st.columns(2)
+    with b1:
+        if st.button("TB MeioPag", use_container_width=True):
+            st.session_state["_open_editor"] = "meio"
+            st.rerun()
+    with b2:
+        if st.button("TB Portador", use_container_width=True):
+            st.session_state["_open_editor"] = "portador"
+            st.rerun()
 
-if st.session_state.get("editor_on_meio"):
+# ======================
+# Editor: Tabela Meio Pagamento
+# ======================
+if st.session_state.get("_open_editor") == "meio":
     editor_area_meio = st.empty()
     with editor_area_meio.container():
         st.markdown("### Tabela Meio de Pagamento")
         try:
             df_rules_raw, ws_rules = _load_sheet_raw_full("Tabela Meio Pagamento")
         except Exception as e:
-            st.error(f"Nao foi possivel abrir a tabela: {e}")
-            st.session_state["editor_on_meio"] = False
-        else:
-            edited = st.data_editor(
-                df_rules_raw,
-                num_rows="dynamic",
-                use_container_width=True,
-                height=520,
-                key="editor_meio_grid"
-            )
-            col1, col2 = st.columns([0.3, 0.3])
-            with col1:
-                if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="meio_save"):
-                    try:
-                        _save_sheet_full(edited, ws_rules)
-                        st.cache_data.clear()
-                        global DF_MEIO, MEIO_RULES
-                        DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
-                        st.success("Alteracoes salvas e regras recarregadas.")
-                    except Exception as e:
-                        st.error(f"Falha ao salvar: {e}")
-                    finally:
-                        st.session_state["editor_on_meio"] = False
-                        editor_area_meio.empty()
-            with col2:
-                if st.button("Fechar sem salvar", use_container_width=True, key="meio_close"):
-                    st.session_state["editor_on_meio"] = False
-                    editor_area_meio.empty()
+            st.session_state["_flash_msg"] = {"kind":"error","msg":f"Nao foi possivel abrir: {e}"}
+            st.session_state["_open_editor"] = None
+            st.rerun()
 
-if st.session_state.get("editor_on_portador"):
+        edited = st.data_editor(
+            df_rules_raw,
+            num_rows="dynamic",
+            use_container_width=True,
+            height=520,
+            key="ed_grid_meio"
+        )
+
+        csave, cclose = st.columns([0.3, 0.3])
+        with csave:
+            if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="btn_save_meio"):
+                try:
+                    _save_sheet_full(edited, ws_rules)
+                    st.cache_data.clear()
+                    global DF_MEIO, MEIO_RULES
+                    DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
+                    st.session_state["_flash_msg"] = {"kind":"success","msg":"Alteracoes salvas e regras recarregadas."}
+                except Exception as e:
+                    st.session_state["_flash_msg"] = {"kind":"error","msg":f"Falha ao salvar: {e}"}
+                finally:
+                    st.session_state["_open_editor"] = None
+                    st.rerun()
+
+        with cclose:
+            if st.button("Fechar sem salvar", use_container_width=True, key="btn_close_meio"):
+                st.session_state["_open_editor"] = None
+                st.rerun()
+
+# ======================
+# Editor: Portador
+# ======================
+if st.session_state.get("_open_editor") == "portador":
     editor_area_port = st.empty()
     with editor_area_port.container():
         st.markdown("### Tabela Portador")
         try:
             df_port_raw, ws_port = _load_sheet_raw_full("Portador")
         except Exception as e:
-            st.error(f"Nao foi possivel abrir a aba Portador: {e}")
-            st.session_state["editor_on_portador"] = False
-        else:
-            edited_port = st.data_editor(
-                df_port_raw,
-                num_rows="dynamic",
-                use_container_width=True,
-                height=520,
-                key="editor_port_grid"
-            )
-            colp1, colp2 = st.columns([0.3, 0.3])
-            with colp1:
-                if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="port_save"):
-                    try:
-                        _save_sheet_full(edited_port, ws_port)
-                        st.cache_data.clear()
-                        global PORTADORES, MAPA_BANCO_PARA_PORTADOR
-                        PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
-                        st.session_state["_portadores"] = PORTADORES
-                        st.success("Alteracoes salvas e portadores recarregados.")
-                    except Exception as e:
-                        st.error(f"Falha ao salvar: {e}")
-                    finally:
-                        st.session_state["editor_on_portador"] = False
-                        editor_area_port.empty()
-            with colp2:
-                if st.button("Fechar sem salvar", use_container_width=True, key="port_close"):
-                    st.session_state["editor_on_portador"] = False
-                    editor_area_port.empty()
+            st.session_state["_flash_msg"] = {"kind":"error","msg":f"Nao foi possivel abrir: {e}"}
+            st.session_state["_open_editor"] = None
+            st.rerun()
+
+        edited_port = st.data_editor(
+            df_port_raw,
+            num_rows="dynamic",
+            use_container_width=True,
+            height=520,
+            key="ed_grid_port"
+        )
+
+        csave2, cclose2 = st.columns([0.3, 0.3])
+        with csave2:
+            if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="btn_save_port"):
+                try:
+                    _save_sheet_full(edited_port, ws_port)
+                    st.cache_data.clear()
+                    global PORTADORES, MAPA_BANCO_PARA_PORTADOR
+                    PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
+                    st.session_state["_portadores"] = PORTADORES
+                    st.session_state["_flash_msg"] = {"kind":"success","msg":"Alteracoes salvas e portadores recarregados."}
+                except Exception as e:
+                    st.session_state["_flash_msg"] = {"kind":"error","msg":f"Falha ao salvar: {e}"}
+                finally:
+                    st.session_state["_open_editor"] = None
+                    st.rerun()
+
+        with cclose2:
+            if st.button("Fechar sem salvar", use_container_width=True, key="btn_close_port"):
+                st.session_state["_open_editor"] = None
+                st.rerun()
 
 # ===== Ordem de saida (sem a flag; a flag entra na frente) =====
 IMPORTADOR_ORDER = [

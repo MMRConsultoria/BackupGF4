@@ -729,7 +729,8 @@ with aba_cr:
         #faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
         #total  = int(len(edited_full))
         
-        _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=not st.session_state.get("cr_edited_once", False))
+        _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=False)
+
     else:
         if st.session_state.get("cr_tipo_imp") == "Adquirente" and not df_raw.empty:
             st.info("Mapeie as colunas (Data, Valor, Referência) e selecione Grupo/Empresa para gerar.")

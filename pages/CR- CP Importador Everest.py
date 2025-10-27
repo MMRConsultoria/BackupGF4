@@ -176,123 +176,102 @@ def carregar_portadores():
     return sorted(bancos), mapa
 
 # ======= BOTÃO PARA RECARREGAR REGRAS (limpa cache) =======
-col_btn1, _ = st.columns([0.25,0.75])
+# ======= REGRAS: recarregar + editar inline no Streamlit =======
+def _load_rules_sheet_raw():
+    """Lê a aba 'Tabela Meio Pagamento' como está (sem cache) e retorna DataFrame."""
+    COL_PADRAO = "Padrão Cod Gerencial"
+    COL_COD    = "Cod Gerencial Everest"
+    COL_CNPJ   = "CNPJ Bandeira"
+    sh = _open_planilha("Vendas diarias")
+    if not sh:
+        raise RuntimeError("Planilha 'Vendas diarias' indisponível.")
+    try:
+        ws = sh.worksheet("Tabela Meio Pagamento")
+    except WorksheetNotFound:
+        raise RuntimeError("Aba 'Tabela Meio Pagamento' não encontrada.")
+    df = pd.DataFrame(ws.get_all_records())
+    # garanta as colunas obrigatórias
+    for c in [COL_PADRAO, COL_COD, COL_CNPJ]:
+        if c not in df.columns:
+            df[c] = ""
+    # mantém apenas as 3 colunas essenciais (e em ordem)
+    df = df[[COL_PADRAO, COL_COD, COL_CNPJ]].astype(str)
+    return df, ws
+
+def _save_rules_to_sheet(df_edit: pd.DataFrame, ws):
+    """Salva o DataFrame de volta à planilha (sobrescreve a aba, preservando cabeçalhos)."""
+    COL_PADRAO = "Padrão Cod Gerencial"
+    COL_COD    = "Cod Gerencial Everest"
+    COL_CNPJ   = "CNPJ Bandeira"
+
+    # normalização mínima
+    df = df_edit.copy()
+    for c in [COL_PADRAO, COL_COD, COL_CNPJ]:
+        if c not in df.columns:
+            raise RuntimeError(f"Coluna obrigatória ausente: {c}")
+        df[c] = df[c].astype(str).str.strip()
+
+    # remove linhas totalmente vazias
+    df = df[~(df[[COL_PADRAO, COL_COD, COL_CNPJ]] == "").all(axis=1)]
+
+    # validações simples
+    faltando_codigo = df[(df[COL_PADRAO] != "") & (df[COL_COD] == "")]
+    if not faltando_codigo.empty:
+        raise RuntimeError("Há linhas com 'Padrão Cod Gerencial' preenchido mas sem 'Cod Gerencial Everest'.")
+
+    # escreve
+    ws.clear()
+    ws.update([ [COL_PADRAO, COL_COD, COL_CNPJ] ] + df[[COL_PADRAO, COL_COD, COL_CNPJ]].values.tolist())
+
+# Barra com botões
+col_btn1, _ = st.columns([0.35, 0.65])
 with col_btn1:
     if st.button("🔄 Atualizar regras (recarregar planilha)", use_container_width=True):
         st.cache_data.clear()
         st.success("Regras recarregadas! Gere novamente o importador.")
 
-@st.cache_data(show_spinner=False)
-def carregar_tabela_meio_pagto():
-    """
-    LÊ APENAS as colunas EXATAS:
-      - 'Padrão Cod Gerencial'
-      - 'Cod Gerencial Everest'
-      - 'CNPJ Bandeira'
-    Não tenta adivinhar nomes alternativos.
-    """
-    COL_PADRAO = "Padrão Cod Gerencial"
-    COL_COD    = "Cod Gerencial Everest"
-    COL_CNPJ   = "CNPJ Bandeira"
+    # toggle do editor
+    if st.button("✏️ Editar banco de regras", use_container_width=True):
+        st.session_state["regras_editor_on"] = True
 
-    sh = _open_planilha("Vendas diarias")
-    if not sh:
-        return pd.DataFrame(), []
-
+# UI do editor (simples)
+if st.session_state.get("regras_editor_on"):
+    st.markdown("#### ✏️ Edição rápida — Tabela Meio Pagamento")
     try:
-        ws = sh.worksheet("Tabela Meio Pagamento")
-    except WorksheetNotFound:
-        st.warning("⚠️ Aba 'Tabela Meio Pagamento' não encontrada.")
-        return pd.DataFrame(), []
+        df_rules_raw, ws_rules = _load_rules_sheet_raw()
+    except Exception as e:
+        st.error(f"Não foi possível abrir a tabela: {e}")
+        st.session_state["regras_editor_on"] = False
+    else:
+        # backup
+        backup = BytesIO()
+        with pd.ExcelWriter(backup, engine="openpyxl") as w:
+            df_rules_raw.to_excel(w, index=False, sheet_name="Tabela Meio Pagamento")
+        backup.seek(0)
+        st.download_button("⬇️ Baixar backup (.xlsx)", backup,
+                           file_name="Tabela_Meio_Pagamento_backup.xlsx",
+                           use_container_width=True)
 
-    df = pd.DataFrame(ws.get_all_records())
-    df = df.astype(str)
-
-    # valida cabeçalhos EXATOS
-    missing = [c for c in [COL_PADRAO, COL_COD, COL_CNPJ] if c not in df.columns]
-    if missing:
-        st.error(
-            "Aba 'Tabela Meio Pagamento' está faltando colunas obrigatórias: "
-            + ", ".join(missing)
-            + ". Use exatamente esses nomes (com acentos e espaços)."
+        st.info("Edite as linhas abaixo. Use apenas as colunas: **Padrão Cod Gerencial**, **Cod Gerencial Everest**, **CNPJ Bandeira**.")
+        edited = st.data_editor(
+            df_rules_raw,
+            num_rows="dynamic",
+            use_container_width=True,
+            height=420,
         )
-        return pd.DataFrame(), []
 
-    # normaliza campos
-    for c in [COL_PADRAO, COL_COD, COL_CNPJ]:
-        df[c] = df[c].astype(str).str.strip()
-
-    # monta regras SOMENTE do Padrão
-    rules = []
-    for _, row in df.iterrows():
-        padrao = row[COL_PADRAO]
-        codigo = row[COL_COD]
-        cnpj   = row[COL_CNPJ]
-
-        if not padrao or not codigo:
-            continue
-
-        tokens = sorted(set(_tokenize(padrao)))   # palavras-chave da linha
-        if not tokens:
-            continue
-
-        rules.append({
-            "tokens": tokens,
-            "codigo_gerencial": codigo,
-            "cnpj_bandeira": cnpj,
-        })
-
-    return df, rules
-
-def _best_rule_for_tokens(ref_tokens: set):
-    """Retorna (rule, hits, matched_tokens) ou (None, 0, set())"""
-    best = None
-    best_hits = 0
-    best_tokens_len = 0
-    best_matched = set()
-
-    for rule in MEIO_RULES:
-        tokens = set(rule["tokens"])
-        matched = tokens & ref_tokens
-        hits = len(matched)
-        if hits == 0:
-            continue
-        if (hits > best_hits) or (hits == best_hits and len(tokens) > best_tokens_len):
-            best = rule
-            best_hits = hits
-            best_tokens_len = len(tokens)
-            best_matched = matched
-
-    return best, best_hits, best_matched
-
-def _match_bandeira_to_gerencial(ref_text: str):
-    """
-    Matching por palavras-chave (tokens) usando apenas 'Padrão Cod Gerencial'.
-    - Conta quantos tokens de cada regra aparecem na referência
-    - Escolhe a regra com MAIOR número de acertos
-    - Empate: escolhe a regra com MAIS tokens totais (mais específica)
-    """
-    if not ref_text or not MEIO_RULES:
-        return "", "", ""
-
-    ref_tokens = set(_tokenize(ref_text))
-    if not ref_tokens:
-        return "", "", ""
-
-    best, _, _ = _best_rule_for_tokens(ref_tokens)
-
-    if best:
-        return best["codigo_gerencial"], best.get("cnpj_bandeira",""), ""
-
-    return "", "", ""
-
-# ===== Dados base =====
-df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
-PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
-DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
-
-def LOJAS_DO(grupo_nome: str):
-    return LOJAS_MAP.get(grupo_nome, [])
+        col_actions = st.columns([0.2, 0.2, 0.6])
+        with col_actions[0]:
+            if st.button("💾 Salvar alterações", type="primary", use_container_width=True):
+                try:
+                    _save_rules_to_sheet(edited, ws_rules)
+                    st.cache_data.clear()   # garante que novas regras entram em vigor
+                    st.success("Alterações salvas na planilha e cache atualizado.")
+                except Exception as e:
+                    st.error(f"Falha ao salvar: {e}")
+        with col_actions[1]:
+            if st.button("Cancelar", use_container_width=True):
+                st.session_state["regras_editor_on"] = False
 
 # ===== Ordem de saída (sem a flag; a flag entra na frente) =====
 IMPORTADOR_ORDER = [

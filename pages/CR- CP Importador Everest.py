@@ -734,33 +734,48 @@ with aba_cr:
                 st.button(label_btn, disabled=True, use_container_width=True)
                 return
         
-            # --- faz cópia para não alterar o DataFrame original
             df_export = df.copy()
         
-            # 1️⃣ remove a coluna de flag "Falta CNPJ" da exportação
+            # 1) tira a coluna de flag do Excel
             if "🔴 Falta CNPJ?" in df_export.columns:
                 df_export = df_export.drop(columns=["🔴 Falta CNPJ?"], errors="ignore")
         
-            # 2️⃣ mantém CNPJ como texto e converte as demais numéricas
+            # 2) colunas que devem ficar como número com casas decimais
+            DEC_COLS = {"Valor Desconto", "Valor Multa", "Valor Juros Dia", "Valor Original"}
+            # 3) colunas que podem ser inteiras se forem só dígitos
+            INT_PREF = {"Portador", "Cód Conta Gerencial", "Cód Centro de Custo", "Nº Parcela"}
+        
+            # --- Regras de conversão célula-a-célula:
+            # - CNPJ/Cliente: SEMPRE texto (preserva zeros/pontuação)
+            # - Colunas decimais: converte só as células 100% numéricas
+            # - Colunas inteiras: converte só as células 100% numéricas
             for col in df_export.columns:
                 if col == "CNPJ/Cliente":
-                    # mantém o formato original como texto
                     df_export[col] = df_export[col].astype(str).str.strip()
-                elif col in ["Portador", "Cód Conta Gerencial"]:
-                    # converte em número, removendo caracteres não numéricos
-                    df_export[col] = (
-                        pd.to_numeric(df_export[col].astype(str).str.replace(r"[^0-9]", "", regex=True), errors="coerce")
-                        .fillna(0)
-                        .astype(int)
-                    )
+                    continue
         
-            # 3️⃣ gera o Excel com openpyxl
+                if col in DEC_COLS:
+                    s = df_export[col].astype(str).str.strip()
+                    s_norm = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+                    mask_num = s_norm.str.match(r"^\d+(\.\d+)?$")
+                    # converte só onde for número; resto permanece texto
+                    df_export.loc[mask_num, col] = pd.to_numeric(s_norm[mask_num], errors="coerce")
+                    continue
+        
+                if col in INT_PREF:
+                    s = df_export[col].astype(str).str.strip()
+                    mask_int = s.str.match(r"^\d+$")
+                    df_export.loc[mask_int, col] = pd.to_numeric(s[mask_int], downcast="integer", errors="coerce")
+                    continue
+        
+                # outras colunas: não forçamos tipo
+        
+            # 3) gerar Excel
             bio = BytesIO()
             with pd.ExcelWriter(bio, engine="openpyxl") as writer:
                 df_export.to_excel(writer, index=False, sheet_name="Importador")
             bio.seek(0)
         
-            # 4️⃣ botão de download
             st.download_button(
                 label_btn,
                 data=bio,
@@ -769,6 +784,7 @@ with aba_cr:
                 use_container_width=True,
                 disabled=disabled
             )
+
 
         _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=False)
 

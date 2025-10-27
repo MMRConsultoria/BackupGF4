@@ -729,7 +729,6 @@ with aba_cr:
         #faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
         #total  = int(len(edited_full))
         
-       # _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=False)
         def _download_excel(df: pd.DataFrame, filename: str, label_btn: str, disabled=False):
             if df.empty:
                 st.button(label_btn, disabled=True, use_container_width=True)
@@ -766,6 +765,7 @@ with aba_cr:
                 use_container_width=True,
                 disabled=disabled
             )
+        _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=False)
 
     else:
         if st.session_state.get("cr_tipo_imp") == "Adquirente" and not df_raw.empty:

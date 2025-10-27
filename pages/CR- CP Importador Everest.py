@@ -335,7 +335,7 @@ def _classificar_pix_em_df(df_importador: pd.DataFrame) -> pd.DataFrame:
 # ===== Dados base (carrega ANTES de montar a UI) =====
 df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
 PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
-DF_MEIO, MEIO_RULES, PIX_DEFAULT_CODE = carregar_tabela_meio_pagto()
+DF_MEIO, MEIO_RULES, PIX_DEFAULT_CODE, PIX_DEFAULT_CNPJ = carregar_tabela_meio_pagto()
 
 # fallbacks na sessão (evita NameError em re-runs)
 st.session_state["_grupos"] = GRUPOS

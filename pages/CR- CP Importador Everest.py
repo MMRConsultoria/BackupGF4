@@ -313,14 +313,19 @@ with left:
             st.session_state["editor_on_portador"] = True
 
 # --- EDITOR: Tabela Meio Pagamento ---
+# --- EDITOR: Tabela Meio Pagamento ---
 if st.session_state.get("editor_on_meio"):
-    st.markdown("Meio de Pagamento")
-    try:
-        df_rules_raw, ws_rules = _load_sheet_raw_full("Tabela Meio Pagamento")
-    except Exception as e:
-        st.error(f"Não foi possível abrir a tabela: {e}")
-        st.session_state["editor_on_meio"] = False
-    else:
+    editor_ph = st.empty()
+    with editor_ph.container():
+        st.markdown("Meio de Pagamento")
+        try:
+            df_rules_raw, ws_rules = _load_sheet_raw_full("Tabela Meio Pagamento")
+        except Exception:
+            # falhou: apenas fecha silenciosamente
+            st.session_state["editor_on_meio"] = False
+            editor_ph.empty()
+            st.stop()
+
         backup = BytesIO()
         with pd.ExcelWriter(backup, engine="openpyxl") as w:
             df_rules_raw.to_excel(w, index=False, sheet_name="Tabela Meio Pagamento")
@@ -329,29 +334,27 @@ if st.session_state.get("editor_on_meio"):
                            file_name="Tabela_Meio_Pagamento_backup.xlsx",
                            use_container_width=True)
 
-        st.info("Edite livremente; ao **Salvar e Fechar**, a aba será sobrescrita e as regras serão recarregadas.")
         edited = st.data_editor(
             df_rules_raw,
             num_rows="dynamic",
             use_container_width=True,
             height=520,
+            key="meio_editor_grid"
         )
 
-        col_actions = st.columns([0.25, 0.25, 0.5])
-        with col_actions[0]:
-            if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="meio_save"):
-                try:
-                    _save_sheet_full(edited, ws_rules)
-                    # recarrega regras do app
-                    st.cache_data.clear()
-                    DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
-                    st.session_state["editor_on_meio"] = False
-                    st.success("Alterações salvas, regras atualizadas e editor fechado.")
-                except Exception as e:
-                    st.error(f"Falha ao salvar: {e}")
-        with col_actions[1]:
-            if st.button("Fechar sem salvar", use_container_width=True, key="meio_close"):
+        # ÚNICO BOTÃO
+        if st.button("Salvar e Fechar", type="primary", use_container_width=True, key="meio_save"):
+            try:
+                _save_sheet_full(edited, ws_rules)
+                # recarrega regras no cache e em memória, sem recarregar o app
+                st.cache_data.clear()
+                global DF_MEIO, MEIO_RULES
+                DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
+            finally:
+                # fecha imediatamente
                 st.session_state["editor_on_meio"] = False
+                editor_ph.empty()
+                st.stop()
 
 # --- EDITOR: Portador ---
 if st.session_state.get("editor_on_portador"):

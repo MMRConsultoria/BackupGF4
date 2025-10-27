@@ -191,6 +191,7 @@ def carregar_tabela_meio_pagto():
       - 'Cod Gerencial Everest'
       - 'CNPJ Bandeira'
       - 'PIX Padrão Cod Gerencial' (novo)
+    Retorna: df, rules, PIX_DEFAULT_CODE, PIX_DEFAULT_CNPJ
     """
     COL_PADRAO = "Padrão Cod Gerencial"
     COL_COD    = "Cod Gerencial Everest"
@@ -199,23 +200,22 @@ def carregar_tabela_meio_pagto():
 
     sh = _open_planilha("Vendas diarias")
     if not sh:
-        return pd.DataFrame(), [], None
+        return pd.DataFrame(), [], None, None
 
     try:
         ws = sh.worksheet("Tabela Meio Pagamento")
     except WorksheetNotFound:
         st.warning("⚠️ Aba 'Tabela Meio Pagamento' não encontrada.")
-        return pd.DataFrame(), [], None
+        return pd.DataFrame(), [], None, None
 
     df = pd.DataFrame(ws.get_all_records()).astype(str)
 
-    # garante colunas e limpa espaços
     for c in [COL_PADRAO, COL_COD, COL_CNPJ, COL_PIXPAD]:
         if c not in df.columns:
             df[c] = ""
         df[c] = df[c].astype(str).str.strip()
 
-    # regras (matching por tokens do 'Padrão Cod Gerencial')
+    # Regras por tokens (para bandeiras/cartões)
     rules = []
     for _, row in df.iterrows():
         padrao = row[COL_PADRAO]
@@ -228,11 +228,29 @@ def carregar_tabela_meio_pagto():
             continue
         rules.append({"tokens": tokens, "codigo_gerencial": codigo, "cnpj_bandeira": cnpj})
 
-    # padrão do PIX: pega o primeiro não-vazio (se houver)
-    pix_vals = [v for v in df[COL_PIXPAD].tolist() if str(v).strip()]
-    pix_default = pix_vals[0].strip() if pix_vals else None
+    # -------- Padrões do PIX --------
+    # 1) tenta usar o valor numérico (se houver) em PIX Padrão Cod Gerencial
+    pix_default_code = (df[COL_PIXPAD].dropna().astype(str).str.strip().replace({"": None}).iloc[0]
+                        if COL_PIXPAD in df.columns and not df[COL_PIXPAD].dropna().eq("").all()
+                        else None)
 
-    return df, rules, pix_default
+    # se veio texto (ex.: "PIX QRS"), cai para o código da linha cujo Tipo de Pagamento == "PIX"
+    if pix_default_code and not str(pix_default_code).strip().isdigit():
+        try:
+            pix_row = df[(df.get("Tipo de Pagamento","").str.upper()=="PIX") & (df[COL_COD].astype(str).str.strip()!="")].iloc[0]
+            pix_default_code = str(pix_row[COL_COD]).strip()
+        except Exception:
+            pix_default_code = None
+
+    # CNPJ padrão do PIX (se existir na tabela)
+    pix_default_cnpj = None
+    try:
+        pix_row2 = df[(df.get("Tipo de Pagamento","").str.upper()=="PIX") & (df[COL_CNPJ].astype(str).str.strip()!="")].iloc[0]
+        pix_default_cnpj = str(pix_row2[COL_CNPJ]).strip()
+    except Exception:
+        pass
+
+    return df, rules, pix_default_code, pix_default_cnpj
 
 def _best_rule_for_tokens(ref_tokens: set):
     best = None
@@ -263,56 +281,56 @@ def _match_bandeira_to_gerencial(ref_text: str):
         return best["codigo_gerencial"], best.get("cnpj_bandeira",""), ""
     return "", "", ""
 # ======================
-# Regra PIX (detecção simples por referência) — NÃO sobrescreve códigos já preenchidos
-# ======================
-
-# Padrões comuns em referências de PIX
+# ===== Regra PIX (não sobrescreve o que já existe) =====
 PIX_PATTERNS = [
     r"\bpix\b",
     r"\bqr\b",
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",  # TXID UUID
-    r"[A-Z0-9]{25,}",  # payloads longos vistos em comprovantes
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    r"[A-Z0-9]{25,}",
 ]
-
 def _is_pix_reference(ref_text: str) -> bool:
     if not ref_text:
         return False
     t = _norm_basic(ref_text)
+    import re as _re
     for pat in PIX_PATTERNS:
-        if re.search(pat, t):
+        if _re.search(pat, t):
             return True
-    # termos usuais
-    if any(w in t for w in ["chave", "txid", "qr code", "qrcode", "pagamento instantaneo", "instantaneo"]):
-        return True
-    return False
+    return any(w in t for w in ["chave","txid","qr code","qrcode","pagamento instantaneo","instantaneo"])
 
 def _classificar_pix_em_df(df_importador: pd.DataFrame) -> pd.DataFrame:
-    """
-    Se a referência indicar PIX e 'Cód Conta Gerencial' estiver vazio,
-    aplica o 'PIX_DEFAULT_CODE' lido da 'Tabela Meio Pagamento'.
-    Não mexe no que já estiver preenchido.
-    """
     if df_importador.empty:
         return df_importador
-    if not PIX_DEFAULT_CODE:
-        # não há padrão PIX definido — simplesmente não faz nada
-        return df_importador
-
     df = df_importador.copy()
+
     col_ref = "Observações do Título"
     col_cod = "Cód Conta Gerencial"
+    col_cnpj = "CNPJ/Cliente"
 
     if col_ref not in df.columns:
         return df
     if col_cod not in df.columns:
         df[col_cod] = ""
+    if col_cnpj not in df.columns:
+        df[col_cnpj] = ""
 
-    # aplica só quando é PIX e o código está vazio
-    mask_pix = df[col_ref].astype(str).apply(_is_pix_reference)
-    mask_vazio = df[col_cod].astype(str).str.strip().eq("")
-    df.loc[mask_pix & mask_vazio, col_cod] = PIX_DEFAULT_CODE
+    # máscara: é PIX e código vazio
+    is_pix = df[col_ref].astype(str).apply(_is_pix_reference)
+    cod_vazio = df[col_cod].astype(str).str.strip().eq("")
+    to_fill = is_pix & cod_vazio
+
+    # código padrão (numérico em string); se não houver, não faz nada
+    pix_code = str(PIX_DEFAULT_CODE).strip() if PIX_DEFAULT_CODE else ""
+    if pix_code:
+        df.loc[to_fill, col_cod] = pix_code
+
+    # CNPJ padrão do PIX (só preenche se estiver vazio)
+    if PIX_DEFAULT_CNPJ:
+        cnpj_vazio = df[col_cnpj].astype(str).str.strip().eq("")
+        df.loc[is_pix & cnpj_vazio, col_cnpj] = str(PIX_DEFAULT_CNPJ).strip()
 
     return df
+
 
 # ===== Dados base (carrega ANTES de montar a UI) =====
 df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()

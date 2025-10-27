@@ -8,6 +8,14 @@ from io import StringIO, BytesIO
 import gspread
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
+# --- fusível anti-help: evita que qualquer help() imprima no app ---
+try:
+    import builtins
+    def _noop_help(*args, **kwargs):
+        return None
+    builtins.help = _noop_help
+except Exception:
+    pass
 
 st.set_page_config(page_title="CR-CP Importador Everest", layout="wide")
 

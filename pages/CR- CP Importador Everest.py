@@ -741,16 +741,20 @@ with aba_cr:
             if "🔴 Falta CNPJ?" in df_export.columns:
                 df_export = df_export.drop(columns=["🔴 Falta CNPJ?"], errors="ignore")
         
-            # 2️⃣ tenta converter colunas numéricas que vieram como texto
-            for col in ["CNPJ/Cliente", "Portador", "Cód Conta Gerencial"]:
-                if col in df_export.columns:
+            # 2️⃣ mantém CNPJ como texto e converte as demais numéricas
+            for col in df_export.columns:
+                if col == "CNPJ/Cliente":
+                    # mantém o formato original como texto
+                    df_export[col] = df_export[col].astype(str).str.strip()
+                elif col in ["Portador", "Cód Conta Gerencial"]:
+                    # converte em número, removendo caracteres não numéricos
                     df_export[col] = (
                         pd.to_numeric(df_export[col].astype(str).str.replace(r"[^0-9]", "", regex=True), errors="coerce")
                         .fillna(0)
                         .astype(int)
                     )
         
-            # 3️⃣ gera o Excel
+            # 3️⃣ gera o Excel com openpyxl
             bio = BytesIO()
             with pd.ExcelWriter(bio, engine="openpyxl") as writer:
                 df_export.to_excel(writer, index=False, sheet_name="Importador")
@@ -765,6 +769,7 @@ with aba_cr:
                 use_container_width=True,
                 disabled=disabled
             )
+
         _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=False)
 
     else:

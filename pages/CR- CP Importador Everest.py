@@ -728,12 +728,7 @@ with aba_cr:
 
         faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
         total  = int(len(edited_full))
-        #st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.") if faltam else st.success("✅ Todos os CNPJs foram preenchidos.")
-        m_cnpj, m_cod, tot = _issues_summary(edited_full)
-        if m_cnpj or m_cod:
-            st.warning(f"⚠️ Existem {m_cnpj} linha(s) sem CNPJ e {m_cod} sem Cód Conta Gerencial. "
-                       "Você pode baixar mesmo assim, mas recomenda-se revisar.")
-
+        
         _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=not st.session_state.get("cr_edited_once", False))
     else:
         if st.session_state.get("cr_tipo_imp") == "Adquirente" and not df_raw.empty:

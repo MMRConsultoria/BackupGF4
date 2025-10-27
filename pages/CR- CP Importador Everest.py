@@ -8,7 +8,6 @@ from io import StringIO, BytesIO
 import gspread
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
-
 # --- fusível anti-help: evita que qualquer help() imprima no app ---
 try:
     import builtins
@@ -20,7 +19,6 @@ except Exception:
 
 st.set_page_config(page_title="CR-CP Importador Everest", layout="wide")
 st.set_option("client.showErrorDetails", False)
-
 # 🔒 Bloqueio de acesso
 if not st.session_state.get("acesso_liberado"):
     st.stop()
@@ -66,10 +64,6 @@ def _norm_basic(s: str) -> str:
     s = re.sub(r"\s+"," ", s).strip().lower()
     return s
 
-def _tokenize(txt: str):
-    # normaliza e separa por palavras/nums
-    return [w for w in re.findall(r"[0-9a-zA-Z]+", _norm_basic(txt)) if w]
-
 def _try_parse_paste(text: str) -> pd.DataFrame:
     text = (text or "").strip("\n\r ")
     if not text: return pd.DataFrame()
@@ -90,6 +84,10 @@ def _to_float_br(x):
     s = s.replace("R$","").replace(" ","").replace(".","").replace(",",".")
     try: return float(s)
     except: return None
+
+def _tokenize(txt: str):
+    # normaliza e separa por palavras/nums
+    return [w for w in re.findall(r"[0-9a-zA-Z]+", _norm_basic(txt)) if w]
 
 # ======================
 # Google Sheets
@@ -184,42 +182,40 @@ def carregar_portadores():
             if p: mapa[b] = p
     return sorted(bancos), mapa
 
-# ====== CARREGAMENTO DAS REGRAS ======
+# ====== CARREGAMENTO DAS REGRAS (para o matching) ======
 @st.cache_data(show_spinner=False)
 def carregar_tabela_meio_pagto():
     """
-    Lê:
+    Lê SOMENTE as colunas EXATAS para o matching:
       - 'Padrão Cod Gerencial'
       - 'Cod Gerencial Everest'
       - 'CNPJ Bandeira'
-      - 'PIX Padrão Cod Gerencial'  (fallback por palavras para PIX)
-    Retorna: DF_MEIO, MEIO_RULES (padrão), PIX_RULES (fallback)
     """
     COL_PADRAO = "Padrão Cod Gerencial"
     COL_COD    = "Cod Gerencial Everest"
     COL_CNPJ   = "CNPJ Bandeira"
-    COL_PIXPAD = "PIX Padrão Cod Gerencial"
 
     sh = _open_planilha("Vendas diarias")
     if not sh:
-        return pd.DataFrame(), [], []
+        return pd.DataFrame(), []
 
     try:
         ws = sh.worksheet("Tabela Meio Pagamento")
     except WorksheetNotFound:
         st.warning("⚠️ Aba 'Tabela Meio Pagamento' não encontrada.")
-        return pd.DataFrame(), [], []
+        return pd.DataFrame(), []
 
     df = pd.DataFrame(ws.get_all_records()).astype(str)
 
-    # garante colunas
-    for c in [COL_PADRAO, COL_COD, COL_CNPJ, COL_PIXPAD]:
-        if c not in df.columns:
-            df[c] = ""
+    missing = [c for c in [COL_PADRAO, COL_COD, COL_CNPJ] if c not in df.columns]
+    if missing:
+        st.error("Faltando colunas obrigatórias: " + ", ".join(missing))
+        return pd.DataFrame(), []
+
+    for c in [COL_PADRAO, COL_COD, COL_CNPJ]:
         df[c] = df[c].astype(str).str.strip()
 
-    # Regras principais (matching por 'Padrão Cod Gerencial')
-    meio_rules = []
+    rules = []
     for _, row in df.iterrows():
         padrao = row[COL_PADRAO]
         codigo = row[COL_COD]
@@ -229,22 +225,8 @@ def carregar_tabela_meio_pagto():
         tokens = sorted(set(_tokenize(padrao)))
         if not tokens:
             continue
-        meio_rules.append({"tokens": tokens, "codigo_gerencial": codigo, "cnpj_bandeira": cnpj})
-
-    # Regras PIX (fallback): usa termos de 'PIX Padrão Cod Gerencial' para apontar COD/CNPJ da mesma linha
-    pix_rules = []
-    for _, row in df.iterrows():
-        pix_text = row[COL_PIXPAD]
-        codigo   = row[COL_COD]
-        cnpj     = row[COL_CNPJ]
-        if not pix_text or not codigo:
-            continue
-        tokens = sorted(set(_tokenize(pix_text)))
-        if not tokens:
-            continue
-        pix_rules.append({"tokens": tokens, "codigo_gerencial": codigo, "cnpj_bandeira": cnpj})
-
-    return df, meio_rules, pix_rules
+        rules.append({"tokens": tokens, "codigo_gerencial": codigo, "cnpj_bandeira": cnpj})
+    return df, rules
 
 def _best_rule_for_tokens(ref_tokens: set):
     best = None
@@ -275,66 +257,10 @@ def _match_bandeira_to_gerencial(ref_text: str):
         return best["codigo_gerencial"], best.get("cnpj_bandeira",""), ""
     return "", "", ""
 
-# ===== PIX fallback: só nas linhas que ficaram sem código =====
-def _best_rule_for_tokens_from(rules_list, ref_tokens: set):
-    best = None
-    best_hits = 0
-    best_tokens_len = 0
-    for rule in rules_list:
-        tokens = set(rule["tokens"])
-        hits = len(tokens & ref_tokens)
-        if hits == 0:
-            continue
-        if (hits > best_hits) or (hits == best_hits and len(tokens) > best_tokens_len):
-            best = rule
-            best_hits = hits
-            best_tokens_len = len(tokens)
-    return best
-
-def _apply_pix_fallback_on_errors(df_importador: pd.DataFrame) -> pd.DataFrame:
-    """
-    Para linhas com 'Cód Conta Gerencial' vazio:
-      - procura match pelas palavras da coluna 'PIX Padrão Cod Gerencial'
-      - se casar, preenche 'Cód Conta Gerencial' e 'CNPJ/Cliente' com a mesma linha da tabela
-    Não mexe no que já tem código.
-    """
-    if df_importador.empty or not PIX_RULES:
-        return df_importador
-
-    df = df_importador.copy()
-    col_ref  = "Observações do Título"
-    col_cod  = "Cód Conta Gerencial"
-    col_cnpj = "CNPJ/Cliente"
-
-    if col_ref not in df.columns:
-        return df
-    if col_cod not in df.columns:
-        df[col_cod] = ""
-    if col_cnpj not in df.columns:
-        df[col_cnpj] = ""
-
-    mask_err = df[col_cod].astype(str).str.strip().eq("")
-    idx_err = df.index[mask_err].tolist()
-    if not idx_err:
-        return df
-
-    for i in idx_err:
-        ref_text = str(df.at[i, col_ref] or "")
-        ref_tokens = set(_tokenize(ref_text))
-        if not ref_tokens:
-            continue
-        best = _best_rule_for_tokens_from(PIX_RULES, ref_tokens)
-        if best:
-            df.at[i, col_cod]  = best["codigo_gerencial"]
-            if str(df.at[i, col_cnpj]).strip() == "":
-                df.at[i, col_cnpj] = best.get("cnpj_bandeira", "")
-
-    return df
-
 # ===== Dados base (carrega ANTES de montar a UI) =====
 df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
 PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
-DF_MEIO, MEIO_RULES, PIX_RULES = carregar_tabela_meio_pagto()
+DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
 
 # fallbacks na sessão (evita NameError em re-runs)
 st.session_state["_grupos"] = GRUPOS
@@ -418,8 +344,7 @@ if st.session_state.get("editor_on_meio"):
                     _save_sheet_full(edited, ws_rules)
                     # recarrega regras do app
                     st.cache_data.clear()
-                    global DF_MEIO, MEIO_RULES, PIX_RULES
-                    DF_MEIO, MEIO_RULES, PIX_RULES = carregar_tabela_meio_pagto()
+                    DF_MEIO, MEIO_RULES = carregar_tabela_meio_pagto()
                     st.session_state["editor_on_meio"] = False
                     st.success("Alterações salvas, regras atualizadas e editor fechado.")
                 except Exception as e:
@@ -460,8 +385,8 @@ if st.session_state.get("editor_on_portador"):
                     _save_sheet_full(edited_port, ws_port)
                     # recarrega portadores do app
                     st.cache_data.clear()
-                    global PORTADORES, MAPA_BANCO_PARA_PORTADOR
                     PORTADORES, MAPA_BANCO_PARA_PORTADOR = carregar_portadores()
+                    # atualiza fallbacks em sessão
                     st.session_state["_portadores"] = PORTADORES
                     st.session_state["editor_on_portador"] = False
                     st.success("Alterações salvas, portadores atualizados e editor fechado.")
@@ -471,7 +396,9 @@ if st.session_state.get("editor_on_portador"):
             if st.button("Fechar sem salvar", use_container_width=True, key="port_close"):
                 st.session_state["editor_on_portador"] = False
 
-# ===== Ordem de saída =====
+
+
+# ===== Ordem de saída (sem a flag; a flag entra na frente) =====
 IMPORTADOR_ORDER = [
     "CNPJ Empresa",
     "Série Título",
@@ -682,9 +609,6 @@ with aba_cr:
             gsel, esel,
             st.session_state.get("cr_portador","")
         )
-        # aplica fallback PIX só nas linhas ainda sem código
-        df_imp = _apply_pix_fallback_on_errors(df_imp)
-
         st.session_state["cr_edited_once"] = False
         st.session_state["cr_df_imp"] = df_imp.copy()
 
@@ -710,6 +634,10 @@ with aba_cr:
         edited_full = edited_full.reindex(columns=cols_final)
 
         st.session_state["cr_df_imp"] = edited_full
+
+        faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
+        total  = int(len(edited_full))
+        #st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.") if faltam else st.success("✅ Todos os CNPJs foram preenchidos.")
 
         _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=not st.session_state.get("cr_edited_once", False))
     else:
@@ -745,9 +673,6 @@ with aba_cp:
             gsel, esel,
             st.session_state.get("cp_portador","")
         )
-        # aplica fallback PIX só nas linhas ainda sem código
-        df_imp = _apply_pix_fallback_on_errors(df_imp)
-
         st.session_state["cp_edited_once"] = False
         st.session_state["cp_df_imp"] = df_imp.copy()
 
@@ -774,6 +699,10 @@ with aba_cp:
         edited_full = edited_full.reindex(columns=cols_final)
 
         st.session_state["cp_df_imp"] = edited_full
+
+        faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
+        total  = int(len(edited_full))
+        #st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.") if faltam else st.success("✅ Todos os CNPJs foram preenchidos.")
 
         _download_excel(edited_full, "Importador_Pagar.xlsx", "📥 Baixar Importador (Pagar)", disabled=not st.session_state.get("cp_edited_once", False))
     else:

@@ -298,10 +298,10 @@ left, _ = st.columns([0.22, 0.78])
 with left:
     c1, c2 = st.columns([1, 1])
     with c1:
-        if st.button("Pagamento", use_container_width=True, help="Abrir/editar aba Tabela Meio Pagamento"):
+        if st.button("TB MeioPag", use_container_width=True, help="Abrir/editar aba Tabela Meio Pagamento"):
             st.session_state["editor_on_meio"] = True
     with c2:
-        if st.button("Portador", use_container_width=True, help="Abrir/editar aba Portador"):
+        if st.button("TB Portador", use_container_width=True, help="Abrir/editar aba Portador"):
             st.session_state["editor_on_portador"] = True
 
 # --- EDITOR: Tabela Meio Pagamento ---

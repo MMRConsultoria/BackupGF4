@@ -641,7 +641,7 @@ with aba_cr:
 
         faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
         total  = int(len(edited_full))
-        st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.") if faltam else st.success("✅ Todos os CNPJs foram preenchidos.")
+        #st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.") if faltam else st.success("✅ Todos os CNPJs foram preenchidos.")
 
         _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=not st.session_state.get("cr_edited_once", False))
     else:

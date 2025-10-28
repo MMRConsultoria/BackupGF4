@@ -85,15 +85,128 @@ def _try_parse_paste(text: str) -> pd.DataFrame:
     return df
 
 def _to_float_br(x):
-    s = str(x or "").strip()
-    s = s.replace("R$","").replace(" ","").replace(".","").replace(",",".")
-    try: return float(s)
-    except: return None
+    """
+    Converte strings '1.234,56', '14,33' ou '14.33' em float.
+    Regra:
+      - Se tem vírgula e ponto: o que aparecer por último é o separador decimal.
+      - Se tem só vírgula: vírgula é decimal.
+      - Se tem só ponto: ponto é decimal.
+    """
+    t = str(x or "").strip().replace(" ", "")
+    if t == "":
+        return None
+    has_c = "," in t
+    has_p = "." in t
+
+    if has_c and has_p:
+        # separador decimal = o último que aparece
+        if t.rfind(",") > t.rfind("."):
+            # vírgula decimal => remova pontos (milhar) e troque vírgula por ponto
+            t = t.replace(".", "").replace(",", ".")
+        else:
+            # ponto decimal => remova vírgulas (milhar)
+            t = t.replace(",", "")
+    elif has_c:
+        t = t.replace(".", "")        # se houver ponto perdido de milhar
+        t = t.replace(",", ".")
+    else:
+        # só ponto ou sem separador: mantém
+        pass
+
+    try:
+        return float(t)
+    except:
+        return None
+
 
 def _tokenize(txt: str):
     # normaliza e separa por palavras/nums
     return [w for w in re.findall(r"[0-9a-zA-Z]+", _norm_basic(txt)) if w]
+def _download_excel(df: pd.DataFrame, filename: str, label_btn: str, disabled=False):
+    if df.empty:
+        st.button(label_btn, disabled=True, use_container_width=True)
+        return
 
+    df_export = df.copy()
+
+    # Remover a flag da exportação
+    if "🔴 Falta CNPJ?" in df_export.columns:
+        df_export = df_export.drop(columns=["🔴 Falta CNPJ?"], errors="ignore")
+
+    # Regras de tipos
+    DEC_COLS = {"Valor Desconto", "Valor Multa", "Valor Juros Dia", "Valor Original"}
+    INT_PREF = {"Portador", "Cód Conta Gerencial", "Cód Centro de Custo", "Nº Parcela"}
+
+    # 2.1) Decimais — NÃO remover ponto à toa. Se já for número, mantém.
+    import re
+    def _parse_dec_series(s: pd.Series) -> pd.Series:
+        if pd.api.types.is_numeric_dtype(s):
+            return s.astype(float)
+        s = s.astype(str).str.strip().str.replace(r"\s", "", regex=True)
+        def _fix(v: str):
+            if v == "":
+                return None
+            has_c = "," in v
+            has_p = "." in v
+            if has_c and has_p:
+                if v.rfind(",") > v.rfind("."):
+                    v = v.replace(".", "").replace(",", ".")
+                else:
+                    v = v.replace(",", "")
+            elif has_c:
+                v = v.replace(".", "").replace(",", ".")
+            # elif só ponto: mantém
+            try:
+                return float(v)
+            except:
+                return None
+        return s.map(_fix)
+
+    for col in DEC_COLS:
+        if col in df_export.columns:
+            df_export[col] = _parse_dec_series(df_export[col]).fillna(0.0)
+
+    # 2.2) CNPJ/Cliente — 14 dígitos vira TEXTO; se só dígitos e != 14, vira NÚMERO
+    if "CNPJ/Cliente" in df_export.columns:
+        s_raw = df_export["CNPJ/Cliente"].astype(str).str.strip()
+        s_digits = s_raw.str.replace(r"\D", "", regex=True)
+        mask_cnpj = s_digits.str.len() == 14
+        mask_only_digits = s_raw.str.match(r"^\d+$")
+
+        df_export.loc[mask_cnpj, "CNPJ/Cliente"] = s_raw[mask_cnpj]  # preserva zeros
+        to_num_mask = (~mask_cnpj) & mask_only_digits
+        df_export.loc[to_num_mask, "CNPJ/Cliente"] = pd.to_numeric(
+            s_raw[to_num_mask], errors="coerce", downcast="integer"
+        )
+        # demais continuam como texto
+
+    # 2.3) Inteiros preferenciais
+    for col in INT_PREF:
+        if col in df_export.columns:
+            s = df_export[col].astype(str).str.strip()
+            mask_int = s.str.match(r"^\d+$")
+            df_export.loc[mask_int, col] = pd.to_numeric(s[mask_int], errors="coerce", downcast="integer")
+
+    # 3) Escrever Excel e aplicar formato #,##0.00 nas colunas de valor
+    bio = BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+        df_export.to_excel(writer, index=False, sheet_name="Importador")
+        ws = writer.sheets["Importador"]
+        header = list(df_export.columns)
+        for j, col in enumerate(header, start=1):
+            if col in DEC_COLS:
+                for i in range(2, len(df_export) + 2):
+                    ws.cell(row=i, column=j).number_format = "#,##0.00"
+
+    bio.seek(0)
+    st.download_button(
+        label_btn,
+        data=bio,
+        file_name=filename,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        disabled=disabled
+    )
 # ======================
 # Google Sheets
 # ======================
@@ -642,19 +755,7 @@ def _build_importador_df(df_raw: pd.DataFrame, prefix: str, grupo: str, loja: st
     out = out[final_cols]
     return out
 
-def _download_excel(df: pd.DataFrame, filename: str, label_btn: str, disabled=False):
-    if df.empty:
-        st.button(label_btn, disabled=True, use_container_width=True)
-        return
-    bio = BytesIO()
-    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Importador")
-    bio.seek(0)
-    st.download_button(label_btn, data=bio,
-                       file_name=filename,
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                       use_container_width=True,
-                       disabled=disabled)
+
 
 # ======================
 # ABAS
@@ -734,80 +835,7 @@ with aba_cr:
         #faltam = int(edited_full["🔴 Falta CNPJ?"].sum())
         #total  = int(len(edited_full))
         
-        def _download_excel(df: pd.DataFrame, filename: str, label_btn: str, disabled=False):
-            if df.empty:
-                st.button(label_btn, disabled=True, use_container_width=True)
-                return
         
-            df_export = df.copy()
-        
-            # 1) Remove a flag da exportação
-            if "🔴 Falta CNPJ?" in df_export.columns:
-                df_export = df_export.drop(columns=["🔴 Falta CNPJ?"], errors="ignore")
-        
-            # 2) Regras de tipos
-            DEC_COLS = {"Valor Desconto", "Valor Multa", "Valor Juros Dia", "Valor Original"}
-            INT_PREF = {"Portador", "Cód Conta Gerencial", "Cód Centro de Custo", "Nº Parcela"}
-        
-            for col in df_export.columns:
-                # ===== CNPJ/Cliente =====
-                if col == "CNPJ/Cliente":
-                    s_raw = df_export[col].astype(str).str.strip()
-                    s_digits = s_raw.str.replace(r"\D", "", regex=True)
-                    mask_cnpj = s_digits.str.len() == 14
-                    mask_only_digits = s_raw.str.match(r"^\d+$")
-        
-                    # CNPJ (14 dígitos) => manter TEXTO exatamente como veio
-                    if mask_cnpj.any():
-                        df_export.loc[mask_cnpj, col] = s_raw[mask_cnpj]
-        
-                    # Não CNPJ mas só dígitos => NÚMERO
-                    to_num_mask = (~mask_cnpj) & mask_only_digits
-                    if to_num_mask.any():
-                        df_export.loc[to_num_mask, col] = pd.to_numeric(
-                            s_raw[to_num_mask], errors="coerce", downcast="integer"
-                        )
-        
-                    # Demais casos (tem letra/símbolo e não é CNPJ): mantém texto como está
-                    continue
-        
-                # ===== Decimais (R$ etc.) =====
-                if col in DEC_COLS:
-                    s = df_export[col].astype(str).str.strip()
-                    s_norm = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
-                    mask_num = s_norm.str.match(r"^\d+(\.\d+)?$")
-                    if mask_num.any():
-                        df_export.loc[mask_num, col] = pd.to_numeric(s_norm[mask_num], errors="coerce")
-                    continue
-        
-                # ===== Inteiros preferenciais =====
-                if col in INT_PREF:
-                    s = df_export[col].astype(str).str.strip()
-                    mask_int = s.str.match(r"^\d+$")
-                    if mask_int.any():
-                        df_export.loc[mask_int, col] = pd.to_numeric(
-                            s[mask_int], errors="coerce", downcast="integer"
-                        )
-                    # se não for só dígitos, mantém texto (não força)
-                    continue
-        
-                # Demais colunas: não forçar tipo
-        
-            # 3) Gerar Excel
-            bio = BytesIO()
-            with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-                df_export.to_excel(writer, index=False, sheet_name="Importador")
-            bio.seek(0)
-        
-            st.download_button(
-                label_btn,
-                data=bio,
-                file_name=filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                disabled=disabled
-            )
-
         _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=False)
 
     else:
@@ -876,47 +904,7 @@ with aba_cp:
         #st.warning(f"⚠️ {faltam} de {total} linha(s) sem CNPJ/Cliente.") if faltam else st.success("✅ Todos os CNPJs foram preenchidos.")
 
         #_download_excel(edited_full, "Importador_Pagar.xlsx", "📥 Baixar Importador (Pagar)", disabled=not st.session_state.get("cp_edited_once", False))
-        def _download_excel(df: pd.DataFrame, filename: str, label_btn: str, disabled=False):
-            if df.empty:
-                st.button(label_btn, disabled=True, use_container_width=True)
-                return
         
-            # --- faz cópia para não alterar o DataFrame original
-            df_export = df.copy()
-        
-            # 1️⃣ remove a coluna de flag "Falta CNPJ" da exportação
-            if "🔴 Falta CNPJ?" in df_export.columns:
-                df_export = df_export.drop(columns=["🔴 Falta CNPJ?"], errors="ignore")
-        
-            # 2️⃣ tenta converter colunas numéricas que vieram como texto
-            for col in ["CNPJ/Cliente", "Portador", "Cód Conta Gerencial"]:
-                if col in df_export.columns:
-                    df_export[col] = (
-                        pd.to_numeric(df_export[col].astype(str).str.replace(r"[^0-9]", "", regex=True), errors="coerce")
-                        .fillna(0)
-                        .astype(int)
-                    )
-        
-            # 3️⃣ gera o Excel
-            bio = BytesIO()
-            with pd.ExcelWriter(bio, engine="openpyxl") as writer:
-                df_export.to_excel(writer, index=False, sheet_name="Importador")
-            bio.seek(0)
-        
-            # 4️⃣ botão de download
-            st.download_button(
-                label_btn,
-                data=bio,
-                file_name=filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                disabled=disabled
-            )
-
-    else:
-        if st.session_state.get("cp_tipo_imp") == "Adquirente" and not df_raw.empty:
-            st.info("Mapeie as colunas (Data, Valor, Referência) e selecione Grupo/Empresa para gerar.")
-
 # --------- 🧾 CADASTRO Cliente/Fornecedor ---------
 with aba_cad:
     st.subheader("Cadastro de Cliente / Fornecedor")
@@ -966,3 +954,6 @@ with aba_cad:
     if st.session_state.get("cadastros"):
         st.markdown("#### Cadastros na sessão (não enviados)")
         st.dataframe(pd.DataFrame(st.session_state["cadastros"]), use_container_width=True, height=220)
+
+
+

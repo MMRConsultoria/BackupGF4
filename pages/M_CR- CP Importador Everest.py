@@ -450,6 +450,54 @@ def _issues_summary(df: pd.DataFrame):
     miss_cod  = int(df["Cód Conta Gerencial"].astype(str).str.strip().eq("").sum()) if "Cód Conta Gerencial" in df else 0
     total     = len(df)
     return miss_cnpj, miss_cod, total
+# ======================
+# Confirmação de Loja (nome + CNPJ) antes do Excel
+# ======================
+def _cnpj_da_loja(grupo: str, loja: str) -> str:
+    """Busca o CNPJ da loja na Tabela Empresa com base em Grupo + Loja."""
+    try:
+        df = globals().get("df_emp", pd.DataFrame())
+        if df.empty or not grupo or not loja:
+            return ""
+        row = df[
+            (df["Grupo"].astype(str).str.strip() == str(grupo).strip()) &
+            (df["Loja"].astype(str).str.strip()  == str(loja).strip())
+        ]
+        if row.empty:
+            return ""
+        return str(row.iloc[0].get("CNPJ", "") or "").strip()
+    except Exception:
+        return ""
+
+def confirmar_loja(prefix: str, grupo: str, loja: str) -> bool:
+    """
+    Mostra um aviso e exige confirmação do usuário antes de liberar o download do Excel.
+    Retorna True se confirmado; False caso contrário.
+    """
+    loja = loja or ""
+    grupo = grupo or ""
+    cnpj = _cnpj_da_loja(grupo, loja)
+
+    st.markdown("### ⚠️ Confirmação da Loja antes do download")
+    st.info(
+        f"- **Grupo:** {grupo or '—'}\n"
+        f"- **Loja:** {loja or '—'}\n"
+        f"- **CNPJ:** {cnpj or '—'}"
+    )
+
+    with st.form(f"{prefix}_confirm_loja_form"):
+        ok = st.checkbox(
+            f"Confirmo que a loja **{loja or '—'}** (CNPJ **{cnpj or '—'}**) está correta.",
+            key=f"{prefix}_confirm_ck"
+        )
+        submitted = st.form_submit_button("Confirmar e liberar download", use_container_width=True)
+        if submitted and not ok:
+            st.error("Você precisa marcar a confirmação para liberar o download.")
+        # Se submeteu e marcou, mantém verdadeiro; caso contrário, mantém o que já estava no state.
+        if submitted and ok:
+            st.session_state[f"{prefix}_confirm_ok"] = True
+
+    return bool(st.session_state.get(f"{prefix}_confirm_ok", False))
 
 # ===== Dados base (carrega ANTES de montar a UI) =====
 df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
@@ -836,7 +884,17 @@ with aba_cr:
         #total  = int(len(edited_full))
         
         
-        _download_excel(edited_full, "Importador_Receber.xlsx", "📥 Baixar Importador (Receber)", disabled=False)
+        # 🔒 Passo de confirmação da loja (nome + CNPJ) antes de liberar o Excel
+        cr_confirmado = confirmar_loja("cr", gsel, esel)
+        
+        # ⬇️ Download do Excel (só libera quando confirmado)
+        _download_excel(
+            edited_full,
+            "Importador_Receber.xlsx",
+            "📥 Baixar Importador (Receber)",
+            disabled=not cr_confirmado
+        )
+
 
     else:
         if st.session_state.get("cr_tipo_imp") == "Adquirente" and not df_raw.empty:

@@ -54,19 +54,22 @@ def gs_client():
 
 def _open_planilha_fluxo():
     """
-    Abre a planilha 'Fluxo de Caixa' (onde estão a aba Fluxo de Caixa e o Controle de Extratos).
+    Abre a planilha de Fluxo de Caixa por ID (mais seguro que por título).
+    ID retirado do link:
+    https://docs.google.com/spreadsheets/d/1MhdAEGgad3lER55aP002OOaAk5AYBWbruqKGGuyd6hw/edit#...
     """
     try:
         gc = gs_client()
-        return gc.open("Fluxo de Caixa")
+        SPREADSHEET_ID = "1MhdAEGgad3lER55aP002OOaAk5AYBWbruqKGGuyd6hw"
+        return gc.open_by_key(SPREADSHEET_ID)
     except Exception as e:
-        st.error(f"⚠️ Erro ao abrir planilha 'Fluxo de Caixa': {e}")
+        st.error(f"⚠️ Erro ao abrir planilha 'Fluxo de Caixa' (ID): {e}")
         return None
 
 @st.cache_data(show_spinner=False)
 def carregar_fluxo_caixa():
     """
-    Lê a planilha **Fluxo de Caixa**, aba 'Fluxo de Caixa', e mapeia:
+    Lê a planilha **Fluxo de Caixa** (ID fixo), aba 'Fluxo de Caixa', e mapeia:
     - Grupo
     - Empresa (Loja)
     - Banco
@@ -84,7 +87,7 @@ def carregar_fluxo_caixa():
     try:
         ws = sh.worksheet("Fluxo de Caixa")
     except WorksheetNotFound:
-        st.warning("⚠️ Aba 'Fluxo de Caixa' não encontrada na planilha 'Fluxo de Caixa'.")
+        st.warning("⚠️ Aba 'Fluxo de Caixa' não encontrada na planilha.")
         return pd.DataFrame()
 
     values = ws.get_all_values()
@@ -107,7 +110,7 @@ def carregar_fluxo_caixa():
         st.error(f"Erro ao mapear colunas da aba 'Fluxo de Caixa': {e}")
         return pd.DataFrame()
 
-    # ➕ Coluna "Extrato Nome Empresa" (pelo cabeçalho exato)
+    # Coluna "Extrato Nome Empresa" (pelo cabeçalho exato)
     if "Extrato Nome Empresa" in df_raw.columns:
         df["ExtratoNomeEmpresa"] = df_raw["Extrato Nome Empresa"].astype(str).str.strip()
     else:
@@ -143,8 +146,8 @@ def gerar_nome_padronizado(grupo, loja, banco, agencia, conta, data_inicio, data
 
 def salvar_registro_extrato(grupo, loja, banco, agencia, conta, data_inicio, data_fim, nome_arquivo):
     """
-    Registra o extrato em uma aba de controle no Google Sheets.
-    👉 Agora grava na PRÓPRIA planilha 'Fluxo de Caixa', aba 'Controle Extratos Bancários'.
+    Registra o extrato em uma aba de controle na PRÓPRIA planilha de Fluxo de Caixa.
+    Aba: 'Controle Extratos Bancários'
     """
     try:
         sh = _open_planilha_fluxo()
@@ -173,7 +176,7 @@ def salvar_registro_extrato(grupo, loja, banco, agencia, conta, data_inicio, dat
             str(data_fim),
             nome_arquivo
         ])
-        return True, f"Registro salvo em '{nome_aba}' da planilha 'Fluxo de Caixa'."
+        return True, f"Registro salvo em '{nome_aba}' na planilha de Fluxo de Caixa."
     except Exception as e:
         return False, f"Erro ao salvar registro: {e}"
 
@@ -301,7 +304,7 @@ def aplicar_reconhecimento_automatico(uploaded_file, df_fluxo, grupos, lojas_map
 
     Usando:
     - Dígitos de agência e conta
-    - Nome da empresa no extrato (coluna 'Extrato Nome Empresa' da planilha Fluxo de Caixa)
+    - Nome da empresa no extrato (coluna 'Extrato Nome Empresa')
     """
     if uploaded_file is None:
         return
@@ -375,7 +378,7 @@ def aplicar_reconhecimento_automatico(uploaded_file, df_fluxo, grupos, lojas_map
     st.session_state["auto_aplicado"] = True
 
 # ======================
-# Carregar bases (TUDO da planilha Fluxo de Caixa)
+# Carregar bases (tudo da planilha Fluxo de Caixa)
 # ======================
 df_fluxo = carregar_fluxo_caixa()
 
@@ -427,7 +430,7 @@ if uploaded_file is not None and not df_fluxo.empty:
                 "👉 *Confira as informações abaixo. Você só precisa alterar algo se o reconhecimento estiver incorreto.*"
             )
 elif uploaded_file is not None and df_fluxo.empty:
-    st.warning("⚠️ Não foi possível carregar a aba 'Fluxo de Caixa' na planilha 'Fluxo de Caixa'. Sem ela não dá pra reconhecer automaticamente.")
+    st.warning("⚠️ Não foi possível carregar a aba 'Fluxo de Caixa' na planilha. Sem ela não dá pra reconhecer automaticamente.")
 
 # Seleção de Grupo e Loja
 col_g, col_l = st.columns(2)
@@ -471,7 +474,7 @@ st.markdown("### 🏦 Seleção de Conta (Fluxo de Caixa)")
 banco_sel = agencia_sel = conta_sel = ""
 
 if df_fluxo.empty:
-    st.info("A planilha 'Fluxo de Caixa' não pôde ser carregada ou está vazia.")
+    st.info("A planilha de Fluxo de Caixa não pôde ser carregada ou está vazia.")
 elif contas_filtradas.empty and grupo_sel not in ("", None, "— selecione —") and loja_sel not in ("", None, "— selecione —"):
     st.info("Nenhuma conta encontrada na aba **Fluxo de Caixa** para este Grupo/Loja.")
 else:
@@ -577,9 +580,9 @@ with col_a2:
         st.button("📊 Registrar extrato no Google Sheets", disabled=True, use_container_width=True)
 
 # Ajuda
-with st.expander("ℹ️ Como funciona a amarração com a planilha 'Fluxo de Caixa'?"):
+with st.expander("ℹ️ Como funciona a amarração com a planilha de Fluxo de Caixa?"):
     st.markdown("""
-    - **Tudo vem da planilha `Fluxo de Caixa`:**
+    - Toda a parametrização vem da planilha de **Fluxo de Caixa** (ID já fixado no código):
       - Aba **Fluxo de Caixa** → usada para:
         - **Grupo**
         - **Empresa (Loja)**
@@ -599,5 +602,5 @@ with st.expander("ℹ️ Como funciona a amarração com a planilha 'Fluxo de Ca
 
     - Depois disso, os campos já vêm preenchidos para você **apenas confirmar**.
     - O botão **Registrar extrato no Google Sheets** grava um log na aba
-      **Controle Extratos Bancários** da própria planilha *Fluxo de Caixa*.
+      **Controle Extratos Bancários** da mesma planilha de Fluxo de Caixa.
     """)

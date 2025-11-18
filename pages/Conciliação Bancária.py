@@ -58,16 +58,15 @@ def gs_client():
 def _open_planilha_fluxo():
     """
     Abre a planilha de Fluxo de Caixa pelo URL completo.
-    URL que você me passou:
+    URL conforme sua captura:
     https://docs.google.com/spreadsheets/d/1MhdAEGgad3lER55aP002OOaAk5AYBWbruqKGGuyd6hw/edit?gid=1030365649#gid=1030365649
     """
     try:
         gc = gs_client()
-        SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1MhdAEGgad3lER55aP002OOaAk5AYBWbruqKGGuyd6hw/edit#gid=0"
+        SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1MhdAEGgad3lER55aP002OOaAk5AYBWbruqKGGuyd6hw/edit?gid=1030365649#gid=1030365649"
         sh = gc.open_by_url(SPREADSHEET_URL)
         return sh
     except Exception as e:
-        # repr(e) pra aparecer o tipo + mensagem real do erro
         st.error(f"⚠️ Erro ao abrir planilha 'Fluxo de Caixa' (open_by_url): {repr(e)}")
         return None
 
@@ -105,7 +104,7 @@ def carregar_fluxo_caixa():
 
     df = pd.DataFrame()
     try:
-        # Mapeamento por posição (ajustar se a estrutura da aba mudar):
+        # Mapeamento por posição (ajuste se a estrutura da aba mudar):
         df["Grupo"] = df_raw.iloc[:, 5]       # F
         df["Loja"] = df_raw.iloc[:, 1]        # B (Empresa)
         df["Banco"] = df_raw.iloc[:, 6]       # G
@@ -421,7 +420,7 @@ if uploaded_file is not None and not df_fluxo.empty:
                     st.markdown(f"- {linha}")
             rec = auto_info.get("reconhecido", {})
             if rec:
-                st.markdown("**Resumo dos dados sugeridos:**")
+                st.markmarkdown("**Resumo dos dados sugeridos:**")
                 st.json(rec)
             st.markdown(
                 "👉 *Confira as informações abaixo. Você só precisa alterar algo se o reconhecimento estiver incorreto.*"

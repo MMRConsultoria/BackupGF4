@@ -11,7 +11,6 @@ import gspread
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
 
-
 # Para leitura de PDF (adicionar pdfplumber no requirements.txt)
 try:
     import pdfplumber
@@ -45,7 +44,10 @@ st.markdown("""
 # ======================
 
 def gs_client():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive"
+    ]
     secret = st.secrets.get("GOOGLE_SERVICE_ACCOUNT")
     if secret is None:
         raise RuntimeError("st.secrets['GOOGLE_SERVICE_ACCOUNT'] não encontrado.")
@@ -55,22 +57,24 @@ def gs_client():
 
 def _open_planilha_fluxo():
     """
-    Abre a planilha de Fluxo de Caixa por ID (mais seguro que por título).
-    ID retirado do link:
-    https://docs.google.com/spreadsheets/d/1MhdAEGgad3lER55aP002OOaAk5AYBWbruqKGGuyd6hw/edit#...
+    Abre a planilha de Fluxo de Caixa pelo URL completo.
+    URL que você me passou:
+    https://docs.google.com/spreadsheets/d/1MhdAEGgad3lER55aP002OOaAk5AYBWbruqKGGuyd6hw/edit?gid=1030365649#gid=1030365649
     """
     try:
         gc = gs_client()
-        SPREADSHEET_ID = "1MhdAEGgad3lER55aP002OOaAk5AYBWbruqKGGuyd6hw"
-        return gc.open_by_key(SPREADSHEET_ID)
+        SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1MhdAEGgad3lER55aP002OOaAk5AYBWbruqKGGuyd6hw/edit#gid=0"
+        sh = gc.open_by_url(SPREADSHEET_URL)
+        return sh
     except Exception as e:
-        st.error(f"⚠️ Erro ao abrir planilha 'Fluxo de Caixa' (ID): {e}")
+        # repr(e) pra aparecer o tipo + mensagem real do erro
+        st.error(f"⚠️ Erro ao abrir planilha 'Fluxo de Caixa' (open_by_url): {repr(e)}")
         return None
 
 @st.cache_data(show_spinner=False)
 def carregar_fluxo_caixa():
     """
-    Lê a planilha **Fluxo de Caixa** (ID fixo), aba 'Fluxo de Caixa', e mapeia:
+    Lê a planilha **Fluxo de Caixa** (URL fixo), aba 'Fluxo de Caixa', e mapeia:
     - Grupo
     - Empresa (Loja)
     - Banco
@@ -101,7 +105,7 @@ def carregar_fluxo_caixa():
 
     df = pd.DataFrame()
     try:
-        # Mantendo mapeamento por posição (ajustar se a estrutura da aba mudar):
+        # Mapeamento por posição (ajustar se a estrutura da aba mudar):
         df["Grupo"] = df_raw.iloc[:, 5]       # F
         df["Loja"] = df_raw.iloc[:, 1]        # B (Empresa)
         df["Banco"] = df_raw.iloc[:, 6]       # G
@@ -266,15 +270,12 @@ def reconhecer_conta_no_texto(texto: str, df_fluxo: pd.DataFrame):
 
         score = 0
 
-        # Agência
         if ag and ag in texto_digitos:
             score += 1
 
-        # Conta
         if cc and cc in texto_digitos:
             score += 2  # peso maior para conta
 
-        # Nome da empresa que aparece no extrato
         if nome_extrato_lower and nome_extrato_lower in texto_lower:
             score += 3  # peso forte para o nome da empresa no extrato
 
@@ -288,7 +289,6 @@ def reconhecer_conta_no_texto(texto: str, df_fluxo: pd.DataFrame):
     if melhor_score == 0 or melhor_linha is None:
         return None, "Nenhuma conta/agência/nome de empresa do Fluxo de Caixa foi encontrada no arquivo."
 
-    # Verifica se há ambiguidade (mais de um com mesmo score máximo)
     qtd_max = sum(1 for s, _ in candidatos if s == melhor_score)
     if qtd_max > 1:
         return None, "Mais de uma conta possível encontrada no arquivo (ambiguidade)."
@@ -302,10 +302,6 @@ def aplicar_reconhecimento_automatico(uploaded_file, df_fluxo, grupos, lojas_map
     - Loja
     - Banco / Agência / Conta
     - Período (Data Inicial / Data Final)
-
-    Usando:
-    - Dígitos de agência e conta
-    - Nome da empresa no extrato (coluna 'Extrato Nome Empresa')
     """
     if uploaded_file is None:
         return
@@ -379,7 +375,7 @@ def aplicar_reconhecimento_automatico(uploaded_file, df_fluxo, grupos, lojas_map
     st.session_state["auto_aplicado"] = True
 
 # ======================
-# Carregar bases (tudo da planilha Fluxo de Caixa)
+# Carregar bases
 # ======================
 df_fluxo = carregar_fluxo_caixa()
 
@@ -583,25 +579,19 @@ with col_a2:
 # Ajuda
 with st.expander("ℹ️ Como funciona a amarração com a planilha de Fluxo de Caixa?"):
     st.markdown("""
-    - Toda a parametrização vem da planilha de **Fluxo de Caixa** (ID já fixado no código):
+    - Toda a parametrização vem da planilha de **Fluxo de Caixa** (URL fixo no código):
       - Aba **Fluxo de Caixa** → usada para:
         - **Grupo**
         - **Empresa (Loja)**
         - **Banco**
         - **Agência**
         - **Conta Corrente**
-        - **Extrato Nome Empresa** → texto exato que aparece no extrato (Itaú, etc.)
+        - **Extrato Nome Empresa**
       - Aba **Controle Extratos Bancários** → recebe o log de todos os extratos registrados.
 
-    - Quando você faz o **upload do extrato**, o sistema tenta:
-      - Ler o arquivo (PDF/Excel/CSV/TXT),
-      - Encontrar **Agência**, **Conta** e o **nome da empresa do extrato**
-        de acordo com a coluna **Extrato Nome Empresa**,
-      - Cruzar com as contas cadastradas na aba Fluxo de Caixa,
-      - Sugerir automaticamente **Grupo, Loja, Banco, Agência e Conta**,
-      - Identificar as datas presentes no extrato e sugerir o período.
+    - O sistema tenta reconhecer automaticamente:
+      - Conta (Agência/Conta/Nome Empresa do extrato),
+      - Período (datas presentes no extrato).
 
-    - Depois disso, os campos já vêm preenchidos para você **apenas confirmar**.
-    - O botão **Registrar extrato no Google Sheets** grava um log na aba
-      **Controle Extratos Bancários** da mesma planilha de Fluxo de Caixa.
+    - Você só precisa conferir e confirmar.
     """)

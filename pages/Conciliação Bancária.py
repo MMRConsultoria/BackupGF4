@@ -11,6 +11,7 @@ import gspread
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
 
+
 # Para leitura de PDF (adicionar pdfplumber no requirements.txt)
 try:
     import pdfplumber

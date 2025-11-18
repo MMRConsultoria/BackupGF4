@@ -52,70 +52,39 @@ def gs_client():
     creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
     return gspread.authorize(creds)
 
-def _open_planilha(title="Vendas diarias"):
+def _open_planilha_fluxo():
+    """
+    Abre a planilha 'Fluxo de Caixa' (onde estão a aba Fluxo de Caixa e o Controle de Extratos).
+    """
     try:
         gc = gs_client()
-        return gc.open(title)
+        return gc.open("Fluxo de Caixa")
     except Exception as e:
-        st.error(f"⚠️ Erro ao abrir planilha '{title}': {e}")
+        st.error(f"⚠️ Erro ao abrir planilha 'Fluxo de Caixa': {e}")
         return None
-
-@st.cache_data(show_spinner=False)
-def carregar_empresas():
-    """Lê Tabela Empresa para montar Grupo x Loja (igual seu outro módulo)."""
-    sh = _open_planilha("Vendas diarias")
-    if sh is None:
-        return pd.DataFrame(), [], {}
-    try:
-        ws = sh.worksheet("Tabela Empresa")
-        df = pd.DataFrame(ws.get_all_records())
-    except Exception as e:
-        st.warning(f"⚠️ Erro lendo 'Tabela Empresa': {e}")
-        return pd.DataFrame(), [], {}
-
-    ren = {
-        "Codigo Everest": "Código Everest",
-        "Codigo Grupo Everest": "Código Grupo Everest",
-        "Loja Nome": "Loja",
-        "Empresa": "Loja",
-        "Grupo Nome": "Grupo"
-    }
-    df = df.rename(columns={k: v for k, v in ren.items() if k in df.columns})
-    for c in ["Grupo", "Loja", "Código Everest", "Código Grupo Everest", "CNPJ"]:
-        if c not in df.columns:
-            df[c] = ""
-        df[c] = df[c].astype(str).str.strip()
-
-    grupos = sorted(df["Grupo"].dropna().unique().tolist())
-    lojas_map = (
-        df.groupby("Grupo")["Loja"]
-          .apply(lambda s: sorted(pd.Series(s.dropna().unique()).astype(str).tolist()))
-          .to_dict()
-    )
-    return df, grupos, lojas_map
 
 @st.cache_data(show_spinner=False)
 def carregar_fluxo_caixa():
     """
-    Lê a aba 'Fluxo de Caixa' e mapeia:
-    - Grupo  (col F)
-    - Empresa (col B)
-    - Banco  (col G)
-    - Agência (col M)
-    - Conta Corrente (col N)
-    - Extrato Nome Empresa (coluna com esse cabeçalho na planilha)
+    Lê a planilha **Fluxo de Caixa**, aba 'Fluxo de Caixa', e mapeia:
+    - Grupo
+    - Empresa (Loja)
+    - Banco
+    - Agência
+    - Conta Corrente
+    - Extrato Nome Empresa (texto que aparece no extrato do banco)
 
     Cria um DF padronizado:
     Grupo, Loja, Banco, Agencia, ContaCorrente, ExtratoNomeEmpresa
     """
-    sh = _open_planilha("Vendas diarias")
+    sh = _open_planilha_fluxo()
     if sh is None:
         return pd.DataFrame()
 
     try:
         ws = sh.worksheet("Fluxo de Caixa")
     except WorksheetNotFound:
-        st.warning("⚠️ Aba 'Fluxo de Caixa' não encontrada.")
+        st.warning("⚠️ Aba 'Fluxo de Caixa' não encontrada na planilha 'Fluxo de Caixa'.")
         return pd.DataFrame()
 
     values = ws.get_all_values()
@@ -128,7 +97,7 @@ def carregar_fluxo_caixa():
 
     df = pd.DataFrame()
     try:
-        # Mantendo mapeamento por posição como você já usava:
+        # Mantendo mapeamento por posição (ajustar se a estrutura da aba mudar):
         df["Grupo"] = df_raw.iloc[:, 5]       # F
         df["Loja"] = df_raw.iloc[:, 1]        # B (Empresa)
         df["Banco"] = df_raw.iloc[:, 6]       # G
@@ -138,7 +107,7 @@ def carregar_fluxo_caixa():
         st.error(f"Erro ao mapear colunas da aba 'Fluxo de Caixa': {e}")
         return pd.DataFrame()
 
-    # ➕ Novo: coluna "Extrato Nome Empresa" (pelo cabeçalho)
+    # ➕ Coluna "Extrato Nome Empresa" (pelo cabeçalho exato)
     if "Extrato Nome Empresa" in df_raw.columns:
         df["ExtratoNomeEmpresa"] = df_raw["Extrato Nome Empresa"].astype(str).str.strip()
     else:
@@ -173,11 +142,14 @@ def gerar_nome_padronizado(grupo, loja, banco, agencia, conta, data_inicio, data
     return f"{grupo_limpo} - {loja_limpa} - {banco_limpo} - Ag {agencia} - CC {conta} - {dt_ini} a {dt_fim}.pdf"
 
 def salvar_registro_extrato(grupo, loja, banco, agencia, conta, data_inicio, data_fim, nome_arquivo):
-    """Registra o extrato em uma aba de controle no Google Sheets."""
+    """
+    Registra o extrato em uma aba de controle no Google Sheets.
+    👉 Agora grava na PRÓPRIA planilha 'Fluxo de Caixa', aba 'Controle Extratos Bancários'.
+    """
     try:
-        sh = _open_planilha("Vendas diarias")
+        sh = _open_planilha_fluxo()
         if not sh:
-            return False, "Planilha 'Vendas diarias' não encontrada."
+            return False, "Planilha 'Fluxo de Caixa' não encontrada."
 
         nome_aba = "Controle Extratos Bancários"
         try:
@@ -201,7 +173,7 @@ def salvar_registro_extrato(grupo, loja, banco, agencia, conta, data_inicio, dat
             str(data_fim),
             nome_arquivo
         ])
-        return True, f"Registro salvo em '{nome_aba}'."
+        return True, f"Registro salvo em '{nome_aba}' da planilha 'Fluxo de Caixa'."
     except Exception as e:
         return False, f"Erro ao salvar registro: {e}"
 
@@ -329,7 +301,7 @@ def aplicar_reconhecimento_automatico(uploaded_file, df_fluxo, grupos, lojas_map
 
     Usando:
     - Dígitos de agência e conta
-    - Nome da empresa no extrato (coluna 'Extrato Nome Empresa')
+    - Nome da empresa no extrato (coluna 'Extrato Nome Empresa' da planilha Fluxo de Caixa)
     """
     if uploaded_file is None:
         return
@@ -403,10 +375,20 @@ def aplicar_reconhecimento_automatico(uploaded_file, df_fluxo, grupos, lojas_map
     st.session_state["auto_aplicado"] = True
 
 # ======================
-# Carregar bases
+# Carregar bases (TUDO da planilha Fluxo de Caixa)
 # ======================
-df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
 df_fluxo = carregar_fluxo_caixa()
+
+if df_fluxo.empty:
+    GRUPOS = []
+    LOJAS_MAP = {}
+else:
+    GRUPOS = sorted(df_fluxo["Grupo"].dropna().unique().tolist())
+    LOJAS_MAP = (
+        df_fluxo.groupby("Grupo")["Loja"]
+        .apply(lambda s: sorted(pd.Series(s.dropna().unique()).astype(str).tolist()))
+        .to_dict()
+    )
 
 for key in ["cb_grupo", "cb_loja", "cb_conta", "cb_dt_ini", "cb_dt_fim"]:
     st.session_state.setdefault(key, None)
@@ -426,7 +408,7 @@ uploaded_file = st.file_uploader(
 )
 
 # 🔍 Reconhecimento Automático (após upload)
-if uploaded_file is not None:
+if uploaded_file is not None and not df_fluxo.empty:
     with st.spinner("🔍 Lendo o arquivo e tentando reconhecer as informações automaticamente..."):
         aplicar_reconhecimento_automatico(uploaded_file, df_fluxo, GRUPOS, LOJAS_MAP)
 
@@ -444,6 +426,8 @@ if uploaded_file is not None:
             st.markdown(
                 "👉 *Confira as informações abaixo. Você só precisa alterar algo se o reconhecimento estiver incorreto.*"
             )
+elif uploaded_file is not None and df_fluxo.empty:
+    st.warning("⚠️ Não foi possível carregar a aba 'Fluxo de Caixa' na planilha 'Fluxo de Caixa'. Sem ela não dá pra reconhecer automaticamente.")
 
 # Seleção de Grupo e Loja
 col_g, col_l = st.columns(2)
@@ -476,7 +460,7 @@ with col_l:
 
 # Contas da aba Fluxo de Caixa
 contas_filtradas = pd.DataFrame()
-if grupo_sel not in (None, "", "— selecione —") and loja_sel not in (None, "", "— selecione —"):
+if grupo_sel not in (None, "", "— selecione —") and loja_sel not in (None, "", "— selecione —") and not df_fluxo.empty:
     contas_filtradas = df_fluxo[
         (df_fluxo["Grupo"] == grupo_sel) &
         (df_fluxo["Loja"] == loja_sel)
@@ -486,34 +470,37 @@ st.markdown("### 🏦 Seleção de Conta (Fluxo de Caixa)")
 
 banco_sel = agencia_sel = conta_sel = ""
 
-if contas_filtradas.empty:
+if df_fluxo.empty:
+    st.info("A planilha 'Fluxo de Caixa' não pôde ser carregada ou está vazia.")
+elif contas_filtradas.empty and grupo_sel not in ("", None, "— selecione —") and loja_sel not in ("", None, "— selecione —"):
     st.info("Nenhuma conta encontrada na aba **Fluxo de Caixa** para este Grupo/Loja.")
 else:
-    contas_filtradas = contas_filtradas.reset_index(drop=True)
-    contas_filtradas["label"] = contas_filtradas.apply(
-        lambda r: f"{r['Banco']} - Ag {r['Agencia']} - CC {r['ContaCorrente']}",
-        axis=1
-    )
-    conta_labels = contas_filtradas["label"].tolist()
+    if not contas_filtradas.empty:
+        contas_filtradas = contas_filtradas.reset_index(drop=True)
+        contas_filtradas["label"] = contas_filtradas.apply(
+            lambda r: f"{r['Banco']} - Ag {r['Agencia']} - CC {r['ContaCorrente']}",
+            axis=1
+        )
+        conta_labels = contas_filtradas["label"].tolist()
 
-    conta_default = st.session_state.get("cb_conta")
-    if conta_default in conta_labels:
-        idx_conta = conta_labels.index(conta_default) + 1
-    else:
-        idx_conta = 0
+        conta_default = st.session_state.get("cb_conta")
+        if conta_default in conta_labels:
+            idx_conta = conta_labels.index(conta_default) + 1
+        else:
+            idx_conta = 0
 
-    conta_escolhida = st.selectbox(
-        "Selecione a conta (Banco / Agência / Conta) conforme cadastro no Fluxo de Caixa:",
-        ["— selecione —"] + conta_labels,
-        index=idx_conta,
-        key="cb_conta"
-    )
+        conta_escolhida = st.selectbox(
+            "Selecione a conta (Banco / Agência / Conta) conforme cadastro no Fluxo de Caixa:",
+            ["— selecione —"] + conta_labels,
+            index=idx_conta,
+            key="cb_conta"
+        )
 
-    if conta_escolhida != "— selecione —":
-        linha_sel = contas_filtradas[contas_filtradas["label"] == conta_escolhida].iloc[0]
-        banco_sel = linha_sel["Banco"]
-        agencia_sel = linha_sel["Agencia"]
-        conta_sel = linha_sel["ContaCorrente"]
+        if conta_escolhida != "— selecione —":
+            linha_sel = contas_filtradas[contas_filtradas["label"] == conta_escolhida].iloc[0]
+            banco_sel = linha_sel["Banco"]
+            agencia_sel = linha_sel["Agencia"]
+            conta_sel = linha_sel["ContaCorrente"]
 
 # Período do extrato
 st.markdown("### 📅 Período do Extrato")
@@ -590,16 +577,18 @@ with col_a2:
         st.button("📊 Registrar extrato no Google Sheets", disabled=True, use_container_width=True)
 
 # Ajuda
-with st.expander("ℹ️ Como funciona a amarração com a aba 'Fluxo de Caixa'?"):
+with st.expander("ℹ️ Como funciona a amarração com a planilha 'Fluxo de Caixa'?"):
     st.markdown("""
-    - Este módulo lê a aba **Fluxo de Caixa** da planilha *Vendas diarias*.
-    - Usa as colunas:
-      - **Grupo** → Coluna **F**
-      - **Empresa (Loja)** → Coluna **B**
-      - **Banco** → Coluna **G**
-      - **Agência** → Coluna **M**
-      - **Conta Corrente** → Coluna **N**
-      - **Extrato Nome Empresa** → nome exato que aparece no extrato do banco
+    - **Tudo vem da planilha `Fluxo de Caixa`:**
+      - Aba **Fluxo de Caixa** → usada para:
+        - **Grupo**
+        - **Empresa (Loja)**
+        - **Banco**
+        - **Agência**
+        - **Conta Corrente**
+        - **Extrato Nome Empresa** → texto exato que aparece no extrato (Itaú, etc.)
+      - Aba **Controle Extratos Bancários** → recebe o log de todos os extratos registrados.
+
     - Quando você faz o **upload do extrato**, o sistema tenta:
       - Ler o arquivo (PDF/Excel/CSV/TXT),
       - Encontrar **Agência**, **Conta** e o **nome da empresa do extrato**
@@ -607,6 +596,8 @@ with st.expander("ℹ️ Como funciona a amarração com a aba 'Fluxo de Caixa'?
       - Cruzar com as contas cadastradas na aba Fluxo de Caixa,
       - Sugerir automaticamente **Grupo, Loja, Banco, Agência e Conta**,
       - Identificar as datas presentes no extrato e sugerir o período.
+
     - Depois disso, os campos já vêm preenchidos para você **apenas confirmar**.
-    - O botão **Registrar extrato no Google Sheets** grava um log na aba **Controle Extratos Bancários**.
+    - O botão **Registrar extrato no Google Sheets** grava um log na aba
+      **Controle Extratos Bancários** da própria planilha *Fluxo de Caixa*.
     """)

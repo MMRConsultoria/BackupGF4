@@ -5,10 +5,17 @@ import streamlit as st
 import pandas as pd
 import re
 import json
+import io
 from datetime import datetime
 import gspread
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
+
+# Para leitura de PDF (adicionar pdfplumber no requirements.txt)
+try:
+    import pdfplumber
+except ImportError:
+    pdfplumber = None
 
 st.set_page_config(page_title="Conciliação Bancária - Extratos", layout="wide")
 
@@ -116,19 +123,12 @@ def carregar_fluxo_caixa():
     rows = values[1:]
     df_raw = pd.DataFrame(rows, columns=header)
 
-    # Vamos referenciar por letra de coluna, como você informou:
-    # F (6) -> Grupo
-    # B (2) -> Empresa
-    # G (7) -> Banco
-    # M (13) -> Agência
-    # N (14) -> Conta Corrente
-    # Como gspread trouxe por nome, usamos iloc para garantir se faltar cabeçalho.
     df = pd.DataFrame()
     try:
-        df["Grupo"] = df_raw.iloc[:, 5]   # F
-        df["Loja"] = df_raw.iloc[:, 1]    # B
-        df["Banco"] = df_raw.iloc[:, 6]   # G
-        df["Agencia"] = df_raw.iloc[:, 12]  # M
+        df["Grupo"] = df_raw.iloc[:, 5]       # F
+        df["Loja"] = df_raw.iloc[:, 1]        # B
+        df["Banco"] = df_raw.iloc[:, 6]       # G
+        df["Agencia"] = df_raw.iloc[:, 12]    # M
         df["ContaCorrente"] = df_raw.iloc[:, 13]  # N
     except Exception as e:
         st.error(f"Erro ao mapear colunas da aba 'Fluxo de Caixa': {e}")
@@ -196,10 +196,210 @@ def salvar_registro_extrato(grupo, loja, banco, agencia, conta, data_inicio, dat
         return False, f"Erro ao salvar registro: {e}"
 
 # ======================
+# Funções de reconhecimento automático
+# ======================
+
+def extrair_texto_arquivo(file_bytes: bytes, file_name: str) -> str:
+    """Transforma o arquivo de extrato em um grande texto (para busca de conta, agência e datas)."""
+    nome = file_name.lower()
+    ext = nome.split(".")[-1] if "." in nome else ""
+
+    try:
+        if ext in ("csv", "txt"):
+            try:
+                texto = file_bytes.decode("utf-8", errors="ignore")
+            except Exception:
+                texto = file_bytes.decode("latin-1", errors="ignore")
+            return texto
+
+        if ext in ("xlsx", "xls"):
+            try:
+                df = pd.read_excel(io.BytesIO(file_bytes), dtype=str)
+            except Exception:
+                df = pd.read_excel(io.BytesIO(file_bytes), dtype=str, engine="openpyxl")
+            df = df.fillna("")
+            # Junta tudo em um textão
+            return " ".join(df.astype(str).values.ravel().tolist())
+
+        if ext == "pdf" and pdfplumber is not None:
+            texto = []
+            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+                for page in pdf.pages:
+                    t = page.extract_text() or ""
+                    texto.append(t)
+            return "\n".join(texto)
+
+    except Exception as e:
+        st.warning(f"⚠️ Não foi possível extrair texto do arquivo para reconhecimento automático: {e}")
+
+    # fallback
+    return ""
+
+def extrair_datas_do_texto(texto: str):
+    """Procura datas no formato dd/mm/aaaa ou dd/mm/aa e retorna (data_min, data_max) ou (None, None)."""
+    padrao = r"\b(\d{1,2}/\d{1,2}/\d{2,4})\b"
+    matchs = re.findall(padrao, texto)
+    datas = []
+
+    for m in matchs:
+        for fmt in ("%d/%m/%Y", "%d/%m/%y"):
+            try:
+                d = datetime.strptime(m, fmt).date()
+                datas.append(d)
+                break
+            except ValueError:
+                continue
+
+    if not datas:
+        return None, None
+
+    return min(datas), max(datas)
+
+def reconhecer_conta_no_texto(texto: str, df_fluxo: pd.DataFrame):
+    """
+    Tenta encontrar uma combinação única de Agência + ContaCorrente no texto,
+    comparando com a aba Fluxo de Caixa.
+    """
+    if df_fluxo.empty or not texto:
+        return None, "Fluxo de Caixa vazio ou texto não disponível."
+
+    # Texto só com dígitos (para procurar números de conta/agência)
+    texto_digitos = re.sub(r"\D", "", texto)
+
+    melhor_linha = None
+    melhor_score = 0
+    candidatos = []
+
+    for _, row in df_fluxo.iterrows():
+        ag = re.sub(r"\D", "", str(row["Agencia"]))
+        cc = re.sub(r"\D", "", str(row["ContaCorrente"]))
+
+        score = 0
+        if ag and ag in texto_digitos:
+            score += 1
+        if cc and cc in texto_digitos:
+            score += 2  # peso maior pra conta
+
+        if score > 0:
+            candidatos.append((score, row))
+
+        if score > melhor_score:
+            melhor_score = score
+            melhor_linha = row
+
+    if melhor_score == 0 or melhor_linha is None:
+        return None, "Nenhuma conta/agência do Fluxo de Caixa foi encontrada no arquivo."
+
+    # Verifica se há ambiguidade (mais de um com mesmo score máximo)
+    qtd_max = sum(1 for s, _ in candidatos if s == melhor_score)
+    if qtd_max > 1:
+        return None, "Mais de uma conta possível encontrada no arquivo (ambiguidade)."
+
+    return melhor_linha, None
+
+def aplicar_reconhecimento_automatico(uploaded_file, df_fluxo, grupos, lojas_map):
+    """
+    Lê o arquivo enviado, tenta reconhecer:
+    - Grupo
+    - Loja
+    - Banco / Agência / Conta
+    - Período (Data Inicial / Data Final)
+
+    Se conseguir, preenche st.session_state para os widgets.
+    """
+    if uploaded_file is None:
+        return
+
+    # Controle para não reprocessar o mesmo arquivo
+    file_id = getattr(uploaded_file, "name", "") or ""
+    if st.session_state.get("last_file_id") == file_id and st.session_state.get("auto_aplicado"):
+        return
+
+    # Marca novo arquivo
+    st.session_state["last_file_id"] = file_id
+    st.session_state["auto_aplicado"] = False
+    st.session_state["auto_info"] = {}
+
+    file_bytes = uploaded_file.read()
+    # IMPORTANTE: reposiciona o ponteiro para permitir outros .read() depois
+    uploaded_file.seek(0)
+
+    texto = extrair_texto_arquivo(file_bytes, uploaded_file.name)
+    if not texto.strip():
+        st.session_state["auto_info"]["mensagem"] = "Não foi possível extrair texto do arquivo para reconhecimento automático."
+        return
+
+    # 1) Conta / agência
+    linha_conta, erro_conta = reconhecer_conta_no_texto(texto, df_fluxo)
+
+    # 2) Datas
+    data_ini_auto, data_fim_auto = extrair_datas_do_texto(texto)
+
+    reconhecido = {}
+
+    if linha_conta is not None:
+        grupo = str(linha_conta["Grupo"]).strip()
+        loja = str(linha_conta["Loja"]).strip()
+        banco = str(linha_conta["Banco"]).strip()
+        ag = str(linha_conta["Agencia"]).strip()
+        cc = str(linha_conta["ContaCorrente"]).strip()
+
+        reconhecido.update({
+            "grupo": grupo,
+            "loja": loja,
+            "banco": banco,
+            "agencia": ag,
+            "conta": cc
+        })
+
+        # Preenche sessão para selects
+        if grupo in grupos:
+            st.session_state["cb_grupo"] = grupo
+
+        # tenta garantir que loja esteja no mapa
+        if loja and grupo in lojas_map and loja in lojas_map[grupo]:
+            st.session_state["cb_loja"] = loja
+
+        # Vamos montar o label da conta igual usamos no selectbox
+        label_conta = f"{banco} - Ag {ag} - CC {cc}"
+        st.session_state["cb_conta"] = label_conta
+
+    # Datas
+    if data_ini_auto is not None and data_fim_auto is not None:
+        reconhecido["data_inicio"] = data_ini_auto
+        reconhecido["data_fim"] = data_fim_auto
+        st.session_state["cb_dt_ini"] = data_ini_auto
+        st.session_state["cb_dt_fim"] = data_fim_auto
+
+    # Monta mensagem amigável
+    msg_lista = []
+    if linha_conta is not None:
+        msg_lista.append("✅ Conta reconhecida automaticamente a partir do arquivo.")
+    elif erro_conta:
+        msg_lista.append(f"⚠️ {erro_conta}")
+
+    if data_ini_auto and data_fim_auto:
+        msg_lista.append(f"✅ Período provável reconhecido: {data_ini_auto.strftime('%d/%m/%Y')} a {data_fim_auto.strftime('%d/%m/%Y')}")
+    else:
+        msg_lista.append("⚠️ Não foi possível reconhecer o período completo do extrato.")
+
+    st.session_state["auto_info"]["reconhecido"] = reconhecido
+    st.session_state["auto_info"]["mensagem"] = "\n".join(msg_lista)
+
+    st.session_state["auto_aplicado"] = True
+
+# ======================
 # Carregar bases
 # ======================
 df_emp, GRUPOS, LOJAS_MAP = carregar_empresas()
 df_fluxo = carregar_fluxo_caixa()
+
+# Garante chaves na sessão (para podermos sobrescrever com automático)
+for key in ["cb_grupo", "cb_loja", "cb_conta", "cb_dt_ini", "cb_dt_fim"]:
+    st.session_state.setdefault(key, None)
+st.session_state.setdefault("auto_info", {})
+st.session_state.setdefault("auto_aplicado", False)
+st.session_state.setdefault("last_file_id", "")
 
 # ======================
 # UI Principal
@@ -212,13 +412,55 @@ uploaded_file = st.file_uploader(
     help="Arquivo do extrato bancário"
 )
 
-# Seleção de Grupo e Loja
+# 🔍 Reconhecimento Automático (após upload)
+if uploaded_file is not None:
+    with st.spinner("🔍 Lendo o arquivo e tentando reconhecer as informações automaticamente..."):
+        aplicar_reconhecimento_automatico(uploaded_file, df_fluxo, GRUPOS, LOJAS_MAP)
+
+    auto_info = st.session_state.get("auto_info", {})
+    if auto_info:
+        with st.expander("🤖 Informações reconhecidas automaticamente (clique para ver)", expanded=True):
+            msg = auto_info.get("mensagem", "")
+            if msg:
+                for linha in msg.split("\n"):
+                    st.markdown(f"- {linha}")
+            rec = auto_info.get("reconhecido", {})
+            if rec:
+                st.markdown("**Resumo dos dados sugeridos:**")
+                st.json(rec)
+            st.markdown(
+                "👉 *Confira as informações abaixo. Você só precisa alterar algo se o reconhecimento estiver incorreto.*"
+            )
+
+# Seleção de Grupo e Loja (já com valores sugeridos se houver reconhecimento)
 col_g, col_l = st.columns(2)
 with col_g:
-    grupo_sel = st.selectbox("Grupo:", ["— selecione —"] + GRUPOS, key="cb_grupo")
+    grupo_sel = st.selectbox(
+        "Grupo:",
+        ["— selecione —"] + GRUPOS,
+        index=(
+            (["— selecione —"] + GRUPOS).index(st.session_state["cb_grupo"])
+            if st.session_state.get("cb_grupo") in GRUPOS
+            else 0
+        ),
+        key="cb_grupo"
+    )
+
 with col_l:
     lojas = LOJAS_MAP.get(grupo_sel, []) if grupo_sel and grupo_sel != "— selecione —" else []
-    loja_sel = st.selectbox("Loja / Empresa:", ["— selecione —"] + lojas, key="cb_loja")
+    # ajusta índice se já tiver loja reconhecida
+    loja_options = ["— selecione —"] + lojas
+    if st.session_state.get("cb_loja") in lojas:
+        idx_loja = loja_options.index(st.session_state["cb_loja"])
+    else:
+        idx_loja = 0
+
+    loja_sel = st.selectbox(
+        "Loja / Empresa:",
+        loja_options,
+        index=idx_loja,
+        key="cb_loja"
+    )
 
 # Filtra as contas da aba Fluxo de Caixa
 contas_filtradas = pd.DataFrame()
@@ -230,20 +472,30 @@ if grupo_sel not in (None, "", "— selecione —") and loja_sel not in (None, "
 
 st.markdown("### 🏦 Seleção de Conta (Fluxo de Caixa)")
 
+banco_sel = agencia_sel = conta_sel = ""
+
 if contas_filtradas.empty:
     st.info("Nenhuma conta encontrada na aba **Fluxo de Caixa** para este Grupo/Loja.")
     conta_opcoes = []
 else:
-    # Cria label amigável para escolha
     contas_filtradas = contas_filtradas.reset_index(drop=True)
     contas_filtradas["label"] = contas_filtradas.apply(
         lambda r: f"{r['Banco']} - Ag {r['Agencia']} - CC {r['ContaCorrente']}",
         axis=1
     )
     conta_labels = contas_filtradas["label"].tolist()
+
+    # Se reconhecimento automático sugeriu uma conta, tenta usá-la
+    conta_default = st.session_state.get("cb_conta")
+    if conta_default in conta_labels:
+        idx_conta = conta_labels.index(conta_default) + 1  # +1 por causa do "— selecione —"
+    else:
+        idx_conta = 0
+
     conta_escolhida = st.selectbox(
         "Selecione a conta (Banco / Agência / Conta) conforme cadastro no Fluxo de Caixa:",
         ["— selecione —"] + conta_labels,
+        index=idx_conta,
         key="cb_conta"
     )
 
@@ -252,16 +504,23 @@ else:
         banco_sel = linha_sel["Banco"]
         agencia_sel = linha_sel["Agencia"]
         conta_sel = linha_sel["ContaCorrente"]
-    else:
-        banco_sel = agencia_sel = conta_sel = ""
 
 # Período do extrato
 st.markdown("### 📅 Período do Extrato")
 col_d1, col_d2 = st.columns(2)
+
 with col_d1:
-    data_inicio = st.date_input("Data Inicial:", key="cb_dt_ini")
+    data_inicio = st.date_input(
+        "Data Inicial:",
+        value=st.session_state.get("cb_dt_ini") or datetime.today().date(),
+        key="cb_dt_ini"
+    )
 with col_d2:
-    data_fim = st.date_input("Data Final:", key="cb_dt_fim")
+    data_fim = st.date_input(
+        "Data Final:",
+        value=st.session_state.get("cb_dt_fim") or datetime.today().date(),
+        key="cb_dt_fim"
+    )
 
 # Nome padronizado
 st.markdown("### 📄 Nome Padronizado do Arquivo")
@@ -284,14 +543,14 @@ if dados_ok:
     )
     st.code(nome_padrao, language="text")
 else:
-    st.warning("Preencha Grupo, Loja, Conta (Fluxo de Caixa), Período e faça o upload do arquivo para gerar o nome padronizado.")
+    st.warning("Preencha/valide Grupo, Loja, Conta (Fluxo de Caixa), Período e faça o upload do arquivo para gerar o nome padronizado.")
     nome_padrao = None
 
 st.markdown("### ✅ Ações")
 
 col_a1, col_a2 = st.columns(2)
 with col_a1:
-    if dados_ok and nome_padrao:
+    if dados_ok and nome_padrao and uploaded_file is not None:
         # leitura bruta para download
         file_bytes = uploaded_file.read()
         uploaded_file.seek(0)
@@ -331,8 +590,13 @@ with st.expander("ℹ️ Como funciona a amarração com a aba 'Fluxo de Caixa'?
       - **Banco** → Coluna **G**
       - **Agência** → Coluna **M**
       - **Conta Corrente** → Coluna **N**
-    - Quando você escolhe **Grupo** e **Loja**, são listadas apenas as contas dessa combinação.
-    - Ao escolher a conta, o sistema preenche automaticamente **Banco**, **Agência** e **Conta** e monta o nome:
-      `Grupo - Loja - Banco - Ag XXXX - CC YYYYY - dd-mm-aaaa a dd-mm-aaaa.pdf`
+    - Quando você faz o **upload do extrato**, o sistema tenta:
+      - Ler o arquivo (PDF/Excel/CSV/TXT),
+      - Encontrar a combinação **Agência + Conta** dentro do texto,
+      - Cruzar com as contas cadastradas na aba Fluxo de Caixa,
+      - Sugerir automaticamente **Grupo, Loja, Banco, Agência e Conta**,
+      - Identificar as datas presentes no extrato e sugerir o período.
+    - Depois disso, os campos de filtros já vêm preenchidos para você **apenas confirmar**.
     - O botão **Registrar extrato no Google Sheets** grava um log na aba **Controle Extratos Bancários**.
     """)
+

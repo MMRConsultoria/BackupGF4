@@ -104,7 +104,9 @@ def carregar_fluxo_caixa():
     - Agência (col M)
     - Conta Corrente (col N)
     - Extrato Nome Empresa (coluna com esse cabeçalho na planilha)
-    Cria um DF padronizado: Grupo, Loja, Banco, Agencia, ContaCorrente, ExtratoNomeEmpresa
+
+    Cria um DF padronizado:
+    Grupo, Loja, Banco, Agencia, ContaCorrente, ExtratoNomeEmpresa
     """
     sh = _open_planilha("Vendas diarias")
     if sh is None:
@@ -126,8 +128,9 @@ def carregar_fluxo_caixa():
 
     df = pd.DataFrame()
     try:
+        # Mantendo mapeamento por posição como você já usava:
         df["Grupo"] = df_raw.iloc[:, 5]       # F
-        df["Loja"] = df_raw.iloc[:, 1]        # B
+        df["Loja"] = df_raw.iloc[:, 1]        # B (Empresa)
         df["Banco"] = df_raw.iloc[:, 6]       # G
         df["Agencia"] = df_raw.iloc[:, 12]    # M
         df["ContaCorrente"] = df_raw.iloc[:, 13]  # N
@@ -135,7 +138,7 @@ def carregar_fluxo_caixa():
         st.error(f"Erro ao mapear colunas da aba 'Fluxo de Caixa': {e}")
         return pd.DataFrame()
 
-    # ➕ Novo: coluna "Extrato Nome Empresa"
+    # ➕ Novo: coluna "Extrato Nome Empresa" (pelo cabeçalho)
     if "Extrato Nome Empresa" in df_raw.columns:
         df["ExtratoNomeEmpresa"] = df_raw["Extrato Nome Empresa"].astype(str).str.strip()
     else:
@@ -295,7 +298,7 @@ def reconhecer_conta_no_texto(texto: str, df_fluxo: pd.DataFrame):
         if cc and cc in texto_digitos:
             score += 2  # peso maior para conta
 
-        # 🔎 Nome da empresa que aparece no extrato
+        # Nome da empresa que aparece no extrato
         if nome_extrato_lower and nome_extrato_lower in texto_lower:
             score += 3  # peso forte para o nome da empresa no extrato
 
@@ -596,7 +599,7 @@ with st.expander("ℹ️ Como funciona a amarração com a aba 'Fluxo de Caixa'?
       - **Banco** → Coluna **G**
       - **Agência** → Coluna **M**
       - **Conta Corrente** → Coluna **N**
-      - **Extrato Nome Empresa** → nome exato que aparece no extrato do banco (ex.: Itaú)
+      - **Extrato Nome Empresa** → nome exato que aparece no extrato do banco
     - Quando você faz o **upload do extrato**, o sistema tenta:
       - Ler o arquivo (PDF/Excel/CSV/TXT),
       - Encontrar **Agência**, **Conta** e o **nome da empresa do extrato**

@@ -1,4 +1,4 @@
-# pages/Padronizador Extratos Bancários.py
+# pages/Conciliação Bancária.py
 # -*- coding: utf-8 -*-
 
 import streamlit as st
@@ -10,8 +10,6 @@ from datetime import datetime
 import gspread
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
-from PyPDF2 import PdfReader, PdfWriter
-import pdfplumber
 
 # Configuração da página
 st.set_page_config(page_title="Padronizador de Extratos Bancários", layout="wide")
@@ -152,23 +150,13 @@ def carregar_bancos():
         st.warning(f"⚠️ Erro ao carregar bancos: {e}")
         return []
 
-def extrair_periodo_do_arquivo(uploaded_file):
-    """Tenta extrair período (datas) do conteúdo do arquivo"""
+def extrair_periodo_do_texto(texto):
+    """Tenta extrair período (datas) do texto"""
     try:
-        # Tenta ler PDF
-        if uploaded_file.name.endswith('.pdf'):
-            pdf = PdfReader(uploaded_file)
-            texto = ""
-            for page in pdf.pages[:3]:  # Primeiras 3 páginas
-                texto += page.extract_text()
-        else:
-            # Tenta ler como texto
-            texto = uploaded_file.read().decode('utf-8', errors='ignore')
-            uploaded_file.seek(0)  # Volta ao início
-        
         # Procura padrões de data
         padroes = [
             r'(\d{2}/\d{2}/\d{4})\s*a\s*(\d{2}/\d{2}/\d{4})',
+            r'(\d{2}/\d{2}/\d{4})\s*até\s*(\d{2}/\d{2}/\d{4})',
             r'Período:\s*(\d{2}/\d{2}/\d{4})\s*-\s*(\d{2}/\d{2}/\d{4})',
             r'De\s*(\d{2}/\d{2}/\d{4})\s*até\s*(\d{2}/\d{2}/\d{4})',
         ]
@@ -179,9 +167,34 @@ def extrair_periodo_do_arquivo(uploaded_file):
                 return match.group(1), match.group(2)
         
         return None, None
-    except Exception as e:
-        st.warning(f"⚠️ Não foi possível extrair período automaticamente: {e}")
+    except Exception:
         return None, None
+
+def processar_arquivo_upload(uploaded_file):
+    """Processa arquivo e tenta extrair informações"""
+    try:
+        # Tenta ler como texto
+        if uploaded_file.name.endswith(('.txt', '.csv')):
+            texto = uploaded_file.read().decode('utf-8', errors='ignore')
+            uploaded_file.seek(0)
+            return texto
+        
+        # Para Excel
+        elif uploaded_file.name.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(uploaded_file)
+            uploaded_file.seek(0)
+            # Converte para texto para buscar datas
+            texto = df.to_string()
+            return texto
+        
+        # Para PDF (sem biblioteca externa, apenas avisa)
+        elif uploaded_file.name.endswith('.pdf'):
+            return "[PDF] - Informe o período manualmente"
+        
+        return ""
+    except Exception as e:
+        st.warning(f"⚠️ Não foi possível processar o arquivo: {e}")
+        return ""
 
 def validar_dados(grupo, loja, banco, agencia, conta, data_inicio, data_fim):
     """Valida se todos os dados necessários foram preenchidos"""
@@ -213,45 +226,65 @@ def gerar_nome_padronizado(grupo, loja, banco, agencia, conta, data_inicio, data
     
     # Formata datas
     try:
-        dt_ini = datetime.strptime(data_inicio, "%Y-%m-%d").strftime("%d-%m-%Y")
-        dt_fim = datetime.strptime(data_fim, "%Y-%m-%d").strftime("%d-%m-%Y")
+        if isinstance(data_inicio, str):
+            if "-" in data_inicio:  # formato YYYY-MM-DD
+                dt_ini = datetime.strptime(data_inicio, "%Y-%m-%d").strftime("%d-%m-%Y")
+            else:  # formato DD/MM/YYYY
+                dt_ini = datetime.strptime(data_inicio, "%d/%m/%Y").strftime("%d-%m-%Y")
+        else:
+            dt_ini = data_inicio.strftime("%d-%m-%Y")
+            
+        if isinstance(data_fim, str):
+            if "-" in data_fim:
+                dt_fim = datetime.strptime(data_fim, "%Y-%m-%d").strftime("%d-%m-%Y")
+            else:
+                dt_fim = datetime.strptime(data_fim, "%d/%m/%Y").strftime("%d-%m-%Y")
+        else:
+            dt_fim = data_fim.strftime("%d-%m-%Y")
     except:
-        dt_ini = data_inicio
-        dt_fim = data_fim
+        dt_ini = str(data_inicio)
+        dt_fim = str(data_fim)
     
     nome = f"{grupo_limpo} - {loja_limpa} - {banco_limpo} - Ag {agencia} - CC {conta} - {dt_ini} a {dt_fim}.pdf"
     return nome
 
-def salvar_no_sheets(grupo, loja, banco, agencia, conta, data_inicio, data_fim, df_extrato):
-    """Salva dados do extrato na aba correta do Google Sheets"""
+def salvar_no_sheets(grupo, loja, banco, agencia, conta, data_inicio, data_fim, nome_arquivo):
+    """Salva registro do extrato na planilha Google Sheets"""
     try:
         sh = _open_planilha("Vendas diarias")
         if not sh:
             return False, "Planilha não encontrada"
         
-        # Nome da aba: Banco - Ag XXXX - CC YYYY
-        nome_aba = f"{banco} - Ag {agencia} - CC {conta}"
+        # Nome da planilha de controle
+        nome_planilha_controle = "Controle Extratos Bancários"
         
-        # Tenta abrir ou criar a aba
+        # Tenta abrir ou criar a planilha de controle
         try:
-            ws = sh.worksheet(nome_aba)
+            ws = sh.worksheet(nome_planilha_controle)
         except WorksheetNotFound:
-            ws = sh.add_worksheet(nome_aba, rows=1000, cols=20)
+            ws = sh.add_worksheet(nome_planilha_controle, rows=1000, cols=20)
             # Adiciona cabeçalho
-            ws.append_row(["Data", "Descrição", "Valor", "Grupo", "Loja", "Período"])
-        
-        # Adiciona os dados
-        for _, row in df_extrato.iterrows():
             ws.append_row([
-                str(row.get("Data", "")),
-                str(row.get("Descrição", "")),
-                str(row.get("Valor", "")),
-                grupo,
-                loja,
-                f"{data_inicio} a {data_fim}"
+                "Data Processamento", "Grupo", "Loja", "Banco", 
+                "Agência", "Conta", "Período Início", "Período Fim", 
+                "Nome Arquivo", "Status"
             ])
         
-        return True, f"Dados salvos na aba '{nome_aba}'"
+        # Adiciona registro
+        ws.append_row([
+            datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            grupo,
+            loja,
+            banco,
+            agencia,
+            conta,
+            str(data_inicio),
+            str(data_fim),
+            nome_arquivo,
+            "Processado"
+        ])
+        
+        return True, f"Registro salvo em '{nome_planilha_controle}'"
     
     except Exception as e:
         return False, f"Erro ao salvar: {str(e)}"
@@ -278,8 +311,9 @@ uploaded_file = st.file_uploader(
 if uploaded_file:
     st.success(f"✅ Arquivo carregado: **{uploaded_file.name}**")
     
-    # Tenta extrair período automaticamente
-    data_ini_auto, data_fim_auto = extrair_periodo_do_arquivo(uploaded_file)
+    # Processa arquivo e tenta extrair período
+    texto_arquivo = processar_arquivo_upload(uploaded_file)
+    data_ini_auto, data_fim_auto = extrair_periodo_do_texto(texto_arquivo)
     
     st.markdown("---")
     st.markdown("### 🔍 Validação e Padronização")
@@ -299,25 +333,34 @@ if uploaded_file:
         
         col_ag, col_cc = st.columns(2)
         with col_ag:
-            agencia = st.text_input("Agência:", key="agencia_extrato")
+            agencia = st.text_input("Agência:", key="agencia_extrato", placeholder="Ex: 1234")
         with col_cc:
-            conta = st.text_input("Conta:", key="conta_extrato")
+            conta = st.text_input("Conta:", key="conta_extrato", placeholder="Ex: 56789-0")
     
     with col2:
         st.markdown("#### 📅 Período do Extrato")
         
         if data_ini_auto and data_fim_auto:
-            st.info(f"📌 Período detectado automaticamente: {data_ini_auto} a {data_fim_auto}")
+            st.info(f"📌 Período detectado: {data_ini_auto} a {data_fim_auto}")
+            try:
+                data_ini_default = datetime.strptime(data_ini_auto, "%d/%m/%Y")
+                data_fim_default = datetime.strptime(data_fim_auto, "%d/%m/%Y")
+            except:
+                data_ini_default = None
+                data_fim_default = None
+        else:
+            data_ini_default = None
+            data_fim_default = None
         
         data_inicio = st.date_input(
             "Data Inicial:",
-            value=datetime.strptime(data_ini_auto, "%d/%m/%Y") if data_ini_auto else None,
+            value=data_ini_default,
             key="data_ini_extrato"
         )
         
         data_fim = st.date_input(
             "Data Final:",
-            value=datetime.strptime(data_fim_auto, "%d/%m/%Y") if data_fim_auto else None,
+            value=data_fim_default,
             key="data_fim_extrato"
         )
         
@@ -349,57 +392,73 @@ if uploaded_file:
     else:
         st.success("✅ **Todos os dados foram validados com sucesso!**")
         
-        col_btn1, col_btn2, col_btn3 = st.columns(3)
+        col_btn1, col_btn2 = st.columns(2)
         
         with col_btn1:
-            # Botão para baixar PDF renomeado
-            if st.button("📥 Baixar PDF Padronizado", use_container_width=True, type="primary"):
-                nome_padrao = gerar_nome_padronizado(
-                    grupo_sel, loja_sel, banco_sel, agencia, conta,
-                    str(data_inicio), str(data_fim)
-                )
-                
-                # Lê o arquivo original
-                file_bytes = uploaded_file.read()
-                uploaded_file.seek(0)
-                
-                st.download_button(
-                    label="⬇️ Clique para baixar",
-                    data=file_bytes,
-                    file_name=nome_padrao,
-                    mime="application/pdf",
-                    use_container_width=True
-                )
+            # Gera nome padronizado
+            nome_padrao = gerar_nome_padronizado(
+                grupo_sel, loja_sel, banco_sel, agencia, conta,
+                str(data_inicio), str(data_fim)
+            )
+            
+            # Lê o arquivo original
+            file_bytes = uploaded_file.read()
+            uploaded_file.seek(0)
+            
+            st.download_button(
+                label="📥 Baixar PDF Padronizado",
+                data=file_bytes,
+                file_name=nome_padrao,
+                mime="application/pdf" if uploaded_file.name.endswith('.pdf') else "application/octet-stream",
+                use_container_width=True,
+                type="primary"
+            )
         
         with col_btn2:
-            # Botão para salvar no Google Sheets
-            if st.button("📊 Salvar no Google Sheets", use_container_width=True):
-                with st.spinner("Salvando no Google Sheets..."):
-                    # Aqui você pode processar o arquivo e extrair os dados
-                    # Por enquanto, vamos criar um DataFrame de exemplo
-                    df_exemplo = pd.DataFrame({
-                        "Data": [str(data_inicio)],
-                        "Descrição": ["Extrato importado"],
-                        "Valor": [0.00]
-                    })
-                    
+            # Botão para salvar registro no Google Sheets
+            if st.button("📊 Registrar no Google Sheets", use_container_width=True):
+                with st.spinner("Salvando registro..."):
                     sucesso, mensagem = salvar_no_sheets(
                         grupo_sel, loja_sel, banco_sel, agencia, conta,
-                        str(data_inicio), str(data_fim), df_exemplo
+                        str(data_inicio), str(data_fim), nome_padrao
                     )
                     
                     if sucesso:
                         st.success(f"✅ {mensagem}")
+                        # Adiciona ao histórico
+                        if "historico_extratos" not in st.session_state:
+                            st.session_state.historico_extratos = []
+                        
+                        st.session_state.historico_extratos.append({
+                            "arquivo": uploaded_file.name,
+                            "arquivo_padrao": nome_padrao,
+                            "grupo": grupo_sel,
+                            "loja": loja_sel,
+                            "banco": banco_sel,
+                            "agencia": agencia,
+                            "conta": conta,
+                            "periodo": f"{data_inicio} a {data_fim}",
+                            "data_processamento": datetime.now().strftime("%d/%m/%Y %H:%M")
+                        })
                     else:
                         st.error(f"❌ {mensagem}")
-        
-        with col_btn3:
-            # Botão para salvar no Google Drive (estrutura de pastas)
-            if st.button("☁️ Salvar no Drive", use_container_width=True):
-                st.info("🚧 Funcionalidade em desenvolvimento: salvará na estrutura de pastas do Drive")
 
 else:
     st.info("👆 Faça upload de um arquivo de extrato bancário para começar")
+
+# ======================
+# Histórico de uploads
+# ======================
+if st.session_state.get("historico_extratos"):
+    st.markdown("---")
+    st.markdown("### 📜 Histórico de Processamentos (Sessão Atual)")
+    df_hist = pd.DataFrame(st.session_state.historico_extratos)
+    st.dataframe(df_hist, use_container_width=True, height=250)
+    
+    # Botão para limpar histórico
+    if st.button("🗑️ Limpar Histórico"):
+        st.session_state.historico_extratos = []
+        st.rerun()
 
 # ======================
 # Seção de ajuda
@@ -410,7 +469,7 @@ with st.expander("ℹ️ Como usar este módulo"):
     
     1. **Upload do arquivo**: Faça upload do extrato bancário (PDF, Excel, CSV ou TXT)
     
-    2. **Validação automática**: O sistema tentará detectar automaticamente o período do extrato
+    2. **Detecção automática**: O sistema tentará detectar automaticamente o período do extrato
     
     3. **Preenchimento dos dados**:
        - Selecione o **Grupo** e a **Loja**
@@ -425,42 +484,20 @@ with st.expander("ℹ️ Como usar este módulo"):
     
     5. **Salvamento**:
        - **Baixar PDF**: Download do arquivo com nome padronizado
-       - **Salvar no Sheets**: Alimenta a aba correta da planilha "Extratos Bancários"
-       - **Salvar no Drive**: Organiza na estrutura de pastas (em desenvolvimento)
+       - **Registrar no Sheets**: Salva o registro na planilha de controle
     
-    ### 📁 Estrutura no Drive:
+    ### 📁 Estrutura planejada no Drive:
     ```
     📁 Conciliação Bancária
       └─ 📁 [Nome do Grupo]
           └─ 📁 [Nome da Loja]
               ├─ 📊 Extratos Bancários.xlsx
-              └─ 📄 [Extratos em PDF]
+              └─ 📄 [Extratos em PDF padronizados]
     ```
+    
+    ### ✅ Benefícios:
+    - ✔️ Nomenclatura padronizada
+    - ✔️ Fácil localização de extratos
+    - ✔️ Controle centralizado no Google Sheets
+    - ✔️ Histórico de processamentos
     """)
-
-# ======================
-# Histórico de uploads (opcional)
-# ======================
-if "historico_extratos" not in st.session_state:
-    st.session_state.historico_extratos = []
-
-if uploaded_file and not erros:
-    # Adiciona ao histórico quando processar
-    if st.button("➕ Adicionar ao histórico", key="add_historico"):
-        st.session_state.historico_extratos.append({
-            "arquivo": uploaded_file.name,
-            "grupo": grupo_sel,
-            "loja": loja_sel,
-            "banco": banco_sel,
-            "agencia": agencia,
-            "conta": conta,
-            "periodo": f"{data_inicio} a {data_fim}",
-            "data_processamento": datetime.now().strftime("%d/%m/%Y %H:%M")
-        })
-        st.success("✅ Adicionado ao histórico!")
-
-if st.session_state.historico_extratos:
-    st.markdown("---")
-    st.markdown("### 📜 Histórico de Processamentos")
-    df_hist = pd.DataFrame(st.session_state.historico_extratos)
-    st.dataframe(df_hist, use_container_width=True, height=200)

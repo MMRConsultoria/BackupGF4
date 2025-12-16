@@ -47,9 +47,8 @@ def extrair_dados(texto):
         "liquido": liquido
     }
 
-
 def desdobrar_tabela(df):
-    n = df.shape[1] // 2  # número de colunas por bloco
+    n = 5  # número fixo de colunas por bloco
 
     bloco1 = df.iloc[:, :n].copy()
     bloco2 = df.iloc[:, n:].copy()
@@ -57,21 +56,22 @@ def desdobrar_tabela(df):
     # Ajustar número de colunas para serem iguais
     diff = bloco1.shape[1] - bloco2.shape[1]
     if diff > 0:
-        # bloco2 tem menos colunas, adicionar colunas vazias
         for i in range(diff):
             bloco2[f"extra_{i}"] = ""
     elif diff < 0:
-        # bloco1 tem menos colunas, adicionar colunas vazias
         for i in range(-diff):
             bloco1[f"extra_{i}"] = ""
 
-    # Agora renomear colunas de bloco2 para as mesmas de bloco1
     bloco2.columns = bloco1.columns
 
     df_desdobrado = pd.concat([bloco1, bloco2], ignore_index=True)
     df_desdobrado = df_desdobrado.dropna(how='all').reset_index(drop=True)
 
+    # Renomear colunas para nomes claros
+    df_desdobrado.columns = ["Col1", "Col2", "Col3", "Col4", "Col5"]
+
     return df_desdobrado
+
 st.title("📄 Extrator de Dados do Resumo da Folha (PDF)")
 
 uploaded_file = st.file_uploader("Faça upload do arquivo PDF", type="pdf")

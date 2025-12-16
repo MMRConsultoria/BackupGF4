@@ -4,8 +4,7 @@ import re
 import pandas as pd
 from io import BytesIO
 
-# -------- regex helpers --------
-_money_re = re.compile(r'^\d{1,3}(?:\.\d{3})*,\d{2}$')  # ex: 101.662,53 ou 0,00
+_money_re = re.compile(r'^\d{1,3}(?:\.\d{3})*,\d{2}$')
 
 def is_money(tok: str) -> bool:
     t = str(tok or "").strip()
@@ -16,7 +15,6 @@ def is_money(tok: str) -> bool:
     return bool(_money_re.match(t))
 
 def _to_float_br(x):
-    """Converte string BR '101.662,53' -> float 101662.53"""
     t = str(x or "").strip()
     if not t:
         return None
@@ -35,13 +33,7 @@ def _to_float_br(x):
     except:
         return None
 
-# -------- parsing helpers --------
 def split_line_into_blocks(line: str):
-    """
-    Tenta dividir a linha em blocos. Primeiro tenta split por >=2 espaços.
-    Se não, divide por espaço e fecha bloco ao encontrar money token.
-    Retorna: lista de blocos (cada bloco = lista de tokens).
-    """
     parts = re.split(r'\s{2,}', line.strip())
     tokens = [p for p in parts if p.strip() != ""]
     if len(tokens) >= 5:
@@ -65,18 +57,10 @@ def split_line_into_blocks(line: str):
     return blocks
 
 def normalize_block_tokens(block_tokens):
-    """
-    Retorna [Col1, Col2, Descrição, Valor]
-    Regras:
-    - Valor = último token money.
-    - Se token antes do valor for '0,00', ignorar ele na descrição.
-    - Descrição = tokens entre Col2 e valor (ou token antes do valor se for '0,00').
-    """
     toks = [t.strip() for t in block_tokens if t is not None and str(t).strip() != ""]
     if not toks:
         return ["", "", "", ""]
 
-    # Encontrar último token money -> Valor
     value = ""
     value_idx = None
     for i in range(len(toks)-1, -1, -1):
@@ -89,10 +73,10 @@ def normalize_block_tokens(block_tokens):
         value = toks[value_idx]
 
     prev_idx = value_idx - 1
+    drop_prev_zero = prev_idx >= 0 and toks[prev_idx] == "0,00"
 
-    drop_prev_zero = False
-    if prev_idx >= 0 and toks[prev_idx] == "0,00":
-        drop_prev_zero = True
+    col1 = toks[0] if len(toks) > 0 else ""
+    col2 = toks[1] if len(toks) > 1 else ""
 
     start_desc = 2
     stop_desc = prev_idx if drop_prev_zero else value_idx
@@ -101,16 +85,12 @@ def normalize_block_tokens(block_tokens):
 
     desc_tokens = []
     for i in range(start_desc, stop_desc):
-        if i < len(toks):
+        if i < len(toks) and toks[i].lower() not in ("hs", "h"):
             desc_tokens.append(toks[i])
     description = " ".join(desc_tokens).strip()
 
-    col1 = toks[0] if len(toks) > 0 else ""
-    col2 = toks[1] if len(toks) > 1 else ""
-
     return [col1 or "", col2 or "", description or "", value or ""]
 
-# -------- extrair dados do texto --------
 def extrair_dados(texto):
     empresa_match = re.search(r"Empresa:\s*\d+\s*-\s*(.+)", texto)
     nome_empresa = empresa_match.group(1).strip() if empresa_match else ""
@@ -135,11 +115,8 @@ def extrair_dados(texto):
             output_rows.append(normalized)
 
     df = pd.DataFrame(output_rows, columns=["Col1", "Col2", "Descrição", "Valor"])
-
-    # converter Valor para float
     df["Valor_num"] = df["Valor"].apply(_to_float_br)
 
-    # valores finais
     valores_match = re.search(
         r"Proventos:\s*([\d\.,]+)\s*Vantagens:\s*([\d\.,]+)\s*Descontos:\s*([\d\.,]+)\s*Líquido:\s*([\d\.,]+)",
         texto, re.IGNORECASE
@@ -162,7 +139,6 @@ def extrair_dados(texto):
         "liquido": liquido
     }
 
-# -------- Streamlit UI --------
 st.set_page_config(page_title="Extrair Resumo Contrato", layout="wide")
 st.title("📄 Extrator - Resumo Contrato (4 colunas)")
 
@@ -186,13 +162,11 @@ if uploaded_file:
         st.subheader("Tabela - Resumo Contrato (formatada)")
         df_final = dados["tabela"].copy()
 
-        # mostrar com coluna Valor_num formatada no padrão BR
         df_show = df_final[["Col1", "Col2", "Descrição", "Valor_num"]].rename(columns={"Valor_num":"Valor"})
         df_show["Valor"] = df_show["Valor"].apply(lambda v: f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(v) else "")
 
         st.dataframe(df_show, use_container_width=True)
 
-        # Exportar para Excel: manter Col1,Col2,Descrição,Valor (numérico)
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             export_df = df_final[["Col1", "Col2", "Descrição", "Valor_num"]].rename(columns={"Valor_num":"Valor"})

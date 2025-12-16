@@ -37,18 +37,13 @@ def is_money(tok: str) -> bool:
         return True
     return bool(_money_re.match(tok))
 
+
 def normalize_block_tokens(block_tokens):
-    """
-    Recebe lista de tokens de um bloco e retorna [Col1, Col2, Descrição, Horas, Valor]
-    Preenche com "" quando faltar.
-    Tratamento especial: se não existe token de horas, mas o token antes do valor é money (ex: '0,00'),
-    consideramos esse token como Horas (quando fizer sentido).
-    """
     toks = [t.strip() for t in block_tokens if t is not None and str(t).strip() != ""]
     if not toks:
         return ["", "", "", "", ""]
 
-    # identificar value (último token que casa com money)
+    # Identificar o último token que é valor monetário (Valor)
     value = ""
     end_idx = len(toks) - 1
     for i in range(len(toks)-1, -1, -1):
@@ -57,39 +52,27 @@ def normalize_block_tokens(block_tokens):
             end_idx = i
             break
 
-    # procurar índice do token horas antes de end_idx
-    hours_idx = None
-    for i in range(end_idx-1, -1, -1):
-        if _hours_re.search(toks[i]) or toks[i].lower().endswith('hs') or toks[i].lower() == 'hs':
-            hours_idx = i
-            break
+    # Inicializar Horas vazio
+    col4 = ""
 
-    # Se não encontrou horas e o token anterior ao value é money (ex: '0,00'), 
-    # então interpretamos esse token como Horas (caso típico que descreveu).
-    if hours_idx is None and end_idx >= 1 and is_money(toks[end_idx-1]):
-        # marcar hours_idx como end_idx-1 e considerar que o value permanece em end_idx
+    # Verificar se o token anterior ao valor é também valor monetário (ex: "0,00")
+    if end_idx >= 1 and is_money(toks[end_idx - 1]):
+        col4 = toks[end_idx - 1]
         hours_idx = end_idx - 1
-        # NOTE: nesse caso, queremos que a "Horas" apareça como esse token (ex: '0,00')
-        # e que a descrição não inclua esse token.
+    else:
+        # Procurar token de horas com 'hs' ou padrão hh:mm antes do valor
+        hours_idx = None
+        for i in range(end_idx-1, -1, -1):
+            if _hours_re.search(toks[i]) or toks[i].lower().endswith('hs') or toks[i].lower() == 'hs':
+                col4 = toks[i]
+                hours_idx = i
+                break
 
-    # col1 e col2: assumimos primeiros dois tokens se existirem
+    # Col1 e Col2
     col1 = toks[0] if len(toks) > 0 else ""
     col2 = toks[1] if len(toks) > 1 else ""
 
-    # col4 = horas (juntar possíveis partes)
-    col4 = ""
-    if hours_idx is not None:
-        h_parts = []
-        i = hours_idx
-        # junte até o token anterior ao value
-        while i < end_idx and i < len(toks):
-            if is_money(toks[i]):
-                break
-            h_parts.append(toks[i])
-            i += 1
-        col4 = " ".join(h_parts).strip()
-
-    # descrição entre índice 2 e hours_idx (ou até end_idx)
+    # Descrição: tokens entre índice 2 e hours_idx (ou end_idx se hours_idx não existir)
     start_desc = 2
     stop_desc = hours_idx if hours_idx is not None else end_idx
     if stop_desc < start_desc:

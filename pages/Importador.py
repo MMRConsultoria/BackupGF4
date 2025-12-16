@@ -40,6 +40,7 @@ def is_money(tok: str) -> bool:
 
 
 def normalize_block_tokens(block_tokens):
+    
     toks = [t.strip() for t in block_tokens if t is not None and str(t).strip() != ""]
     if not toks:
         return ["", "", "", "", ""]
@@ -55,18 +56,25 @@ def normalize_block_tokens(block_tokens):
 
     # Inicializar Horas vazio
     col4 = ""
+    hours_idx = None
 
     # Procurar token de horas antes do valor:
     # Pode ser token com padrão hh:mm ou token 'hs'
     # Ou, se o token anterior ao valor for valor monetário (ex: '0,00'), considerar como horas
-    hours_idx = None
     if end_idx >= 1 and is_money(toks[end_idx - 1]):
         col4 = toks[end_idx - 1]
         hours_idx = end_idx - 1
     else:
+        # Procurar token que contenha hh:mm ou token 'hs' e juntar tokens consecutivos que fazem parte da hora
         for i in range(end_idx-1, -1, -1):
             if _hours_re.search(toks[i]) or toks[i].lower().endswith('hs') or toks[i].lower() == 'hs':
-                col4 = toks[i]
+                # juntar tokens consecutivos para formar horas completas
+                hours_tokens = [toks[i]]
+                j = i + 1
+                while j < end_idx and (toks[j].lower() == 'hs' or _hours_re.search(toks[j])):
+                    hours_tokens.append(toks[j])
+                    j += 1
+                col4 = " ".join(hours_tokens).strip()
                 hours_idx = i
                 break
 

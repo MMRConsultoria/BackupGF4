@@ -1,42 +1,60 @@
-import streamlit as st
-import pdfplumber
+import re
 import pandas as pd
-from io import BytesIO
 
-uploaded_file = st.file_uploader("Faça upload do PDF", type="pdf")
+def extrair_dados(texto):
+    # Extrair nome da empresa
+    empresa_match = re.search(r"Empresa:\s*\d+\s*-\s*(.+)", texto)
+    nome_empresa = empresa_match.group(1).strip() if empresa_match else ""
 
-if uploaded_file:
-    with pdfplumber.open(uploaded_file) as pdf:
-        all_text = ""
-        all_tables = []
-        for page in pdf.pages:
-            all_text += page.extract_text() or ""
-            tables = page.extract_tables()
-            for table in tables:
-                df = pd.DataFrame(table[1:], columns=table[0])
-                all_tables.append(df)
+    # Extrair CNPJ
+    cnpj_match = re.search(r"Inscrição Federal:\s*([\d./-]+)", texto)
+    cnpj = cnpj_match.group(1).strip() if cnpj_match else ""
 
-    st.subheader("Texto extraído")
-    st.text_area("Texto completo", all_text, height=300)
+    # Extrair período
+    periodo_match = re.search(r"Período:\s*([\d/]+)\s*a\s*([\d/]+)", texto)
+    periodo = f"{periodo_match.group(1)} a {periodo_match.group(2)}" if periodo_match else ""
 
-    if all_tables:
-        st.subheader(f"{len(all_tables)} tabelas extraídas")
-        for i, df in enumerate(all_tables):
-            st.write(f"Tabela {i+1}")
-            st.dataframe(df)
+    # Extrair bloco da tabela entre "Resumo Contrato" e "Totais"
+    tabela_match = re.search(r"Resumo Contrato(.*?)Totais", texto, re.DOTALL)
+    tabela_texto = tabela_match.group(1).strip() if tabela_match else ""
 
-        # Concatenar todas as tabelas e permitir download Excel
-        df_all = pd.concat(all_tables, ignore_index=True)
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_all.to_excel(writer, index=False, sheet_name='Todas_Tabelas')
-        output.seek(0)
+    # Processar tabela em linhas e colunas
+    linhas = [l.strip() for l in tabela_texto.split('\n') if l.strip()]
+    dados = []
+    for linha in linhas:
+        # Dividir por múltiplos espaços (ajuste conforme o layout)
+        cols = re.split(r'\s{2,}', linha)
+        dados.append(cols)
 
-        st.download_button(
-            label="📥 Baixar todas as tabelas em Excel",
-            data=output,
-            file_name="tabelas_extraidas.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    else:
-        st.info("Nenhuma tabela encontrada no PDF.")
+    # Criar DataFrame da tabela
+    df_tabela = pd.DataFrame(dados)
+
+    # Extrair valores finais (Proventos, Vantagens, Descontos, Líquido)
+    valores_match = re.search(
+        r"Proventos:\s*([\d.,]+)\s*Vantagens:\s*([\d.,]+)\s*Descontos:\s*([\d.,]+)\s*Líquido:\s*([\d.,]+)",
+        texto
+    )
+    proventos, vantagens, descontos, liquido = ("", "", "", "")
+    if valores_match:
+        proventos = valores_match.group(1)
+        vantagens = valores_match.group(2)
+        descontos = valores_match.group(3)
+        liquido = valores_match.group(4)
+
+    return {
+        "nome_empresa": nome_empresa,
+        "cnpj": cnpj,
+        "periodo": periodo,
+        "tabela": df_tabela,
+        "proventos": proventos,
+        "vantagens": vantagens,
+        "descontos": descontos,
+        "liquido": liquido
+    }
+
+# Exemplo de uso:
+# texto_extraido = ... (seu texto extraído do PDF)
+# dados = extrair_dados(texto_extraido)
+# print(dados["nome_empresa"], dados["cnpj"], dados["periodo"])
+# print(dados["tabela"])
+# print(dados["proventos"], dados["vantagens"], dados["descontos"], dados["liquido"])

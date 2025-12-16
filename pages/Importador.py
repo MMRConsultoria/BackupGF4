@@ -4,12 +4,19 @@ import re
 import pandas as pd
 from io import BytesIO
 
-# ----------------- Helpers -----------------
-_money_re = re.compile(r'^\d{1,3}(?:\.\d{3})*,\d{2}$')  # exemplo: 101.662,53 ou 0,00
-_hours_re = re.compile(r'\d+:\d+')                    # exemplo: 11459:20, 277:35
+# -------- regex helpers --------
+_money_re = re.compile(r'^\d{1,3}(?:\.\d{3})*,\d{2}$')  # ex: 101.662,53 ou 0,00
+
+def is_money(tok: str) -> bool:
+    t = str(tok or "").strip()
+    if not t:
+        return False
+    if re.match(r'^\d+,\d{2}$', t):
+        return True
+    return bool(_money_re.match(t))
 
 def _to_float_br(x):
-    """Converte strings BR '101.662,53' => float 101662.53"""
+    """Converte string BR '101.662,53' -> float 101662.53"""
     t = str(x or "").strip()
     if not t:
         return None
@@ -28,22 +35,48 @@ def _to_float_br(x):
     except:
         return None
 
-def is_money(tok: str) -> bool:
-    tok = str(tok or "").strip()
-    if not tok:
-        return False
-    # aceitar também valores sem milhares, ex: '0,00' ou '598,02'
-    if re.match(r'^\d+,\d{2}$', tok):
-        return True
-    return bool(_money_re.match(tok))
+# -------- parsing helpers --------
+def split_line_into_blocks(line: str):
+    """
+    Tenta dividir a linha em blocos. Primeiro tenta split por >=2 espaços.
+    Se não, divide por espaço e fecha bloco ao encontrar money token.
+    Retorna: lista de blocos (cada bloco = lista de tokens).
+    """
+    parts = re.split(r'\s{2,}', line.strip())
+    tokens = [p for p in parts if p.strip() != ""]
+    if len(tokens) >= 5:
+        blocks = []
+        i = 0
+        while i < len(tokens):
+            blocks.append(tokens[i:i+5])
+            i += 5
+        return blocks
+
+    tokens = line.strip().split()
+    blocks = []
+    current = []
+    for tok in tokens:
+        current.append(tok)
+        if is_money(tok):
+            blocks.append(current)
+            current = []
+    if current:
+        blocks.append(current)
+    return blocks
 
 def normalize_block_tokens(block_tokens):
-    
+    """
+    Retorna [Col1, Col2, Descrição, Valor]
+    Regras:
+    - Valor = último token money.
+    - Se token antes do valor for '0,00', ignorar ele na descrição.
+    - Descrição = tokens entre Col2 e valor (ou token antes do valor se for '0,00').
+    """
     toks = [t.strip() for t in block_tokens if t is not None and str(t).strip() != ""]
     if not toks:
         return ["", "", "", ""]
 
-    # Encontrar último token que é valor monetário (Valor)
+    # Encontrar último token money -> Valor
     value = ""
     value_idx = None
     for i in range(len(toks)-1, -1, -1):
@@ -57,12 +90,10 @@ def normalize_block_tokens(block_tokens):
 
     prev_idx = value_idx - 1
 
-    # Se token anterior ao valor for '0,00', ignorar ele (não entra na descrição)
     drop_prev_zero = False
     if prev_idx >= 0 and toks[prev_idx] == "0,00":
         drop_prev_zero = True
 
-    # Descrição: tokens entre índice 2 e (prev_idx se drop_prev_zero else value_idx)
     start_desc = 2
     stop_desc = prev_idx if drop_prev_zero else value_idx
     if stop_desc < start_desc:
@@ -74,42 +105,12 @@ def normalize_block_tokens(block_tokens):
             desc_tokens.append(toks[i])
     description = " ".join(desc_tokens).strip()
 
-    # Col1 e Col2
     col1 = toks[0] if len(toks) > 0 else ""
     col2 = toks[1] if len(toks) > 1 else ""
 
     return [col1 or "", col2 or "", description or "", value or ""]
 
-def split_line_into_blocks(line):
-    """
-    Divide a linha em blocos. Primeiro tenta split por >=2 espaços.
-    Se não resolver, tokeniza e separa por ocorrência de valores monetários.
-    Cada bloco retornado é lista de tokens.
-    """
-    parts = re.split(r'\s{2,}', line.strip())
-    tokens = [p for p in parts if p.strip() != ""]
-    if len(tokens) >= 5:
-        blocks = []
-        i = 0
-        while i < len(tokens):
-            blocks.append(tokens[i:i+5])
-            i += 5
-        return blocks
-
-    # fallback: dividir por espaço simples e finalizar bloco ao encontrar money token
-    tokens = line.strip().split()
-    blocks = []
-    current = []
-    for tok in tokens:
-        current.append(tok)
-        if is_money(tok):
-            blocks.append(current)
-            current = []
-    if current:
-        blocks.append(current)
-    return blocks
-
-# ----------------- Extração do texto para estrutura -----------------
+# -------- extrair dados do texto --------
 def extrair_dados(texto):
     empresa_match = re.search(r"Empresa:\s*\d+\s*-\s*(.+)", texto)
     nome_empresa = empresa_match.group(1).strip() if empresa_match else ""
@@ -133,7 +134,7 @@ def extrair_dados(texto):
             normalized = normalize_block_tokens(b)
             output_rows.append(normalized)
 
-    df = pd.DataFrame(output_rows, columns=["Col1", "Col2", "Descrição", "Horas", "Valor"])
+    df = pd.DataFrame(output_rows, columns=["Col1", "Col2", "Descrição", "Valor"])
 
     # converter Valor para float
     df["Valor_num"] = df["Valor"].apply(_to_float_br)
@@ -154,16 +155,16 @@ def extrair_dados(texto):
         "nome_empresa": nome_empresa,
         "cnpj": cnpj,
         "periodo": periodo,
-        "tabela": df,           # contém coluna Valor (orig) e Valor_num (float)
+        "tabela": df,
         "proventos": proventos,
         "vantagens": vantagens,
         "descontos": descontos,
         "liquido": liquido
     }
 
-# ----------------- Streamlit UI -----------------
+# -------- Streamlit UI --------
 st.set_page_config(page_title="Extrair Resumo Contrato", layout="wide")
-st.title("📄 Extrator - Resumo Contrato (formato final)")
+st.title("📄 Extrator - Resumo Contrato (4 colunas)")
 
 uploaded_file = st.file_uploader("Faça upload do PDF (Relação de Cálculo)", type="pdf")
 
@@ -186,22 +187,20 @@ if uploaded_file:
         df_final = dados["tabela"].copy()
 
         # mostrar com coluna Valor_num formatada no padrão BR
-        df_show = df_final[["Col1", "Col2", "Descrição", "Horas", "Valor_num"]].rename(columns={"Valor_num":"Valor"})
+        df_show = df_final[["Col1", "Col2", "Descrição", "Valor_num"]].rename(columns={"Valor_num":"Valor"})
         df_show["Valor"] = df_show["Valor"].apply(lambda v: f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(v) else "")
 
         st.dataframe(df_show, use_container_width=True)
 
-        # Exportar para Excel: manter Col1,Col2,Descrição,Horas,Valor (numérico)
+        # Exportar para Excel: manter Col1,Col2,Descrição,Valor (numérico)
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            export_df = df_final[["Col1", "Col2", "Descrição", "Horas", "Valor_num"]].rename(columns={"Valor_num":"Valor"})
+            export_df = df_final[["Col1", "Col2", "Descrição", "Valor_num"]].rename(columns={"Valor_num":"Valor"})
             export_df.to_excel(writer, index=False, sheet_name='Resumo_Contrato')
             ws = writer.sheets['Resumo_Contrato']
-            # aplicar formatação numérica na coluna Valor (última coluna)
             money_fmt = writer.book.add_format({'num_format': '#,##0.00'})
             last_col_idx = export_df.columns.get_loc("Valor")
             ws.set_column(last_col_idx, last_col_idx, 15, money_fmt)
-            # ajustar larguras
             for i, col in enumerate(export_df.columns):
                 max_len = max(export_df[col].astype(str).map(len).max(), len(col)) + 2
                 ws.set_column(i, i, max_len)

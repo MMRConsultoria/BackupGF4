@@ -40,7 +40,7 @@ def is_money(tok: str) -> bool:
 
 
 def normalize_block_tokens(block_tokens):
-    
+
     toks = [t.strip() for t in block_tokens if t is not None and str(t).strip() != ""]
     if not toks:
         return ["", "", "", "", ""]

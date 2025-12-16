@@ -47,6 +47,19 @@ def extrair_dados(texto):
         "liquido": liquido
     }
 
+def desdobrar_tabela(df):
+    n = df.shape[1] // 2  # número de colunas por bloco
+
+    bloco1 = df.iloc[:, :n]
+    bloco2 = df.iloc[:, n:]
+
+    bloco2.columns = bloco1.columns
+
+    df_desdobrado = pd.concat([bloco1, bloco2], ignore_index=True)
+    df_desdobrado = df_desdobrado.dropna(how='all').reset_index(drop=True)
+
+    return df_desdobrado
+
 st.title("📄 Extrator de Dados do Resumo da Folha (PDF)")
 
 uploaded_file = st.file_uploader("Faça upload do arquivo PDF", type="pdf")
@@ -64,8 +77,11 @@ if uploaded_file:
     st.markdown(f"**CNPJ:** {dados['cnpj']}")
     st.markdown(f"**Período:** {dados['periodo']}")
 
-    st.subheader("Tabela - Resumo Contrato")
-    st.dataframe(dados["tabela"])
+    df_original = dados["tabela"]
+    df_final = desdobrar_tabela(df_original)
+
+    st.subheader("Tabela - Resumo Contrato (desdobrada)")
+    st.dataframe(df_final)
 
     st.subheader("Totais")
     st.markdown(f"- Proventos: {dados['proventos']}")
@@ -75,12 +91,12 @@ if uploaded_file:
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        dados["tabela"].to_excel(writer, index=False, sheet_name='Resumo_Contrato')
+        df_final.to_excel(writer, index=False, sheet_name='Resumo_Contrato')
     output.seek(0)
 
     st.download_button(
-        label="📥 Baixar tabela em Excel",
+        label="📥 Baixar tabela desdobrada em Excel",
         data=output,
-        file_name="resumo_contrato.xlsx",
+        file_name="resumo_contrato_desdobrado.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )

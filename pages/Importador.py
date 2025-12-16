@@ -1,5 +1,8 @@
+import streamlit as st
+import pdfplumber
 import re
 import pandas as pd
+from io import BytesIO
 
 def extrair_dados(texto):
     # Extrair nome da empresa
@@ -52,9 +55,41 @@ def extrair_dados(texto):
         "liquido": liquido
     }
 
-# Exemplo de uso:
-# texto_extraido = ... (seu texto extraído do PDF)
-# dados = extrair_dados(texto_extraido)
-# print(dados["nome_empresa"], dados["cnpj"], dados["periodo"])
-# print(dados["tabela"])
-# print(dados["proventos"], dados["vantagens"], dados["descontos"], dados["liquido"])
+st.title("📄 Extrator de Dados do Resumo da Folha (PDF)")
+
+uploaded_file = st.file_uploader("Faça upload do arquivo PDF", type="pdf")
+
+if uploaded_file:
+    with pdfplumber.open(uploaded_file) as pdf:
+        texto_completo = ""
+        for page in pdf.pages:
+            texto_completo += page.extract_text() + "\n"
+
+    dados = extrair_dados(texto_completo)
+
+    st.subheader("Informações extraídas")
+    st.markdown(f"**Nome da Empresa:** {dados['nome_empresa']}")
+    st.markdown(f"**CNPJ:** {dados['cnpj']}")
+    st.markdown(f"**Período:** {dados['periodo']}")
+
+    st.subheader("Tabela - Resumo Contrato")
+    st.dataframe(dados["tabela"])
+
+    st.subheader("Totais")
+    st.markdown(f"- Proventos: {dados['proventos']}")
+    st.markdown(f"- Vantagens: {dados['vantagens']}")
+    st.markdown(f"- Descontos: {dados['descontos']}")
+    st.markdown(f"- Líquido: {dados['liquido']}")
+
+    # Botão para download da tabela em Excel
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        dados["tabela"].to_excel(writer, index=False, sheet_name='Resumo_Contrato')
+    output.seek(0)
+
+    st.download_button(
+        label="📥 Baixar tabela em Excel",
+        data=output,
+        file_name="resumo_contrato.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )])

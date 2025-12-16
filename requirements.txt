@@ -19,6 +19,7 @@ PyPDF2
 tabula-py
 camelot-py[cv]
 pytesseract
+Pillow
 
 
 

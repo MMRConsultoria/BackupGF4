@@ -18,6 +18,7 @@ xlsxwriter>=3.2.0
 PyPDF2
 tabula-py
 camelot-py[cv]
+pytesseract
 
 
 

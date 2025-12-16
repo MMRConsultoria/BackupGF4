@@ -6,7 +6,6 @@ from io import BytesIO
 
 # ---------- regex / helpers ----------
 _money_re = re.compile(r'^\d{1,3}(?:\.\d{3})*,\d{2}$')  # ex: 101.662,53 ou 0,00
-_hours_re = re.compile(r'^\d{1,5}:\d{2}$')              # ex: 11459:20 ou 277:35 (apenas números:minutes)
 _token_hours_part = re.compile(r'\d+:\d+')              # achar hh:mm em qualquer parte do token
 
 def is_money(tok: str) -> bool:
@@ -61,9 +60,8 @@ def split_line_into_blocks(line: str):
             blocks.append(block)
         start = mi+1
 
-    # se sobrou tokens após último money, anexar ao último bloco (é comum)
+    # se sobrou tokens após último money, anexar ao último bloco
     if start < len(tokens):
-        # anexar ao último bloco
         if blocks:
             blocks[-1].extend(tokens[start:])
         else:
@@ -79,7 +77,6 @@ def normalize_block_tokens(block_tokens):
     - Se token imediatamente antes do Valor for '0,00', ele é ignorado (não entra na descrição)
     - Remover tokens 'hs' e tokens de horas (hh:mm) da descrição
     - Descrição = tokens entre Col2 e (token antes do Valor) após remoções
-    - Se Col1/Col2 forem money, tratamos Col1/Col2 como "" (evitar deslocamentos)
     """
     toks = [t.strip() for t in block_tokens if t is not None and str(t).strip() != ""]
     if not toks:
@@ -125,7 +122,7 @@ def normalize_block_tokens(block_tokens):
                 continue
             if _token_hours_part.search(token):
                 continue
-            # também ignorar tokens puramente numéricos que sejam valores isolados (precaução)
+            # também ignorar tokens que são values (precaução)
             if is_money(token):
                 continue
             desc_tokens.append(token)
@@ -151,7 +148,7 @@ def extrair_dados(texto):
         tabela_match = re.search(r"Resumo Contrato(.*?)Totais", texto, re.DOTALL | re.IGNORECASE)
     tabela_texto = tabela_match.group(1).strip() if tabela_match else texto  # se não achar, processa todo texto (debug)
 
-    linhas = [ln for ln in [l.strip() for l in tabela_texto.split("\n")] if l.strip()]
+    linhas = [ln.strip() for ln in tabela_texto.split("\n") if ln.strip()]
 
     output_rows = []
     debug_blocks = []  # para debug opcional: (linha, tokens, blocks, normalized_rows)
@@ -228,7 +225,7 @@ if uploaded_file:
         df_show["Valor"] = df_show["Valor"].apply(lambda v: f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(v) else "")
 
         st.subheader("Tabela - Resumo Contrato (formatada)")
-        st.dataframe(df_show, use_container_width=True, height=400)
+        st.dataframe(df_show, use_container_width=True, height=420)
 
         # Botão download Excel (Valor numérico)
         output = BytesIO()
@@ -260,12 +257,12 @@ if uploaded_file:
 
         if show_debug:
             st.subheader("Debug por linha (tokens, blocos, normalizados)")
-            for i, dbg in enumerate(dados["debug_blocks"]):
-                st.markdown(f"**Linha {i+1}:** {dbg['linha']}")
+            for i, dbg in enumerate(dados["debug_blocks"], start=1):
+                st.markdown(f"**Linha {i}:** {dbg['linha']}")
                 st.write("Tokens:", dbg["tokens"])
                 st.write("Blocks (tokens por bloco):", dbg["blocks"])
                 st.write("Normalized rows from this line:", dbg["normalized"])
-                st.divider()
+                st.markdown("---")
 
     except Exception as e:
         st.error(f"Erro ao processar o PDF: {e}")

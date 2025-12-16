@@ -17,7 +17,7 @@ xlrd>=2.0.1
 xlsxwriter>=3.2.0
 PyPDF2
 tabula-py
-camelot-py
+camelot-py[cv]
 
 
 

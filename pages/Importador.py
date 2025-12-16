@@ -41,12 +41,14 @@ def normalize_block_tokens(block_tokens):
     """
     Recebe lista de tokens de um bloco e retorna [Col1, Col2, Descrição, Horas, Valor]
     Preenche com "" quando faltar.
+    Tratamento especial: se não existe token de horas, mas o token antes do valor é money (ex: '0,00'),
+    consideramos esse token como Horas (quando fizer sentido).
     """
     toks = [t.strip() for t in block_tokens if t is not None and str(t).strip() != ""]
     if not toks:
         return ["", "", "", "", ""]
 
-    # identifique value (último token que é money)
+    # identificar value (último token que casa com money)
     value = ""
     end_idx = len(toks) - 1
     for i in range(len(toks)-1, -1, -1):
@@ -62,6 +64,15 @@ def normalize_block_tokens(block_tokens):
             hours_idx = i
             break
 
+    # Se não encontrou horas e o token anterior ao value é money (ex: '0,00'), 
+    # então interpretamos esse token como Horas (caso típico que descreveu).
+    if hours_idx is None and end_idx >= 1 and is_money(toks[end_idx-1]):
+        # marcar hours_idx como end_idx-1 e considerar que o value permanece em end_idx
+        hours_idx = end_idx - 1
+        # NOTE: nesse caso, queremos que a "Horas" apareça como esse token (ex: '0,00')
+        # e que a descrição não inclua esse token.
+
+    # col1 e col2: assumimos primeiros dois tokens se existirem
     col1 = toks[0] if len(toks) > 0 else ""
     col2 = toks[1] if len(toks) > 1 else ""
 
@@ -70,6 +81,7 @@ def normalize_block_tokens(block_tokens):
     if hours_idx is not None:
         h_parts = []
         i = hours_idx
+        # junte até o token anterior ao value
         while i < end_idx and i < len(toks):
             if is_money(toks[i]):
                 break
@@ -97,12 +109,10 @@ def split_line_into_blocks(line):
     Cada bloco retornado é lista de tokens.
     """
     parts = re.split(r'\s{2,}', line.strip())
-    # se parts já retornar com tokens suficientes, tratar seq de 5 como blocos
     tokens = [p for p in parts if p.strip() != ""]
     if len(tokens) >= 5:
         blocks = []
         i = 0
-        # agrupar de 5 em 5 (caso o split já tenha separado células)
         while i < len(tokens):
             blocks.append(tokens[i:i+5])
             i += 5
@@ -197,9 +207,8 @@ if uploaded_file:
         st.subheader("Tabela - Resumo Contrato (formatada)")
         df_final = dados["tabela"].copy()
 
-        # mostrar com coluna Valor_num formatada
+        # mostrar com coluna Valor_num formatada no padrão BR
         df_show = df_final[["Col1", "Col2", "Descrição", "Horas", "Valor_num"]].rename(columns={"Valor_num":"Valor"})
-        # formata Valor para exibição com vírgula e separador de milhar usando locale-like (string)
         df_show["Valor"] = df_show["Valor"].apply(lambda v: f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(v) else "")
 
         st.dataframe(df_show, use_container_width=True)

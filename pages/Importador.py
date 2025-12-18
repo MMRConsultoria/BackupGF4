@@ -4,9 +4,8 @@ import re
 import pandas as pd
 from io import BytesIO
 
-# ---------- regex / helpers ----------
-_money_re = re.compile(r'^\d{1,3}(?:\.\d{3})*,\d{2}$')  # ex: 101.662,53 ou 0,00
-_token_hours_part = re.compile(r'\d+:\d+')              # achar hh:mm em qualquer parte do token
+_money_re = re.compile(r'^\d{1,3}(?:\.\d{3})*,\d{2}$')
+_token_hours_part = re.compile(r'\d+:\d+')
 
 def is_money(tok: str) -> bool:
     t = str(tok or "").strip()
@@ -17,7 +16,6 @@ def is_money(tok: str) -> bool:
     return bool(_money_re.match(t))
 
 def _to_float_br(x):
-    """Converte string BR '101.662,53' -> float 101662.53"""
     t = str(x or "").strip()
     if not t:
         return None
@@ -25,7 +23,6 @@ def _to_float_br(x):
     has_c = "," in t
     has_p = "." in t
     if has_c and has_p:
-        # se houver pontos de milhar e vírgula decimal
         if t.rfind(",") > t.rfind("."):
             t = t.replace(".", "").replace(",", ".")
         else:
@@ -37,7 +34,6 @@ def _to_float_br(x):
     except:
         return None
 
-# Mapeamento mês em português (evita problemas de locale)
 _MONTHS_PT = {
     1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
     5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
@@ -45,10 +41,6 @@ _MONTHS_PT = {
 }
 
 def extrair_mes_ano(periodo_str):
-    """
-    Recebe período no formato 'dd/mm/aaaa a dd/mm/aaaa' e retorna (MêsNome, Ano)
-    Usa o mês da primeira data do período.
-    """
     match = re.search(r"(\d{2})/(\d{2})/(\d{4})", periodo_str)
     if match:
         mes_num = int(match.group(2))
@@ -57,13 +49,7 @@ def extrair_mes_ano(periodo_str):
         return mes_nome, ano
     return "", ""
 
-# ---------- split line into blocks ----------
 def split_line_into_blocks(line: str):
-    """
-    Quebra a linha em blocos usando cada ocorrência de token monetário (is_money) como final de bloco.
-    Se houver sequência de money tokens consecutivos (ex: '0,00 1.847,81'), usa o ÚLTIMO money da sequência
-    como final do bloco (evita criar um bloco separado com 0,00 como 'valor').
-    """
     tokens = [t for t in line.strip().split() if t != ""]
     if not tokens:
         return []
@@ -72,7 +58,6 @@ def split_line_into_blocks(line: str):
     if not money_idxs:
         return [tokens]
 
-    # agrupa runs de índices consecutivos e pega o último índice de cada run
     filtered_money_idxs = []
     i = 0
     while i < len(money_idxs):
@@ -90,7 +75,6 @@ def split_line_into_blocks(line: str):
             blocks.append(block)
         start = mi + 1
 
-    # se restaram tokens após último money, anexar ao último bloco
     if start < len(tokens):
         if blocks:
             blocks[-1].extend(tokens[start:])
@@ -99,20 +83,11 @@ def split_line_into_blocks(line: str):
 
     return blocks
 
-# ---------- normalize block tokens ----------
 def normalize_block_tokens(block_tokens):
-    """
-    Converte um bloco de tokens em [Col1, Col2, Descrição, Valor] aplicando as regras:
-    - Valor = último token money do bloco
-    - Ignorar tokens de horas (hh:mm, 'hs') e também '0,00' quando aparecer no lugar da hora
-    - Descrição = tokens entre Col2 e início das horas (ou até o valor se não houver horas)
-    - Col1 e Col2 só são preenchidos se não forem money (proteção contra deslocamentos)
-    """
     toks = [t.strip() for t in block_tokens if t is not None and str(t).strip() != ""]
     if not toks:
         return ["", "", "", ""]
 
-    # encontrar último token money no bloco
     value_idx = None
     for i in range(len(toks) - 1, -1, -1):
         if is_money(toks[i]):
@@ -123,7 +98,6 @@ def normalize_block_tokens(block_tokens):
 
     value = toks[value_idx]
 
-    # detectar token de horas ou placeholder 0,00 entre índice 2 e value_idx-1
     hour_idx = None
     for i in range(2, value_idx):
         t = toks[i].lower()
@@ -131,11 +105,9 @@ def normalize_block_tokens(block_tokens):
             hour_idx = i
             break
 
-    # Col1 = código da descrição; Col2 = código numérico (para mapear Tipo)
     col1 = toks[0] if len(toks) > 0 and not is_money(toks[0]) else ""
     col2 = toks[1] if len(toks) > 1 and not is_money(toks[1]) else ""
 
-    # descrição: entre índice 2 e hour_idx (se existir) ou até value_idx
     start_desc = 2
     stop_desc = hour_idx if hour_idx is not None else value_idx
     if stop_desc < start_desc:
@@ -146,7 +118,6 @@ def normalize_block_tokens(block_tokens):
         if i < len(toks):
             token = toks[i]
             lower = token.lower()
-            # ignorar 'hs', formatos hh:mm e '0,00'
             if lower in ("hs", "h"):
                 continue
             if _token_hours_part.search(token):
@@ -161,7 +132,6 @@ def normalize_block_tokens(block_tokens):
 
     return [col1 or "", col2 or "", description or "", value or ""]
 
-# ---------- extrair dados do texto ----------
 def extrair_dados(texto):
     empresa_match = re.search(r"Empresa:\s*\d+\s*-\s*(.+)", texto)
     nome_empresa = empresa_match.group(1).strip() if empresa_match else ""
@@ -172,7 +142,6 @@ def extrair_dados(texto):
     periodo_match = re.search(r"Período:\s*([0-3]?\d/[0-1]?\d/\d{4})\s*a\s*([0-3]?\d/[0-1]?\d/\d{4})", texto)
     periodo = f"{periodo_match.group(1)} a {periodo_match.group(2)}" if periodo_match else ""
 
-    # captura o bloco entre "Resumo Contrato" e "Totais"
     tabela_match = re.search(r"Resumo Contrato(.*?)(?:\nTotais\b|\nTotais\s*$)", texto, re.DOTALL | re.IGNORECASE)
     if not tabela_match:
         tabela_match = re.search(r"Resumo Contrato(.*?)Totais", texto, re.DOTALL | re.IGNORECASE)
@@ -200,7 +169,6 @@ def extrair_dados(texto):
     df = pd.DataFrame(output_rows, columns=["Col1", "Col2", "Descrição", "Valor"])
     df = df.replace("", pd.NA).dropna(how="all").fillna("")
 
-    # Mapear Col2 (código numérico) para nome do tipo conforme mapeamento
     tipo_map = {
         "1": "Proventos",
         "2": "Vantagens",
@@ -210,24 +178,19 @@ def extrair_dados(texto):
     }
     df["Tipo"] = df["Col2"].map(tipo_map).fillna("")
 
-    # extrair mês e ano do período
     mes, ano = extrair_mes_ano(periodo)
 
-    # adicionar colunas fixas
     df["Empresa"] = nome_empresa
     df["CNPJ"] = cnpj
     df["Período"] = periodo
     df["Mês"] = mes
     df["Ano"] = ano
 
-    # renomear Col1 para Codigo da Descrição e reorganizar colunas:
     df = df.rename(columns={"Col1": "Codigo da Descrição"})
     df = df[["Empresa", "CNPJ", "Período", "Mês", "Ano", "Tipo", "Codigo da Descrição", "Descrição", "Valor"]]
 
-    # converter Valor para numérico em nova coluna
     df["Valor_num"] = df["Valor"].apply(_to_float_br)
 
-    # Totais (Proventos/Vantagens/Descontos/Líquido)
     valores_match = re.search(
         r"Proventos:\s*([\d\.,]+)\s*Vantagens:\s*([\d\.,]+)\s*Descontos:\s*([\d\.,]+)\s*Líquido:\s*([\d\.,]+)",
         texto, re.IGNORECASE
@@ -251,37 +214,57 @@ def extrair_dados(texto):
         "liquido": liquido
     }
 
-# ---------- Streamlit UI ----------
-st.set_page_config(page_title="Extrair Resumo Contrato", layout="wide")
-st.title("📄 Extrator - Resumo Contrato (formato final)")
+st.set_page_config(page_title="Extrair Resumo Contrato - Múltiplos PDFs", layout="wide")
+st.title("📄 Extrator - Resumo Contrato (múltiplos arquivos)")
 
-uploaded_file = st.file_uploader("Faça upload do PDF (Relação de Cálculo)", type="pdf")
+uploaded_files = st.file_uploader("Faça upload de um ou mais PDFs (Relação de Cálculo)", type="pdf", accept_multiple_files=True)
 show_debug = st.checkbox("Mostrar debug (tokens & blocks)")
 
-if uploaded_file:
-    try:
-        with pdfplumber.open(uploaded_file) as pdf:
-            texto = ""
-            for p in pdf.pages:
-                texto += (p.extract_text() or "") + "\n"
+if uploaded_files:
+    all_dfs = []
+    all_proventos = []
+    all_vantagens = []
+    all_descontos = []
+    all_liquido = []
 
-        dados = extrair_dados(texto)
+    for uploaded_file in uploaded_files:
+        try:
+            with pdfplumber.open(uploaded_file) as pdf:
+                texto = ""
+                for p in pdf.pages:
+                    texto += (p.extract_text() or "") + "\n"
 
-        st.subheader("Informações extraídas")
-        st.markdown(f"**Nome da Empresa:** {dados['nome_empresa']}")
-        st.markdown(f"**CNPJ:** {dados['cnpj']}")
-        st.markdown(f"**Período:** {dados['periodo']}")
+            dados = extrair_dados(texto)
+            df = dados["tabela"].copy()
+            all_dfs.append(df)
 
-        df = dados["tabela"].copy()
+            all_proventos.append(dados["proventos"])
+            all_vantagens.append(dados["vantagens"])
+            all_descontos.append(dados["descontos"])
+            all_liquido.append(dados["liquido"])
+
+            if show_debug:
+                st.subheader(f"Debug do arquivo: {uploaded_file.name}")
+                for i, dbg in enumerate(dados["debug_blocks"], start=1):
+                    st.markdown(f"**Linha {i}:** {dbg['linha']}")
+                    st.write("Tokens:", dbg["tokens"])
+                    st.write("Blocks (tokens por bloco):", dbg["blocks"])
+                    st.write("Normalized rows from this line:", dbg["normalized"])
+                    st.markdown("---")
+
+        except Exception as e:
+            st.error(f"Erro ao processar o arquivo {uploaded_file.name}: {e}")
+
+    if all_dfs:
+        df_all = pd.concat(all_dfs, ignore_index=True)
 
         # Preparar exibição: formatar Valor_num para exibir como BR
-        df_show = df.copy()
+        df_show = df_all.copy()
         df_show["Valor"] = df_show["Valor_num"].apply(
             lambda v: f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(v) else ""
         )
 
-        # Exibir com a ordem solicitada e coluna "Codigo da Descrição" ao lado da Descrição
-        st.subheader("Tabela - Resumo Contrato (formatada)")
+        st.subheader("Tabela combinada - Resumo Contrato (formatada)")
         st.dataframe(
             df_show[["Empresa", "CNPJ", "Período", "Mês", "Ano", "Tipo", "Codigo da Descrição", "Descrição", "Valor"]],
             use_container_width=True,
@@ -291,55 +274,43 @@ if uploaded_file:
         # Exportar para Excel com Valor numérico
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            export_df = df.copy()
-            # renomear Valor_num -> Valor (numérico) para o Excel e remover string Valor
+            export_df = df_all.copy()
             export_df = export_df.drop(columns=["Valor"]).rename(columns={"Valor_num": "Valor"})
             export_df.to_excel(writer, index=False, sheet_name="Resumo_Contrato")
             ws = writer.sheets["Resumo_Contrato"]
-            # formatar coluna Valor
             last_col_idx = export_df.columns.get_loc("Valor")
             money_fmt = writer.book.add_format({'num_format': '#,##0.00'})
             ws.set_column(last_col_idx, last_col_idx, 15, money_fmt)
-            # ajustar largura das colunas
             for i, col in enumerate(export_df.columns):
                 max_len = max(export_df[col].astype(str).map(len).max(), len(col)) + 2
                 ws.set_column(i, i, max_len)
         output.seek(0)
 
         st.download_button(
-            label="📥 Baixar tabela (Excel) com Valor numérico",
+            label="📥 Baixar tabela combinada (Excel) com Valor numérico",
             data=output,
-            file_name="resumo_contrato_formatado.xlsx",
+            file_name="resumo_contrato_combinado.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
 
-        st.subheader("Totais")
-        st.markdown(f"- **Proventos:** {dados['proventos']}")
-        st.markdown(f"- **Vantagens:** {dados['vantagens']}")
-        st.markdown(f"- **Descontos:** {dados['descontos']}")
-        st.markdown(f"- **Líquido:** {dados['liquido']}")
+        # Mostrar totais combinados (somando valores numéricos)
+        def parse_valor_str(v):
+            try:
+                return float(v.replace(".", "").replace(",", "."))
+            except:
+                return 0.0
 
-        if show_debug:
-            st.subheader("Debug por linha (tokens, blocos, normalizados)")
-            for i, dbg in enumerate(dados["debug_blocks"], start=1):
-                st.markdown(f"**Linha {i}:** {dbg['linha']}")
-                st.write("Tokens:", dbg["tokens"])
-                st.write("Blocks (tokens por bloco):", dbg["blocks"])
-                st.write("Normalized rows from this line:", dbg["normalized"])
-                st.markdown("---")
+        total_proventos = sum(parse_valor_str(v) for v in all_proventos if v)
+        total_vantagens = sum(parse_valor_str(v) for v in all_vantagens if v)
+        total_descontos = sum(parse_valor_str(v) for v in all_descontos if v)
+        total_liquido = sum(parse_valor_str(v) for v in all_liquido if v)
 
-    except Exception as e:
-        st.error(f"Erro ao processar o PDF: {e}")
-        # mostrar preview do texto extraído para ajudar o debug
-        try:
-            with pdfplumber.open(uploaded_file) as pdf:
-                preview = ""
-                for i, p in enumerate(pdf.pages[:4]):
-                    preview += f"--- Página {i+1} ---\n"
-                    preview += (p.extract_text() or "") + "\n\n"
-            st.text_area("Preview texto extraído (debug)", preview, height=300)
-        except Exception:
-            pass
+        st.subheader("Totais combinados")
+        st.markdown(f"- **Proventos:** R$ {total_proventos:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        st.markdown(f"- **Vantagens:** R$ {total_vantagens:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        st.markdown(f"- **Descontos:** R$ {total_descontos:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+        st.markdown(f"- **Líquido:** R$ {total_liquido:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
 else:
-    st.info("Faça upload do PDF para extrair a tabela.")
+    st.info("Faça upload de um ou mais arquivos PDF para extrair as tabelas.")

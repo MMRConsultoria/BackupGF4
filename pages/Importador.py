@@ -42,7 +42,7 @@ def extrair_mes_ano(periodo_str):
     if match:
         mes_num = int(match.group(1))
         ano = match.group(2)
-        mes_nome = calendar.month_name[mes_num] if 1 <= mes_num <= 12 else ""
+        mes_nome = calendar.month_name[mes_num].capitalize() if 1 <= mes_num <= 12 else ""
         return mes_nome, ano
     return "", ""
 
@@ -104,6 +104,7 @@ def normalize_block_tokens(block_tokens):
             hour_idx = i
             break
 
+    # Col1 = código, Col2 é código-numérico que mapeamos para Tipo depois
     col1 = toks[0] if len(toks) > 0 and not is_money(toks[0]) else ""
     col2 = toks[1] if len(toks) > 1 and not is_money(toks[1]) else ""
     col3_tokens = []
@@ -168,7 +169,7 @@ def extrair_dados(texto):
     df = pd.DataFrame(output_rows, columns=["Col1", "Col2", "Descrição", "Valor"])
     df = df.replace("", pd.NA).dropna(how="all").fillna("")
 
-    # Mapear Col2 para nome do tipo conforme mapeamento
+    # Mapear Col2 (código numérico) para nome do tipo conforme mapeamento
     tipo_map = {
         "1": "Proventos",
         "2": "Vantagens",
@@ -186,8 +187,11 @@ def extrair_dados(texto):
     df["Mês"] = mes
     df["Ano"] = ano
 
-    # Reorganizar colunas na ordem desejada
-    df = df[["Empresa", "CNPJ", "Período", "Mês", "Ano", "Col1", "Tipo", "Descrição", "Valor"]]
+    # Renomear Col1 para "Codigo da Descrição" e reorganizar colunas:
+    df = df.rename(columns={"Col1": "Codigo da Descrição"})
+
+    # Ordem final: Empresa, CNPJ, Período, Mês, Ano, Tipo, Codigo da Descrição, Descrição, Valor
+    df = df[["Empresa", "CNPJ", "Período", "Mês", "Ano", "Tipo", "Codigo da Descrição", "Descrição", "Valor"]]
 
     df["Valor_num"] = df["Valor"].apply(_to_float_br)
 
@@ -216,7 +220,7 @@ def extrair_dados(texto):
 
 # ---------- Streamlit UI ----------
 st.set_page_config(page_title="Extrair Resumo Contrato", layout="wide")
-st.title("📄 Extrator - Resumo Contrato (com colunas adicionais)")
+st.title("📄 Extrator - Resumo Contrato (formato final)")
 
 uploaded_file = st.file_uploader("Faça upload do PDF (Relação de Cálculo)", type="pdf")
 show_debug = st.checkbox("Mostrar debug (tokens & blocks)")
@@ -237,22 +241,27 @@ if uploaded_file:
 
         df = dados["tabela"].copy()
 
-        # Mostrar tabela com Valor formatado para visual
+        # Preparar exibição: formatar Valor_num para exibir como BR
         df_show = df.copy()
         df_show["Valor"] = df_show["Valor_num"].apply(lambda v: f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(v) else "")
 
+        # Exibir com a ordem solicitada e coluna "Codigo da Descrição" ao lado da Descrição
         st.subheader("Tabela - Resumo Contrato (formatada)")
-        st.dataframe(df_show.drop(columns=["Valor_num"]), use_container_width=True, height=420)
+        st.dataframe(df_show[["Empresa", "CNPJ", "Período", "Mês", "Ano", "Tipo", "Codigo da Descrição", "Descrição", "Valor"]], use_container_width=True, height=460)
 
-        # Exportar para Excel com as mesmas colunas
+        # Exportar para Excel com Valor numérico
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            export_df = df.drop(columns=["Valor"]).rename(columns={"Valor_num": "Valor"})
+            export_df = df.copy()
+            # renomear Valor_num -> Valor (numérico) para o Excel
+            export_df = export_df.drop(columns=["Valor"]).rename(columns={"Valor_num": "Valor"})
             export_df.to_excel(writer, index=False, sheet_name="Resumo_Contrato")
             ws = writer.sheets["Resumo_Contrato"]
-            money_fmt = writer.book.add_format({'num_format': '#,##0.00'})
+            # formatar coluna Valor
             last_col_idx = export_df.columns.get_loc("Valor")
+            money_fmt = writer.book.add_format({'num_format': '#,##0.00'})
             ws.set_column(last_col_idx, last_col_idx, 15, money_fmt)
+            # ajustar largura
             for i, col in enumerate(export_df.columns):
                 max_len = max(export_df[col].astype(str).map(len).max(), len(col)) + 2
                 ws.set_column(i, i, max_len)

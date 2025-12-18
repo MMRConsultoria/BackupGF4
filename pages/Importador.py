@@ -2,6 +2,7 @@ import streamlit as st
 import pdfplumber
 import re
 import pandas as pd
+import calendar
 from io import BytesIO
 
 # ---------- regex / helpers ----------
@@ -34,6 +35,16 @@ def _to_float_br(x):
         return float(t)
     except:
         return None
+
+def extrair_mes_ano(periodo_str):
+    # Exemplo: "01/02/2025 a 28/02/2025"
+    match = re.search(r"\d{2}/(\d{2})/(\d{4})", periodo_str)
+    if match:
+        mes_num = int(match.group(1))
+        ano = match.group(2)
+        mes_nome = calendar.month_name[mes_num] if 1 <= mes_num <= 12 else ""
+        return mes_nome, ano
+    return "", ""
 
 # ---------- split line into blocks ----------
 def split_line_into_blocks(line: str):
@@ -157,7 +168,7 @@ def extrair_dados(texto):
     df = pd.DataFrame(output_rows, columns=["Col1", "Col2", "Descrição", "Valor"])
     df = df.replace("", pd.NA).dropna(how="all").fillna("")
 
-    # Mapear Col2 para nome do tipo conforme Col3
+    # Mapear Col2 para nome do tipo conforme mapeamento
     tipo_map = {
         "1": "Proventos",
         "2": "Vantagens",
@@ -166,6 +177,17 @@ def extrair_dados(texto):
         "5": "Informativo"
     }
     df["Tipo"] = df["Col2"].map(tipo_map).fillna("")
+
+    mes, ano = extrair_mes_ano(periodo)
+
+    df["Empresa"] = nome_empresa
+    df["CNPJ"] = cnpj
+    df["Período"] = periodo
+    df["Mês"] = mes
+    df["Ano"] = ano
+
+    # Reorganizar colunas na ordem desejada
+    df = df[["Empresa", "CNPJ", "Período", "Mês", "Ano", "Col1", "Tipo", "Descrição", "Valor"]]
 
     df["Valor_num"] = df["Valor"].apply(_to_float_br)
 
@@ -194,7 +216,7 @@ def extrair_dados(texto):
 
 # ---------- Streamlit UI ----------
 st.set_page_config(page_title="Extrair Resumo Contrato", layout="wide")
-st.title("📄 Extrator - Resumo Contrato (4 colunas)")
+st.title("📄 Extrator - Resumo Contrato (com colunas adicionais)")
 
 uploaded_file = st.file_uploader("Faça upload do PDF (Relação de Cálculo)", type="pdf")
 show_debug = st.checkbox("Mostrar debug (tokens & blocks)")
@@ -215,17 +237,17 @@ if uploaded_file:
 
         df = dados["tabela"].copy()
 
-        # Mostrar tabela com colunas: Col1, Tipo, Descrição, Valor formatado
-        df_show = df[["Col1", "Tipo", "Descrição", "Valor_num"]].rename(columns={"Valor_num": "Valor"})
-        df_show["Valor"] = df_show["Valor"].apply(lambda v: f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(v) else "")
+        # Mostrar tabela com Valor formatado para visual
+        df_show = df.copy()
+        df_show["Valor"] = df_show["Valor_num"].apply(lambda v: f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(v) else "")
 
         st.subheader("Tabela - Resumo Contrato (formatada)")
-        st.dataframe(df_show, use_container_width=True, height=420)
+        st.dataframe(df_show.drop(columns=["Valor_num"]), use_container_width=True, height=420)
 
         # Exportar para Excel com as mesmas colunas
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            export_df = df[["Col1", "Tipo", "Descrição", "Valor_num"]].rename(columns={"Valor_num": "Valor"})
+            export_df = df.drop(columns=["Valor"]).rename(columns={"Valor_num": "Valor"})
             export_df.to_excel(writer, index=False, sheet_name="Resumo_Contrato")
             ws = writer.sheets["Resumo_Contrato"]
             money_fmt = writer.book.add_format({'num_format': '#,##0.00'})

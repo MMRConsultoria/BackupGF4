@@ -49,6 +49,50 @@ def extrair_mes_ano(periodo_str):
         return mes_nome, ano
     return "", ""
 
+# limpar nome da empresa: remove datas/períodos e CNPJ caso apareça junto
+def clean_company_name(raw_name: str) -> str:
+    if not raw_name:
+        return ""
+    s = raw_name.strip()
+    # remover intervalos de data "dd/mm/yyyy a dd/mm/yyyy"
+    s = re.sub(r'\d{2}/\d{2}/\d{4}\s*(?:a|-)\s*\d{2}/\d{2}/\d{4}', '', s)
+    # remover datas soltas
+    s = re.sub(r'\d{2}/\d{2}/\d{4}', '', s)
+    # remover CNPJ formais
+    s = re.sub(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}', '', s)
+    # remover sequências de números com barras ou traços (por segurança)
+    s = re.sub(r'\d+[\/-]\d+[\/-]?\d*', '', s)
+    # remover múltiplos espaços
+    s = re.sub(r'\s{2,}', ' ', s)
+    return s.strip()
+
+def extract_company_code_and_name(texto: str):
+    """
+    Tenta extrair 'codigo' e 'nome' da linha com 'Empresa:'.
+    Exemplos esperados:
+      "Empresa: 4 - GF4 PARTICIPACOES LTDA"
+      "Empresa: 27 - GF4 PARTICIPACOES LTDA 01/02/2025 a 28/02/2025"
+    Retorna (codigo_str, nome_limpo)
+    """
+    if not texto:
+        return "", ""
+    # procura a primeira ocorrência de "Empresa" seguida de código e nome
+    m = re.search(r"Empresa[:\s]*\s*(\d+)\s*[-\u2013\u2014]?\s*(.+)", texto, re.IGNORECASE)
+    if m:
+        codigo = m.group(1).strip()
+        nome_raw = m.group(2).strip()
+    else:
+        # fallback: só pega nome depois de "Empresa:" sem código
+        m2 = re.search(r"Empresa[:\s]*\s*(.+)", texto, re.IGNORECASE)
+        if m2:
+            codigo = ""
+            nome_raw = m2.group(1).strip()
+        else:
+            codigo = ""
+            nome_raw = ""
+    nome_limpo = clean_company_name(nome_raw)
+    return codigo, nome_limpo
+
 def split_line_into_blocks(line: str):
     tokens = [t for t in line.strip().split() if t != ""]
     if not tokens:
@@ -129,17 +173,16 @@ def normalize_block_tokens(block_tokens):
             desc_tokens.append(token)
 
     description = " ".join(desc_tokens).strip()
-
     return [col1 or "", col2 or "", description or "", value or ""]
 
 def extrair_dados(texto):
-    empresa_match = re.search(r"Empresa:\s*\d+\s*-\s*(.+)", texto)
-    nome_empresa = empresa_match.group(1).strip() if empresa_match else ""
+    # extrair codigo e nome da empresa
+    codigo_empresa, nome_empresa = extract_company_code_and_name(texto)
 
-    cnpj_match = re.search(r"Inscrição Federal:\s*([\d./-]+)", texto)
+    cnpj_match = re.search(r"Inscrição Federal[:\s]*\s*([\d./-]+)", texto, re.IGNORECASE)
     cnpj = cnpj_match.group(1).strip() if cnpj_match else ""
 
-    periodo_match = re.search(r"Período:\s*([0-3]?\d/[0-1]?\d/\d{4})\s*a\s*([0-3]?\d/[0-1]?\d/\d{4})", texto)
+    periodo_match = re.search(r"Período[:\s]*\s*([0-3]?\d/[0-1]?\d/\d{4})\s*(?:a|-)\s*([0-3]?\d/[0-1]?\d/\d{4})", texto, re.IGNORECASE)
     periodo = f"{periodo_match.group(1)} a {periodo_match.group(2)}" if periodo_match else ""
 
     tabela_match = re.search(r"Resumo Contrato(.*?)(?:\nTotais\b|\nTotais\s*$)", texto, re.DOTALL | re.IGNORECASE)
@@ -180,19 +223,22 @@ def extrair_dados(texto):
 
     mes, ano = extrair_mes_ano(periodo)
 
+    # adicionar colunas fixas incluindo Codigo Empresa (primeira coluna solicitada)
+    df["Codigo Empresa"] = codigo_empresa
     df["Empresa"] = nome_empresa
     df["CNPJ"] = cnpj
     df["Período"] = periodo
     df["Mês"] = mes
     df["Ano"] = ano
 
+    # renomear Col1 para Codigo da Descrição e reorganizar colunas:
     df = df.rename(columns={"Col1": "Codigo da Descrição"})
-    df = df[["Empresa", "CNPJ", "Período", "Mês", "Ano", "Tipo", "Codigo da Descrição", "Descrição", "Valor"]]
+    df = df[["Codigo Empresa", "Empresa", "CNPJ", "Período", "Mês", "Ano", "Tipo", "Codigo da Descrição", "Descrição", "Valor"]]
 
     df["Valor_num"] = df["Valor"].apply(_to_float_br)
 
     valores_match = re.search(
-        r"Proventos:\s*([\d\.,]+)\s*Vantagens:\s*([\d\.,]+)\s*Descontos:\s*([\d\.,]+)\s*Líquido:\s*([\d\.,]+)",
+        r"Proventos[:\s]*([\d\.,]+)\s*Vantagens[:\s]*([\d\.,]+)\s*Descontos[:\s]*([\d\.,]+)\s*Líquido[:\s]*([\d\.,]+)",
         texto, re.IGNORECASE
     )
     proventos = vantagens = descontos = liquido = ""
@@ -203,6 +249,7 @@ def extrair_dados(texto):
         liquido = valores_match.group(4)
 
     return {
+        "codigo_empresa": codigo_empresa,
         "nome_empresa": nome_empresa,
         "cnpj": cnpj,
         "periodo": periodo,
@@ -214,6 +261,7 @@ def extrair_dados(texto):
         "liquido": liquido
     }
 
+# ---------- Streamlit UI ----------
 st.set_page_config(page_title="Extrair Resumo Contrato - Múltiplos PDFs", layout="wide")
 st.title("📄 Extrator - Resumo Contrato (múltiplos arquivos)")
 
@@ -245,6 +293,7 @@ if uploaded_files:
 
             if show_debug:
                 st.subheader(f"Debug do arquivo: {uploaded_file.name}")
+                st.markdown(f"- Raw Empresa extraída: `{dados['codigo_empresa']} - {dados['nome_empresa']}`")
                 for i, dbg in enumerate(dados["debug_blocks"], start=1):
                     st.markdown(f"**Linha {i}:** {dbg['linha']}")
                     st.write("Tokens:", dbg["tokens"])
@@ -258,30 +307,28 @@ if uploaded_files:
     if all_dfs:
         df_all = pd.concat(all_dfs, ignore_index=True)
 
-        # --- Resumo por Mês e Tipo ---
+        # --- Resumo por Mês e Tipo (apenas na tela) ---
         st.subheader("Resumo por Mês e Tipo")
-        # Garantir que 'Mês' e 'Tipo' são strings e 'Valor_num' é numérico
         df_resumo = df_all.copy()
         df_resumo['Mês'] = df_resumo['Mês'].astype(str)
         df_resumo['Tipo'] = df_resumo['Tipo'].astype(str)
         df_resumo['Valor_num'] = pd.to_numeric(df_resumo['Valor_num'], errors='coerce').fillna(0)
 
         resumo_agrupado = df_resumo.groupby(['Mês', 'Tipo'])['Valor_num'].sum().reset_index()
-        resumo_agrupado = resumo_agrupado.pivot(index='Mês', columns='Tipo', values='Valor_num').fillna(0)
+        resumo_pivot = resumo_agrupado.pivot(index='Mês', columns='Tipo', values='Valor_num').fillna(0)
 
-        # Ordenar os meses
-        meses_ordenados = [m for m in _MONTHS_PT.values() if m in resumo_agrupado.index]
-        resumo_agrupado = resumo_agrupado.reindex(meses_ordenados, fill_value=0)
+        # Ordenar meses conforme lista
+        meses_ordenados = [m for m in _MONTHS_PT.values() if m in resumo_pivot.index]
+        resumo_pivot = resumo_pivot.reindex(meses_ordenados, fill_value=0)
 
         # Formatar valores para exibição
-        for col in resumo_agrupado.columns:
-            resumo_agrupado[col] = resumo_agrupado[col].apply(
+        resumo_formatado = resumo_pivot.copy()
+        for col in resumo_formatado.columns:
+            resumo_formatado[col] = resumo_formatado[col].apply(
                 lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
             )
-        
-        st.dataframe(resumo_agrupado, use_container_width=True)
-        # --- Fim do Resumo ---
 
+        st.dataframe(resumo_formatado, use_container_width=True)
 
         # Preparar exibição da tabela combinada: formatar Valor_num para exibir como BR
         df_show = df_all.copy()
@@ -291,7 +338,7 @@ if uploaded_files:
 
         st.subheader("Tabela combinada - Resumo Contrato (formatada)")
         st.dataframe(
-            df_show[["Empresa", "CNPJ", "Período", "Mês", "Ano", "Tipo", "Codigo da Descrição", "Descrição", "Valor"]],
+            df_show[["Codigo Empresa", "Empresa", "CNPJ", "Período", "Mês", "Ano", "Tipo", "Codigo da Descrição", "Descrição", "Valor"]],
             use_container_width=True,
             height=480
         )

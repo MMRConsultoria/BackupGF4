@@ -71,62 +71,43 @@ def split_line_into_blocks(line: str):
 
 # ---------- normalização de bloco -> 4 colunas ----------
 def normalize_block_tokens(block_tokens):
-    """
-    Retorna [Col1, Col2, Descrição, Valor] seguindo as regras:
-    - Valor = último token money do bloco
-    - Se token imediatamente antes do Valor for '0,00', ele é ignorado (não entra na descrição)
-    - Remover tokens 'hs' e tokens de horas (hh:mm) da descrição
-    - Descrição = tokens entre Col2 e (token antes do Valor) após remoções
-    """
     toks = [t.strip() for t in block_tokens if t is not None and str(t).strip() != ""]
     if not toks:
         return ["", "", "", ""]
 
-    # achar último token money no bloco
+    # Encontrar o índice do último token que é valor monetário (Valor)
     value_idx = None
     for i in range(len(toks)-1, -1, -1):
         if is_money(toks[i]):
             value_idx = i
             break
-
     if value_idx is None:
-        # fallback: último token
         value_idx = len(toks) - 1
 
     value = toks[value_idx]
 
-    prev_idx = value_idx - 1
-    drop_prev_zero = prev_idx >= 0 and toks[prev_idx] == "0,00"
+    # Procurar índice do token de horas (ex: 11459:20, hs) ou do token '0,00' que aparece no lugar da hora
+    hour_idx = None
+    for i in range(2, value_idx):
+        t = toks[i].lower()
+        if _token_hours_part.search(t) or t == "hs" or t == "0,00":
+            hour_idx = i
+            break
 
-    # construir col1 e col2: preferir tokens que NÃO sejam money
-    col1 = ""
-    col2 = ""
-    if len(toks) > 0 and not is_money(toks[0]):
-        col1 = toks[0]
-    if len(toks) > 1 and not is_money(toks[1]):
-        col2 = toks[1]
+    # Col1 e Col2 (somente se não forem valores monetários)
+    col1 = toks[0] if len(toks) > 0 and not is_money(toks[0]) else ""
+    col2 = toks[1] if len(toks) > 1 and not is_money(toks[1]) else ""
 
-    # descrição: tokens entre índices 2 .. stop_desc-1
+    # Descrição: tokens entre índice 2 e hour_idx (se hour_idx existir), senão até value_idx
     start_desc = 2
-    stop_desc = prev_idx if drop_prev_zero else value_idx
+    stop_desc = hour_idx if hour_idx is not None else value_idx
     if stop_desc < start_desc:
         stop_desc = start_desc
 
     desc_tokens = []
     for i in range(start_desc, stop_desc):
         if i < len(toks):
-            token = toks[i]
-            lower = token.lower()
-            # ignorar 'hs' e tokens de formato hh:mm
-            if lower in ("hs", "h"):
-                continue
-            if _token_hours_part.search(token):
-                continue
-            # também ignorar tokens que são values (precaução)
-            if is_money(token):
-                continue
-            desc_tokens.append(token)
-
+            desc_tokens.append(toks[i])
     description = " ".join(desc_tokens).strip()
 
     return [col1 or "", col2 or "", description or "", value or ""]

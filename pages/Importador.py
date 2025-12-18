@@ -39,7 +39,9 @@ def _to_float_br(x):
 # ---------- split line into blocks (robusto) ----------
 def split_line_into_blocks(line: str):
     """
-    Quebra a linha em blocos usando cada ocorrência de token monetário como final de bloco.
+    Quebra a linha em blocos usando ocorrências de token monetário como final de bloco.
+    Se houver sequência de money tokens consecutivos (ex: '0,00 1.847,81'), usa o ÚLTIMO money da sequência
+    como final do bloco (evita criar um bloco separada com 0,00 como 'valor').
     Retorna lista de blocos (cada bloco = lista de tokens).
     """
     tokens = [t for t in line.strip().split() if t != ""]
@@ -48,19 +50,27 @@ def split_line_into_blocks(line: str):
 
     money_idxs = [i for i, t in enumerate(tokens) if is_money(t)]
     if not money_idxs:
-        # sem money: retorna tudo como um bloco (será tratado depois)
         return [tokens]
+
+    # agrupa runs de índices consecutivos e pega o último índice de cada run
+    filtered_money_idxs = []
+    i = 0
+    while i < len(money_idxs):
+        j = i
+        while j + 1 < len(money_idxs) and money_idxs[j+1] == money_idxs[j] + 1:
+            j += 1
+        filtered_money_idxs.append(money_idxs[j])  # usar último index do run
+        i = j + 1
 
     blocks = []
     start = 0
-    for mi in money_idxs:
-        # bloco do start até mi (inclusive)
+    for mi in filtered_money_idxs:
         block = tokens[start:mi+1]
         if block:
             blocks.append(block)
         start = mi+1
 
-    # se sobrou tokens após último money, anexar ao último bloco
+    # se restaram tokens após último money, anexar ao último bloco
     if start < len(tokens):
         if blocks:
             blocks[-1].extend(tokens[start:])
@@ -71,11 +81,18 @@ def split_line_into_blocks(line: str):
 
 # ---------- normalização de bloco -> 4 colunas ----------
 def normalize_block_tokens(block_tokens):
+    """
+    Retorna [Col1, Col2, Descrição, Valor] seguindo as regras:
+    - Valor = último token money do bloco
+    - Ignorar tokens de horas (hh:mm, 'hs') e também '0,00' quando aparecer na posição das horas
+    - Descrição = tokens entre Col2 e início das horas (ou até o valor se não houver horas)
+    - Col1/Col2 só são preenchidos se não forem money (proteção contra deslocamentos)
+    """
     toks = [t.strip() for t in block_tokens if t is not None and str(t).strip() != ""]
     if not toks:
         return ["", "", "", ""]
 
-    # Encontrar o índice do último token que é valor monetário (Valor)
+    # achar índice do último token money no bloco (valor real do bloco)
     value_idx = None
     for i in range(len(toks)-1, -1, -1):
         if is_money(toks[i]):
@@ -86,7 +103,7 @@ def normalize_block_tokens(block_tokens):
 
     value = toks[value_idx]
 
-    # Procurar índice do token de horas (ex: 11459:20, hs) ou do token '0,00' que aparece no lugar da hora
+    # identificar posição de horas ou '0,00' entre índice 2 e value_idx-1
     hour_idx = None
     for i in range(2, value_idx):
         t = toks[i].lower()
@@ -94,11 +111,11 @@ def normalize_block_tokens(block_tokens):
             hour_idx = i
             break
 
-    # Col1 e Col2 (somente se não forem valores monetários)
+    # construir col1 e col2 com proteção (não aceitar money em col1/col2)
     col1 = toks[0] if len(toks) > 0 and not is_money(toks[0]) else ""
     col2 = toks[1] if len(toks) > 1 and not is_money(toks[1]) else ""
 
-    # Descrição: tokens entre índice 2 e hour_idx (se hour_idx existir), senão até value_idx
+    # descrição: entre índice 2 e hour_idx (se existir), caso contrário até value_idx
     start_desc = 2
     stop_desc = hour_idx if hour_idx is not None else value_idx
     if stop_desc < start_desc:
@@ -107,7 +124,20 @@ def normalize_block_tokens(block_tokens):
     desc_tokens = []
     for i in range(start_desc, stop_desc):
         if i < len(toks):
-            desc_tokens.append(toks[i])
+            token = toks[i]
+            lower = token.lower()
+            # ignorar explicitamente 'hs', formatos hh:mm e '0,00'
+            if lower in ("hs", "h"):
+                continue
+            if _token_hours_part.search(token):
+                continue
+            if lower == "0,00":
+                continue
+            # ignorar tokens money por precaução
+            if is_money(token):
+                continue
+            desc_tokens.append(token)
+
     description = " ".join(desc_tokens).strip()
 
     return [col1 or "", col2 or "", description or "", value or ""]
@@ -127,12 +157,12 @@ def extrair_dados(texto):
     tabela_match = re.search(r"Resumo Contrato(.*?)(?:\nTotais\b|\nTotais\s*$)", texto, re.DOTALL | re.IGNORECASE)
     if not tabela_match:
         tabela_match = re.search(r"Resumo Contrato(.*?)Totais", texto, re.DOTALL | re.IGNORECASE)
-    tabela_texto = tabela_match.group(1).strip() if tabela_match else texto  # se não achar, processa todo texto (debug)
+    tabela_texto = tabela_match.group(1).strip() if tabela_match else texto  # fallback: todo o texto
 
     linhas = [ln.strip() for ln in tabela_texto.split("\n") if ln.strip()]
 
     output_rows = []
-    debug_blocks = []  # para debug opcional: (linha, tokens, blocks, normalized_rows)
+    debug_blocks = []
     for linha in linhas:
         tokens = [t for t in linha.split() if t]
         blocks = split_line_into_blocks(linha)

@@ -12,7 +12,6 @@ def is_money(tok: str) -> bool:
     t = str(tok or "").strip()
     if not t:
         return False
-    # aceitar formatos sem milhar também (ex: 598,02)
     if re.match(r'^\d+,\d{2}$', t):
         return True
     return bool(_money_re.match(t))
@@ -36,14 +35,8 @@ def _to_float_br(x):
     except:
         return None
 
-# ---------- split line into blocks (robusto) ----------
+# ---------- split line into blocks ----------
 def split_line_into_blocks(line: str):
-    """
-    Quebra a linha em blocos usando ocorrências de token monetário como final de bloco.
-    Se houver sequência de money tokens consecutivos (ex: '0,00 1.847,81'), usa o ÚLTIMO money da sequência
-    como final do bloco (evita criar um bloco separada com 0,00 como 'valor').
-    Retorna lista de blocos (cada bloco = lista de tokens).
-    """
     tokens = [t for t in line.strip().split() if t != ""]
     if not tokens:
         return []
@@ -52,14 +45,13 @@ def split_line_into_blocks(line: str):
     if not money_idxs:
         return [tokens]
 
-    # agrupa runs de índices consecutivos e pega o último índice de cada run
     filtered_money_idxs = []
     i = 0
     while i < len(money_idxs):
         j = i
         while j + 1 < len(money_idxs) and money_idxs[j+1] == money_idxs[j] + 1:
             j += 1
-        filtered_money_idxs.append(money_idxs[j])  # usar último index do run
+        filtered_money_idxs.append(money_idxs[j])
         i = j + 1
 
     blocks = []
@@ -70,7 +62,6 @@ def split_line_into_blocks(line: str):
             blocks.append(block)
         start = mi+1
 
-    # se restaram tokens após último money, anexar ao último bloco
     if start < len(tokens):
         if blocks:
             blocks[-1].extend(tokens[start:])
@@ -79,20 +70,12 @@ def split_line_into_blocks(line: str):
 
     return blocks
 
-# ---------- normalização de bloco -> 4 colunas ----------
+# ---------- normalize block tokens ----------
 def normalize_block_tokens(block_tokens):
-    """
-    Retorna [Col1, Col2, Descrição, Valor] seguindo as regras:
-    - Valor = último token money do bloco
-    - Ignorar tokens de horas (hh:mm, 'hs') e também '0,00' quando aparecer na posição das horas
-    - Descrição = tokens entre Col2 e início das horas (ou até o valor se não houver horas)
-    - Col1/Col2 só são preenchidos se não forem money (proteção contra deslocamentos)
-    """
     toks = [t.strip() for t in block_tokens if t is not None and str(t).strip() != ""]
     if not toks:
         return ["", "", "", ""]
 
-    # achar índice do último token money no bloco (valor real do bloco)
     value_idx = None
     for i in range(len(toks)-1, -1, -1):
         if is_money(toks[i]):
@@ -103,7 +86,6 @@ def normalize_block_tokens(block_tokens):
 
     value = toks[value_idx]
 
-    # identificar posição de horas ou '0,00' entre índice 2 e value_idx-1
     hour_idx = None
     for i in range(2, value_idx):
         t = toks[i].lower()
@@ -111,38 +93,33 @@ def normalize_block_tokens(block_tokens):
             hour_idx = i
             break
 
-    # construir col1 e col2 com proteção (não aceitar money em col1/col2)
     col1 = toks[0] if len(toks) > 0 and not is_money(toks[0]) else ""
     col2 = toks[1] if len(toks) > 1 and not is_money(toks[1]) else ""
-
-    # descrição: entre índice 2 e hour_idx (se existir), caso contrário até value_idx
+    col3_tokens = []
     start_desc = 2
     stop_desc = hour_idx if hour_idx is not None else value_idx
     if stop_desc < start_desc:
         stop_desc = start_desc
 
-    desc_tokens = []
     for i in range(start_desc, stop_desc):
         if i < len(toks):
             token = toks[i]
             lower = token.lower()
-            # ignorar explicitamente 'hs', formatos hh:mm e '0,00'
             if lower in ("hs", "h"):
                 continue
             if _token_hours_part.search(token):
                 continue
             if lower == "0,00":
                 continue
-            # ignorar tokens money por precaução
             if is_money(token):
                 continue
-            desc_tokens.append(token)
+            col3_tokens.append(token)
 
-    description = " ".join(desc_tokens).strip()
+    col3 = " ".join(col3_tokens).strip()
 
-    return [col1 or "", col2 or "", description or "", value or ""]
+    return [col1 or "", col2 or "", col3 or "", value or ""]
 
-# ---------- extrair dados ----------
+# ---------- extract data ----------
 def extrair_dados(texto):
     empresa_match = re.search(r"Empresa:\s*\d+\s*-\s*(.+)", texto)
     nome_empresa = empresa_match.group(1).strip() if empresa_match else ""
@@ -153,11 +130,10 @@ def extrair_dados(texto):
     periodo_match = re.search(r"Período:\s*([0-3]?\d/[0-1]?\d/\d{4})\s*a\s*([0-3]?\d/[0-1]?\d/\d{4})", texto)
     periodo = f"{periodo_match.group(1)} a {periodo_match.group(2)}" if periodo_match else ""
 
-    # bloco entre "Resumo Contrato" e "Totais"
     tabela_match = re.search(r"Resumo Contrato(.*?)(?:\nTotais\b|\nTotais\s*$)", texto, re.DOTALL | re.IGNORECASE)
     if not tabela_match:
         tabela_match = re.search(r"Resumo Contrato(.*?)Totais", texto, re.DOTALL | re.IGNORECASE)
-    tabela_texto = tabela_match.group(1).strip() if tabela_match else texto  # fallback: todo o texto
+    tabela_texto = tabela_match.group(1).strip() if tabela_match else texto
 
     linhas = [ln.strip() for ln in tabela_texto.split("\n") if ln.strip()]
 
@@ -179,12 +155,20 @@ def extrair_dados(texto):
         })
 
     df = pd.DataFrame(output_rows, columns=["Col1", "Col2", "Descrição", "Valor"])
-    # remover linhas vazias (todas colunas vazias)
     df = df.replace("", pd.NA).dropna(how="all").fillna("")
+
+    # Mapear Col2 para nome do tipo conforme Col3
+    tipo_map = {
+        "1": "Proventos",
+        "2": "Vantagens",
+        "3": "Descontos",
+        "4": "Informativo",
+        "5": "Informativo"
+    }
+    df["Tipo"] = df["Col2"].map(tipo_map).fillna("")
 
     df["Valor_num"] = df["Valor"].apply(_to_float_br)
 
-    # Totais (Proventos/Vantagens/Descontos/Líquido)
     valores_match = re.search(
         r"Proventos:\s*([\d\.,]+)\s*Vantagens:\s*([\d\.,]+)\s*Descontos:\s*([\d\.,]+)\s*Líquido:\s*([\d\.,]+)",
         texto, re.IGNORECASE
@@ -231,17 +215,17 @@ if uploaded_file:
 
         df = dados["tabela"].copy()
 
-        # Mostrar tabela com Valor formatado para visual
-        df_show = df[["Col1", "Col2", "Descrição", "Valor_num"]].rename(columns={"Valor_num":"Valor"})
+        # Mostrar tabela com colunas: Col1, Tipo, Descrição, Valor formatado
+        df_show = df[["Col1", "Tipo", "Descrição", "Valor_num"]].rename(columns={"Valor_num": "Valor"})
         df_show["Valor"] = df_show["Valor"].apply(lambda v: f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(v) else "")
 
         st.subheader("Tabela - Resumo Contrato (formatada)")
         st.dataframe(df_show, use_container_width=True, height=420)
 
-        # Botão download Excel (Valor numérico)
+        # Exportar para Excel com as mesmas colunas
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            export_df = df[["Col1", "Col2", "Descrição", "Valor_num"]].rename(columns={"Valor_num":"Valor"})
+            export_df = df[["Col1", "Tipo", "Descrição", "Valor_num"]].rename(columns={"Valor_num": "Valor"})
             export_df.to_excel(writer, index=False, sheet_name="Resumo_Contrato")
             ws = writer.sheets["Resumo_Contrato"]
             money_fmt = writer.book.add_format({'num_format': '#,##0.00'})
@@ -277,7 +261,6 @@ if uploaded_file:
 
     except Exception as e:
         st.error(f"Erro ao processar o PDF: {e}")
-        # mostrar preview do texto para ajudar debug
         try:
             with pdfplumber.open(uploaded_file) as pdf:
                 preview = ""

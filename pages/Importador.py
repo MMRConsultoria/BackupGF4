@@ -54,35 +54,47 @@ def clean_company_name(raw_name: str) -> str:
     if not raw_name:
         return ""
     s = raw_name.strip()
-    # remover intervalos de data "dd/mm/yyyy a dd/mm/yyyy"
+    # remover intervalos de data "dd/mm/yyyy a dd/mm/yyyy" e datas soltas
     s = re.sub(r'\d{2}/\d{2}/\d{4}\s*(?:a|-)\s*\d{2}/\d{2}/\d{4}', '', s)
-    # remover datas soltas
     s = re.sub(r'\d{2}/\d{2}/\d{4}', '', s)
+    # remover hora hh:mm
+    s = re.sub(r'\b\d{1,2}:\d{2}\b', '', s)
+    # remover "Pág" ou "Pág." e número de página
+    s = re.sub(r'\bPág(?:\.|:)?\s*\d+\b', '', s, flags=re.IGNORECASE)
     # remover CNPJ formais
     s = re.sub(r'\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}', '', s)
-    # remover sequências de números com barras ou traços (por segurança)
-    s = re.sub(r'\d+[\/-]\d+[\/-]?\d*', '', s)
+    # remover sequências de números com barras ou traços (por segurança), mas cuidado para não remover nomes com números válidos
+    s = re.sub(r'\b\d{1,6}[\/-]\d{1,6}[\/-]?\d*\b', '', s)
     # remover múltiplos espaços
     s = re.sub(r'\s{2,}', ' ', s)
     return s.strip()
 
 def extract_company_code_and_name(texto: str):
     """
-    Tenta extrair 'codigo' e 'nome' da linha com 'Empresa:'.
-    Exemplos esperados:
-      "Empresa: 4 - GF4 PARTICIPACOES LTDA"
-      "Empresa: 27 - GF4 PARTICIPACOES LTDA 01/02/2025 a 28/02/2025"
+    Extrai código e nome da empresa da linha 'Empresa:'.
+    Remove tudo que vier após o nome (datas, hora, Pág, etc).
     Retorna (codigo_str, nome_limpo)
     """
     if not texto:
         return "", ""
-    # procura a primeira ocorrência de "Empresa" seguida de código e nome
+    # procurar trecho começando por "Empresa" e capturar código e resto
     m = re.search(r"Empresa[:\s]*\s*(\d+)\s*[-\u2013\u2014]?\s*(.+)", texto, re.IGNORECASE)
     if m:
         codigo = m.group(1).strip()
-        nome_raw = m.group(2).strip()
+        resto = m.group(2).strip()
+        # cortar tudo após a primeira ocorrência de data, hora ou "Pág"
+        corte = re.search(r"(\d{2}/\d{2}/\d{4}|\b\d{1,2}:\d{2}\b|\bPág\b|\bPág\.?\b|\bPage\b)", resto, re.IGNORECASE)
+        if corte:
+            nome_raw = resto[:corte.start()].strip()
+        else:
+            # se não encontrar padrão, tentar cortar antes de um CNPJ ou antes de "Inscrição" ou antes de "Período"
+            corte2 = re.search(r"(?:\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\bInscrição\b|\bPeríodo\b)", resto, re.IGNORECASE)
+            if corte2:
+                nome_raw = resto[:corte2.start()].strip()
+            else:
+                nome_raw = resto
     else:
-        # fallback: só pega nome depois de "Empresa:" sem código
+        # fallback simples: pega tudo após "Empresa:" se existir
         m2 = re.search(r"Empresa[:\s]*\s*(.+)", texto, re.IGNORECASE)
         if m2:
             codigo = ""

@@ -258,7 +258,32 @@ if uploaded_files:
     if all_dfs:
         df_all = pd.concat(all_dfs, ignore_index=True)
 
-        # Preparar exibição: formatar Valor_num para exibir como BR
+        # --- Resumo por Mês e Tipo ---
+        st.subheader("Resumo por Mês e Tipo")
+        # Garantir que 'Mês' e 'Tipo' são strings e 'Valor_num' é numérico
+        df_resumo = df_all.copy()
+        df_resumo['Mês'] = df_resumo['Mês'].astype(str)
+        df_resumo['Tipo'] = df_resumo['Tipo'].astype(str)
+        df_resumo['Valor_num'] = pd.to_numeric(df_resumo['Valor_num'], errors='coerce').fillna(0)
+
+        resumo_agrupado = df_resumo.groupby(['Mês', 'Tipo'])['Valor_num'].sum().reset_index()
+        resumo_agrupado = resumo_agrupado.pivot(index='Mês', columns='Tipo', values='Valor_num').fillna(0)
+
+        # Ordenar os meses
+        meses_ordenados = [m for m in _MONTHS_PT.values() if m in resumo_agrupado.index]
+        resumo_agrupado = resumo_agrupado.reindex(meses_ordenados, fill_value=0)
+
+        # Formatar valores para exibição
+        for col in resumo_agrupado.columns:
+            resumo_agrupado[col] = resumo_agrupado[col].apply(
+                lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            )
+        
+        st.dataframe(resumo_agrupado, use_container_width=True)
+        # --- Fim do Resumo ---
+
+
+        # Preparar exibição da tabela combinada: formatar Valor_num para exibir como BR
         df_show = df_all.copy()
         df_show["Valor"] = df_show["Valor_num"].apply(
             lambda v: f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(v) else ""
@@ -294,7 +319,6 @@ if uploaded_files:
             use_container_width=True
         )
 
-        # Mostrar totais combinados (somando valores numéricos)
         def parse_valor_str(v):
             try:
                 return float(v.replace(".", "").replace(",", "."))

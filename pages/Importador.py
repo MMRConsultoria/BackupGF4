@@ -372,12 +372,34 @@ def extrair_dados_csv(file):
             continue
 
         # quadro esquerdo
-        if ln[0]:
-            rows.append([ln[0], ln[1], ln[2], ln[4]])
+        num_colunas = len(df_raw.columns)
 
-        # quadro direito
-        if ln[5]:
-            rows.append([ln[5], ln[6], ln[7], ln[9]])
+        for ln in linhas:
+            # ignora cabeçalhos
+            if str(ln[0]).startswith("Empresa") or str(ln[0]).startswith("Relação"):
+                continue
+        
+            # percorre blocos de 5 colunas (A/F/K/P/...)
+            for start in range(0, num_colunas, 5):
+                try:
+                    codigo = ln[start]
+                    tipo = ln[start + 1]
+                    descricao = ln[start + 2]
+                    valor = ln[start + 4]
+                except IndexError:
+                    continue
+        
+                # ignora blocos vazios
+                if not codigo or not descricao or not valor:
+                    continue
+        
+                rows.append([
+                    codigo,
+                    tipo,
+                    descricao,
+                    valor
+                ])
+
 
     df = pd.DataFrame(
         rows,

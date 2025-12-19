@@ -514,13 +514,13 @@ def extrair_dados_csv(file):
 
 # ---------------- Streamlit UI ----------------
 
-st.title("📄 Extrator – Resumo Contrato")
+#st.title("📄 Extrator – Resumo Contrato")
 
 uploaded_files = st.file_uploader(
     "Faça upload de PDFs ou CSVs",
     accept_multiple_files=True
 )
-show_debug = st.checkbox("Mostrar debug (tokens & blocks)")
+#show_debug = st.checkbox("Mostrar debug (tokens & blocks)")
 
 if uploaded_files:
     all_dfs = []
@@ -580,7 +580,7 @@ if uploaded_files:
         
 
         # ---------------- Resumo por Codigo Empresa e Mês (fixo) ----------------
-        st.subheader("Resumo por Código da Empresa e Mês (Proventos, Vantagens, Descontos, Informativo, Líquido)")
+        st.subheader("Resumo Operação")
 
         df_resumo = df_all.copy()
         df_resumo['Mês'] = df_resumo['Mês'].astype(str)
@@ -652,7 +652,7 @@ if uploaded_files:
         out_summary.seek(0)
 
         st.download_button(
-            label="📥 Baixar resumo (Excel)",
+            label="📥 Excel",
             data=out_summary,
             file_name="resumo_por_empresa_mes.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -667,7 +667,7 @@ if uploaded_files:
         )
         
 
-        st.subheader("Tabela combinada - Resumo Contrato (formatada)")
+        st.subheader("Folha de Pagamento Detalhado")
         st.dataframe(
             df_show[["Codigo Empresa", "Empresa", "CNPJ", "Período", "Mês", "Ano", "Tipo", "Codigo da Descrição", "Descrição", "Valor"]],
             use_container_width=True,
@@ -690,7 +690,7 @@ if uploaded_files:
         output.seek(0)
 
         st.download_button(
-            label="📥 Baixar tabela combinada (Excel) com Valor numérico",
+            label="📥 Excel",
             data=output,
             file_name="resumo_contrato_combinado.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

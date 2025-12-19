@@ -520,8 +520,8 @@ uploaded_files = st.file_uploader(
     "Faça upload de PDFs ou CSVs",
     accept_multiple_files=True
 )
-show_debug = st.checkbox("Mostrar debug (tokens & blocks)")
-
+#show_debug = st.checkbox("Mostrar debug (tokens & blocks)")
+show_debug = False
 if uploaded_files:
     all_dfs = []
     all_proventos = []

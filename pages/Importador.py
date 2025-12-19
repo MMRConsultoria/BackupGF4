@@ -541,8 +541,11 @@ if uploaded_files:
         for col in colunas_esperadas + ['Líquido']:
             formatted[col] = formatted[col].apply(lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
-        st.dataframe(formatted, use_container_width=True, height=360)
-
+        st.dataframe(
+            formatted,
+            use_container_width=True,
+            height=min(360, 45 + 35 * len(formatted))
+        )
         # Botão para baixar o resumo em Excel (com valores numéricos)
         out_summary = BytesIO()
         with pd.ExcelWriter(out_summary, engine="xlsxwriter") as writer:

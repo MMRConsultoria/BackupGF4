@@ -375,21 +375,19 @@ def extrair_dados_csv(file):
         num_colunas = len(df_raw.columns)
 
         for ln in linhas:
-            # ignora cabeçalhos
-            if str(ln[0]).startswith("Empresa") or str(ln[0]).startswith("Relação"):
-                continue
-        
-            # percorre blocos de 5 colunas (A/F/K/P/...)
             for start in range(0, num_colunas, 5):
                 try:
-                    codigo = ln[start]
-                    tipo = ln[start + 1]
-                    descricao = ln[start + 2]
-                    valor = ln[start + 4]
+                    codigo = str(ln[start]).strip()
+                    tipo = str(ln[start + 1]).strip()
+                    descricao = str(ln[start + 2]).strip()
+                    valor = str(ln[start + 4]).strip()
                 except IndexError:
                     continue
         
-                # ignora blocos vazios
+                # 🔒 FILTRO CRÍTICO — evita explosão de linhas
+                if tipo not in {"1", "2", "3", "4", "5"}:
+                    continue
+        
                 if not codigo or not descricao or not valor:
                     continue
         

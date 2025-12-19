@@ -188,43 +188,33 @@ def extrair_dados_csv_questor(uploaded_file):
     return pd.DataFrame(rows)
 
 
-# =========================
-# STREAMLIT APP
-# =========================
+# =========================================================
+# INTERFACE STREAMLIT
+# =========================================================
 
-st.set_page_config(layout="wide")
-st.title("Leitura GF4 – PDF + CSV Questor")
+st.title("📊 Resumo – Questor + PDF Antigo")
 
-uploaded_files = st.file_uploader(
-    "Faça upload de PDFs ou CSVs (Questor)",
-    type=["pdf", "csv"],
+files = st.file_uploader(
+    "Envie arquivos Questor (CSV/XLSX) e/ou PDF antigo",
+    type=["csv", "xlsx", "pdf"],
     accept_multiple_files=True
 )
 
-dfs = []
-
 if files:
+    dfs = []
+
     for f in files:
-        if f.name.lower().endswith(".pdf"):
-            with pdfplumber.open(f) as pdf:
-                texto = ""
-                for p in pdf.pages:
-                    texto += (p.extract_text() or "") + "\n"
-            df = extrair_dados_pdf(texto)
+        if f.name.lower().endswith((".csv", ".xlsx")):
+            df_q = ler_questor(f)
+            dfs.append(df_q)
 
-        elif f.name.lower().endswith(".csv"):
-            df = extrair_dados_csv_questor(f)
-
-        dfs.append(df)
+        elif f.name.lower().endswith(".pdf"):
+            df_p = ler_pdf_antigo(f)
+            dfs.append(df_p)
 
     df_final = pd.concat(dfs, ignore_index=True)
 
-    df_final = df_final[[
-        "Codigo Empresa", "Empresa", "CNPJ", "Período",
-        "Mês", "Ano", "Tipo",
-        "Codigo da Descrição", "Descrição", "Valor", "Sistema"
-    ]]
-
+    st.subheader("📋 Dados consolidados")
     st.dataframe(df_final, use_container_width=True)
 
     # Excel

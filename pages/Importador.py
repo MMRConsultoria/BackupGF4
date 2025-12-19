@@ -302,23 +302,33 @@ def extrair_dados_csv(file):
         df_raw.astype(str).agg(" ".join, axis=1).tolist()
     )
 
-    # Empresa (B3)
-    b3 = df_raw.iloc[2, 1]
-    codigo_empresa = b3.split("-")[0].strip()
-    nome_empresa = b3.split("-")[1].strip() if "-" in b3 else ""
+    
 
     # Sistema = última coluna da direita (linha 3)
     sistema = df_raw.iloc[2, -1].strip()
+    # ================= POSIÇÕES FIXAS (CSV) =================
 
-    # CNPJ (B4)
+    # B3 → Código + Empresa
+    b3 = df_raw.iloc[2, 1].strip()
+    if "-" in b3:
+        codigo_empresa, nome_empresa = [x.strip() for x in b3.split("-", 1)]
+    else:
+        codigo_empresa = b3
+        nome_empresa = ""
+    
+    # B4 → CNPJ
     cnpj = df_raw.iloc[3, 1].strip()
-
-    # Período (A8)
+    
+    # A8 → Período
+    periodo_raw = df_raw.iloc[7, 0]
     periodo_match = re.search(
         r"(\d{2}/\d{2}/\d{4}\s*a\s*\d{2}/\d{2}/\d{4})",
-        df_raw.iloc[7, 0]
+        periodo_raw
     )
     periodo = periodo_match.group(1) if periodo_match else ""
+
+   
+    
 
     mes, ano = extrair_mes_ano(periodo)
 

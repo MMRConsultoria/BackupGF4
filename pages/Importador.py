@@ -197,7 +197,6 @@ st.title("Leitura GF4 – PDF + CSV Questor")
 
 files = st.file_uploader(
     "Envie PDFs ou CSVs",
-    type=["pdf", "csv"],
     accept_multiple_files=True
 )
 

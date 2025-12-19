@@ -306,28 +306,39 @@ def extrair_dados_csv(file):
 
     # Sistema = última coluna da direita (linha 3)
     sistema = df_raw.iloc[2, -1].strip()
-    # ================= POSIÇÕES FIXAS (CSV) =================
+   # ================= EXTRAÇÃO ROBUSTA (CSV) =================
 
-    # B3 → Código + Empresa
-    b3 = df_raw.iloc[2, 1].strip()
-    if "-" in b3:
-        codigo_empresa, nome_empresa = [x.strip() for x in b3.split("-", 1)]
-    else:
-        codigo_empresa = b3
-        nome_empresa = ""
+    codigo_empresa = ""
+    nome_empresa = ""
+    cnpj = ""
+    periodo = ""
     
-    # B4 → CNPJ
-    cnpj = df_raw.iloc[3, 1].strip()
+    for i in range(len(df_raw)):
+        linha = " ".join(df_raw.iloc[i].astype(str).values)
     
-    # A8 → Período
-    periodo_raw = df_raw.iloc[7, 0]
-    periodo_match = re.search(
-        r"(\d{2}/\d{2}/\d{4}\s*a\s*\d{2}/\d{2}/\d{4})",
-        periodo_raw
-    )
-    periodo = periodo_match.group(1) if periodo_match else ""
-
-   
+        # Empresa (B3 visual)
+        if "Empresa" in linha and "-" in linha and not codigo_empresa:
+            partes = linha.split("-", 1)
+            codigo_empresa = partes[0].replace("Empresa", "").strip()
+            nome_empresa = partes[1].strip()
+    
+        # CNPJ (B4 visual)
+        if "CNPJ" in linha or "Inscrição" in linha:
+            m = re.search(r"(\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2})", linha)
+            if m:
+                cnpj = m.group(1)
+    
+        # Período (A8 visual)
+        if "Período" in linha:
+            m = re.search(
+                r"(\d{2}/\d{2}/\d{4}\s*a\s*\d{2}/\d{2}/\d{4})",
+                linha
+            )
+            if m:
+                periodo = m.group(1)
+    
+    
+       
     
 
     mes, ano = extrair_mes_ano(periodo)

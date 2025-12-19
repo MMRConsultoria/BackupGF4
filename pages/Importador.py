@@ -1,15 +1,12 @@
+# -*- coding: utf-8 -*-
+
 import streamlit as st
 import pdfplumber
 import re
 import pandas as pd
 from io import BytesIO
 
-# -*- coding: utf-8 -*-
-
-import streamlit as st
-
 # ================= FUSÍVEL ANTI-HELP =================
-# Evita qualquer help(), docstring ou saída técnica no app
 try:
     import builtins
     def _noop_help(*args, **kwargs):
@@ -24,13 +21,12 @@ st.set_page_config(
     layout="wide"
 )
 
-# Não mostrar detalhes técnicos de erro para o usuário
 st.set_option("client.showErrorDetails", False)
 
 # ================= BLOQUEIO DE ACESSO =================
-# Padrão do sistema (mantém consistência entre módulos)
 if not st.session_state.get("acesso_liberado"):
     st.stop()
+
 
 # ================= CSS PADRÃO =================
 st.markdown("""
@@ -517,8 +513,8 @@ def extrair_dados_csv(file):
 
 
 # ---------------- Streamlit UI ----------------
-st.set_page_config(page_title="Extrair Resumo Contrato - Múltiplos PDFs", layout="wide")
-st.title("📄 Extrator - Resumo Contrato (múltiplos arquivos)")
+
+st.title("📄 Extrator – Resumo Contrato")
 
 uploaded_files = st.file_uploader(
     "Faça upload de PDFs ou CSVs",

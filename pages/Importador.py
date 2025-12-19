@@ -546,8 +546,7 @@ if uploaded_files:
         # Botão para baixar o resumo em Excel (com valores numéricos)
         out_summary = BytesIO()
         with pd.ExcelWriter(out_summary, engine="xlsxwriter") as writer:
-            resumo_pivot.to_excel(writer, in
-                                  dex=False, sheet_name="Resumo")
+            resumo_pivot.to_excel(writer, index=False, sheet_name="Resumo")
             ws = writer.sheets["Resumo"]
             # formatar colunas numéricas
             book = writer.book

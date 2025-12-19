@@ -319,7 +319,12 @@ def extrair_dados_csv(file):
         # Empresa (B3 visual)
         if "Empresa" in linha and "-" in linha and not codigo_empresa:
             partes = linha.split("-", 1)
-            codigo_empresa = partes[0].replace("Empresa", "").strip()
+            codigo_empresa = (
+                partes[0]
+                .replace("Empresa", "")
+                .replace(":", "")
+                .strip()
+            )
             nome_empresa = partes[1].strip()
     
         # CNPJ (B4 visual)

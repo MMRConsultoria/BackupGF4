@@ -4,6 +4,94 @@ import re
 import pandas as pd
 from io import BytesIO
 
+# -*- coding: utf-8 -*-
+
+import streamlit as st
+
+# ================= FUSÍVEL ANTI-HELP =================
+# Evita qualquer help(), docstring ou saída técnica no app
+try:
+    import builtins
+    def _noop_help(*args, **kwargs):
+        return None
+    builtins.help = _noop_help
+except Exception:
+    pass
+
+# ================= CONFIG STREAMLIT =================
+st.set_page_config(
+    page_title="Resumo Contrato",
+    layout="wide"
+)
+
+# Não mostrar detalhes técnicos de erro para o usuário
+st.set_option("client.showErrorDetails", False)
+
+# ================= BLOQUEIO DE ACESSO =================
+# Padrão do sistema (mantém consistência entre módulos)
+if not st.session_state.get("acesso_liberado"):
+    st.stop()
+
+# ================= CSS PADRÃO =================
+st.markdown("""
+<style>
+  /* Oculta toolbar e menu Streamlit */
+  [data-testid="stToolbar"] { visibility: hidden; height: 0%; position: fixed; }
+  header { visibility: hidden; }
+
+  /* Aparência geral */
+  .stApp { background-color: #f9f9f9; }
+
+  /* Tabs (se houver) */
+  div[data-baseweb="tab-list"] { margin-top: 20px; }
+
+  button[data-baseweb="tab"] {
+      background-color: #f0f2f6;
+      border-radius: 10px;
+      padding: 10px 20px;
+      margin-right: 10px;
+      transition: all 0.3s ease;
+      font-size: 16px;
+      font-weight: 600;
+  }
+
+  button[data-baseweb="tab"]:hover {
+      background-color: #dce0ea;
+      color: black;
+  }
+
+  button[data-baseweb="tab"][aria-selected="true"] {
+      background-color: #0366d6;
+      color: white;
+  }
+
+  hr.compact {
+      height: 1px;
+      background: #e6e9f0;
+      border: none;
+      margin: 8px 0 10px;
+  }
+
+  .compact [data-testid="stSelectbox"],
+  .compact [data-testid="stTextArea"],
+  .compact [data-testid="stVerticalBlock"] > div {
+      margin-bottom: 8px !important;
+  }
+</style>
+""", unsafe_allow_html=True)
+
+# ================= CABEÇALHO PADRÃO =================
+st.markdown("""
+  <div style='display: flex; align-items: center; gap: 10px; margin-bottom: 12px;'>
+      <img src='https://img.icons8.com/color/48/document.png' width='40'/>
+      <h1 style='display: inline; margin: 0; font-size: 2.0rem;'>
+          Resumo Contrato
+      </h1>
+  </div>
+""", unsafe_allow_html=True)
+
+
+
 # ---------------- utilitários ----------------
 _money_re = re.compile(r'^\d{1,3}(?:\.\d{3})*,\d{2}$')
 _token_hours_part = re.compile(r'\d+:\d+')

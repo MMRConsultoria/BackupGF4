@@ -546,7 +546,8 @@ if uploaded_files:
         # Botão para baixar o resumo em Excel (com valores numéricos)
         out_summary = BytesIO()
         with pd.ExcelWriter(out_summary, engine="xlsxwriter") as writer:
-            resumo_pivot.to_excel(writer, index=False, sheet_name="Resumo")
+            resumo_pivot.to_excel(writer, in
+                                  dex=False, sheet_name="Resumo")
             ws = writer.sheets["Resumo"]
             # formatar colunas numéricas
             book = writer.book
@@ -574,9 +575,11 @@ if uploaded_files:
 
         # ---------------- Tabela combinada (exibição e export) ----------------
         df_show = df_all.copy()
+        df_show = df_show[df_show["Valor_num"].fillna(0) != 0]
         df_show["Valor"] = df_show["Valor_num"].apply(
             lambda v: f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(v) else ""
         )
+        
 
         st.subheader("Tabela combinada - Resumo Contrato (formatada)")
         st.dataframe(
@@ -584,7 +587,7 @@ if uploaded_files:
             use_container_width=True,
             height=480
         )
-
+        
         # Exportar para Excel com Valor numérico
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:

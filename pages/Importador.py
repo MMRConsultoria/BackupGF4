@@ -195,8 +195,9 @@ def extrair_dados_csv_questor(uploaded_file):
 st.set_page_config(layout="wide")
 st.title("Leitura GF4 – PDF + CSV Questor")
 
-files = st.file_uploader(
-    "Envie PDFs ou CSVs",
+uploaded_files = st.file_uploader(
+    "Faça upload de PDFs ou CSVs (Questor)",
+    type=["pdf", "csv"],
     accept_multiple_files=True
 )
 

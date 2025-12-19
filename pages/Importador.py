@@ -367,36 +367,32 @@ def extrair_dados_csv(file):
 
     rows = []
 
+    num_colunas = len(df_raw.columns)
+
     for ln in linhas:
-        if ln[0].startswith("Empresa") or ln[0].startswith("Relação"):
-            continue
+        for start in range(0, num_colunas, 5):
+            try:
+                codigo = str(ln[start]).strip()
+                tipo = str(ln[start + 1]).strip()
+                descricao = str(ln[start + 2]).strip()
+                valor = str(ln[start + 4]).strip()
+            except IndexError:
+                continue
+    
+            # 🔒 FILTRO QUE DEFINE LINHA REAL
+            if tipo not in {"1", "2", "3", "4", "5"}:
+                continue
+    
+            if not codigo or not descricao or not valor:
+                continue
+    
+            rows.append([
+                codigo,
+                tipo,
+                descricao,
+                valor
+            ])
 
-        # quadro esquerdo
-        num_colunas = len(df_raw.columns)
-
-        for ln in linhas:
-            for start in range(0, num_colunas, 5):
-                try:
-                    codigo = str(ln[start]).strip()
-                    tipo = str(ln[start + 1]).strip()
-                    descricao = str(ln[start + 2]).strip()
-                    valor = str(ln[start + 4]).strip()
-                except IndexError:
-                    continue
-        
-                # 🔒 FILTRO CRÍTICO — evita explosão de linhas
-                if tipo not in {"1", "2", "3", "4", "5"}:
-                    continue
-        
-                if not codigo or not descricao or not valor:
-                    continue
-        
-                rows.append([
-                    codigo,
-                    tipo,
-                    descricao,
-                    valor
-                ])
 
 
     df = pd.DataFrame(

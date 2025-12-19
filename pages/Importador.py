@@ -37,15 +37,27 @@ def extrair_mes_ano(periodo_str):
     return "", ""
 
 # ======================================================
-# LIMPEZA EMPRESA
+# LIMPEZA EMPRESA (PDF + QUESTOR)
 # ======================================================
 def clean_company_name(raw):
     if not raw:
         return ""
-    s = raw
+    s = str(raw)
+
+    # remover separadores do CSV Questor
+    s = s.replace(";", " ")
+
+    # remover datas
     s = re.sub(r'\d{2}/\d{2}/\d{4}', '', s)
+
+    # remover paginação
     s = re.sub(r'\bPág.*', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bPágina.*', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bPage.*', '', s, flags=re.IGNORECASE)
+
+    # normalizar espaços
     s = re.sub(r'\s{2,}', ' ', s)
+
     return s.strip()
 
 def extract_company_code_and_name(texto):
@@ -58,25 +70,44 @@ def extract_company_code_and_name(texto):
 # PARSER DE LINHAS
 # ======================================================
 def split_line_into_blocks(line):
-    tokens = line.split()
-    money_idxs = [i for i,t in enumerate(tokens) if is_money(t)]
+    tokens = [t for t in line.split() if t]
+    money_idxs = [i for i, t in enumerate(tokens) if is_money(t)]
     if not money_idxs:
         return [tokens]
 
     blocks, start = [], 0
     for idx in money_idxs:
         blocks.append(tokens[start:idx+1])
-        start = idx+1
+        start = idx + 1
+
     if start < len(tokens):
         blocks[-1].extend(tokens[start:])
+
     return blocks
 
 def normalize_block_tokens(toks):
     value = next((t for t in reversed(toks) if is_money(t)), "")
+
     col1 = toks[0] if len(toks) > 0 else ""
     col2 = toks[1] if len(toks) > 1 else ""
+
+    texto_full = " ".join(toks).lower()
+
+    # ================== IDENTIFICAÇÃO DE TIPO (QUESTOR) ==================
+    tipo = ""
+
+    if any(p in texto_full for p in ["provento", "salário", "salario", "hora extra", "adicional"]):
+        tipo = "Proventos"
+    elif any(p in texto_full for p in ["vantagem", "benefício", "beneficio"]):
+        tipo = "Vantagens"
+    elif any(p in texto_full for p in ["desconto", "inss", "fgts", "irrf", "vale", "plano"]):
+        tipo = "Descontos"
+    elif any(p in texto_full for p in ["informativo", "base", "referência", "referencia"]):
+        tipo = "Informativo"
+
     desc = " ".join(toks[2:-1]).strip()
-    return [col1, col2, desc, value]
+
+    return [col1, col2 if not tipo else tipo, desc, value]
 
 # ======================================================
 # EXTRAÇÃO PRINCIPAL (COMUM)
@@ -104,11 +135,20 @@ def extrair_dados(texto):
         for b in split_line_into_blocks(ln):
             rows.append(normalize_block_tokens(b))
 
-    df = pd.DataFrame(rows, columns=["Col1","Col2","Descrição","Valor"])
+    df = pd.DataFrame(rows, columns=["Col1", "Col2", "Descrição", "Valor"])
     df["Valor_num"] = df["Valor"].apply(_to_float_br)
 
-    tipo_map = {"1":"Proventos","2":"Vantagens","3":"Descontos","4":"Informativo","5":"Informativo"}
-    df["Tipo"] = df["Col2"].map(tipo_map)
+    # ================== TIPO PDF (fallback) ==================
+    tipo_map = {
+        "1": "Proventos",
+        "2": "Vantagens",
+        "3": "Descontos",
+        "4": "Informativo",
+        "5": "Informativo"
+    }
+
+    df["Tipo"] = df["Col2"].replace(tipo_map)
+    df["Tipo"] = df["Tipo"].fillna(df["Col2"])
 
     mes, ano = extrair_mes_ano(periodo)
 
@@ -118,11 +158,11 @@ def extrair_dados(texto):
     df["Mês"] = mes
     df["Ano"] = ano
 
-    df = df.rename(columns={"Col1":"Codigo da Descrição"})
+    df = df.rename(columns={"Col1": "Codigo da Descrição"})
 
     return df[
-        ["Codigo Empresa","Empresa","Período","Mês","Ano",
-         "Tipo","Codigo da Descrição","Descrição","Valor","Valor_num"]
+        ["Codigo Empresa", "Empresa", "Período", "Mês", "Ano",
+         "Tipo", "Codigo da Descrição", "Descrição", "Valor", "Valor_num"]
     ]
 
 # ======================================================
@@ -150,8 +190,8 @@ st.set_page_config("Extrator PDF + Questor", layout="wide")
 st.title("📄 Extrator Resumo Contrato – PDF + Questor")
 
 files = st.file_uploader(
-    "Envie PDFs (Antigo) ou CSV/XLSX (Questor)",
-    type=["pdf","csv","xlsx"],
+    "Envie PDFs (Sistema Antigo) ou CSV/XLSX (Questor)",
+    type=["pdf", "csv", "xlsx"],
     accept_multiple_files=True
 )
 
@@ -184,8 +224,8 @@ if files:
 
     st.dataframe(
         df_show[
-            ["Sistema","Codigo Empresa","Empresa","Período","Mês","Ano",
-             "Tipo","Codigo da Descrição","Descrição","Valor"]
+            ["Sistema", "Codigo Empresa", "Empresa", "Período", "Mês", "Ano",
+             "Tipo", "Codigo da Descrição", "Descrição", "Valor"]
         ],
         use_container_width=True,
         height=500
@@ -194,12 +234,15 @@ if files:
     # ================= EXCEL =================
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        export_df = df_all.drop(columns=["Valor"]).rename(columns={"Valor_num":"Valor"})
+        export_df = df_all.drop(columns=["Valor"]).rename(columns={"Valor_num": "Valor"})
         export_df.to_excel(writer, index=False, sheet_name="Resumo")
         ws = writer.sheets["Resumo"]
         money_fmt = writer.book.add_format({'num_format': '#,##0.00'})
         idx = export_df.columns.get_loc("Valor")
         ws.set_column(idx, idx, 15, money_fmt)
+
+        for i, col in enumerate(export_df.columns):
+            ws.set_column(i, i, max(len(col) + 2, 14))
 
     output.seek(0)
 

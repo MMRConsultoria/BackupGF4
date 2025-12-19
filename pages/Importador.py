@@ -326,10 +326,14 @@ def extrair_dados_csv(file):
     start = None
     end = None
 
+    
     for i in range(len(df_raw)):
-        if "Resumo Contrato" in df_raw.iloc[i, 0]:
+        linha_txt = " ".join(df_raw.iloc[i].astype(str).values)
+    
+        if "Resumo Contrato" in linha_txt:
             start = i + 1
-        if start and "Totais" in df_raw.iloc[i, 0]:
+    
+        if start and "Totais" in linha_txt:
             end = i
             break
 
@@ -399,7 +403,7 @@ if uploaded_files:
     all_descontos = []
     all_liquido = []
 
-    for uploaded_file in uploaded_files:
+
     for uploaded_file in uploaded_files:
         try:
             nome = uploaded_file.name.lower()

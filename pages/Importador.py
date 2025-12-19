@@ -620,11 +620,11 @@ if uploaded_files:
         total_descontos = sum(parse_valor_str(v) for v in all_descontos if v)
         total_liquido = sum(parse_valor_str(v) for v in all_liquido if v)
 
-        st.subheader("Totais combinados dos PDFs (se extraídos das seções de totais)")
-        st.markdown(f"- **Proventos:** R$ {total_proventos:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        st.markdown(f"- **Vantagens:** R$ {total_vantagens:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        st.markdown(f"- **Descontos:** R$ {total_descontos:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
-        st.markdown(f"- **Líquido:** R$ {total_liquido:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+       # st.subheader("Totais combinados dos PDFs (se extraídos das seções de totais)")
+       # st.markdown(f"- **Proventos:** R$ {total_proventos:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+       # st.markdown(f"- **Vantagens:** R$ {total_vantagens:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+       # st.markdown(f"- **Descontos:** R$ {total_descontos:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+       # st.markdown(f"- **Líquido:** R$ {total_liquido:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
 
 else:
     st.info("Faça upload de um ou mais arquivos PDF para extrair as tabelas.")

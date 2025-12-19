@@ -325,7 +325,7 @@ def extrair_dados_csv(file):
                 .replace(":", "")
                 .strip()
             )
-            nome_empresa = partes[1].strip()
+            nome_empresa = clean_company_name(partes[1])
     
         # CNPJ (B4 visual)
         if "CNPJ" in linha or "Inscrição" in linha:

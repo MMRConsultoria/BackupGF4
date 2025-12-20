@@ -227,10 +227,10 @@ with st.spinner("⏳ Processando..."):
 
                 #Relatorio 3S
          
-                elif True:  # Novo formato: procurar linha com "ID Loja"
+                elif True:  # Novo formato
                     df_temp = pd.read_excel(xls, sheet_name=abas[0], header=None)
                 
-                    # Procurar a linha que contém "ID Loja" (case insensitive)
+                    # Procurar a linha que contém "ID Loja"
                     header_row_index = None
                     for idx, row in df_temp.iterrows():
                         if "id loja" in str(row.iloc[0]).lower():
@@ -244,17 +244,29 @@ with st.spinner("⏳ Processando..."):
                     # Ler novamente, pulando até a linha do cabeçalho
                     df_novo = pd.read_excel(xls, sheet_name=abas[0], header=header_row_index)
                 
-                    # Padronizar colunas
-                    df_final = pd.DataFrame()
-                    df_final["Data"] = pd.to_datetime(df_novo.iloc[:, 2], errors="coerce")  # Coluna C
-                    df_final["Loja"] = df_novo.iloc[:, 0].astype(str).str.strip()           # Coluna A
-                    df_final["Fat.Total"] = pd.to_numeric(df_novo.iloc[:, 7], errors="coerce")  # Coluna H
-                    df_final["Serv/Tx"] = 0  # padrão
-                    df_final["Fat.Real"] = pd.to_numeric(df_novo.iloc[:, 11], errors="coerce")  # Coluna L
-                    df_final["Pessoas"] = np.nan  # ou 0, se não tiver
-                    df_final["Ticket"] = pd.to_numeric(df_novo.iloc[:, 12], errors="coerce")  # Coluna M
-                    df_final["Mês"] = df_final["Data"].dt.strftime("%b").str.lower()
-                    df_final["Ano"] = df_final["Data"].dt.year
+                    # Padronizar colunas conforme mapeamento
+                    df_novo["Loja"] = df_novo.iloc[:, 0].astype(str).str.strip()
+                    df_novo["Data"] = pd.to_datetime(df_novo.iloc[:, 2], errors="coerce")
+                    df_novo["Fat.Total"] = pd.to_numeric(df_novo.iloc[:, 7], errors="coerce")
+                    df_novo["Serv/Tx"] = 0  # padrão
+                    df_novo["Fat.Real"] = pd.to_numeric(df_novo.iloc[:, 11], errors="coerce")
+                    df_novo["Ticket"] = pd.to_numeric(df_novo.iloc[:, 12], errors="coerce")
+                
+                    # ⚠️ Filtrar linhas onde a Loja é "9999"
+                    df_novo = df_novo[df_novo["Loja"] != "9999"]
+                
+                    # Agrupar por Data e Loja
+                    df_agrupado = df_novo.groupby(["Data", "Loja"]).agg({
+                        "Fat.Total": "sum",
+                        "Serv/Tx": "sum",
+                        "Fat.Real": "sum",
+                        "Ticket": "mean"
+                    }).reset_index()
+                
+                    df_agrupado["Mês"] = df_agrupado["Data"].dt.strftime("%b").str.lower()
+                    df_agrupado["Ano"] = df_agrupado["Data"].dt.year
+                
+                    df_final = df_agrupado
                 else:
                     st.error("❌ O arquivo enviado não contém uma aba reconhecida. Esperado: 'FaturamentoDiarioPorLoja' ou 'Relatório 100113'.")
                     st.stop()

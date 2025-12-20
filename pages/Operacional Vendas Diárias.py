@@ -206,6 +206,7 @@ with st.spinner("⏳ Processando..."):
     
                 elif "Relatório 100132" in abas:
                     df = pd.read_excel(xls, sheet_name="Relatório 100132")
+                    
                     df["Loja"] = df["Código - Nome Empresa"].astype(str).str.split("-", n=1).str[-1].str.strip().str.lower()
                     df["Data"] = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
                     df["Fat.Total"] = pd.to_numeric(df["Valor Total"], errors="coerce")
@@ -225,9 +226,25 @@ with st.spinner("⏳ Processando..."):
                     df_final = df_agrupado
 
                 #Relatorio 3S
-                elif True:  # condição para detectar o novo formato, ex: aba S ou else
-                    df_novo = pd.read_excel(xls, sheet_name=abas[0])
-                    
+         
+                elif True:  # Novo formato: procurar linha com "ID Loja"
+                    df_temp = pd.read_excel(xls, sheet_name=abas[0], header=None)
+                
+                    # Procurar a linha que contém "ID Loja" (case insensitive)
+                    header_row_index = None
+                    for idx, row in df_temp.iterrows():
+                        if "id loja" in str(row.iloc[0]).lower():
+                            header_row_index = idx
+                            break
+                
+                    if header_row_index is None:
+                        st.error("❌ Não foi possível encontrar a linha com 'ID Loja'. Verifique o arquivo.")
+                        st.stop()
+                
+                    # Ler novamente, pulando até a linha do cabeçalho
+                    df_novo = pd.read_excel(xls, sheet_name=abas[0], header=header_row_index)
+                
+                    # Padronizar colunas
                     df_final = pd.DataFrame()
                     df_final["Data"] = pd.to_datetime(df_novo.iloc[:, 2], errors="coerce")  # Coluna C
                     df_final["Loja"] = df_novo.iloc[:, 0].astype(str).str.strip()           # Coluna A

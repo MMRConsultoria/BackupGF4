@@ -245,25 +245,25 @@ with st.spinner("⏳ Processando..."):
                     df_novo = pd.read_excel(xls, sheet_name=abas[0], header=header_row_index)
                 
                     # Padronizar colunas conforme mapeamento
-                    df_novo["Loja"] = df_novo.iloc[:, 0].astype(str).str.lstrip("0").replace("", "0").str.strip()
+                    df_novo["ID Loja"] = df_novo.iloc[:, 0].astype(str).str.lstrip("0").replace("", "0").str.strip()
                     df_novo["Data"] = pd.to_datetime(df_novo.iloc[:, 2], errors="coerce")
                     df_novo["Fat.Total"] = pd.to_numeric(df_novo.iloc[:, 7], errors="coerce")
                     df_novo["Serv/Tx"] = 0  # padrão
                     df_novo["Fat.Real"] = pd.to_numeric(df_novo.iloc[:, 11], errors="coerce")
                     df_novo["Ticket"] = pd.to_numeric(df_novo.iloc[:, 12], errors="coerce")
                 
-                    # ⚠️ Filtrar linhas onde a Loja é "9999"
-                    df_novo = df_novo[df_novo["Loja"] != "9999"]
+                    # ⚠️ Filtrar linhas onde o ID Loja é "9999"
+                    df_novo = df_novo[df_novo["ID Loja"] != "9999"]
                 
-                    # Validar lojas com base na coluna C da Tabela Empresa
+                    # Validar ID Loja com base na coluna C da Tabela Empresa
                     lojas_cadastradas = df_empresa.iloc[:, 2].astype(str).str.strip().unique()
-                    lojas_nao_cadastradas = df_novo.loc[~df_novo["Loja"].isin(lojas_cadastradas), "Loja"].unique()
+                    lojas_nao_cadastradas = df_novo.loc[~df_novo["ID Loja"].isin(lojas_cadastradas), "ID Loja"].unique()
                 
                     if len(lojas_nao_cadastradas) > 0:
-                        st.warning(f"⚠️ As seguintes lojas não estão cadastradas na Tabela Empresa (coluna C): {', '.join(lojas_nao_cadastradas)}")
+                        st.warning(f"⚠️ Os seguintes ID Loja não estão cadastrados na Tabela Empresa (coluna C): {', '.join(lojas_nao_cadastradas)}")
                 
-                    # Agrupar por Data e Loja
-                    df_agrupado = df_novo.groupby(["Data", "Loja"]).agg({
+                    # Agrupar por Data e ID Loja
+                    df_agrupado = df_novo.groupby(["Data", "ID Loja"]).agg({
                         "Fat.Total": "sum",
                         "Serv/Tx": "sum",
                         "Fat.Real": "sum",

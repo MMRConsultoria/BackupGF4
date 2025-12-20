@@ -255,6 +255,13 @@ with st.spinner("⏳ Processando..."):
                     # ⚠️ Filtrar linhas onde a Loja é "9999"
                     df_novo = df_novo[df_novo["Loja"] != "9999"]
                 
+                    # Validar lojas com base na coluna C da Tabela Empresa
+                    lojas_cadastradas = df_empresa.iloc[:, 2].astype(str).str.strip().unique()
+                    lojas_nao_cadastradas = df_novo.loc[~df_novo["Loja"].isin(lojas_cadastradas), "Loja"].unique()
+                
+                    if len(lojas_nao_cadastradas) > 0:
+                        st.warning(f"⚠️ As seguintes lojas não estão cadastradas na Tabela Empresa (coluna C): {', '.join(lojas_nao_cadastradas)}")
+                
                     # Agrupar por Data e Loja
                     df_agrupado = df_novo.groupby(["Data", "Loja"]).agg({
                         "Fat.Total": "sum",

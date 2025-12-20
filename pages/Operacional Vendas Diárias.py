@@ -227,7 +227,7 @@ with st.spinner("⏳ Processando..."):
 
                 #Relatorio 3S
          
-                elif True:  # Novo formato
+               elif True:  # Novo formato - relatório "S"
                     df_temp = pd.read_excel(xls, sheet_name=abas[0], header=None)
                 
                     # Procurar a linha que contém "ID Loja"
@@ -269,6 +269,9 @@ with st.spinner("⏳ Processando..."):
                         "Fat.Real": "sum",
                         "Ticket": "mean"
                     }).reset_index()
+                
+                    # Renomear para manter consistência com o restante do código
+                    df_agrupado = df_agrupado.rename(columns={"ID Loja": "Loja"})
                 
                     df_agrupado["Mês"] = df_agrupado["Data"].dt.strftime("%b").str.lower()
                     df_agrupado["Ano"] = df_agrupado["Data"].dt.year

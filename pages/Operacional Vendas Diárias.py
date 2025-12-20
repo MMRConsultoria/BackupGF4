@@ -257,7 +257,19 @@ with st.spinner("⏳ Processando..."):
                             return codigo_limpo if codigo_limpo != "" else "0"
                         else:
                             return ""
+                    # Limpar códigos da Tabela Empresa (coluna C)
+                    def limpar_codigo_empresa(codigo):
+                        if pd.isna(codigo):
+                            return ""
+                        return str(codigo).strip()
                     
+                    lojas_cadastradas = df_empresa.iloc[:, 2].apply(limpar_codigo_empresa).unique()
+                    
+                    # Verificar quais códigos do relatório não estão cadastrados
+                    nao_cadastradas = df_novo.loc[~df_novo["ID Loja"].isin(lojas_cadastradas), "ID Loja"].unique()
+                    
+                    if len(nao_cadastradas) > 0:
+                        st.warning(f"⚠️ {len(nao_cadastradas)} empresa(s) não localizada(s): {', '.join(nao_cadastradas)}")
                     df_novo["ID Loja"] = df_novo.iloc[:, 0].apply(limpar_codigo_everest)
                     df_novo["Data"] = pd.to_datetime(df_novo.iloc[:, 2], errors="coerce")
                     df_novo["Fat.Total"] = pd.to_numeric(df_novo.iloc[:, 7], errors="coerce")

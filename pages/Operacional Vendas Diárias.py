@@ -223,7 +223,21 @@ with st.spinner("⏳ Processando..."):
                     df_agrupado["Mês"] = df_agrupado["Data"].dt.strftime("%b").str.lower()
                     df_agrupado["Ano"] = df_agrupado["Data"].dt.year
                     df_final = df_agrupado
-    
+
+                #Relatorio 3S
+                elif True:  # condição para detectar o novo formato, ex: aba S ou else
+                    df_novo = pd.read_excel(xls, sheet_name=abas[0])
+                    
+                    df_final = pd.DataFrame()
+                    df_final["Data"] = pd.to_datetime(df_novo.iloc[:, 2], errors="coerce")  # Coluna C
+                    df_final["Loja"] = df_novo.iloc[:, 0].astype(str).str.strip()           # Coluna A
+                    df_final["Fat.Total"] = pd.to_numeric(df_novo.iloc[:, 7], errors="coerce")  # Coluna H
+                    df_final["Serv/Tx"] = 0  # padrão
+                    df_final["Fat.Real"] = pd.to_numeric(df_novo.iloc[:, 11], errors="coerce")  # Coluna L
+                    df_final["Pessoas"] = np.nan  # ou 0, se não tiver
+                    df_final["Ticket"] = pd.to_numeric(df_novo.iloc[:, 12], errors="coerce")  # Coluna M
+                    df_final["Mês"] = df_final["Data"].dt.strftime("%b").str.lower()
+                    df_final["Ano"] = df_final["Data"].dt.year
                 else:
                     st.error("❌ O arquivo enviado não contém uma aba reconhecida. Esperado: 'FaturamentoDiarioPorLoja' ou 'Relatório 100113'.")
                     st.stop()
@@ -247,7 +261,7 @@ with st.spinner("⏳ Processando..."):
                 df_final = df_final.sort_values(by=["Data_Ordenada", "Loja"]).drop(columns="Data_Ordenada")
     
                 df_empresa["Loja"] = df_empresa["Loja"].astype(str).str.strip().str.lower()
-                df_final["Loja"] = df_final["Loja"].astype(str).str.strip().str.lower()
+                df_final["Lsoja"] = df_final["Loja"].astype(str).str.strip().str.lower()
                 df_final = pd.merge(df_final, df_empresa, on="Loja", how="left")
     
                 colunas_finais = [

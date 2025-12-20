@@ -245,7 +245,20 @@ with st.spinner("⏳ Processando..."):
                     df_novo = pd.read_excel(xls, sheet_name=abas[0], header=header_row_index)
                 
                     # Padronizar colunas conforme mapeamento
-                    df_novo["ID Loja"] = df_novo.iloc[:, 0].astype(str).str.lstrip("0").replace("", "0").str.strip()
+                    import re
+
+                    def limpar_codigo_everest(codigo):
+                        if pd.isna(codigo):
+                            return ""
+                        numeros = re.findall(r'\d+', str(codigo))
+                        if numeros:
+                            codigo_numerico = "".join(numeros)
+                            codigo_limpo = codigo_numerico.lstrip("0")
+                            return codigo_limpo if codigo_limpo != "" else "0"
+                        else:
+                            return ""
+                    
+                    df_novo["ID Loja"] = df_novo.iloc[:, 0].apply(limpar_codigo_everest)
                     df_novo["Data"] = pd.to_datetime(df_novo.iloc[:, 2], errors="coerce")
                     df_novo["Fat.Total"] = pd.to_numeric(df_novo.iloc[:, 7], errors="coerce")
                     df_novo["Serv/Tx"] = 0  # padrão

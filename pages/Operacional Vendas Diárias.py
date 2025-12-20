@@ -227,81 +227,140 @@ with st.spinner("⏳ Processando..."):
 
                 #Relatorio 3S
          
-                elif True:  # Novo formato - relatório "S"
+                elif True:  # Novo formato - relatório "S" (ler a partir da linha com 'ID LOJA')
+                    import re
+                    from io import BytesIO
+                
+                    # --- Ler a primeira aba sem header para localizar a linha do cabeçalho ---
                     df_temp = pd.read_excel(xls, sheet_name=abas[0], header=None)
                 
-                    # Procurar a linha que contém "ID Loja"
                     header_row_index = None
                     for idx, row in df_temp.iterrows():
-                        if "id loja" in str(row.iloc[0]).lower():
+                        # Procura por 'id loja' em qualquer coluna da linha do possível cabeçalho
+                        row_text = " ".join([str(x).lower() for x in row.values if not pd.isna(x)])
+                        if "id loja" in row_text:
                             header_row_index = idx
                             break
                 
                     if header_row_index is None:
-                        st.error("❌ Não foi possível encontrar a linha com 'ID Loja'. Verifique o arquivo.")
+                        st.error("❌ Não foi possível encontrar a linha com 'ID LOJA'. Verifique o arquivo.")
                         st.stop()
                 
-                    # Ler novamente, pulando até a linha do cabeçalho
+                    # Ler novamente usando a linha encontrada como header
                     df_novo = pd.read_excel(xls, sheet_name=abas[0], header=header_row_index)
                 
-                    # Padronizar colunas conforme mapeamento
-                    import re
-
-                    def limpar_codigo_everest(codigo):
-                        if pd.isna(codigo):
+                    # Normalizar nomes das colunas (remove espaços extremos e coloca em lowercase)
+                    df_novo.columns = df_novo.columns.astype(str).str.strip().str.lower()
+                
+                    # Função para extrair apenas números do campo e remover zeros à esquerda
+                    def limpar_codigo_everest(valor):
+                        if pd.isna(valor):
                             return ""
-                        numeros = re.findall(r'\d+', str(codigo))
-                        if numeros:
-                            codigo_numerico = "".join(numeros)
-                            codigo_limpo = codigo_numerico.lstrip("0")
-                            return codigo_limpo if codigo_limpo != "" else "0"
-                        else:
+                        s = str(valor)
+                        nums = re.findall(r'\d+', s)
+                        if not nums:
                             return ""
-                    # Limpar códigos da Tabela Empresa (coluna C)
-                    def limpar_codigo_empresa(codigo):
-                        if pd.isna(codigo):
-                            return ""
-                        return str(codigo).strip()
-                    
-                    lojas_cadastradas = df_empresa.iloc[:, 2].apply(limpar_codigo_empresa).unique()
-                    
-                    # Verificar quais códigos do relatório não estão cadastrados
-                    nao_cadastradas = df_novo.loc[~df_novo["ID Loja"].isin(lojas_cadastradas), "ID Loja"].unique()
-                    
+                        joined = "".join(nums)
+                        cleaned = joined.lstrip("0")
+                        return cleaned if cleaned != "" else "0"
+                
+                    # Função para converter valores monetários de formato BR (ex: 'R$ 1.234,56') para float
+                    def parse_num_br(x):
+                        if pd.isna(x):
+                            return np.nan
+                        s = str(x).strip()
+                        # remover 'R$', espaços e possíveis parênteses
+                        s = re.sub(r'[Rr]\$|\(|\)|\s', '', s)
+                        # substituir pontos de milhar e transformar vírgula decimal em ponto
+                        s = s.replace('.', '').replace(',', '.')
+                        # extrair número (mantendo sinal e decimal)
+                        m = re.search(r'-?\d+(\.\d+)?', s)
+                        return float(m.group()) if m else np.nan
+                
+                    # --- Identificar colunas relevantes (tenta por nome; se não achar, usa índices padrão) ---
+                    # Coluna ID LOJA
+                    possible_id_cols = [c for c in df_novo.columns if "id" in c and "loja" in c]
+                    if possible_id_cols:
+                        id_col = possible_id_cols[0]
+                    else:
+                        id_col = df_novo.columns[0]  # fallback para primeira coluna
+                
+                    # Coluna Data
+                    possible_data_cols = [c for c in df_novo.columns if "data" in c]
+                    data_col = possible_data_cols[0] if possible_data_cols else df_novo.columns[2]
+                
+                    # Coluna de Fat.Total (procura por 'total fatur' ou 'total bruto' ou 'total faturado')
+                    possible_fattotal = [c for c in df_novo.columns if "total fatur" in c or "total bruto" in c or "total faturado" in c or "total fatur" in c or "total faturad" in c]
+                    fattotal_col = possible_fattotal[0] if possible_fattotal else (df_novo.columns[7] if len(df_novo.columns) > 7 else df_novo.columns[-1])
+                
+                    # Coluna Fat.Real / Total Líquido (procura 'total líquido' / 'total liquido')
+                    possible_fatreal = [c for c in df_novo.columns if "total líquid" in c or "total liquid" in c or "total liq" in c]
+                    fatreal_col = possible_fatreal[0] if possible_fatreal else (df_novo.columns[11] if len(df_novo.columns) > 11 else fattotal_col)
+                
+                    # Coluna Ticket (procura 'ticket médio' ou 'tickets')
+                    possible_ticket = [c for c in df_novo.columns if "ticket" in c]
+                    ticket_col = possible_ticket[0] if possible_ticket else (df_novo.columns[12] if len(df_novo.columns) > 12 else None)
+                
+                    # Se quiser conferir nomes detectados (descomente para debug)
+                    # st.write("Detectado id_col:", id_col, "data_col:", data_col, "fattotal_col:", fattotal_col, "fatreal_col:", fatreal_col, "ticket_col:", ticket_col)
+                
+                    # --- Criar colunas padronizadas ---
+                    df_novo['id_loja_raw'] = df_novo[id_col]  # manter original para debug, se necessário
+                    df_novo['id loja'] = df_novo[id_col].apply(limpar_codigo_everest)
+                
+                    # Converter data
+                    df_novo['data_tmp'] = pd.to_datetime(df_novo[data_col], dayfirst=True, errors='coerce')
+                
+                    # Converter valores numéricos
+                    df_novo['fat_total_tmp'] = df_novo[fattotal_col].apply(parse_num_br)
+                    df_novo['fat_real_tmp'] = df_novo[fatreal_col].apply(parse_num_br) if fatreal_col is not None else np.nan
+                    df_novo['ticket_tmp'] = df_novo[ticket_col].apply(lambda x: pd.to_numeric(x, errors='coerce')) if ticket_col is not None else np.nan
+                
+                    # Filtrar id loja == '9999'
+                    df_novo = df_novo[df_novo['id loja'] != "9999"]
+                
+                    # --- Preparar lista de códigos cadastrados da Tabela Empresa (coluna C) ---
+                    # Garantir que df_empresa está carregado no contexto (como no seu script original)
+                    empresas_col_c = df_empresa.iloc[:, 2].astype(str).apply(lambda x: re.sub(r'\D', '', x)).str.lstrip('0').replace('', '0').unique()
+                
+                    # Identificar não cadastradas
+                    nao_cadastradas = np.setdiff1d(df_novo['id loja'].unique(), empresas_col_c)
                     if len(nao_cadastradas) > 0:
-                        st.warning(f"⚠️ {len(nao_cadastradas)} empresa(s) não localizada(s): {', '.join(nao_cadastradas)}")
-                    df_novo["ID Loja"] = df_novo.iloc[:, 0].apply(limpar_codigo_everest)
-                    df_novo["Data"] = pd.to_datetime(df_novo.iloc[:, 2], errors="coerce")
-                    df_novo["Fat.Total"] = pd.to_numeric(df_novo.iloc[:, 7], errors="coerce")
-                    df_novo["Serv/Tx"] = 0  # padrão
-                    df_novo["Fat.Real"] = pd.to_numeric(df_novo.iloc[:, 11], errors="coerce")
-                    df_novo["Ticket"] = pd.to_numeric(df_novo.iloc[:, 12], errors="coerce")
+                        st.warning(f"⚠️ {len(nao_cadastradas)} empresa(s) não localizada(s), cadastre e reprocesse novamente!<br>{'<br>'.join(map(str, nao_cadastradas))}", unsafe_allow_html=True)
                 
-                    # ⚠️ Filtrar linhas onde o ID Loja é "9999"
-                    df_novo = df_novo[df_novo["ID Loja"] != "9999"]
+                    # --- Agrupamento e padronização final ---
+                    # Montar dataframe temporário com colunas padronizadas antes do agrupamento
+                    df_work = pd.DataFrame({
+                        'Data': df_novo['data_tmp'],
+                        'Loja': df_novo['id loja'],
+                        'Fat.Total': df_novo['fat_total_tmp'],
+                        'Serv/Tx': 0.0,
+                        'Fat.Real': df_novo['fat_real_tmp'],
+                        'Pessoas': np.nan,
+                        'Ticket': df_novo['ticket_tmp']
+                    })
                 
-                    # Validar ID Loja com base na coluna C da Tabela Empresa
-                    lojas_cadastradas = df_empresa.iloc[:, 2].astype(str).str.strip().unique()
-                    lojas_nao_cadastradas = df_novo.loc[~df_novo["ID Loja"].isin(lojas_cadastradas), "ID Loja"].unique()
+                    # Remover linhas sem data válida
+                    df_work = df_work[~df_work['Data'].isna()]
                 
-                    if len(lojas_nao_cadastradas) > 0:
-                        st.warning(f"⚠️ Os seguintes ID Loja não estão cadastrados na Tabela Empresa (coluna C): {', '.join(lojas_nao_cadastradas)}")
-                
-                    # Agrupar por Data e ID Loja
-                    df_agrupado = df_novo.groupby(["Data", "ID Loja"]).agg({
-                        "Fat.Total": "sum",
-                        "Serv/Tx": "sum",
-                        "Fat.Real": "sum",
-                        "Ticket": "mean"
+                    # Agrupar por Data e Loja
+                    df_agrupado = df_work.groupby(['Data', 'Loja']).agg({
+                        'Fat.Total': 'sum',
+                        'Serv/Tx': 'sum',
+                        'Fat.Real': 'sum',
+                        'Ticket': 'mean'
                     }).reset_index()
                 
-                    # Renomear para manter consistência com o restante do código
-                    df_agrupado = df_agrupado.rename(columns={"ID Loja": "Loja"})
+                    # Criar colunas Mês e Ano
+                    df_agrupado['Mês'] = df_agrupado['Data'].dt.strftime('%b').str.lower()
+                    df_agrupado['Ano'] = df_agrupado['Data'].dt.year
                 
-                    df_agrupado["Mês"] = df_agrupado["Data"].dt.strftime("%b").str.lower()
-                    df_agrupado["Ano"] = df_agrupado["Data"].dt.year
+                    # Garantir as colunas no mesmo order / nomes do restante do script
+                    # (Pessoas não agregado — manter NaN)
+                    df_agrupado['Pessoas'] = np.nan
                 
-                    df_final = df_agrupado
+                    # Resultado final esperado pelo resto do sistema
+                    df_final = df_agrupado[['Data', 'Loja', 'Fat.Total', 'Serv/Tx', 'Fat.Real', 'Pessoas', 'Ticket', 'Mês', 'Ano']]
                 else:
                     st.error("❌ O arquivo enviado não contém uma aba reconhecida. Esperado: 'FaturamentoDiarioPorLoja' ou 'Relatório 100113'.")
                     st.stop()

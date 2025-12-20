@@ -227,7 +227,7 @@ with st.spinner("⏳ Processando..."):
 
                 #Relatorio 3S
          
-               elif True:  # Novo formato - relatório "S"
+                elif True:  # Novo formato - relatório "S"
                     df_temp = pd.read_excel(xls, sheet_name=abas[0], header=None)
                 
                     # Procurar a linha que contém "ID Loja"

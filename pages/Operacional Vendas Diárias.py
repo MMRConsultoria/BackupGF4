@@ -226,84 +226,84 @@ with st.spinner("⏳ Processando..."):
                 
                    
                     
-                    # =====================================================
-                    # FORMATO 3 — PRIMEIRA ABA | ID LOJA DINÂMICO
-                    # =====================================================
-                    else:
-                        nome_aba = abas[0]
-                        df_bruto = pd.read_excel(xls, sheet_name=nome_aba, header=None)
-        
-                        # localizar linha do cabeçalho (ID LOJA na coluna A)
-                        linha_header = None
-                        for i in range(len(df_bruto)):
-                            if "ID LOJA" in str(df_bruto.iloc[i, 0]).upper():
-                                linha_header = i
-                                break
-        
-                        if linha_header is None:
-                            st.error("❌ Arquivo não reconhecido. Não encontrei 'ID LOJA' na coluna A.")
-                            st.stop()
-        
-                        # leitura dos dados (SEM cabeçalho)
-                        df = pd.read_excel(
-                            xls,
-                            sheet_name=nome_aba,
-                            skiprows=linha_header + 1,
-                            header=None
-                        )
-        
-                        # colunas fixas
-                        # A=0 ID LOJA | C=2 DATA | G=6 Ticket | H=7 Fat.Total | L=11 Serv/Tx | M=12 Fat.Real
-                        df = df.iloc[:, [0, 2, 6, 7, 11, 12]]
-                        df = df.dropna(how="all")
-        
-                        # normalizações
-                        df[0] = (
-                            df[0]
-                            .astype(str)
-                            .str.replace(r"\D", "", regex=True)
-                            .str.lstrip("0")
-                        )
-        
-                        df[2] = pd.to_datetime(df[2], dayfirst=True, errors="coerce")
-                        df[7] = pd.to_numeric(df[7], errors="coerce")
-                        df[11] = pd.to_numeric(df[11], errors="coerce")
-                        df[12] = pd.to_numeric(df[12], errors="coerce")
-                        df[6] = pd.to_numeric(df[6], errors="coerce")
-        
-                        df = df.dropna(subset=[0, 2])
-        
-                        # merge com Tabela Empresa (Código Everest = coluna C)
-                        df_empresa["Código Everest"] = (
-                            df_empresa["Código Everest"]
-                            .astype(str)
-                            .str.replace(r"\D", "", regex=True)
-                            .str.lstrip("0")
-                        )
-        
-                        df = df.merge(
-                            df_empresa[["Código Everest", "Loja"]],
-                            left_on=0,
-                            right_on="Código Everest",
-                            how="left"
-                        )
-        
-                        df_final = (
-                            df.groupby([2, "Loja"], as_index=False)
-                            .agg({
-                                7: "sum",
-                                11: "sum",
-                                12: "sum",
-                                6: "mean"
-                            })
-                        )
-        
-                        df_final.columns = ["Data", "Loja", "Fat.Total", "Serv/Tx", "Fat.Real", "Ticket"]
-                        df_final["Mês"] = df_final["Data"].dt.strftime("%b").str.lower()
-                        df_final["Ano"] = df_final["Data"].dt.year
-        
-                except Exception as e:
-                    st.error(f"❌ Erro ao processar o arquivo: {e}")
+                # =====================================================
+                # FORMATO 3 — PRIMEIRA ABA | ID LOJA DINÂMICO
+                # =====================================================
+                else:
+                    nome_aba = abas[0]
+                    df_bruto = pd.read_excel(xls, sheet_name=nome_aba, header=None)
+    
+                    # localizar linha do cabeçalho (ID LOJA na coluna A)
+                    linha_header = None
+                    for i in range(len(df_bruto)):
+                        if "ID LOJA" in str(df_bruto.iloc[i, 0]).upper():
+                            linha_header = i
+                            break
+    
+                    if linha_header is None:
+                        st.error("❌ Arquivo não reconhecido. Não encontrei 'ID LOJA' na coluna A.")
+                        st.stop()
+    
+                    # leitura dos dados (SEM cabeçalho)
+                    df = pd.read_excel(
+                        xls,
+                        sheet_name=nome_aba,
+                        skiprows=linha_header + 1,
+                        header=None
+                    )
+    
+                    # colunas fixas
+                    # A=0 ID LOJA | C=2 DATA | G=6 Ticket | H=7 Fat.Total | L=11 Serv/Tx | M=12 Fat.Real
+                    df = df.iloc[:, [0, 2, 6, 7, 11, 12]]
+                    df = df.dropna(how="all")
+    
+                    # normalizações
+                    df[0] = (
+                        df[0]
+                        .astype(str)
+                        .str.replace(r"\D", "", regex=True)
+                        .str.lstrip("0")
+                    )
+    
+                    df[2] = pd.to_datetime(df[2], dayfirst=True, errors="coerce")
+                    df[7] = pd.to_numeric(df[7], errors="coerce")
+                    df[11] = pd.to_numeric(df[11], errors="coerce")
+                    df[12] = pd.to_numeric(df[12], errors="coerce")
+                    df[6] = pd.to_numeric(df[6], errors="coerce")
+    
+                    df = df.dropna(subset=[0, 2])
+    
+                    # merge com Tabela Empresa (Código Everest = coluna C)
+                    df_empresa["Código Everest"] = (
+                        df_empresa["Código Everest"]
+                        .astype(str)
+                        .str.replace(r"\D", "", regex=True)
+                        .str.lstrip("0")
+                    )
+    
+                    df = df.merge(
+                        df_empresa[["Código Everest", "Loja"]],
+                        left_on=0,
+                        right_on="Código Everest",
+                        how="left"
+                    )
+    
+                    df_final = (
+                        df.groupby([2, "Loja"], as_index=False)
+                        .agg({
+                            7: "sum",
+                            11: "sum",
+                            12: "sum",
+                            6: "mean"
+                        })
+                    )
+    
+                    df_final.columns = ["Data", "Loja", "Fat.Total", "Serv/Tx", "Fat.Real", "Ticket"]
+                    df_final["Mês"] = df_final["Data"].dt.strftime("%b").str.lower()
+                    df_final["Ano"] = df_final["Data"].dt.year
+    
+            except Exception as e:
+                st.error(f"❌ Erro ao processar o arquivo: {e}")
 
                 #else:
                 #    st.error("❌ O arquivo enviado não contém uma aba reconhecida. Esperado: 'FaturamentoDiarioPorLoja' ou 'Relatório 100113'.")

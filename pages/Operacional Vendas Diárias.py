@@ -629,13 +629,23 @@ with st.spinner("⏳ Processando..."):
             return f"R$ {s}"
 
         def inferir_sistema_mes_ano(df: pd.DataFrame):
-            if "Sistema" in df.columns and df["Sistema"].astype(str).str.strip().ne("").any():
-                sistema = df["Sistema"].astype(str).str.strip().mode().iloc[0]
-            else:
-                grp = df.get("Grupo", pd.Series([], dtype="object")).astype(str).str.lower()
-                sistema = "CISS" if grp.str.contains(r"\bkopp\b", regex=True).any() else "Colibri"
+           
+            # 1️⃣ Se existir Sistema explícito, respeita
+            if "Sistema" in df.columns:
+                sistema_series = df["Sistema"].astype(str).str.strip()
+                sistema_series = sistema_series[sistema_series != ""]
         
-            return sistema
+                if not sistema_series.empty:
+                    return sistema_series.mode().iloc[0]
+        
+            # 2️⃣ Fallback por Grupo
+            grp = df.get("Grupo", pd.Series([], dtype="object")).astype(str).str.lower()
+        
+            if grp.str.contains(r"\bkopp\b", regex=True).any():
+                return "CISS"
+        
+            # 3️⃣ Fallback final
+            return "Colibri"
 
         
             # Mês/Ano
@@ -1535,11 +1545,19 @@ with st.spinner("⏳ Processando..."):
                         # --- Sistema ---
                         if col_sis:
                             sis_val = str(d.get("Sistema", "") or "").strip()
+                        
+                            # 🔒 protege sistemas explícitos (ex: 3SCheckout)
                             if not sis_val:
-                                # fallback: se vier vazio do df_conf, deduz a partir do Grupo
-                                grp = str(d.get("Grupo", "") or "")
-                                sis_val = "CISS" if re.search(r"kopp", grp, flags=re.I) else "Colibri"
+                                grp = str(d.get("Grupo", "") or "").strip().lower()
+                        
+                                if grp:
+                                    sis_val = "CISS" if re.search(r"\bkopp\b", grp, flags=re.I) else "Colibri"
+                                else:
+                                    # sem Grupo → não força Colibri
+                                    sis_val = ""
+                        
                             row_out[col_sis] = sis_val
+
                         # garante que a ordem é a do headers
                         rows_to_append.append([row_out[h] for h in headers])
                     

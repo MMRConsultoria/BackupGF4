@@ -628,12 +628,27 @@ with st.spinner("⏳ Processando..."):
             return f"R$ {s}"
 
         def inferir_sistema_mes_ano(df: pd.DataFrame):
-            # Sistema
+            # 1️⃣ Se a coluna Sistema existir e estiver preenchida, respeita
             if "Sistema" in df.columns and df["Sistema"].astype(str).str.strip().ne("").any():
                 sistema = df["Sistema"].astype(str).str.strip().mode().iloc[0]
+        
             else:
                 grp = df.get("Grupo", pd.Series([], dtype="object")).astype(str).str.lower()
-                sistema = "CISS" if grp.str.contains(r"\bkopp\b", regex=True).any() else "Colibri"
+        
+                # 2️⃣ CISS
+                if grp.str.contains(r"\bkopp\b", regex=True).any():
+                    sistema = "CISS"
+        
+                # 3️⃣ 3SCheckout (não tem Grupo e veio por ID LOJA)
+                elif "Grupo" not in df.columns or grp.dropna().empty:
+                    sistema = "3SCheckout"
+        
+                # 4️⃣ fallback
+                else:
+                    sistema = "Colibri"
+        
+            return sistema
+
         
             # Mês/Ano
             dt = pd.to_datetime(df.get("Data", pd.Series([], dtype="object")).astype(str), dayfirst=True, errors="coerce")

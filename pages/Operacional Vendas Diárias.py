@@ -301,6 +301,7 @@ with st.spinner("⏳ Processando..."):
                     df_final.columns = ["Data", "Loja", "Fat.Total", "Serv/Tx", "Fat.Real", "Ticket"]
                     df_final["Mês"] = df_final["Data"].dt.strftime("%b").str.lower()
                     df_final["Ano"] = df_final["Data"].dt.year
+                    df_final["Sistema"] = "3SCheckout"
                     #st.success("✅ Arquivo identificado como FORMATO 3 (ID LOJA dinâmico)")
                     #st.write("Linhas processadas:", len(df_final))
                     #st.dataframe(df_final.head(5))
@@ -628,24 +629,11 @@ with st.spinner("⏳ Processando..."):
             return f"R$ {s}"
 
         def inferir_sistema_mes_ano(df: pd.DataFrame):
-            # 1️⃣ Se a coluna Sistema existir e estiver preenchida, respeita
             if "Sistema" in df.columns and df["Sistema"].astype(str).str.strip().ne("").any():
                 sistema = df["Sistema"].astype(str).str.strip().mode().iloc[0]
-        
             else:
                 grp = df.get("Grupo", pd.Series([], dtype="object")).astype(str).str.lower()
-        
-                # 2️⃣ CISS
-                if grp.str.contains(r"\bkopp\b", regex=True).any():
-                    sistema = "CISS"
-        
-                # 3️⃣ 3SCheckout (não tem Grupo e veio por ID LOJA)
-                elif "Grupo" not in df.columns or grp.dropna().empty:
-                    sistema = "3SCheckout"
-        
-                # 4️⃣ fallback
-                else:
-                    sistema = "Colibri"
+                sistema = "CISS" if grp.str.contains(r"\bkopp\b", regex=True).any() else "Colibri"
         
             return sistema
 

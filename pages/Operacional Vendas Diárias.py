@@ -301,9 +301,12 @@ with st.spinner("⏳ Processando..."):
                     df_final.columns = ["Data", "Loja", "Fat.Total", "Serv/Tx", "Fat.Real", "Ticket"]
                     df_final["Mês"] = df_final["Data"].dt.strftime("%b").str.lower()
                     df_final["Ano"] = df_final["Data"].dt.year
+                    st.success("✅ Arquivo identificado como FORMATO 3 (ID LOJA dinâmico)")
+                    st.write("Linhas processadas:", len(df_final))
+                    st.dataframe(df_final.head(5))
     
-            except Exception as e:
-                st.error(f"❌ Erro ao processar o arquivo: {e}")
+            #except Exception as e:
+            #    st.error(f"❌ Erro ao processar o arquivo: {e}")
 
                 #else:
                 #    st.error("❌ O arquivo enviado não contém uma aba reconhecida. Esperado: 'FaturamentoDiarioPorLoja' ou 'Relatório 100113'.")

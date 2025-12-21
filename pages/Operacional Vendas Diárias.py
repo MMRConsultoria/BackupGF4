@@ -305,9 +305,9 @@ with st.spinner("⏳ Processando..."):
                     df_final["Mês"] = df_final["Data"].dt.strftime("%b").str.lower()
                     df_final["Ano"] = df_final["Data"].dt.year
 
-                else:
-                    st.error("❌ O arquivo enviado não contém uma aba reconhecida. Esperado: 'FaturamentoDiarioPorLoja' ou 'Relatório 100113'.")
-                    st.stop()
+                #else:
+                #    st.error("❌ O arquivo enviado não contém uma aba reconhecida. Esperado: 'FaturamentoDiarioPorLoja' ou 'Relatório 100113'.")
+                #    st.stop()
     
                 dias_traducao = {
                     "Monday": "segunda-feira", "Tuesday": "terça-feira", "Wednesday": "quarta-feira",

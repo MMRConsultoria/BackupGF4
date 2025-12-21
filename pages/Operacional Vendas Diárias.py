@@ -227,56 +227,119 @@ with st.spinner("⏳ Processando..."):
 
                 #Relatorio 3S
          
-                elif True:  # Novo formato - relatório "S"
-                    df_temp = pd.read_excel(xls, sheet_name=abas[0], header=None)
+                elif True:  # Novo formato - relatório "S" (bloco de download)
+                    import re
+                    import numpy as np
                 
-                    # Procurar a linha que contém "ID Loja"
+                    # --- localizar a linha do cabeçalho que contém 'ID LOJA' ---
+                    df_temp = pd.read_excel(xls, sheet_name=abas[0], header=None)
                     header_row_index = None
                     for idx, row in df_temp.iterrows():
-                        if "id loja" in str(row.iloc[0]).lower():
+                        row_text = " ".join([str(x).lower() for x in row.values if not pd.isna(x)])
+                        if "id loja" in row_text:
                             header_row_index = idx
                             break
                 
                     if header_row_index is None:
-                        st.error("❌ Não foi possível encontrar a linha com 'ID Loja'. Verifique o arquivo.")
+                        st.error("❌ Não foi possível encontrar a linha com 'ID LOJA'. Verifique o arquivo.")
                         st.stop()
                 
-                    # Ler novamente, pulando até a linha do cabeçalho
+                    # --- ler a aba usando a linha encontrada como header ---
                     df_novo = pd.read_excel(xls, sheet_name=abas[0], header=header_row_index)
                 
-                    # Padronizar colunas conforme mapeamento
-                    df_novo["ID Loja"] = df_novo.iloc[:, 0].astype(str).str.lstrip("0").replace("", "0").str.strip()
-                    df_novo["Data"] = pd.to_datetime(df_novo.iloc[:, 2], errors="coerce")
-                    df_novo["Fat.Total"] = pd.to_numeric(df_novo.iloc[:, 7], errors="coerce")
-                    df_novo["Serv/Tx"] = 0  # padrão
-                    df_novo["Fat.Real"] = pd.to_numeric(df_novo.iloc[:, 11], errors="coerce")
-                    df_novo["Ticket"] = pd.to_numeric(df_novo.iloc[:, 12], errors="coerce")
+                    # normalizar nomes das colunas (remover espaços extremos)
+                    df_novo.columns = df_novo.columns.astype(str).str.strip()
                 
-                    # ⚠️ Filtrar linhas onde o ID Loja é "9999"
-                    df_novo = df_novo[df_novo["ID Loja"] != "9999"]
+                    # função para extrair apenas dígitos e remover zeros à esquerda
+                    def limpar_codigo_relatorio(valor):
+                        if pd.isna(valor):
+                            return ""
+                        s = str(valor)
+                        numeros = re.findall(r"\d+", s)
+                        if not numeros:
+                            return ""
+                        joined = "".join(numeros)
+                        cleaned = joined.lstrip("0")
+                        return cleaned if cleaned != "" else "0"
                 
-                    # Validar ID Loja com base na coluna C da Tabela Empresa
+                    # função para converter valores no formato BR (ex: 'R$ 1.234,56' ou '1.234,56') para float
+                    def parse_num_br(x):
+                        if pd.isna(x):
+                            return np.nan
+                        s = str(x).strip()
+                        # remove R$, espaços, parênteses
+                        s = re.sub(r"[Rr]\$|\(|\)|\s", "", s)
+                        # remover pontos de milhar e trocar vírgula decimal por ponto
+                        s = s.replace(".", "").replace(",", ".")
+                        m = re.search(r"-?\d+(\.\d+)?", s)
+                        return float(m.group()) if m else np.nan
+                
+                    # --- criar colunas padronizadas a partir das posições conhecidas ---
+                    # coluna A -> ID Loja (index 0)
+                    df_novo["ID Loja"] = df_novo.iloc[:, 0].apply(limpar_codigo_relatorio)
+                
+                    # coluna C -> Data (index 2)
+                    df_novo["Data"] = pd.to_datetime(df_novo.iloc[:, 2], dayfirst=True, errors="coerce")
+                
+                    # coluna H -> Fat.Total (index 7) (se existir)
+                    fattotal_val = df_novo.iloc[:, 7] if df_novo.shape[1] > 7 else None
+                    df_novo["Fat.Total"] = fattotal_val.apply(parse_num_br) if fattotal_val is not None else np.nan
+                
+                    # coluna L -> Fat.Real (index 11) (se existir)
+                    fatreal_val = df_novo.iloc[:, 11] if df_novo.shape[1] > 11 else None
+                    df_novo["Fat.Real"] = fatreal_val.apply(parse_num_br) if fatreal_val is not None else np.nan
+                
+                    # coluna M -> Ticket (index 12) (se existir)
+                    ticket_val = df_novo.iloc[:, 12] if df_novo.shape[1] > 12 else None
+                    df_novo["Ticket"] = pd.to_numeric(ticket_val, errors="coerce") if ticket_val is not None else np.nan
+                
+                    # Serv/Tx padrão
+                    df_novo["Serv/Tx"] = 0.0
+                
+                    # --- filtrar ID Loja '9999' ---
+                    df_novo = df_novo[df_novo["ID Loja"].astype(str) != "9999"]
+                
+                    # --- validar ID Loja contra Tabela Empresa (coluna C) sem alterar Tabela Empresa ---
                     lojas_cadastradas = df_empresa.iloc[:, 2].astype(str).str.strip().unique()
-                    lojas_nao_cadastradas = df_novo.loc[~df_novo["ID Loja"].isin(lojas_cadastradas), "ID Loja"].unique()
+                    # garantir que comparação use strings sem zeros à esquerda na tabela (apenas para comparação local)
+                    lojas_cadastradas_norm = [re.sub(r"\D", "", str(x)).lstrip("0") if pd.notna(x) else "" for x in lojas_cadastradas]
+                    lojas_cadastradas_norm = [x if x != "" else "0" for x in lojas_cadastradas_norm]
                 
-                    if len(lojas_nao_cadastradas) > 0:
-                        st.warning(f"⚠️ Os seguintes ID Loja não estão cadastrados na Tabela Empresa (coluna C): {', '.join(lojas_nao_cadastradas)}")
+                    nao_cadastradas = np.setdiff1d(df_novo["ID Loja"].unique(), lojas_cadastradas_norm)
+                    if len(nao_cadastradas) > 0:
+                        st.warning("⚠️ {} empresa(s) não localizada(s), cadastre e reprocesse novamente!\n{}".format(
+                            len(nao_cadastradas), "\n".join(map(str, nao_cadastradas))
+                        ))
                 
-                    # Agrupar por Data e ID Loja
-                    df_agrupado = df_novo.groupby(["Data", "ID Loja"]).agg({
+                    # --- construir dataframe de trabalho padronizado ---
+                    df_work = pd.DataFrame({
+                        "Data": df_novo["Data"],
+                        "Loja": df_novo["ID Loja"],
+                        "Fat.Total": df_novo["Fat.Total"],
+                        "Serv/Tx": df_novo["Serv/Tx"],
+                        "Fat.Real": df_novo["Fat.Real"],
+                        "Pessoas": np.nan,
+                        "Ticket": df_novo["Ticket"]
+                    })
+                
+                    # remover linhas sem data válida
+                    df_work = df_work[~df_work["Data"].isna()]
+                
+                    # agrupar por Data e Loja (mesma lógica do Relatório 100132)
+                    df_agrupado = df_work.groupby(["Data", "Loja"], dropna=False).agg({
                         "Fat.Total": "sum",
                         "Serv/Tx": "sum",
                         "Fat.Real": "sum",
                         "Ticket": "mean"
                     }).reset_index()
                 
-                    # Renomear para manter consistência com o restante do código
-                    df_agrupado = df_agrupado.rename(columns={"ID Loja": "Loja"})
-                
+                    # colunas mês e ano no formato esperado
                     df_agrupado["Mês"] = df_agrupado["Data"].dt.strftime("%b").str.lower()
                     df_agrupado["Ano"] = df_agrupado["Data"].dt.year
                 
-                    df_final = df_agrupado
+                    # garantir ordem/nome das colunas para o restante do fluxo
+                    df_agrupado["Pessoas"] = np.nan  # manter coluna Pessoas
+    df_final = df_agrupado[["Data", "Loja", "Fat.Total", "Serv/Tx", "Fat.Real", "Pessoas", "Ticket", "Mês", "Ano"]]
                 else:
                     st.error("❌ O arquivo enviado não contém uma aba reconhecida. Esperado: 'FaturamentoDiarioPorLoja' ou 'Relatório 100113'.")
                     st.stop()

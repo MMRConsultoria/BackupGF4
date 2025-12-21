@@ -275,19 +275,21 @@ with st.spinner("⏳ Processando..."):
                     df = df.dropna(subset=[0, 1])
                 
                     # 🔗 Merge com Tabela Empresa usando Codigo Everest (coluna D)
-                    df_empresa["Codigo Everest"] = (
-                        df_empresa["Codigo Everest"]
+                    # 🔗 Merge com Tabela Empresa usando Código Everest (coluna C)
+                    df_empresa["Código Everest"] = (
+                        df_empresa["Código Everest"]
                         .astype(str)
                         .str.replace(r"\D", "", regex=True)
                         .str.lstrip("0")
                     )
                     
                     df = df.merge(
-                        df_empresa[["Codigo Everest", "Loja"]],
-                        left_on=0,                  # ID LOJA do Excel novo
-                        right_on="Codigo Everest",
+                        df_empresa[["Código Everest", "Loja"]],
+                        left_on=0,              # ID LOJA vindo do Excel novo
+                        right_on="Código Everest",
                         how="left"
                     )
+
 
                 
                     # 📊 Criação do df_final (PADRÃO DOS OUTROS FORMATOS)

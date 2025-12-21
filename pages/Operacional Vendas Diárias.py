@@ -270,7 +270,7 @@ with st.spinner("⏳ Processando..."):
                     df[11] = pd.to_numeric(df[11], errors="coerce")
                     df[12] = pd.to_numeric(df[12], errors="coerce")
                     df[6] = pd.to_numeric(df[6], errors="coerce")
-    
+                    df = df[~((df[7] == 0) & (df[12] == 0))]
                     df = df.dropna(subset=[0, 2])
     
                     # merge com Tabela Empresa (Código Everest = coluna C)

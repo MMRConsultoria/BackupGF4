@@ -224,12 +224,13 @@ with st.spinner("⏳ Processando..."):
                     df_agrupado["Ano"] = df_agrupado["Data"].dt.year
                     df_final = df_agrupado
                 else:
+                   
                     # ================================
                     # TERCEIRO FORMATO — PRIMEIRA ABA (linha dinâmica)
                     # ================================
                     nome_aba = abas[0]
                     df_bruto = pd.read_excel(xls, sheet_name=nome_aba, header=None)
-
+                
                     # 🔎 Localiza a linha onde está "ID LOJA" na coluna A
                     linha_header = None
                     for i in range(len(df_bruto)):
@@ -237,45 +238,42 @@ with st.spinner("⏳ Processando..."):
                         if "ID LOJA" in valor:
                             linha_header = i
                             break
-
+                
                     if linha_header is None:
                         st.error("❌ Arquivo não reconhecido. Não encontrei 'ID LOJA' na coluna A.")
                         st.stop()
-
-                    # 📥 Lê novamente usando a linha correta como cabeçalho
+                
+                    # 📥 Lê os dados (sem confiar no cabeçalho)
                     df = pd.read_excel(
                         xls,
                         sheet_name=nome_aba,
-                        skiprows=linha_header
+                        skiprows=linha_header + 1,
+                        header=None
                     )
-
-                    # Renomeia colunas por posição (garantia)
-                    df = df.rename(columns={
-                        df.columns[0]: "ID_LOJA",
-                        df.columns[1]: "Data",
-                        df.columns[6]: "Ticket",
-                        df.columns[7]: "Fat.Total",
-                        df.columns[11]: "Serv/Tx",
-                        df.columns[12]: "Fat.Real",
-                    })
-
-                    # 🧹 Limpeza e normalização
-                    df["ID_LOJA"] = (
-                        df["ID_LOJA"]
+                
+                    # Seleciona colunas fixas por posição
+                    df = df.iloc[:, [0, 1, 6, 7, 11, 12]]
+                
+                    # Remove linhas vazias
+                    df = df.dropna(how="all")
+                
+                    # Normalizações
+                    df[0] = (
+                        df[0]
                         .astype(str)
                         .str.replace(r"\D", "", regex=True)
                         .str.lstrip("0")
                     )
-
-                    df["Data"] = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
-                    df["Fat.Total"] = pd.to_numeric(df["Fat.Total"], errors="coerce")
-                    df["Serv/Tx"] = pd.to_numeric(df["Serv/Tx"], errors="coerce")
-                    df["Fat.Real"] = pd.to_numeric(df["Fat.Real"], errors="coerce")
-                    df["Ticket"] = pd.to_numeric(df["Ticket"], errors="coerce")
-
+                
+                    df[1] = pd.to_datetime(df[1], dayfirst=True, errors="coerce")
+                    df[7] = pd.to_numeric(df[7], errors="coerce")   # Fat.Total
+                    df[11] = pd.to_numeric(df[11], errors="coerce") # Serv/Tx
+                    df[12] = pd.to_numeric(df[12], errors="coerce") # Fat.Real
+                    df[6] = pd.to_numeric(df[6], errors="coerce")   # Ticket
+                
                     # Remove linhas inválidas
-                    df = df.dropna(subset=["ID_LOJA", "Data"])
-
+                    df = df.dropna(subset=[0, 1])
+                
                     # 🔗 Merge com Tabela Empresa
                     df_empresa["Codigo Loja"] = (
                         df_empresa["Codigo Loja"]
@@ -283,25 +281,27 @@ with st.spinner("⏳ Processando..."):
                         .str.replace(r"\D", "", regex=True)
                         .str.lstrip("0")
                     )
-
+                
                     df = df.merge(
                         df_empresa[["Codigo Loja", "Loja"]],
-                        left_on="ID_LOJA",
+                        left_on=0,
                         right_on="Codigo Loja",
                         how="left"
                     )
-
-                    # 📊 Agrupamento final (igual aos outros formatos)
+                
+                    # 📊 Criação do df_final (PADRÃO DOS OUTROS FORMATOS)
                     df_final = (
-                        df.groupby(["Data", "Loja"], as_index=False)
+                        df.groupby([1, "Loja"], as_index=False)
                         .agg({
-                            "Fat.Total": "sum",
-                            "Serv/Tx": "sum",
-                            "Fat.Real": "sum",
-                            "Ticket": "mean"
+                            7: "sum",   # Fat.Total
+                            11: "sum",  # Serv/Tx
+                            12: "sum",  # Fat.Real
+                            6: "mean"   # Ticket
                         })
                     )
-
+                
+                    # Ajuste final de colunas
+                    df_final.columns = ["Data", "Loja", "Fat.Total", "Serv/Tx", "Fat.Real", "Ticket"]
                     df_final["Mês"] = df_final["Data"].dt.strftime("%b").str.lower()
                     df_final["Ano"] = df_final["Data"].dt.year
 

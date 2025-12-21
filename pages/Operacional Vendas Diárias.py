@@ -339,7 +339,7 @@ with st.spinner("⏳ Processando..."):
                 
                     # garantir ordem/nome das colunas para o restante do fluxo
                     df_agrupado["Pessoas"] = np.nan  # manter coluna Pessoas
-    df_final = df_agrupado[["Data", "Loja", "Fat.Total", "Serv/Tx", "Fat.Real", "Pessoas", "Ticket", "Mês", "Ano"]]
+                    df_final = df_agrupado[["Data", "Loja", "Fat.Total", "Serv/Tx", "Fat.Real", "Pessoas", "Ticket", "Mês", "Ano"]]
                 else:
                     st.error("❌ O arquivo enviado não contém uma aba reconhecida. Esperado: 'FaturamentoDiarioPorLoja' ou 'Relatório 100113'.")
                     st.stop()

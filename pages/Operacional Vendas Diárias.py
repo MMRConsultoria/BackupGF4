@@ -264,7 +264,7 @@ with st.spinner("⏳ Processando..."):
                         .str.replace(r"\D", "", regex=True)
                         .str.lstrip("0")
                     )
-    
+                    df = df[df[0] != "9999"]
                     df[2] = pd.to_datetime(df[2], dayfirst=True, errors="coerce")
                     df[7] = pd.to_numeric(df[7], errors="coerce")
                     df[11] = pd.to_numeric(df[11], errors="coerce")

@@ -265,7 +265,7 @@ with st.spinner("⏳ Processando..."):
                         .str.lstrip("0")
                     )
                 
-                    df[1] = pd.to_datetime(df[1], dayfirst=True, errors="coerce")
+                    df[2] = pd.to_datetime(df[2], dayfirst=True, errors="coerce")
                     df[7] = pd.to_numeric(df[7], errors="coerce")   # Fat.Total
                     df[11] = pd.to_numeric(df[11], errors="coerce") # Serv/Tx
                     df[12] = pd.to_numeric(df[12], errors="coerce") # Fat.Real

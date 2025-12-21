@@ -338,7 +338,7 @@ with st.spinner("⏳ Processando..."):
                 colunas_finais = [
                     "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
                     "Código Grupo Everest", "Fat.Total", "Serv/Tx", "Fat.Real",
-                    "Ticket", "Mês", "Ano"
+                    "Ticket", "Mês", "Ano","Sistema"
                 ]
                 df_final = df_final[colunas_finais]
                 

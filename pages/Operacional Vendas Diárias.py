@@ -740,13 +740,17 @@ with st.spinner("⏳ Processando..."):
         
                 df_final = df_input.copy()
             
-                # >>> SISTEMA (preencher sempre que ausente OU vazio)
-                if ("Sistema" not in df_final.columns) or df_final["Sistema"].astype(str).str.strip().eq("").all():
+                # >>> SISTEMA (preencher apenas se NÃO EXISTIR)
+                if "Sistema" not in df_final.columns:
                     if str(titulo_origem).lower() == "manuais":
                         df_final["Sistema"] = "Lançamento manual"
                     else:
                         grp_norm = df_final.get("Grupo", "").astype(str).str.strip().str.lower()
-                        df_final["Sistema"] = np.where(grp_norm.str.contains(r"\bkopp\b", regex=True), "CISS", "Colibri")
+                        df_final["Sistema"] = np.where(
+                            grp_norm.str.contains(r"\bkopp\b", regex=True),
+                            "CISS",
+                            "Colibri"
+                        )
                 # <<< fim SISTEMA
             
                 # ===== 1) Preparos =====

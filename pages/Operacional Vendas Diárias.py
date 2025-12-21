@@ -274,20 +274,21 @@ with st.spinner("⏳ Processando..."):
                     # Remove linhas inválidas
                     df = df.dropna(subset=[0, 1])
                 
-                    # 🔗 Merge com Tabela Empresa
-                    df_empresa["Codigo Loja"] = (
-                        df_empresa["Codigo Loja"]
+                    # 🔗 Merge com Tabela Empresa usando Codigo Everest (coluna D)
+                    df_empresa["Codigo Everest"] = (
+                        df_empresa["Codigo Everest"]
                         .astype(str)
                         .str.replace(r"\D", "", regex=True)
                         .str.lstrip("0")
                     )
-                
+                    
                     df = df.merge(
-                        df_empresa[["Codigo Loja", "Loja"]],
-                        left_on=0,
-                        right_on="Codigo Loja",
+                        df_empresa[["Codigo Everest", "Loja"]],
+                        left_on=0,                  # ID LOJA do Excel novo
+                        right_on="Codigo Everest",
                         how="left"
                     )
+
                 
                     # 📊 Criação do df_final (PADRÃO DOS OUTROS FORMATOS)
                     df_final = (

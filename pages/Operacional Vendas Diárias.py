@@ -750,17 +750,19 @@ with st.spinner("⏳ Processando..."):
         
                 df_final = df_input.copy()
             
-                # >>> SISTEMA (preencher apenas se NÃO EXISTIR)
-                if "Sistema" not in df_final.columns:
-                    if str(titulo_origem).lower() == "manuais":
-                        df_final["Sistema"] = "Lançamento manual"
-                    else:
-                        grp_norm = df_final.get("Grupo", "").astype(str).str.strip().str.lower()
-                        df_final["Sistema"] = np.where(
-                            grp_norm.str.contains(r"\bkopp\b", regex=True),
-                            "CISS",
-                            "Colibri"
-                        )
+                # >>> SISTEMA (regra de precedência)
+                if str(titulo_origem).lower() == "manuais":
+                    # 🔒 Regra máxima: lançamento manual sempre vence
+                    df_final["Sistema"] = "Lançamento manual"
+                
+                elif "Sistema" not in df_final.columns:
+                    # 🔁 Fallback apenas se ninguém definiu
+                    grp_norm = df_final.get("Grupo", "").astype(str).str.strip().str.lower()
+                    df_final["Sistema"] = np.where(
+                        grp_norm.str.contains(r"\bkopp\b", regex=True),
+                        "CISS",
+                        "Colibri"
+                    )
                 # <<< fim SISTEMA
             
                 # ===== 1) Preparos =====

@@ -223,7 +223,7 @@ with st.spinner("⏳ Processando..."):
                     df_agrupado["Mês"] = df_agrupado["Data"].dt.strftime("%b").str.lower()
                     df_agrupado["Ano"] = df_agrupado["Data"].dt.year
                     df_final = df_agrupado
-                else:
+                
                    
                     
                     # =====================================================

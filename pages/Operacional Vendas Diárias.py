@@ -340,7 +340,7 @@ with st.spinner("⏳ Processando..."):
                     "Código Grupo Everest", "Fat.Total", "Serv/Tx", "Fat.Real",
                     "Ticket", "Mês", "Ano","Sistema"
                 ]
-                df_final = df_final[colunas_finais]
+                df_final = df_final[[c for c in colunas_finais if c in df_final.columns]]
                 
                 st.session_state.df_final = df_final
                 st.session_state.atualizou_google = False

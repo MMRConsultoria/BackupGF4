@@ -21,6 +21,7 @@ camelot-py[cv]
 pytesseract
 Pillow
 pdfplumber
+psycopg2-binary
 
 
 

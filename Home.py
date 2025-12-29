@@ -1,6 +1,7 @@
 # Home.py
 import streamlit as st
-
+from db_utils import get_conn
+import pandas as pd
 # =====================================
 # CSS para esconder barra de botões do canto superior direito
 # =====================================

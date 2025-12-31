@@ -1,6 +1,6 @@
 # Home.py
 import streamlit as st
-from páginas.db_utils import get_conn
+from pages.db_utils import get_conn
 import pandas as pd
 # =====================================
 # CSS para esconder barra de botões do canto superior direito

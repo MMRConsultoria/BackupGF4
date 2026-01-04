@@ -46,11 +46,12 @@ nocache = st.query_params.get("nocache", "0")
 if isinstance(nocache, list):  # st.query_params pode retornar lista
     nocache = nocache[0] if nocache else "0"
 
+st.sidebar.write(f"Streamlit version: {st.__version__}")
+
 if nocache == "1":
-    se nocache == "1" :
-    st.cache_data.clear()   # Para cache_data (Streamlit 1.18+) 
-    st.cache_clear()        # Para cache antigo 
-    st.warning( "🧹 Cache limpo via ?nocache=1" )
+    st.cache_data.clear()  # Para cache_data (Streamlit 1.18+)
+    st.cache_clear()       # Para cache antigo
+    st.warning("🧹 Cache limpo via ?nocache=1")
 
 # ✅ Gate de login
 if not st.session_state.get("acesso_liberado"):

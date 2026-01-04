@@ -49,7 +49,7 @@ if isinstance(nocache, list):  # st.query_params pode retornar lista
 st.sidebar.write(f"Streamlit version: {st.__version__}")
 
 if nocache == "1":
-    st.cache_data.clear()  # Para cache_data (Streamlit 1.18+)
+        st.cache_data.clear()  # Para cache_data (Streamlit 1.18+)
     st.cache_clear()       # Para cache antigo
     st.warning("🧹 Cache limpo via ?nocache=1")
 

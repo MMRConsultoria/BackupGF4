@@ -1,7 +1,6 @@
 # Home.py
 import streamlit as st
-from pages.db_utils import get_conn
-import pandas as pd
+
 # =====================================
 # CSS para esconder barra de botões do canto superior direito
 # =====================================
@@ -82,16 +81,3 @@ st.image(logo_cliente or "https://raw.githubusercontent.com/MMRConsultoria/MMRBa
 # ✅ Mensagem
 st.markdown("## Bem-vindo ao Portal de Relatórios")
 st.success(f"✅ Acesso liberado para o código {codigo_empresa}!")
-
-st.markdown("### Teste de conexão com o banco")
-
-if st.button("Testar conexão com RDS"):
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("SELECT 1;")
-        st.success(f"Conectou! Resultado SELECT 1: {cur.fetchone()}")
-        cur.close()
-        conn.close()
-    except Exception as e:
-        st.error(f"Erro na conexão: {e}")

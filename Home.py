@@ -27,6 +27,8 @@ from zoneinfo import ZoneInfo
 now_br = datetime.now(ZoneInfo("America/Sao_Paulo"))
 
 st.sidebar.write("🔄 Build time (Brasília):", now_br.strftime("%Y-%m-%d %H:%M:%S"))
+st.sidebar.caption( f"🧩 Versão do app: {app_version()} " )
+st.sidebar.write( f"🐍 Versão do Streamlit: {st.__version__} " )   # <-- Nova linha
 
 def app_version():
     h = hashlib.sha256()

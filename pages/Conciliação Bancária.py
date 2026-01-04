@@ -398,7 +398,7 @@ st.session_state.setdefault("last_file_id", "")
 # ======================
 # UI Principal
 # ======================
-st.markdown("### 📤 Upload de Extrato Bancário")
+st.markdown("### 📤 Uploado de Extrato Bancário")
 
 uploaded_file = st.file_uploader(
     "Selecione o arquivo do extrato (PDF, Excel, CSV, TXT)",

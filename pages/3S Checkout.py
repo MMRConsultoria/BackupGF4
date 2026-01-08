@@ -25,17 +25,6 @@ def get_conn():
     )
 
 
-def get_all_tables(conn):
-    query = """
-    SELECT table_schema, table_name
-    FROM information_schema.tables
-    WHERE table_type = 'BASE TABLE'
-      AND table_schema NOT IN ('pg_catalog', 'information_schema')
-    ORDER BY table_schema, table_name;
-    """
-    return pd.read_sql(query, conn)
-
-
 def fetch_table_data(conn, schema, table):
     query = f'SELECT * FROM "{schema}"."{table}"'
     return pd.read_sql(query, conn)
@@ -62,17 +51,16 @@ def sanitize_for_excel(df: pd.DataFrame, target_tz: str = "America/Sao_Paulo") -
 def export_db_to_excel(target_tz: str = "America/Sao_Paulo"):
     conn = get_conn()
     try:
-        tables_df = get_all_tables(conn)
-        if tables_df.empty:
-            return None, "Nenhuma tabela encontrada no banco."
+        # Lista específica de tabelas que queremos exportar
+        tables_to_export = [
+            ("public", "order_picture"),
+            ("public", "order_picture_tender")
+        ]
 
         output = BytesIO()
 
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            for _, row in tables_df.iterrows():
-                schema = row["table_schema"]
-                table = row["table_name"]
-
+            for schema, table in tables_to_export:
                 df = fetch_table_data(conn, schema, table)
                 df = sanitize_for_excel(df, target_tz=target_tz)
 
@@ -81,6 +69,8 @@ def export_db_to_excel(target_tz: str = "America/Sao_Paulo"):
 
         output.seek(0)
         return output, None
+    except Exception as e:
+        return None, str(e)
     finally:
         conn.close()
 
@@ -102,7 +92,7 @@ if st.button("Gerar Excel", type="primary", disabled=st.session_state.get("expor
         status.write("Conectando ao banco e lendo tabelas...")
         progress = st.progress(0)
 
-        # Faz a exportação (sem criar st.write a cada tabela)
+        # Faz a exportação
         excel_bytes, err = export_db_to_excel(target_tz=target_tz)
 
         progress.progress(100)

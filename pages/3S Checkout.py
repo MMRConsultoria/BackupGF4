@@ -112,14 +112,18 @@ def export_order_picture_to_excel():
         # 6. Criar coluna de data sem hora
         df['data'] = df['business_dt'].dt.date
         
-        # ✅ 7. SELECIONAR APENAS AS COLUNAS DESEJADAS
-        df_final = df[['data', 'store_code', 'total_gross', 'TIP_AMOUNT', 'tender_tenderDescr']].copy()
+        # ✅ 7. CRIAR COLUNA TOTAL (total_gross + TIP_AMOUNT)
+        df['total_com_gorjeta'] = df['total_gross'] + df['TIP_AMOUNT']
         
-        # 8. Agrupar totais por store_code e data
+        # ✅ 8. SELECIONAR APENAS AS COLUNAS DESEJADAS
+        df_final = df[['data', 'store_code', 'total_gross', 'TIP_AMOUNT', 'total_com_gorjeta', 'tender_tenderDescr']].copy()
+        
+        # 9. Agrupar totais por store_code e data
         resumo = df.groupby(['store_code', 'data']).agg(
             qtd_pedidos=('order_code', 'count'),
             total_gross=('total_gross', 'sum'),
-            total_tip=('TIP_AMOUNT', 'sum')
+            total_tip=('TIP_AMOUNT', 'sum'),
+            total_com_gorjeta=('total_com_gorjeta', 'sum')
         ).reset_index()
         
         # Limpa datas para o Excel
@@ -149,10 +153,10 @@ st.markdown("""
 - **Período**: de 01/12/2025 até o dia anterior (D-1)
 - **Lojas excluídas**: 0000, 0001, 9999
 - **Registros válidos**: sem VOID_TYPE preenchido
-- **Colunas exportadas**: data, store_code, total_gross, TIP_AMOUNT, tender_tenderDescr
+- **Colunas exportadas**: data, store_code, total_gross, TIP_AMOUNT, **total_com_gorjeta**, tender_tenderDescr
 - **Resultado**: 
-  - Aba 1: Totais agrupados por loja e dia
-  - Aba 2: Dados detalhados (apenas colunas selecionadas)
+  - Aba 1: Totais agrupados por loja e dia (com total_com_gorjeta)
+  - Aba 2: Dados detalhados (com total_com_gorjeta)
 """)
 
 # Botão de reset (caso fique travado)

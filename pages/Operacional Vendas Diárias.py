@@ -108,11 +108,13 @@ with st.spinner("⏳ Processando..."):
         )
     
     
+    
     def buscar_dados_3s_checkout():
         """Busca dados do 3S Checkout direto do banco e processa"""
         conn = get_db_conn()
         try:
             # ✅ CALCULA A DATA DE ONTEM
+            from datetime import datetime, timedelta
             ontem = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
             
             # ✅ FILTRO SQL: Adicionado "AND business_dt <= %s"
@@ -124,10 +126,8 @@ with st.spinner("⏳ Processando..."):
                   AND store_code NOT IN ('0000', '0001', '9999')
                   AND state_id = 5
             """
-            # Passamos 'ontem' como parâmetro para evitar SQL Injection e garantir o formato
             df = pd.read_sql(query, conn, params=(ontem,))
             
-        
             
             # 1. Converter datas
             df['business_dt'] = pd.to_datetime(df['business_dt'], errors='coerce')

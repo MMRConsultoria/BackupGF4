@@ -1437,9 +1437,22 @@ with st.spinner("⏳ Processando..."):
                 st.error("Não há dados para enviar.")
             else:
                 # ✅ Usa o DataFrame disponível (prioriza resumo_3s se existir)
-                df_para_enviar = st.session_state.get("resumo_3s") or st.session_state.get("df_final")
-                origem = "3s_checkout" if "resumo_3s" in st.session_state else "upload"
-                ok = enviar_para_sheets(df_para_enviar.copy(), titulo_origem=origem)
+                # --- Lógica correta para selecionar o DataFrame sem erro de ValueError ---
+                df_para_enviar = None
+                origem = ""
+                
+                # 1. Tenta pegar o do 3S Checkout primeiro
+                if "resumo_3s" in st.session_state and st.session_state.resumo_3s is not None:
+                    if isinstance(st.session_state.resumo_3s, pd.DataFrame) and not st.session_state.resumo_3s.empty:
+                        df_para_enviar = st.session_state.resumo_3s
+                        origem = "3s_checkout"
+                
+                # 2. Se não tiver 3S, tenta o do Upload Manual
+                if df_para_enviar is None:
+                    if "df_final" in st.session_state and st.session_state.df_final is not None:
+                        if isinstance(st.session_state.df_final, pd.DataFrame) and not st.session_state.df_final.empty:
+                            df_para_enviar = st.session_state.df_final
+                            origem = "upload"
         
         # ✅ Mostra o resumo sempre que existir (fora do if enviar_auto)
         r = st.session_state.get("_resumo_envio")

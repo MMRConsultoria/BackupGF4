@@ -79,27 +79,6 @@ def parse_props(x):
     return x if isinstance(x, dict) else {}
 
 
-def expand_details(df):
-    """Expande a coluna tender_details (JSON) em colunas separadas"""
-    if 'tender_details' not in df.columns:
-        return df
-    
-    # Parse do JSON
-    details_parsed = df['tender_details'].apply(parse_props)
-    
-    # Extrai as chaves únicas de todos os JSONs
-    all_keys = set()
-    for d in details_parsed:
-        if isinstance(d, dict):
-            all_keys.update(d.keys())
-    
-    # Cria uma coluna para cada chave encontrada
-    for key in sorted(all_keys):
-        df[f'tender_{key}'] = details_parsed.apply(lambda x: x.get(key) if isinstance(x, dict) else None)
-    
-    return df
-
-
 def export_order_picture_to_excel():
     conn = get_conn()
     try:
@@ -126,13 +105,17 @@ def export_order_picture_to_excel():
         # 4. Desconsiderar registros com VOID_TYPE preenchido
         df = df[df['VOID_TYPE'].isna() | (df['VOID_TYPE'] == "") | (df['VOID_TYPE'] == 0)].copy()
         
-        # 5. EXPANDIR A COLUNA tender_details
-        df = expand_details(df)
+        # 5. Extrair tender_tenderDescr do JSON tender_details
+        tender_parsed = df['tender_details'].apply(parse_props)
+        df['tender_tenderDescr'] = tender_parsed.apply(lambda x: x.get('tenderDescr') if isinstance(x, dict) else None)
         
-        # 6. Criar coluna de data sem hora para agrupamento
+        # 6. Criar coluna de data sem hora
         df['data'] = df['business_dt'].dt.date
         
-        # 7. Agrupar totais por store_code e data
+        # ✅ 7. SELECIONAR APENAS AS COLUNAS DESEJADAS
+        df_final = df[['data', 'store_code', 'total_gross', 'TIP_AMOUNT', 'tender_tenderDescr']].copy()
+        
+        # 8. Agrupar totais por store_code e data
         resumo = df.groupby(['store_code', 'data']).agg(
             qtd_pedidos=('order_code', 'count'),
             total_gross=('total_gross', 'sum'),
@@ -140,17 +123,17 @@ def export_order_picture_to_excel():
         ).reset_index()
         
         # Limpa datas para o Excel
-        df = sanitize_for_excel(df)
+        df_final = sanitize_for_excel(df_final)
         resumo = sanitize_for_excel(resumo)
         
         # Gera Excel com DUAS ABAS
         output = BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             resumo.to_excel(writer, sheet_name="Resumo_Loja_Dia", index=False)
-            df.to_excel(writer, sheet_name="Dados_Detalhados", index=False)
+            df_final.to_excel(writer, sheet_name="Dados_Detalhados", index=False)
 
         output.seek(0)
-        return output, None, len(df), len(resumo)
+        return output, None, len(df_final), len(resumo)
     except Exception as e:
         return None, str(e), 0, 0
     finally:
@@ -166,10 +149,10 @@ st.markdown("""
 - **Período**: de 01/12/2025 até o dia anterior (D-1)
 - **Lojas excluídas**: 0000, 0001, 9999
 - **Registros válidos**: sem VOID_TYPE preenchido
-- **Colunas**: store_code, business_dt, total_gross, TIP_AMOUNT + **tender_details expandido**
+- **Colunas exportadas**: data, store_code, total_gross, TIP_AMOUNT, tender_tenderDescr
 - **Resultado**: 
   - Aba 1: Totais agrupados por loja e dia
-  - Aba 2: Dados detalhados com tender expandido
+  - Aba 2: Dados detalhados (apenas colunas selecionadas)
 """)
 
 # Botão de reset (caso fique travado)

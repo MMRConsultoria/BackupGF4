@@ -1521,6 +1521,7 @@ with st.spinner("⏳ Processando..."):
                 st.error(f"❌ Falha ao conectar: {e}")
 
         # === Handler do botão superior "Atualizar SheetsS" ===
+        # === Handler do botão superior "Atualizar Sheets" ===
         if enviar_auto:
             if not has_df:
                 st.error("Não há dados para enviar.")
@@ -1544,19 +1545,21 @@ with st.spinner("⏳ Processando..."):
                 if df_para_enviar is None:
                     st.error("❌ Nenhum dado disponível para enviar (faça upload ou rode o 3S Checkout).")
                 else:
-                    ok = enviar_para_sheets(df_para_enviar.copy(), titulo_origem=origem)"upload")
-                # Se a função abriu o painel de conflitos, ela já dá st.rerun().
-                # Só mostramos "concluído" quando NÃO ficou em modo de conflitos.
-                #if ok and not st.session_state.get("modo_conflitos", False):
-                    #st.success("✅ Processo concluído.")
+                    ok = enviar_para_sheets(df_para_enviar.copy(), titulo_origem=origem)
+                    # Se a função abriu o painel de conflitos, ela já dá st.rerun().
+                    # Só mostramos "concluído" quando NÃO ficou em modo de conflitos.
+                    # if ok and not st.session_state.get("modo_conflitos", False):
+                    #     st.success("✅ Processo concluído.")
+        
+        # ✅ Mostra resumo se existir
         if "_resumo_envio" in st.session_state:
-                    r = st.session_state._resumo_envio
-                    #st.markdown(
-                    #    f"**Resumo:** 🟢 Enviados: **{r['enviados']}** &nbsp;|&nbsp; "
-                    #    f"❌ Duplicados (M): **{r['dup_m']}** &nbsp;|&nbsp; "
-                    #    f"🔴 Possíveis duplicados (N): **{r['sus_n']}**"
-                    #)
-                    del st.session_state._resumo_envio
+            r = st.session_state._resumo_envio
+            # st.markdown(
+            #     f"**Resumo:** 🟢 Enviados: **{r['enviados']}** &nbsp;|&nbsp; "
+            #     f"❌ Duplicados (M): **{r['dup_m']}** &nbsp;|&nbsp; "
+            #     f"🔴 Possíveis duplicados (N): **{r['sus_n']}**"
+            # )
+            del st.session_state._resumo_envio
         # ========================== FASE 2: FORM DE CONFLITOS ==========================
         if st.session_state.get("modo_conflitos", False) and st.session_state.get("conflitos_df_conf") is not None:
             df_conf = st.session_state.conflitos_df_conf.copy()

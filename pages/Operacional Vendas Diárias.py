@@ -107,19 +107,27 @@ with st.spinner("⏳ Processando..."):
             sslrootcert=CERT_PATH,
         )
     
+    
     def buscar_dados_3s_checkout():
         """Busca dados do 3S Checkout direto do banco e processa"""
         conn = get_db_conn()
         try:
-            # ✅ Filtro direto no SQL (muito mais rápido)
+            # ✅ CALCULA A DATA DE ONTEM
+            ontem = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+            
+            # ✅ FILTRO SQL: Adicionado "AND business_dt <= %s"
             query = """
                 SELECT store_code, business_dt, total_gross, custom_properties, order_code, state_id
                 FROM public.order_picture
                 WHERE business_dt >= '2024-12-01'
+                  AND business_dt <= %s
                   AND store_code NOT IN ('0000', '0001', '9999')
                   AND state_id = 5
             """
-            df = pd.read_sql(query, conn)
+            # Passamos 'ontem' como parâmetro para evitar SQL Injection e garantir o formato
+            df = pd.read_sql(query, conn, params=(ontem,))
+            
+        
             
             # 1. Converter datas
             df['business_dt'] = pd.to_datetime(df['business_dt'], errors='coerce')

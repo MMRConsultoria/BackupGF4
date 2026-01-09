@@ -63,15 +63,29 @@ with st.spinner("⏳ Processando..."):
     # ================================
     # 1. Conexão com Google Sheets
     # ================================
+    # ================================
+    # 1. Conexão com Google Sheets - OTIMIZADO
+    # ================================
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
     credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
     gc = gspread.authorize(credentials)
     planilha_empresa = gc.open("Vendas diarias")
-    df_empresa = pd.DataFrame(planilha_empresa.worksheet("Tabela Empresa").get_all_records())
-    # ✅ Força Loja em minúsculo desde a origem
-    if "Loja" in df_empresa.columns:
-        df_empresa["Loja"] = df_empresa["Loja"].astype(str).str.lower().str.strip()
+    
+    # ✅ OTIMIZAÇÃO: Carrega valores brutos e normaliza ANTES de criar DataFrame
+    aba_empresa = planilha_empresa.worksheet("Tabela Empresa")
+    valores_empresa = aba_empresa.get_all_values()
+    
+    if len(valores_empresa) > 1:
+        # Cria DataFrame com cabeçalho
+        df_empresa = pd.DataFrame(valores_empresa[1:], columns=valores_empresa[0])
+        df_empresa.columns = df_empresa.columns.str.strip()
+        
+        # ✅ Força Loja em minúsculo IMEDIATAMENTE após carregar
+        if "Loja" in df_empresa.columns:
+            df_empresa["Loja"] = df_empresa["Loja"].astype(str).str.lower().str.strip()
+    else:
+        df_empresa = pd.DataFrame()
     # ================================
     # 2. Função de conexão com PostgreSQL
     # ================================

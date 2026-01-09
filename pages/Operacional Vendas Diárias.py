@@ -1,5 +1,5 @@
 
-   # pages/OperacionalVendasDiarias.py
+# pages/OperacionalVendasDiarias.py
 
 import streamlit as st
 import pandas as pd
@@ -612,10 +612,7 @@ with st.spinner("⏳ Processando..."):
                         )
         
                 except Exception as e:
-                    st.error(f"❌ Erro ao processar o arquivo: {e}") 
-    
-    
-    
+                    st.error(f"❌ Erro ao processar o arquivo: {e}")
     
     
     # =======================================

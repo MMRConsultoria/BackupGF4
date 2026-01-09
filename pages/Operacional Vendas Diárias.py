@@ -69,7 +69,9 @@ with st.spinner("⏳ Processando..."):
     gc = gspread.authorize(credentials)
     planilha_empresa = gc.open("Vendas diarias")
     df_empresa = pd.DataFrame(planilha_empresa.worksheet("Tabela Empresa").get_all_records())
-    
+    # ✅ Força Loja em minúsculo desde a origem
+    if "Loja" in df_empresa.columns:
+        df_empresa["Loja"] = df_empresa["Loja"].astype(str).str.lower().str.strip()
     # ================================
     # 2. Função de conexão com PostgreSQL
     # ================================
@@ -756,8 +758,8 @@ with st.spinner("⏳ Processando..."):
                 codg_col  = next((c for c,n in cols_norm.items() if "codigo" in n and "grupo" in n and "everest" in n), None)
     
                 out = pd.DataFrame()
-                out["Loja"] = df[loja_col].astype(str).str.strip()
-                out["Loja_norm"] = out["Loja"].str.lower()
+                out["Loja"] = df[loja_col].astype(str).str.strip().str.lower()  # ✅ Já em minúsculo
+                out["Loja_norm"] = out["Loja"]  # Já está normalizado
                 out["Grupo"] = df[grupo_col].astype(str).str.strip() if grupo_col else ""
     
                 out["Código Everest"] = pd.to_numeric(df[cod_col], errors="coerce") if cod_col else pd.NA

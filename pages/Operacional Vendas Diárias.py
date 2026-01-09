@@ -1416,8 +1416,9 @@ with st.spinner("⏳ Processando..."):
                 
         # ------------------------ HEADER / BOTÕES ------------------------
         LINK_SHEET = "https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU/edit?usp=sharing"
-        df_sess = st.session_state.get("df_final")
-        has_df = isinstance(df_sess, pd.DataFrame) and not df_sess.empty  # ✅ simples e robusto
+        # ✅ Aceita TANTO df_final (upload) QUANTO resumo_3s (3S Checkout)
+        df_sess = st.session_state.get("df_final") or st.session_state.get("resumo_3s")
+        has_df = isinstance(df_sess, pd.DataFrame) and not df_sess.empty    
 
     
         c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
@@ -1430,13 +1431,15 @@ with st.spinner("⏳ Processando..."):
                 key="btn_enviar_auto_header",
             )
         
+        
         if enviar_auto:
             if not has_df:
                 st.error("Não há dados para enviar.")
             else:
-                ok = enviar_para_sheets(st.session_state.df_final.copy(), titulo_origem="upload")
-                # Se houver suspeitos por N, a função faz st.rerun() e abrirá o painel.
-                # Se não houver, cai aqui e mostramos o resumo.
+                # ✅ Usa o DataFrame disponível (prioriza resumo_3s se existir)
+                df_para_enviar = st.session_state.get("resumo_3s") or st.session_state.get("df_final")
+                origem = "3s_checkout" if "resumo_3s" in st.session_state else "upload"
+                ok = enviar_para_sheets(df_para_enviar.copy(), titulo_origem=origem)
         
         # ✅ Mostra o resumo sempre que existir (fora do if enviar_auto)
         r = st.session_state.get("_resumo_envio")

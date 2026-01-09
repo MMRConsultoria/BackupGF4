@@ -73,10 +73,8 @@ def export_order_picture_to_excel():
         # Busca dados do banco
         df = fetch_filtered_data(conn)
         
-        # 1. Converter datas e filtrar (A partir de 01/12/2025)
+        # 1. Converter datas (SEM FILTRO DE DATA)
         df['business_dt'] = pd.to_datetime(df['business_dt'], errors='coerce')
-        data_corte = datetime(2025, 12, 1)
-        df = df[df['business_dt'] >= data_corte].copy()
         
         # 2. Filtrar lojas (Excluir 0000, 0001, 9999)
         df['store_code'] = df['store_code'].astype(str).str.zfill(4)
@@ -123,7 +121,7 @@ def export_order_picture_to_excel():
 st.title("Exportar order_picture - Resumo por Loja e Dia")
 st.subheader("Filtros aplicados:")
 st.markdown("""
-- **Período**: a partir de 01/12/2025
+- **Período**: Todas as datas
 - **Lojas excluídas**: 0000, 0001, 9999
 - **Registros válidos**: sem VOID_TYPE preenchido
 - **Colunas**: store_code, business_dt, total_gross, TIP_AMOUNT

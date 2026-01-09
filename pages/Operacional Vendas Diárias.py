@@ -168,7 +168,8 @@ with st.spinner("⏳ Processando..."):
             
             resumo = pd.merge(resumo, df_empresa[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]], 
                              on="Código Everest", how="left")
-            
+            # ✅ Converte nome da loja para MAIÚSCULO
+            resumo["Loja"] = resumo["Loja"].astype(str).str.upper()
             # 12. Adicionar colunas adicionais
             resumo['Ticket'] = 0  # Não temos essa informação no agrupamento
             resumo['Mês'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.strftime('%b').str.lower()
@@ -551,7 +552,7 @@ with st.spinner("⏳ Processando..."):
                     df_empresa["Loja"] = df_empresa["Loja"].astype(str).str.strip().str.lower()
                     df_final["Loja"] = df_final["Loja"].astype(str).str.strip().str.lower()
                     df_final = pd.merge(df_final, df_empresa, on="Loja", how="left")
-        
+                    df_final["Loja"] = df_final["Loja"].astype(str).str.upper()
                     colunas_finais = [
                         "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
                         "Código Grupo Everest", "Fat.Total", "Serv/Tx", "Fat.Real",
@@ -945,7 +946,8 @@ with st.spinner("⏳ Processando..."):
         
             # Completar códigos a partir do catálogo
             df = preencher_codigos_por_loja(df, catalogo)
-        
+            # ✅ Converte nome da loja para MAIÚSCULO
+            df["Loja"] = df["Loja"].astype(str).str.upper()
             cols_preferidas = [
                 "Data","Dia da Semana","Loja","Código Everest","Grupo","Código Grupo Everest",
                 "Fat.Total","Serv/Tx","Fat.Real","Ticket","Mês","Ano"

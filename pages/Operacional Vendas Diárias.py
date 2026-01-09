@@ -85,10 +85,10 @@ with st.spinner("⏳ Processando..."):
             """
             df = pd.read_sql(query, conn)
             
-            # 1. Converter datas (já vem filtrado do banco)
+            # 1. Converter datas
             df['business_dt'] = pd.to_datetime(df['business_dt'], errors='coerce')
             
-            # 2. Garantir formato de loja (já filtrado no SQL, mas mantém por segurança)
+            # 2. Garantir formato de loja (4 dígitos)
             df['store_code'] = df['store_code'].astype(str).str.zfill(4)
             
             # 3. Extrair campos de custom_properties
@@ -117,10 +117,61 @@ with st.spinner("⏳ Processando..."):
             
             # 6. Agrupar totais por store_code e data
             resumo = df.groupby(['store_code', 'data']).agg(
-                qtd_pedidos=('order_code', 'count'),
-                total_gross=('total_gross', 'sum'),
-                total_tip=('TIP_AMOUNT', 'sum')
+                Fat_Real=('total_gross', 'sum'),
+                Serv_Tx=('TIP_AMOUNT', 'sum')
             ).reset_index()
+            
+            # 7. Calcular Fat.Total
+            resumo['Fat_Total'] = resumo['Fat_Real'] + resumo['Serv_Tx']
+            
+            # 8. Renomear colunas para o formato correto
+            resumo.columns = ['Código Everest', 'Data', 'Fat.Real', 'Serv/Tx', 'Fat.Total']
+            
+            # 9. Formatar Data
+            resumo['Data'] = pd.to_datetime(resumo['Data']).dt.strftime('%d/%m/%Y')
+            
+            # 10. Adicionar Dia da Semana
+            dias_traducao = {
+                "Monday": "segunda-feira", "Tuesday": "terça-feira", "Wednesday": "quarta-feira",
+                "Thursday": "quinta-feira", "Friday": "sexta-feira", "Saturday": "sábado", "Sunday": "domingo"
+            }
+            resumo.insert(1, 'Dia da Semana', pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.day_name().map(dias_traducao))
+            
+            # 11. Buscar informações da Tabela Empresa
+            df_empresa["Código Everest"] = df_empresa["Código Everest"].astype(str).str.strip()
+            resumo["Código Everest"] = resumo["Código Everest"].astype(str).str.strip()
+            
+            resumo = pd.merge(resumo, df_empresa[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]], 
+                             on="Código Everest", how="left")
+            
+            # 12. Adicionar colunas adicionais
+            resumo['Ticket'] = 0  # Não temos essa informação no agrupamento
+            resumo['Mês'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.strftime('%b').str.lower()
+            
+            meses = {"jan": "jan", "feb": "fev", "mar": "mar", "apr": "abr", "may": "mai", "jun": "jun",
+                     "jul": "jul", "aug": "ago", "sep": "set", "oct": "out", "nov": "nov", "dec": "dez"}
+            resumo["Mês"] = resumo["Mês"].map(meses)
+            
+            resumo['Ano'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.year
+            resumo['Sistema'] = '3SCheckout'
+            
+            # 13. Ordenar colunas no formato padrão
+            colunas_finais = [
+                "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
+                "Código Grupo Everest", "Fat.Total", "Serv/Tx", "Fat.Real",
+                "Ticket", "Mês", "Ano", "Sistema"
+            ]
+            
+            resumo = resumo[[c for c in colunas_finais if c in resumo.columns]]
+            
+            # 14. Arredondar valores
+            for col in ["Fat.Total", "Serv/Tx", "Fat.Real", "Ticket"]:
+                if col in resumo.columns:
+                    resumo[col] = resumo[col].round(2)
+            
+            # 15. Ordenar por Data e Loja
+            resumo['Data_Ordenada'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y')
+            resumo = resumo.sort_values(by=['Data_Ordenada', 'Loja']).drop(columns='Data_Ordenada')
             
             return resumo, None, len(df)
         except Exception as e:
@@ -226,10 +277,43 @@ with st.spinner("⏳ Processando..."):
                 elif resumo_3s is not None and not resumo_3s.empty:
                     st.success(f"✅ {total_registros} registros processados com sucesso!")
                     
-                    # Gera Excel
+                    # Verificar empresas não localizadas
+                    empresas_nao_localizadas = resumo_3s[resumo_3s["Loja"].isna()]["Código Everest"].unique()
+                    if len(empresas_nao_localizadas) > 0:
+                        empresas_nao_localizadas_str = "<br>".join(empresas_nao_localizadas)
+                        mensagem = f"""
+                        ⚠️ {len(empresas_nao_localizadas)} código(s) não localizado(s) na Tabela Empresa! <br>{empresas_nao_localizadas_str}
+                        <br>✏️ Atualize a tabela clicando 
+                        <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU/edit?usp=drive_link' target='_blank'><strong>aqui</strong></a>.
+                        """
+                        st.markdown(mensagem, unsafe_allow_html=True)
+                    else:
+                        st.success("✅ Todas as lojas foram localizadas na Tabela_Empresa!")
+                    
+                    # Mostrar resumo do período
+                    datas_validas = pd.to_datetime(resumo_3s["Data"], format="%d/%m/%Y", errors='coerce').dropna()
+                    if not datas_validas.empty:
+                        data_inicial = datas_validas.min().strftime("%d/%m/%Y")
+                        data_final_str = datas_validas.max().strftime("%d/%m/%Y")
+                        valor_total = resumo_3s["Fat.Total"].sum()
+                        valor_total_formatado = f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown(f"""
+                                <div style='font-size:24px; font-weight: bold; margin-bottom:10px;'>🗓️ Período processado</div>
+                                <div style='font-size:30px; color:#000;'>{data_inicial} até {data_final_str}</div>
+                            """, unsafe_allow_html=True)
+                        with col2:
+                            st.markdown(f"""
+                                <div style='font-size:24px; font-weight: bold; margin-bottom:10px;'>💰 Valor total</div>
+                                <div style='font-size:30px; color:green;'>{valor_total_formatado}</div>
+                            """, unsafe_allow_html=True)
+                    
+                    # Gera Excel no formato padrão
                     output = BytesIO()
-                    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                        resumo_3s.to_excel(writer, sheet_name="Resumo_Loja_Dia", index=False)
+                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                        resumo_3s.to_excel(writer, sheet_name='Faturamento Servico', index=False)
                     output.seek(0)
                     
                     st.download_button(

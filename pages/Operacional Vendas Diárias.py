@@ -1525,7 +1525,26 @@ with st.spinner("⏳ Processando..."):
             if not has_df:
                 st.error("Não há dados para enviar.")
             else:
-                ok = enviar_para_sheets(st.session_state.df_final.copy(), titulo_origem="upload")
+                df_para_enviar = None
+                origem = None
+                
+                # Prioriza 3S
+                df_3s = st.session_state.get("resumo_3s", None)
+                if isinstance(df_3s, pd.DataFrame) and not df_3s.empty:
+                    df_para_enviar = df_3s
+                    origem = "3s_checkout"
+                
+                # Fallback: upload manual
+                if df_para_enviar is None:
+                    df_up = st.session_state.get("df_final", None)
+                    if isinstance(df_up, pd.DataFrame) and not df_up.empty:
+                        df_para_enviar = df_up
+                        origem = "upload"
+                
+                if df_para_enviar is None:
+                    st.error("❌ Nenhum dado disponível para enviar (faça upload ou rode o 3S Checkout).")
+                else:
+                    ok = enviar_para_sheets(df_para_enviar.copy(), titulo_origem=origem)"upload")
                 # Se a função abriu o painel de conflitos, ela já dá st.rerun().
                 # Só mostramos "concluído" quando NÃO ficou em modo de conflitos.
                 #if ok and not st.session_state.get("modo_conflitos", False):

@@ -1168,7 +1168,21 @@ with st.spinner("⏳ Processando..."):
                 q_novos = int(len(df_novos))
                 q_dup_m = int(len(df_dup_M))
                 q_sus_n = int(len(df_suspeitos))
+                # ✅ ADICIONE AQUI (LOGO APÓS AS CONTAGENS):
+                st.session_state._resumo_envio = {
+                    "enviados": q_novos, 
+                    "dup_m": q_dup_m, 
+                    "sus_n": q_sus_n
+                }
                 
+                # ✅ RENDERIZA A BARRA SEMPRE
+                st.markdown(f"""
+                    <div style="padding:10px; border-radius:8px; background-color:#e8f5e9; border:1px solid #c8e6c9; margin-bottom:15px;">
+                        🟢 Enviados: <b>{q_novos}</b> | 
+                        ❌ Duplicados: <b>{q_dup_m}</b> | 
+                        🔴 Suspeitos: <b>{q_sus_n}</b>
+                    </div>
+                """, unsafe_allow_html=True)
                 # === ENVIA NOVOS MESMO HAVENDO SUSPEITOS ===
                 if q_novos > 0:
                     try:

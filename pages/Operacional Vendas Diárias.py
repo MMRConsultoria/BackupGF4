@@ -88,8 +88,8 @@ with st.spinner("⏳ Processando..."):
             # 1. Converter datas
             df['business_dt'] = pd.to_datetime(df['business_dt'], errors='coerce')
             
-            # 2. Garantir formato de loja (4 dígitos)
-            df['store_code'] = df['store_code'].astype(str).str.zfill(4)
+            # 2. ✅ REMOVER ZEROS À ESQUERDA do store_code
+            df['store_code'] = df['store_code'].astype(str).str.lstrip('0')
             
             # 3. Extrair campos de custom_properties
             def parse_props(x):
@@ -137,8 +137,13 @@ with st.spinner("⏳ Processando..."):
             }
             resumo.insert(1, 'Dia da Semana', pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.day_name().map(dias_traducao))
             
-            # 11. Buscar informações da Tabela Empresa
-            df_empresa["Código Everest"] = df_empresa["Código Everest"].astype(str).str.strip()
+            # 11. ✅ Buscar informações da Tabela Empresa (também sem zeros à esquerda)
+            df_empresa["Código Everest"] = (
+                df_empresa["Código Everest"]
+                .astype(str)
+                .str.replace(r"\D", "", regex=True)
+                .str.lstrip("0")
+            )
             resumo["Código Everest"] = resumo["Código Everest"].astype(str).str.strip()
             
             resumo = pd.merge(resumo, df_empresa[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]], 

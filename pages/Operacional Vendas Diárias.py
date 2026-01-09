@@ -1,4 +1,5 @@
-# pages/OperacionalVendasDiarias.py
+
+   # pages/OperacionalVendasDiarias.py
 
 import streamlit as st
 import pandas as pd
@@ -22,6 +23,21 @@ if not st.session_state.get("acesso_liberado"):
 # ✅ Inicializar controle de modo
 if "modo_3s" not in st.session_state:
     st.session_state.modo_3s = False
+
+# ✅ Função para limpar estado da Aba 2
+def limpar_estado_aba_google():
+    chaves = [
+        "df_google",
+        "df_google_sheets",
+        "df_para_atualizar",
+        "mensagem_atualizacao",
+        "mensagem_sucesso",
+        "atualizou_google",
+        "preview_google",
+    ]
+    for k in chaves:
+        if k in st.session_state:
+            del st.session_state[k]
 
 # ======================
 # CSS para esconder só a barra superior
@@ -280,6 +296,9 @@ with st.spinner("⏳ Processando..."):
         if st.button("🔄 Atualizar 3S Checkout", type="primary", use_container_width=True):
             st.session_state.modo_3s = True
             st.session_state.df_final = None  # limpa upload manual
+            
+            # ✅ LIMPA ABA 2
+            limpar_estado_aba_google()
             
             with st.spinner("Buscando dados do banco..."):
                 resumo_3s, erro_3s, total_registros = buscar_dados_3s_checkout()
@@ -593,8 +612,7 @@ with st.spinner("⏳ Processando..."):
                         )
         
                 except Exception as e:
-                    st.error(f"❌ Erro ao processar o arquivo: {e}")
-    
+                    st.error(f"❌ Erro ao processar o arquivo: {e}") 
     
     
     

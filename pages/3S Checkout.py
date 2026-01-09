@@ -31,19 +31,19 @@ def get_conn():
     )
 
 
-def fetch_filtered_data(conn):
-    """Busca dados da tabela order_picture com JOIN na order_picture_tender"""
+def fetch_data(conn):
+    """Busca dados da order_picture com JOIN na order_picture_tender (somente para os IDs existentes em order_picture)."""
     query = """
         SELECT 
             op.order_picture_id,
-            op.store_code, 
-            op.business_dt, 
-            op.total_gross, 
-            op.custom_properties, 
+            op.store_code,
+            op.business_dt,
+            op.total_gross,
+            op.custom_properties,
             op.order_code,
             opt.details as tender_details
         FROM public.order_picture op
-        LEFT JOIN public.order_picture_tender opt 
+        LEFT JOIN public.order_picture_tender opt
             ON op.order_picture_id = opt.order_picture_id
     """
     return pd.read_sql(query, conn)
@@ -82,55 +82,57 @@ def parse_props(x):
 def export_order_picture_to_excel():
     conn = get_conn()
     try:
-        # Busca dados do banco (agora com JOIN)
-        df = fetch_filtered_data(conn)
-        
-        # ✅ 1. Converter datas e filtrar (De 01/12/2025 ATÉ ONTEM)
-        df['business_dt'] = pd.to_datetime(df['business_dt'], errors='coerce')
-        data_corte_inicio = datetime(2025, 12, 1)
+        # Busca dados do banco (com JOIN)
+        df = fetch_data(conn)
+
+        # ✅ 1) Converter datas e filtrar SOMENTE ATÉ ONTEM (D-1)
+        df["business_dt"] = pd.to_datetime(df["business_dt"], errors="coerce")
         data_corte_fim = (datetime.now() - timedelta(days=1)).replace(hour=23, minute=59, second=59)
-        
-        df = df[(df['business_dt'] >= data_corte_inicio) & (df['business_dt'] <= data_corte_fim)].copy()
-        
-        # 2. Filtrar lojas (Excluir 0000, 0001, 9999)
-        df['store_code'] = df['store_code'].astype(str).str.zfill(4)
-        excluir = ['0000', '0001', '9999']
-        df = df[~df['store_code'].isin(excluir)].copy()
-        
-        # 3. Extrair campos de custom_properties (TIP_AMOUNT e VOID_TYPE)
-        props = df['custom_properties'].apply(parse_props)
-        df['TIP_AMOUNT'] = pd.to_numeric(props.apply(lambda x: x.get('TIP_AMOUNT')), errors='coerce').fillna(0)
-        df['VOID_TYPE'] = props.apply(lambda x: x.get('VOID_TYPE'))
-        
-        # 4. Desconsiderar registros com VOID_TYPE preenchido
-        df = df[df['VOID_TYPE'].isna() | (df['VOID_TYPE'] == "") | (df['VOID_TYPE'] == 0)].copy()
-        
-        # 5. Extrair tender_tenderDescr do JSON tender_details
-        tender_parsed = df['tender_details'].apply(parse_props)
-        df['tender_tenderDescr'] = tender_parsed.apply(lambda x: x.get('tenderDescr') if isinstance(x, dict) else None)
-        
-        # 6. Criar coluna de data sem hora
-        df['data'] = df['business_dt'].dt.date
-        
-        # ✅ 7. CRIAR COLUNA TOTAL (total_gross + TIP_AMOUNT)
-        df['total_com_gorjeta'] = df['total_gross'] + df['TIP_AMOUNT']
-        
-        # ✅ 8. SELECIONAR APENAS AS COLUNAS DESEJADAS
-        df_final = df[['data', 'store_code', 'total_gross', 'TIP_AMOUNT', 'total_com_gorjeta', 'tender_tenderDescr']].copy()
-        
-        # 9. Agrupar totais por store_code e data
-        resumo = df.groupby(['store_code', 'data']).agg(
-            qtd_pedidos=('order_code', 'count'),
-            total_gross=('total_gross', 'sum'),
-            total_tip=('TIP_AMOUNT', 'sum'),
-            total_com_gorjeta=('total_com_gorjeta', 'sum')
+        df = df[df["business_dt"] <= data_corte_fim].copy()
+
+        # 2) Filtrar lojas (Excluir 0000, 0001, 9999)
+        df["store_code"] = df["store_code"].astype(str).str.zfill(4)
+        excluir = ["0000", "0001", "9999"]
+        df = df[~df["store_code"].isin(excluir)].copy()
+
+        # 3) Extrair campos de custom_properties (TIP_AMOUNT e VOID_TYPE)
+        props = df["custom_properties"].apply(parse_props)
+        df["TIP_AMOUNT"] = pd.to_numeric(props.apply(lambda x: x.get("TIP_AMOUNT")), errors="coerce").fillna(0)
+        df["VOID_TYPE"] = props.apply(lambda x: x.get("VOID_TYPE"))
+
+        # 4) Desconsiderar registros com VOID_TYPE preenchido
+        df = df[df["VOID_TYPE"].isna() | (df["VOID_TYPE"] == "") | (df["VOID_TYPE"] == 0)].copy()
+
+        # 5) Extrair tender_tenderDescr do JSON tender_details
+        tender_parsed = df["tender_details"].apply(parse_props)
+        df["tender_tenderDescr"] = tender_parsed.apply(
+            lambda x: x.get("tenderDescr") if isinstance(x, dict) else None
+        )
+
+        # 6) Criar coluna de data sem hora
+        df["data"] = df["business_dt"].dt.date
+
+        # 7) Criar coluna total (total_gross + TIP_AMOUNT)
+        df["total_com_gorjeta"] = pd.to_numeric(df["total_gross"], errors="coerce").fillna(0) + pd.to_numeric(
+            df["TIP_AMOUNT"], errors="coerce"
+        ).fillna(0)
+
+        # ✅ 8) Manter somente as colunas desejadas
+        df_final = df[["data", "store_code", "total_gross", "TIP_AMOUNT", "total_com_gorjeta", "tender_tenderDescr"]].copy()
+
+        # 9) Resumo por loja e dia
+        resumo = df.groupby(["store_code", "data"]).agg(
+            qtd_pedidos=("order_code", "count"),
+            total_gross=("total_gross", "sum"),
+            total_tip=("TIP_AMOUNT", "sum"),
+            total_com_gorjeta=("total_com_gorjeta", "sum"),
         ).reset_index()
-        
-        # Limpa datas para o Excel
+
+        # Limpa para Excel
         df_final = sanitize_for_excel(df_final)
         resumo = sanitize_for_excel(resumo)
-        
-        # Gera Excel com DUAS ABAS
+
+        # Gera Excel com 2 abas
         output = BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             resumo.to_excel(writer, sheet_name="Resumo_Loja_Dia", index=False)
@@ -138,6 +140,7 @@ def export_order_picture_to_excel():
 
         output.seek(0)
         return output, None, len(df_final), len(resumo)
+
     except Exception as e:
         return None, str(e), 0, 0
     finally:
@@ -150,13 +153,13 @@ def export_order_picture_to_excel():
 st.title("Exportar order_picture + Tender - Resumo por Loja e Dia")
 st.subheader("Filtros aplicados:")
 st.markdown("""
-- **Período**: de 01/12/2025 até o dia anterior (D-1)
+- **Período**: até o dia anterior (D-1)
 - **Lojas excluídas**: 0000, 0001, 9999
 - **Registros válidos**: sem VOID_TYPE preenchido
-- **Colunas exportadas**: data, store_code, total_gross, TIP_AMOUNT, **total_com_gorjeta**, tender_tenderDescr
-- **Resultado**: 
-  - Aba 1: Totais agrupados por loja e dia (com total_com_gorjeta)
-  - Aba 2: Dados detalhados (com total_com_gorjeta)
+- **Colunas exportadas (detalhado)**: data, store_code, total_gross, TIP_AMOUNT, total_com_gorjeta, tender_tenderDescr
+- **Resultado**:
+  - Aba 1: Resumo por loja e dia
+  - Aba 2: Dados detalhados (somente colunas desejadas)
 """)
 
 # Botão de reset (caso fique travado)
@@ -176,14 +179,14 @@ if st.button("Gerar Excel", type="primary", disabled=st.session_state["exporting
 
         if err:
             status.update(label="Falhou", state="error")
-            st.error(f"Erro no banco: {err}")
+            st.error(f"❌ Erro ao processar: {err}")
         else:
             status.update(label="Concluído ✅", state="complete")
             st.success(f"""
-            **Processamento concluído!**
-            - Registros válidos processados: {total_rows:,}
-            - Linhas no resumo (loja + dia): {summary_rows:,}
-            """)
+**Processamento concluído!**
+- Registros válidos processados (detalhado): {total_rows:,}
+- Linhas no resumo (loja + dia): {summary_rows:,}
+""")
             st.download_button(
                 "📥 Baixar Excel",
                 data=excel_bytes,

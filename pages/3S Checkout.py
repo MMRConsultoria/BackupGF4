@@ -66,14 +66,24 @@ def buscar_dados_3s_checkout():
         # ✅ CALCULA A DATA DE ONTEM
         ontem = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         
-        # ✅ FILTRO SQL
+        # ✅ QUERY COM JOIN para trazer tender
         query = """
-            SELECT store_code, business_dt, total_gross, custom_properties, order_code, state_id
-            FROM public.order_picture
-            WHERE business_dt >= '2024-12-01'
-              AND business_dt <= %s
-              AND store_code NOT IN ('0000', '0001', '9999')
-              AND state_id = 5
+            SELECT 
+                op.order_picture_id,
+                op.store_code, 
+                op.business_dt, 
+                op.total_gross, 
+                op.custom_properties, 
+                op.order_code, 
+                op.state_id,
+                opt.details as tender_details
+            FROM public.order_picture op
+            LEFT JOIN public.order_picture_tender opt 
+                ON op.order_picture_id = opt.order_picture_id
+            WHERE op.business_dt >= '2024-12-01'
+              AND op.business_dt <= %s
+              AND op.store_code NOT IN ('0000', '0001', '9999')
+              AND op.state_id = 5
         """
         df = pd.read_sql(query, conn, params=(ontem,))
         
@@ -104,78 +114,139 @@ def buscar_dados_3s_checkout():
         # 4. Desconsiderar registros com VOID_TYPE preenchido
         df = df[df['VOID_TYPE'].isna() | (df['VOID_TYPE'] == "") | (df['VOID_TYPE'] == 0)].copy()
         
-        # 5. Criar coluna de data sem hora para agrupamento
+        # 5. ✅ Extrair tender_tenderDescr do JSON tender_details
+        tender_parsed = df['tender_details'].apply(parse_props)
+        df['tender_tenderDescr'] = tender_parsed.apply(
+            lambda x: x.get("tenderDescr") if isinstance(x, dict) else None
+        )
+        
+        # 6. Criar coluna de data sem hora para agrupamento
         df['data'] = df['business_dt'].dt.date
         
-        # 6. Agrupar totais por store_code e data
-        resumo = df.groupby(['store_code', 'data']).agg(
+        # ================================
+        # ABA 1: VENDAS (agrupado por loja e data)
+        # ================================
+        resumo_vendas = df.groupby(['store_code', 'data']).agg(
             Fat_Real=('total_gross', 'sum'),
             Serv_Tx=('TIP_AMOUNT', 'sum')
         ).reset_index()
         
-        # 7. Calcular Fat.Total
-        resumo['Fat_Total'] = resumo['Fat_Real'] + resumo['Serv_Tx']
+        # Calcular Fat.Total
+        resumo_vendas['Fat_Total'] = resumo_vendas['Fat_Real'] + resumo_vendas['Serv_Tx']
         
-        # 8. Renomear colunas para o formato correto
-        resumo.columns = ['Código Everest', 'Data', 'Fat.Real', 'Serv/Tx', 'Fat.Total']
+        # Renomear colunas
+        resumo_vendas.columns = ['Código Everest', 'Data', 'Fat.Real', 'Serv/Tx', 'Fat.Total']
         
-        # 9. Formatar Data
-        resumo['Data'] = pd.to_datetime(resumo['Data']).dt.strftime('%d/%m/%Y')
+        # Formatar Data
+        resumo_vendas['Data'] = pd.to_datetime(resumo_vendas['Data']).dt.strftime('%d/%m/%Y')
         
-        # 10. Adicionar Dia da Semana
+        # Adicionar Dia da Semana
         dias_traducao = {
             "Monday": "segunda-feira", "Tuesday": "terça-feira", "Wednesday": "quarta-feira",
             "Thursday": "quinta-feira", "Friday": "sexta-feira", "Saturday": "sábado", "Sunday": "domingo"
         }
-        resumo.insert(1, 'Dia da Semana', pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.day_name().map(dias_traducao))
+        resumo_vendas.insert(1, 'Dia da Semana', pd.to_datetime(resumo_vendas['Data'], format='%d/%m/%Y').dt.day_name().map(dias_traducao))
         
-        # 11. ✅ Buscar informações da Tabela Empresa
+        # Buscar informações da Tabela Empresa
         df_empresa["Código Everest"] = (
             df_empresa["Código Everest"]
             .astype(str)
             .str.replace(r"\D", "", regex=True)
             .str.lstrip("0")
         )
-        resumo["Código Everest"] = resumo["Código Everest"].astype(str).str.strip()
+        resumo_vendas["Código Everest"] = resumo_vendas["Código Everest"].astype(str).str.strip()
         
-        resumo = pd.merge(resumo, df_empresa[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]], 
+        resumo_vendas = pd.merge(resumo_vendas, df_empresa[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]], 
                          on="Código Everest", how="left")
         
-        # ✅ Converte nome da loja para minúsculo
-        resumo["Loja"] = resumo["Loja"].astype(str).str.strip().str.lower()
+        # Converte nome da loja para minúsculo
+        resumo_vendas["Loja"] = resumo_vendas["Loja"].astype(str).str.strip().str.lower()
         
-        # 12. Adicionar colunas adicionais
-        resumo['Ticket'] = 0
-        resumo['Mês'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.strftime('%b').str.lower()
+        # Adicionar colunas adicionais
+        resumo_vendas['Ticket'] = 0
+        resumo_vendas['Mês'] = pd.to_datetime(resumo_vendas['Data'], format='%d/%m/%Y').dt.strftime('%b').str.lower()
         
         meses = {"jan": "jan", "feb": "fev", "mar": "mar", "apr": "abr", "may": "mai", "jun": "jun",
                  "jul": "jul", "aug": "ago", "sep": "set", "oct": "out", "nov": "nov", "dec": "dez"}
-        resumo["Mês"] = resumo["Mês"].map(meses)
+        resumo_vendas["Mês"] = resumo_vendas["Mês"].map(meses)
         
-        resumo['Ano'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.year
-        resumo['Sistema'] = '3SCheckout'
+        resumo_vendas['Ano'] = pd.to_datetime(resumo_vendas['Data'], format='%d/%m/%Y').dt.year
+        resumo_vendas['Sistema'] = '3SCheckout'
         
-        # 13. Ordenar colunas no formato padrão
-        colunas_finais = [
+        # Ordenar colunas
+        colunas_vendas = [
             "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
             "Código Grupo Everest", "Fat.Total", "Serv/Tx", "Fat.Real",
             "Ticket", "Mês", "Ano", "Sistema"
         ]
         
-        resumo = resumo[[c for c in colunas_finais if c in resumo.columns]]
+        resumo_vendas = resumo_vendas[[c for c in colunas_vendas if c in resumo_vendas.columns]]
         
-        # 14. Arredondar valores
+        # Arredondar valores
         for col in ["Fat.Total", "Serv/Tx", "Fat.Real", "Ticket"]:
-            if col in resumo.columns:
-                resumo[col] = resumo[col].round(2)
+            if col in resumo_vendas.columns:
+                resumo_vendas[col] = resumo_vendas[col].round(2)
         
-        # 15. Ordenar por Data e Loja
-        resumo['Data_Ordenada'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y')
-        resumo = resumo.sort_values(by=['Data_Ordenada', 'Loja']).drop(columns='Data_Ordenada')
+        # Ordenar por Data e Loja
+        resumo_vendas['Data_Ordenada'] = pd.to_datetime(resumo_vendas['Data'], format='%d/%m/%Y')
+        resumo_vendas = resumo_vendas.sort_values(by=['Data_Ordenada', 'Loja']).drop(columns='Data_Ordenada')
         
-        return resumo, None, len(df)
+        # ================================
+        # ABA 2: MEIO DE PAGAMENTO (agrupado por loja, data e tender)
+        # ================================
+        resumo_pagamento = df.groupby(['store_code', 'data', 'tender_tenderDescr']).agg(
+            Fat_Real=('total_gross', 'sum'),
+            Serv_Tx=('TIP_AMOUNT', 'sum')
+        ).reset_index()
+        
+        # Calcular Fat.Total
+        resumo_pagamento['Fat_Total'] = resumo_pagamento['Fat_Real'] + resumo_pagamento['Serv_Tx']
+        
+        # Renomear colunas
+        resumo_pagamento.columns = ['Código Everest', 'Data', 'Meio de Pagamento', 'Fat.Real', 'Serv/Tx', 'Fat.Total']
+        
+        # Formatar Data
+        resumo_pagamento['Data'] = pd.to_datetime(resumo_pagamento['Data']).dt.strftime('%d/%m/%Y')
+        
+        # Adicionar Dia da Semana
+        resumo_pagamento.insert(1, 'Dia da Semana', pd.to_datetime(resumo_pagamento['Data'], format='%d/%m/%Y').dt.day_name().map(dias_traducao))
+        
+        # Buscar informações da Tabela Empresa
+        resumo_pagamento["Código Everest"] = resumo_pagamento["Código Everest"].astype(str).str.strip()
+        
+        resumo_pagamento = pd.merge(resumo_pagamento, df_empresa[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]], 
+                         on="Código Everest", how="left")
+        
+        # Converte nome da loja para minúsculo
+        resumo_pagamento["Loja"] = resumo_pagamento["Loja"].astype(str).str.strip().str.lower()
+        
+        # Adicionar colunas adicionais
+        resumo_pagamento['Mês'] = pd.to_datetime(resumo_pagamento['Data'], format='%d/%m/%Y').dt.strftime('%b').str.lower()
+        resumo_pagamento["Mês"] = resumo_pagamento["Mês"].map(meses)
+        resumo_pagamento['Ano'] = pd.to_datetime(resumo_pagamento['Data'], format='%d/%m/%Y').dt.year
+        resumo_pagamento['Sistema'] = '3SCheckout'
+        
+        # Ordenar colunas
+        colunas_pagamento = [
+            "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
+            "Código Grupo Everest", "Meio de Pagamento", "Fat.Total", "Serv/Tx", "Fat.Real",
+            "Mês", "Ano", "Sistema"
+        ]
+        
+        resumo_pagamento = resumo_pagamento[[c for c in colunas_pagamento if c in resumo_pagamento.columns]]
+        
+        # Arredondar valores
+        for col in ["Fat.Total", "Serv/Tx", "Fat.Real"]:
+            if col in resumo_pagamento.columns:
+                resumo_pagamento[col] = resumo_pagamento[col].round(2)
+        
+        # Ordenar por Data, Loja e Meio de Pagamento
+        resumo_pagamento['Data_Ordenada'] = pd.to_datetime(resumo_pagamento['Data'], format='%d/%m/%Y')
+        resumo_pagamento = resumo_pagamento.sort_values(by=['Data_Ordenada', 'Loja', 'Meio de Pagamento']).drop(columns='Data_Ordenada')
+        
+        return resumo_vendas, resumo_pagamento, None, len(df)
     except Exception as e:
-        return None, str(e), 0
+        return None, None, str(e), 0
     finally:
         conn.close()
 
@@ -186,15 +257,15 @@ st.title("🔄 Atualização 3S Checkout")
 
 if st.button("🔄 Atualizar 3S Checkout", type="primary", use_container_width=True):
     with st.spinner("Buscando dados do banco..."):
-        resumo_3s, erro_3s, total_registros = buscar_dados_3s_checkout()
+        resumo_vendas, resumo_pagamento, erro_3s, total_registros = buscar_dados_3s_checkout()
         
         if erro_3s:
             st.error(f"❌ Erro ao buscar dados: {erro_3s}")
-        elif resumo_3s is not None and not resumo_3s.empty:
+        elif resumo_vendas is not None and not resumo_vendas.empty:
             st.success(f"✅ {total_registros} registros processados com sucesso!")
             
             # Verificar empresas não localizadas
-            empresas_nao_localizadas = resumo_3s[resumo_3s["Loja"].isna()]["Código Everest"].unique()
+            empresas_nao_localizadas = resumo_vendas[resumo_vendas["Loja"].isna()]["Código Everest"].unique()
             if len(empresas_nao_localizadas) > 0:
                 empresas_nao_localizadas_str = "<br>".join(empresas_nao_localizadas)
                 mensagem = f"""
@@ -207,11 +278,11 @@ if st.button("🔄 Atualizar 3S Checkout", type="primary", use_container_width=T
                 st.success("✅ Todas as lojas foram localizadas na Tabela_Empresa!")
             
             # Mostrar resumo do período
-            datas_validas = pd.to_datetime(resumo_3s["Data"], format="%d/%m/%Y", errors='coerce').dropna()
+            datas_validas = pd.to_datetime(resumo_vendas["Data"], format="%d/%m/%Y", errors='coerce').dropna()
             if not datas_validas.empty:
                 data_inicial = datas_validas.min().strftime("%d/%m/%Y")
                 data_final_str = datas_validas.max().strftime("%d/%m/%Y")
-                valor_total = resumo_3s["Fat.Total"].sum()
+                valor_total = resumo_vendas["Fat.Total"].sum()
                 valor_total_formatado = f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
                 
                 col1, col2 = st.columns(2)
@@ -226,10 +297,11 @@ if st.button("🔄 Atualizar 3S Checkout", type="primary", use_container_width=T
                         <div style='font-size:30px; color:green;'>{valor_total_formatado}</div>
                     """, unsafe_allow_html=True)
             
-            # Gera Excel no formato padrão
+            # ✅ Gera Excel com 2 abas
             output = BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                resumo_3s.to_excel(writer, sheet_name='Faturamento Servico', index=False)
+                resumo_vendas.to_excel(writer, sheet_name='Faturamento Servico', index=False)
+                resumo_pagamento.to_excel(writer, sheet_name='Meio de Pagamento', index=False)
             output.seek(0)
             
             st.download_button(

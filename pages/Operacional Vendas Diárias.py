@@ -171,7 +171,7 @@ with st.spinner("⏳ Processando..."):
             resumo = pd.merge(resumo, df_empresa[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]], 
                              on="Código Everest", how="left")
             # ✅ Converte nome da loja para MAIÚSCULO
-            resumo["Loja"] = resumo["Loja"].astype(str).str.strip()
+            resumo["Loja"] = resumo["Loja"].astype(str).str.strip().str.lower()
             # 12. Adicionar colunas adicionais
             resumo['Ticket'] = 0  # Não temos essa informação no agrupamento
             resumo['Mês'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.strftime('%b').str.lower()
@@ -554,7 +554,7 @@ with st.spinner("⏳ Processando..."):
                     df_empresa["Loja"] = df_empresa["Loja"].astype(str).str.strip().str.lower()
                     df_final["Loja"] = df_final["Loja"].astype(str).str.strip().str.lower()
                     df_final = pd.merge(df_final, df_empresa, on="Loja", how="left")
-                    df_final["Loja"] = df_final["Loja"].astype(str).str.strip()
+                    df_final["Loja"] = df_final["Loja"].astype(str).str.strip().str.lower()
                     colunas_finais = [
                         "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
                         "Código Grupo Everest", "Fat.Total", "Serv/Tx", "Fat.Real",
@@ -949,7 +949,7 @@ with st.spinner("⏳ Processando..."):
             # Completar códigos a partir do catálogo
             df = preencher_codigos_por_loja(df, catalogo)
             # ✅ Converte nome da loja para MAIÚSCULO
-            df["Loja"] = df["Loja"].astype(str).str.strip()
+            df["Loja"] = df["Loja"].astype(str).str.strip().str.lower()
             cols_preferidas = [
                 "Data","Dia da Semana","Loja","Código Everest","Grupo","Código Grupo Everest",
                 "Fat.Total","Serv/Tx","Fat.Real","Ticket","Mês","Ano"
@@ -2499,7 +2499,7 @@ with st.spinner("⏳ Processando..."):
         tabela = resumo[["Mês","Sistema","Total_Faturamento","Total_MeioPagamento","Diferença"]].copy()
     
         # Aparência do Sistema (title) apenas visual; manteremos UPPER nas comparações
-        tabela["Sistema_View"] = tabela["Sistema"].str.title()
+        tabela["Sistema_View"] = tabela["Sistema"].str.lower()
         # Formata BRL em texto
         for col in ["Total_Faturamento","Total_MeioPagamento","Diferença"]:
             tabela[col] = tabela[col].apply(_fmt_brl)

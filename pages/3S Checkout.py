@@ -2,7 +2,7 @@ import streamlit as st
 import psycopg2
 import pandas as pd
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import ast
 
@@ -32,8 +32,20 @@ def get_conn():
 
 
 def fetch_filtered_data(conn):
-    """Busca dados da tabela order_picture de forma simples"""
-    query = "SELECT store_code, business_dt, total_gross, custom_properties, order_code FROM public.order_picture"
+    """Busca dados da tabela order_picture com JOIN na order_picture_tender"""
+    query = """
+        SELECT 
+            op.order_picture_id,
+            op.store_code, 
+            op.business_dt, 
+            op.total_gross, 
+            op.custom_properties, 
+            op.order_code,
+            opt.details as tender_details
+        FROM public.order_picture op
+        LEFT JOIN public.order_picture_tender opt 
+            ON op.order_picture_id = opt.order_picture_id
+    """
     return pd.read_sql(query, conn)
 
 
@@ -67,16 +79,39 @@ def parse_props(x):
     return x if isinstance(x, dict) else {}
 
 
+def expand_details(df):
+    """Expande a coluna tender_details (JSON) em colunas separadas"""
+    if 'tender_details' not in df.columns:
+        return df
+    
+    # Parse do JSON
+    details_parsed = df['tender_details'].apply(parse_props)
+    
+    # Extrai as chaves únicas de todos os JSONs
+    all_keys = set()
+    for d in details_parsed:
+        if isinstance(d, dict):
+            all_keys.update(d.keys())
+    
+    # Cria uma coluna para cada chave encontrada
+    for key in sorted(all_keys):
+        df[f'tender_{key}'] = details_parsed.apply(lambda x: x.get(key) if isinstance(x, dict) else None)
+    
+    return df
+
+
 def export_order_picture_to_excel():
     conn = get_conn()
     try:
-        # Busca dados do banco
+        # Busca dados do banco (agora com JOIN)
         df = fetch_filtered_data(conn)
         
-        # 1. Converter datas e filtrar (A partir de 01/12/2025)
+        # ✅ 1. Converter datas e filtrar (De 01/12/2025 ATÉ ONTEM)
         df['business_dt'] = pd.to_datetime(df['business_dt'], errors='coerce')
-        data_corte = datetime(2025, 12, 1)
-        df = df[df['business_dt'] >= data_corte].copy()
+        data_corte_inicio = datetime(2025, 12, 1)
+        data_corte_fim = (datetime.now() - timedelta(days=1)).replace(hour=23, minute=59, second=59)
+        
+        df = df[(df['business_dt'] >= data_corte_inicio) & (df['business_dt'] <= data_corte_fim)].copy()
         
         # 2. Filtrar lojas (Excluir 0000, 0001, 9999)
         df['store_code'] = df['store_code'].astype(str).str.zfill(4)
@@ -91,10 +126,13 @@ def export_order_picture_to_excel():
         # 4. Desconsiderar registros com VOID_TYPE preenchido
         df = df[df['VOID_TYPE'].isna() | (df['VOID_TYPE'] == "") | (df['VOID_TYPE'] == 0)].copy()
         
-        # 5. Criar coluna de data sem hora para agrupamento
+        # 5. EXPANDIR A COLUNA tender_details
+        df = expand_details(df)
+        
+        # 6. Criar coluna de data sem hora para agrupamento
         df['data'] = df['business_dt'].dt.date
         
-        # 6. Agrupar totais por store_code e data
+        # 7. Agrupar totais por store_code e data
         resumo = df.groupby(['store_code', 'data']).agg(
             qtd_pedidos=('order_code', 'count'),
             total_gross=('total_gross', 'sum'),
@@ -102,12 +140,14 @@ def export_order_picture_to_excel():
         ).reset_index()
         
         # Limpa datas para o Excel
+        df = sanitize_for_excel(df)
         resumo = sanitize_for_excel(resumo)
         
-        # Gera Excel
+        # Gera Excel com DUAS ABAS
         output = BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             resumo.to_excel(writer, sheet_name="Resumo_Loja_Dia", index=False)
+            df.to_excel(writer, sheet_name="Dados_Detalhados", index=False)
 
         output.seek(0)
         return output, None, len(df), len(resumo)
@@ -120,14 +160,16 @@ def export_order_picture_to_excel():
 # -------------------------
 # UI
 # -------------------------
-st.title("Exportar order_picture - Resumo por Loja e Dia")
+st.title("Exportar order_picture + Tender - Resumo por Loja e Dia")
 st.subheader("Filtros aplicados:")
 st.markdown("""
-- **Período**: a partir de 01/12/2025
+- **Período**: de 01/12/2025 até o dia anterior (D-1)
 - **Lojas excluídas**: 0000, 0001, 9999
 - **Registros válidos**: sem VOID_TYPE preenchido
-- **Colunas**: store_code, business_dt, total_gross, TIP_AMOUNT
-- **Resultado**: Totais agrupados por loja e dia
+- **Colunas**: store_code, business_dt, total_gross, TIP_AMOUNT + **tender_details expandido**
+- **Resultado**: 
+  - Aba 1: Totais agrupados por loja e dia
+  - Aba 2: Dados detalhados com tender expandido
 """)
 
 # Botão de reset (caso fique travado)
@@ -142,7 +184,7 @@ if st.button("Gerar Excel", type="primary", disabled=st.session_state["exporting
     status = st.status("Processando dados...", expanded=True)
 
     try:
-        status.write("Conectando ao banco e lendo tabela...")
+        status.write("Conectando ao banco e lendo tabelas...")
         excel_bytes, err, total_rows, summary_rows = export_order_picture_to_excel()
 
         if err:

@@ -1,7 +1,5 @@
 # pages/OperacionalVendasDiarias.py
 
-
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -13,14 +11,13 @@ from oauth2client.service_account import ServiceAccountCredentials
 import json
 import plotly.express as px
 from datetime import date
+import psycopg2
+
 st.set_page_config(page_title="Vendas Diarias", layout="wide")
 
 # 🔒 Bloqueia o acesso caso o usuário não esteja logado
 if not st.session_state.get("acesso_liberado"):
     st.stop()
-from contextlib import contextmanager
-st.set_page_config(page_title="Spinner personalizado | MMR Consultoria")
-import streamlit as st
 
 # ======================
 # CSS para esconder só a barra superior
@@ -54,10 +51,86 @@ with st.spinner("⏳ Processando..."):
     df_empresa = pd.DataFrame(planilha_empresa.worksheet("Tabela Empresa").get_all_records())
     
     # ================================
-    # 2. Configuração inicial do app
+    # 2. Função de conexão com PostgreSQL
     # ================================
+    CERT_PATH = "aws-us-east-2-bundle.pem"
     
-    #st.title("📋 Relatório de Vendas Diarias")
+    if "cert_written" not in st.session_state:
+        with open(CERT_PATH, "w", encoding="utf-8") as f:
+            f.write(st.secrets["certs"]["aws_rds_us_east_2"])
+        st.session_state["cert_written"] = True
+    
+    def get_db_conn():
+        return psycopg2.connect(
+            host=st.secrets["db"]["host"],
+            port=st.secrets["db"]["port"],
+            dbname=st.secrets["db"]["database"],
+            user=st.secrets["db"]["user"],
+            password=st.secrets["db"]["password"],
+            sslmode="verify-full",
+            sslrootcert=CERT_PATH,
+        )
+    
+    def buscar_dados_3s_checkout():
+        """Busca dados do 3S Checkout direto do banco e processa"""
+        conn = get_db_conn()
+        try:
+            # ✅ Filtro direto no SQL (muito mais rápido)
+            query = """
+                SELECT store_code, business_dt, total_gross, custom_properties, order_code, state_id
+                FROM public.order_picture
+                WHERE business_dt >= '2024-12-01'
+                  AND store_code NOT IN ('0000', '0001', '9999')
+                  AND state_id = 5
+            """
+            df = pd.read_sql(query, conn)
+            
+            # 1. Converter datas (já vem filtrado do banco)
+            df['business_dt'] = pd.to_datetime(df['business_dt'], errors='coerce')
+            
+            # 2. Garantir formato de loja (já filtrado no SQL, mas mantém por segurança)
+            df['store_code'] = df['store_code'].astype(str).str.zfill(4)
+            
+            # 3. Extrair campos de custom_properties
+            def parse_props(x):
+                if pd.isna(x): return {}
+                try:
+                    if isinstance(x, str):
+                        return json.loads(x)
+                except:
+                    try:
+                        import ast
+                        return ast.literal_eval(x)
+                    except:
+                        return {}
+                return x if isinstance(x, dict) else {}
+            
+            props = df['custom_properties'].apply(parse_props)
+            df['TIP_AMOUNT'] = pd.to_numeric(props.apply(lambda x: x.get('TIP_AMOUNT')), errors='coerce').fillna(0)
+            df['VOID_TYPE'] = props.apply(lambda x: x.get('VOID_TYPE'))
+            
+            # 4. Desconsiderar registros com VOID_TYPE preenchido
+            df = df[df['VOID_TYPE'].isna() | (df['VOID_TYPE'] == "") | (df['VOID_TYPE'] == 0)].copy()
+            
+            # 5. Criar coluna de data sem hora para agrupamento
+            df['data'] = df['business_dt'].dt.date
+            
+            # 6. Agrupar totais por store_code e data
+            resumo = df.groupby(['store_code', 'data']).agg(
+                qtd_pedidos=('order_code', 'count'),
+                total_gross=('total_gross', 'sum'),
+                total_tip=('TIP_AMOUNT', 'sum')
+            ).reset_index()
+            
+            return resumo, None, len(df)
+        except Exception as e:
+            return None, str(e), 0
+        finally:
+            conn.close()
+    
+    # ================================
+    # Configuração inicial do app
+    # ================================
     
     # 🎨 Estilizar abas
     st.markdown("""
@@ -82,39 +155,32 @@ with st.spinner("⏳ Processando..."):
         planilha = gc.open("Vendas diarias")
         aba_fat = planilha.worksheet("Fat Sistema Externo")
         data_raw = aba_fat.get_all_values()
-    
-        # Converte para DataFrame e define o cabeçalho
+
         if len(data_raw) > 1:
-            df = pd.DataFrame(data_raw[1:], columns=data_raw[0])  # usa a primeira linha como header
-    
-            # Limpa espaços extras nos nomes de colunas
+            df = pd.DataFrame(data_raw[1:], columns=data_raw[0])
             df.columns = df.columns.str.strip()
-    
-            # Verifica se coluna "Data" está presente
+
             if "Data" in df.columns:
                 df["Data"] = pd.to_datetime(df["Data"].astype(str).str.strip(), dayfirst=True, errors="coerce")
-    
-    
+
                 ultima_data_valida = df["Data"].dropna()
-    
+
                 if not ultima_data_valida.empty:
                     ultima_data = ultima_data_valida.max().strftime("%d/%m/%Y")
-    
-                    # Corrige coluna Grupo
+
                     df["Grupo"] = df["Grupo"].astype(str).str.strip().str.lower()
                     df["GrupoExibicao"] = df["Grupo"].apply(
                         lambda g: "Bares" if g in ["amata", "aurora"]
                         else "Kopp" if g == "kopp"
                         else "GF4"
                     )
-    
-                    # Contagem de lojas únicas por grupo
+
                     df_ultima_data = df[df["Data"] == df["Data"].max()]
                     contagem = df_ultima_data.groupby("GrupoExibicao")["Loja"].nunique().to_dict()
                     qtde_bares = contagem.get("Bares", 0)
                     qtde_kopp = contagem.get("Kopp", 0)
                     qtde_gf4 = contagem.get("GF4", 0)
-    
+
                     resumo_msg = f"""
                     <div style='font-size:13px; color:gray; margin-bottom:10px;'>
                     📅 Última atualização: {ultima_data} — Bares ({qtde_bares}), Kopp ({qtde_kopp}), GF4 ({qtde_gf4})
@@ -130,7 +196,7 @@ with st.spinner("⏳ Processando..."):
     except Exception as e:
         st.error(f"❌ Erro ao processar dados do Google Sheets: {e}")
     
-    # Cabeçalho bonito (depois do estilo)
+    # Cabeçalho bonito
     st.markdown("""
         <div style='display: flex; align-items: center; gap: 10px; margin-bottom: 20px;'>
             <img src='https://img.icons8.com/color/48/graph.png' width='40'/>
@@ -138,25 +204,51 @@ with st.spinner("⏳ Processando..."):
         </div>
     """, unsafe_allow_html=True)
     
-    
     # ================================
     # 3. Separação em ABAS
     # ================================
     aba1, aba3, aba4, aba5 = st.tabs(["📄 Upload e Processamento", "🔄 Atualizar Google Sheets","📊 Auditar integração Everest","📊 Auditar Faturamento X Meio Pagamento"])
-    # ---- Helper para saber qual aba está ativa ----
-    def marcar_aba_ativa(tab_key: str):
-        st.session_state["_aba_ativa"] = tab_key
+    
     # ================================
     # 📄 Aba 1 - Upload e Processamento
     # ================================
     
     with aba1:
+        # ========== BOTÃO 3S CHECKOUT ==========
+        st.markdown("### 🔄 Atualização Automática 3S Checkout")
+        
+        if st.button("🔄 Atualizar 3S Checkout", type="primary", use_container_width=True):
+            with st.spinner("Buscando dados do banco..."):
+                resumo_3s, erro_3s, total_registros = buscar_dados_3s_checkout()
+                
+                if erro_3s:
+                    st.error(f"❌ Erro ao buscar dados: {erro_3s}")
+                elif resumo_3s is not None and not resumo_3s.empty:
+                    st.success(f"✅ {total_registros} registros processados com sucesso!")
+                    
+                    # Gera Excel
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                        resumo_3s.to_excel(writer, sheet_name="Resumo_Loja_Dia", index=False)
+                    output.seek(0)
+                    
+                    st.download_button(
+                        label="📥 Baixar Excel 3S Checkout",
+                        data=output,
+                        file_name=f"3s_checkout_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.warning("⚠️ Nenhum dado encontrado para o período.")
+        
+        st.markdown("---")
+        st.markdown("### 📁 Upload Manual")
        
         uploaded_file = st.file_uploader(
             "📁 Clique para selecionar ou arraste aqui o arquivo Excel com os dados de faturamento",
             type=["xls", "xlsx"]
         )    
-    
+
         if uploaded_file:
             try:
                 xls = pd.ExcelFile(uploaded_file)
@@ -224,8 +316,6 @@ with st.spinner("⏳ Processando..."):
                     df_agrupado["Ano"] = df_agrupado["Data"].dt.year
                     df_final = df_agrupado
                 
-                   
-                    
                 # =====================================================
                 # FORMATO 3 — PRIMEIRA ABA | ID LOJA DINÂMICO
                 # =====================================================
@@ -302,17 +392,7 @@ with st.spinner("⏳ Processando..."):
                     df_final["Mês"] = df_final["Data"].dt.strftime("%b").str.lower()
                     df_final["Ano"] = df_final["Data"].dt.year
                     df_final["Sistema"] = "3SCheckout"
-                    #st.success("✅ Arquivo identificado como FORMATO 3 (ID LOJA dinâmico)")
-                    #st.write("Linhas processadas:", len(df_final))
-                    #st.dataframe(df_final.head(5))
-    
-            #except Exception as e:
-            #    st.error(f"❌ Erro ao processar o arquivo: {e}")
 
-                #else:
-                #    st.error("❌ O arquivo enviado não contém uma aba reconhecida. Esperado: 'FaturamentoDiarioPorLoja' ou 'Relatório 100113'.")
-                #    st.stop()
-    
                 dias_traducao = {
                     "Monday": "segunda-feira", "Tuesday": "terça-feira", "Wednesday": "quarta-feira",
                     "Thursday": "quinta-feira", "Friday": "sexta-feira", "Saturday": "sábado", "Sunday": "domingo"

@@ -76,7 +76,8 @@ def buscar_dados_3s_checkout():
                 op.custom_properties, 
                 op.order_code, 
                 op.state_id,
-                opt.details as tender_details
+                opt.details as tender_details,
+                opt.total_gross as tender_total_gross
             FROM public.order_picture op
             LEFT JOIN public.order_picture_tender opt 
                 ON op.order_picture_id = opt.order_picture_id
@@ -126,7 +127,7 @@ def buscar_dados_3s_checkout():
         resumo_vendas = df.copy()
         
         # Renomear e criar colunas
-        resumo_vendas['order_picture_id'] = resumo_vendas['order_picture_id']  # ✅ Mantém o ID
+        resumo_vendas['order_picture_id'] = resumo_vendas['order_picture_id']
         resumo_vendas['Código Everest'] = resumo_vendas['store_code']
         resumo_vendas['Data'] = resumo_vendas['business_dt'].dt.strftime('%d/%m/%Y')
         resumo_vendas['Fat.Real'] = resumo_vendas['total_gross']
@@ -166,7 +167,7 @@ def buscar_dados_3s_checkout():
         resumo_vendas['Ano'] = resumo_vendas['business_dt'].dt.year
         resumo_vendas['Sistema'] = '3SCheckout'
         
-        # ✅ Ordenar colunas COM order_picture_id
+        # Ordenar colunas
         colunas_vendas = [
             "order_picture_id", "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
             "Código Grupo Everest", "Fat.Total", "Serv/Tx", "Fat.Real",
@@ -186,16 +187,27 @@ def buscar_dados_3s_checkout():
         
         # ================================
         # ABA 2: MEIO DE PAGAMENTO (SEM AGRUPAMENTO)
+        # ✅ USANDO VALORES DA TABELA order_picture_tender
         # ================================
-        resumo_pagamento = df.copy()
+        # Filtrar apenas registros que têm tender (meio de pagamento)
+        resumo_pagamento = df[df['tender_tenderDescr'].notna()].copy()
+        
+        # ✅ Extrair TIP_AMOUNT do tender_details (não do custom_properties)
+        tender_parsed_pag = resumo_pagamento['tender_details'].apply(parse_props)
+        resumo_pagamento['tender_tip_amount'] = pd.to_numeric(
+            tender_parsed_pag.apply(lambda x: x.get('tipAmount', 0) if isinstance(x, dict) else 0), 
+            errors='coerce'
+        ).fillna(0)
         
         # Renomear e criar colunas
-        resumo_pagamento['order_picture_id'] = resumo_pagamento['order_picture_id']  # ✅ Mantém o ID
+        resumo_pagamento['order_picture_id'] = resumo_pagamento['order_picture_id']
         resumo_pagamento['Código Everest'] = resumo_pagamento['store_code']
         resumo_pagamento['Data'] = resumo_pagamento['business_dt'].dt.strftime('%d/%m/%Y')
         resumo_pagamento['Meio de Pagamento'] = resumo_pagamento['tender_tenderDescr']
-        resumo_pagamento['Fat.Real'] = resumo_pagamento['total_gross']
-        resumo_pagamento['Serv/Tx'] = resumo_pagamento['TIP_AMOUNT']
+        
+        # ✅ USAR tender_total_gross ao invés de total_gross
+        resumo_pagamento['Fat.Real'] = pd.to_numeric(resumo_pagamento['tender_total_gross'], errors='coerce').fillna(0)
+        resumo_pagamento['Serv/Tx'] = resumo_pagamento['tender_tip_amount']
         resumo_pagamento['Fat.Total'] = resumo_pagamento['Fat.Real'] + resumo_pagamento['Serv/Tx']
         
         # Adicionar Dia da Semana
@@ -216,7 +228,7 @@ def buscar_dados_3s_checkout():
         resumo_pagamento['Ano'] = resumo_pagamento['business_dt'].dt.year
         resumo_pagamento['Sistema'] = '3SCheckout'
         
-        # ✅ Ordenar colunas COM order_picture_id
+        # Ordenar colunas
         colunas_pagamento = [
             "order_picture_id", "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
             "Código Grupo Everest", "Meio de Pagamento", "Fat.Total", "Serv/Tx", "Fat.Real",

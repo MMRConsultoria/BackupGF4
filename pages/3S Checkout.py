@@ -66,7 +66,7 @@ def buscar_dados_3s_checkout():
         # ✅ CALCULA A DATA DE ONTEM
         ontem = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
         
-        # ✅ QUERY COM JOIN para trazer tender
+        # ✅ QUERY COM JOIN - Usando tender_amount da tabela opt
         query = """
             SELECT 
                 op.order_picture_id,
@@ -77,7 +77,7 @@ def buscar_dados_3s_checkout():
                 op.order_code, 
                 op.state_id,
                 opt.details as tender_details,
-                opt.total_gross as tender_total_gross
+                opt.tender_amount as opt_tender_amount
             FROM public.order_picture op
             LEFT JOIN public.order_picture_tender opt 
                 ON op.order_picture_id = opt.order_picture_id
@@ -115,18 +115,22 @@ def buscar_dados_3s_checkout():
         # 4. Desconsiderar registros com VOID_TYPE preenchido
         df = df[df['VOID_TYPE'].isna() | (df['VOID_TYPE'] == "") | (df['VOID_TYPE'] == 0)].copy()
         
-        # 5. ✅ Extrair tender_tenderDescr do JSON tender_details
+        # 5. ✅ Extrair dados do JSON tender_details
         tender_parsed = df['tender_details'].apply(parse_props)
         df['tender_tenderDescr'] = tender_parsed.apply(
             lambda x: x.get("tenderDescr") if isinstance(x, dict) else None
         )
+        # Extrair tipAmount do JSON (caso precise para a aba de pagamentos)
+        df['tender_tip_amount'] = pd.to_numeric(
+            tender_parsed.apply(lambda x: x.get('tipAmount', 0) if isinstance(x, dict) else 0), 
+            errors='coerce'
+        ).fillna(0)
         
         # ================================
         # ABA 1: VENDAS (SEM AGRUPAMENTO)
         # ================================
         resumo_vendas = df.copy()
         
-        # Renomear e criar colunas
         resumo_vendas['order_picture_id'] = resumo_vendas['order_picture_id']
         resumo_vendas['Código Everest'] = resumo_vendas['store_code']
         resumo_vendas['Data'] = resumo_vendas['business_dt'].dt.strftime('%d/%m/%Y')
@@ -134,14 +138,12 @@ def buscar_dados_3s_checkout():
         resumo_vendas['Serv/Tx'] = resumo_vendas['TIP_AMOUNT']
         resumo_vendas['Fat.Total'] = resumo_vendas['Fat.Real'] + resumo_vendas['Serv/Tx']
         
-        # Adicionar Dia da Semana
         dias_traducao = {
             "Monday": "segunda-feira", "Tuesday": "terça-feira", "Wednesday": "quarta-feira",
             "Thursday": "quinta-feira", "Friday": "sexta-feira", "Saturday": "sábado", "Sunday": "domingo"
         }
         resumo_vendas['Dia da Semana'] = resumo_vendas['business_dt'].dt.day_name().map(dias_traducao)
         
-        # Buscar informações da Tabela Empresa
         df_empresa["Código Everest"] = (
             df_empresa["Código Everest"]
             .astype(str)
@@ -153,96 +155,69 @@ def buscar_dados_3s_checkout():
         resumo_vendas = pd.merge(resumo_vendas, df_empresa[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]], 
                          on="Código Everest", how="left")
         
-        # Converte nome da loja para minúsculo
         resumo_vendas["Loja"] = resumo_vendas["Loja"].astype(str).str.strip().str.lower()
-        
-        # Adicionar colunas adicionais
         resumo_vendas['Ticket'] = 0
         resumo_vendas['Mês'] = resumo_vendas['business_dt'].dt.strftime('%b').str.lower()
         
         meses = {"jan": "jan", "feb": "fev", "mar": "mar", "apr": "abr", "may": "mai", "jun": "jun",
                  "jul": "jul", "aug": "ago", "sep": "set", "oct": "out", "nov": "nov", "dec": "dez"}
         resumo_vendas["Mês"] = resumo_vendas["Mês"].map(meses)
-        
         resumo_vendas['Ano'] = resumo_vendas['business_dt'].dt.year
         resumo_vendas['Sistema'] = '3SCheckout'
         
-        # Ordenar colunas
         colunas_vendas = [
             "order_picture_id", "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
             "Código Grupo Everest", "Fat.Total", "Serv/Tx", "Fat.Real",
             "Ticket", "Mês", "Ano", "Sistema"
         ]
-        
         resumo_vendas = resumo_vendas[[c for c in colunas_vendas if c in resumo_vendas.columns]]
         
-        # Arredondar valores
         for col in ["Fat.Total", "Serv/Tx", "Fat.Real", "Ticket"]:
             if col in resumo_vendas.columns:
                 resumo_vendas[col] = resumo_vendas[col].round(2)
         
-        # Ordenar por Data e Loja
         resumo_vendas['Data_Ordenada'] = pd.to_datetime(resumo_vendas['Data'], format='%d/%m/%Y')
         resumo_vendas = resumo_vendas.sort_values(by=['Data_Ordenada', 'Loja']).drop(columns='Data_Ordenada')
         
         # ================================
         # ABA 2: MEIO DE PAGAMENTO (SEM AGRUPAMENTO)
-        # ✅ USANDO VALORES DA TABELA order_picture_tender
+        # ✅ USANDO tender_amount da tabela opt
         # ================================
-        # Filtrar apenas registros que têm tender (meio de pagamento)
         resumo_pagamento = df[df['tender_tenderDescr'].notna()].copy()
         
-        # ✅ Extrair TIP_AMOUNT do tender_details (não do custom_properties)
-        tender_parsed_pag = resumo_pagamento['tender_details'].apply(parse_props)
-        resumo_pagamento['tender_tip_amount'] = pd.to_numeric(
-            tender_parsed_pag.apply(lambda x: x.get('tipAmount', 0) if isinstance(x, dict) else 0), 
-            errors='coerce'
-        ).fillna(0)
-        
-        # Renomear e criar colunas
         resumo_pagamento['order_picture_id'] = resumo_pagamento['order_picture_id']
         resumo_pagamento['Código Everest'] = resumo_pagamento['store_code']
         resumo_pagamento['Data'] = resumo_pagamento['business_dt'].dt.strftime('%d/%m/%Y')
         resumo_pagamento['Meio de Pagamento'] = resumo_pagamento['tender_tenderDescr']
         
-        # ✅ USAR tender_total_gross ao invés de total_gross
-        resumo_pagamento['Fat.Real'] = pd.to_numeric(resumo_pagamento['tender_total_gross'], errors='coerce').fillna(0)
+        # ✅ Fat.Real = tender_amount da tabela order_picture_tender
+        resumo_pagamento['Fat.Real'] = pd.to_numeric(resumo_pagamento['opt_tender_amount'], errors='coerce').fillna(0)
         resumo_pagamento['Serv/Tx'] = resumo_pagamento['tender_tip_amount']
         resumo_pagamento['Fat.Total'] = resumo_pagamento['Fat.Real'] + resumo_pagamento['Serv/Tx']
         
-        # Adicionar Dia da Semana
         resumo_pagamento['Dia da Semana'] = resumo_pagamento['business_dt'].dt.day_name().map(dias_traducao)
-        
-        # Buscar informações da Tabela Empresa
         resumo_pagamento["Código Everest"] = resumo_pagamento["Código Everest"].astype(str).str.strip()
         
         resumo_pagamento = pd.merge(resumo_pagamento, df_empresa[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]], 
                          on="Código Everest", how="left")
         
-        # Converte nome da loja para minúsculo
         resumo_pagamento["Loja"] = resumo_pagamento["Loja"].astype(str).str.strip().str.lower()
-        
-        # Adicionar colunas adicionais
         resumo_pagamento['Mês'] = resumo_pagamento['business_dt'].dt.strftime('%b').str.lower()
         resumo_pagamento["Mês"] = resumo_pagamento["Mês"].map(meses)
         resumo_pagamento['Ano'] = resumo_pagamento['business_dt'].dt.year
         resumo_pagamento['Sistema'] = '3SCheckout'
         
-        # Ordenar colunas
         colunas_pagamento = [
             "order_picture_id", "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
             "Código Grupo Everest", "Meio de Pagamento", "Fat.Total", "Serv/Tx", "Fat.Real",
             "Mês", "Ano", "Sistema"
         ]
-        
         resumo_pagamento = resumo_pagamento[[c for c in colunas_pagamento if c in resumo_pagamento.columns]]
         
-        # Arredondar valores
         for col in ["Fat.Total", "Serv/Tx", "Fat.Real"]:
             if col in resumo_pagamento.columns:
                 resumo_pagamento[col] = resumo_pagamento[col].round(2)
         
-        # Ordenar por Data, Loja e Meio de Pagamento
         resumo_pagamento['Data_Ordenada'] = pd.to_datetime(resumo_pagamento['Data'], format='%d/%m/%Y')
         resumo_pagamento = resumo_pagamento.sort_values(by=['Data_Ordenada', 'Loja', 'Meio de Pagamento']).drop(columns='Data_Ordenada')
         

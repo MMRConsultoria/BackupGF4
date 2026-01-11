@@ -60,7 +60,7 @@ else:
 # 4. Função de busca e processamento
 # ================================
 def buscar_dados_3s_checkout():
-    """Busca dados do 3S Checkout direto do banco e processa"""
+    """Busca dados do 3S Checkout direto do banco e processa SEM AGRUPAMENTO"""
     conn = get_db_conn()
     try:
         # ✅ CALCULA A DATA DE ONTEM
@@ -120,32 +120,24 @@ def buscar_dados_3s_checkout():
             lambda x: x.get("tenderDescr") if isinstance(x, dict) else None
         )
         
-        # 6. Criar coluna de data sem hora para agrupamento
-        df['data'] = df['business_dt'].dt.date
-        
         # ================================
-        # ABA 1: VENDAS (agrupado por loja e data)
+        # ABA 1: VENDAS (SEM AGRUPAMENTO)
         # ================================
-        resumo_vendas = df.groupby(['store_code', 'data']).agg(
-            Fat_Real=('total_gross', 'sum'),
-            Serv_Tx=('TIP_AMOUNT', 'sum')
-        ).reset_index()
+        resumo_vendas = df.copy()
         
-        # Calcular Fat.Total
-        resumo_vendas['Fat_Total'] = resumo_vendas['Fat_Real'] + resumo_vendas['Serv_Tx']
-        
-        # Renomear colunas
-        resumo_vendas.columns = ['Código Everest', 'Data', 'Fat.Real', 'Serv/Tx', 'Fat.Total']
-        
-        # Formatar Data
-        resumo_vendas['Data'] = pd.to_datetime(resumo_vendas['Data']).dt.strftime('%d/%m/%Y')
+        # Renomear e criar colunas
+        resumo_vendas['Código Everest'] = resumo_vendas['store_code']
+        resumo_vendas['Data'] = resumo_vendas['business_dt'].dt.strftime('%d/%m/%Y')
+        resumo_vendas['Fat.Real'] = resumo_vendas['total_gross']
+        resumo_vendas['Serv/Tx'] = resumo_vendas['TIP_AMOUNT']
+        resumo_vendas['Fat.Total'] = resumo_vendas['Fat.Real'] + resumo_vendas['Serv/Tx']
         
         # Adicionar Dia da Semana
         dias_traducao = {
             "Monday": "segunda-feira", "Tuesday": "terça-feira", "Wednesday": "quarta-feira",
             "Thursday": "quinta-feira", "Friday": "sexta-feira", "Saturday": "sábado", "Sunday": "domingo"
         }
-        resumo_vendas.insert(1, 'Dia da Semana', pd.to_datetime(resumo_vendas['Data'], format='%d/%m/%Y').dt.day_name().map(dias_traducao))
+        resumo_vendas['Dia da Semana'] = resumo_vendas['business_dt'].dt.day_name().map(dias_traducao)
         
         # Buscar informações da Tabela Empresa
         df_empresa["Código Everest"] = (
@@ -164,13 +156,13 @@ def buscar_dados_3s_checkout():
         
         # Adicionar colunas adicionais
         resumo_vendas['Ticket'] = 0
-        resumo_vendas['Mês'] = pd.to_datetime(resumo_vendas['Data'], format='%d/%m/%Y').dt.strftime('%b').str.lower()
+        resumo_vendas['Mês'] = resumo_vendas['business_dt'].dt.strftime('%b').str.lower()
         
         meses = {"jan": "jan", "feb": "fev", "mar": "mar", "apr": "abr", "may": "mai", "jun": "jun",
                  "jul": "jul", "aug": "ago", "sep": "set", "oct": "out", "nov": "nov", "dec": "dez"}
         resumo_vendas["Mês"] = resumo_vendas["Mês"].map(meses)
         
-        resumo_vendas['Ano'] = pd.to_datetime(resumo_vendas['Data'], format='%d/%m/%Y').dt.year
+        resumo_vendas['Ano'] = resumo_vendas['business_dt'].dt.year
         resumo_vendas['Sistema'] = '3SCheckout'
         
         # Ordenar colunas
@@ -192,24 +184,20 @@ def buscar_dados_3s_checkout():
         resumo_vendas = resumo_vendas.sort_values(by=['Data_Ordenada', 'Loja']).drop(columns='Data_Ordenada')
         
         # ================================
-        # ABA 2: MEIO DE PAGAMENTO (agrupado por loja, data e tender)
+        # ABA 2: MEIO DE PAGAMENTO (SEM AGRUPAMENTO)
         # ================================
-        resumo_pagamento = df.groupby(['store_code', 'data', 'tender_tenderDescr']).agg(
-            Fat_Real=('total_gross', 'sum'),
-            Serv_Tx=('TIP_AMOUNT', 'sum')
-        ).reset_index()
+        resumo_pagamento = df.copy()
         
-        # Calcular Fat.Total
-        resumo_pagamento['Fat_Total'] = resumo_pagamento['Fat_Real'] + resumo_pagamento['Serv_Tx']
-        
-        # Renomear colunas
-        resumo_pagamento.columns = ['Código Everest', 'Data', 'Meio de Pagamento', 'Fat.Real', 'Serv/Tx', 'Fat.Total']
-        
-        # Formatar Data
-        resumo_pagamento['Data'] = pd.to_datetime(resumo_pagamento['Data']).dt.strftime('%d/%m/%Y')
+        # Renomear e criar colunas
+        resumo_pagamento['Código Everest'] = resumo_pagamento['store_code']
+        resumo_pagamento['Data'] = resumo_pagamento['business_dt'].dt.strftime('%d/%m/%Y')
+        resumo_pagamento['Meio de Pagamento'] = resumo_pagamento['tender_tenderDescr']
+        resumo_pagamento['Fat.Real'] = resumo_pagamento['total_gross']
+        resumo_pagamento['Serv/Tx'] = resumo_pagamento['TIP_AMOUNT']
+        resumo_pagamento['Fat.Total'] = resumo_pagamento['Fat.Real'] + resumo_pagamento['Serv/Tx']
         
         # Adicionar Dia da Semana
-        resumo_pagamento.insert(1, 'Dia da Semana', pd.to_datetime(resumo_pagamento['Data'], format='%d/%m/%Y').dt.day_name().map(dias_traducao))
+        resumo_pagamento['Dia da Semana'] = resumo_pagamento['business_dt'].dt.day_name().map(dias_traducao)
         
         # Buscar informações da Tabela Empresa
         resumo_pagamento["Código Everest"] = resumo_pagamento["Código Everest"].astype(str).str.strip()
@@ -221,9 +209,9 @@ def buscar_dados_3s_checkout():
         resumo_pagamento["Loja"] = resumo_pagamento["Loja"].astype(str).str.strip().str.lower()
         
         # Adicionar colunas adicionais
-        resumo_pagamento['Mês'] = pd.to_datetime(resumo_pagamento['Data'], format='%d/%m/%Y').dt.strftime('%b').str.lower()
+        resumo_pagamento['Mês'] = resumo_pagamento['business_dt'].dt.strftime('%b').str.lower()
         resumo_pagamento["Mês"] = resumo_pagamento["Mês"].map(meses)
-        resumo_pagamento['Ano'] = pd.to_datetime(resumo_pagamento['Data'], format='%d/%m/%Y').dt.year
+        resumo_pagamento['Ano'] = resumo_pagamento['business_dt'].dt.year
         resumo_pagamento['Sistema'] = '3SCheckout'
         
         # Ordenar colunas

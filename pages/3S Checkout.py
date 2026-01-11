@@ -126,6 +126,7 @@ def buscar_dados_3s_checkout():
         resumo_vendas = df.copy()
         
         # Renomear e criar colunas
+        resumo_vendas['order_picture_id'] = resumo_vendas['order_picture_id']  # ✅ Mantém o ID
         resumo_vendas['Código Everest'] = resumo_vendas['store_code']
         resumo_vendas['Data'] = resumo_vendas['business_dt'].dt.strftime('%d/%m/%Y')
         resumo_vendas['Fat.Real'] = resumo_vendas['total_gross']
@@ -165,9 +166,9 @@ def buscar_dados_3s_checkout():
         resumo_vendas['Ano'] = resumo_vendas['business_dt'].dt.year
         resumo_vendas['Sistema'] = '3SCheckout'
         
-        # Ordenar colunas
+        # ✅ Ordenar colunas COM order_picture_id
         colunas_vendas = [
-            "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
+            "order_picture_id", "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
             "Código Grupo Everest", "Fat.Total", "Serv/Tx", "Fat.Real",
             "Ticket", "Mês", "Ano", "Sistema"
         ]
@@ -189,6 +190,7 @@ def buscar_dados_3s_checkout():
         resumo_pagamento = df.copy()
         
         # Renomear e criar colunas
+        resumo_pagamento['order_picture_id'] = resumo_pagamento['order_picture_id']  # ✅ Mantém o ID
         resumo_pagamento['Código Everest'] = resumo_pagamento['store_code']
         resumo_pagamento['Data'] = resumo_pagamento['business_dt'].dt.strftime('%d/%m/%Y')
         resumo_pagamento['Meio de Pagamento'] = resumo_pagamento['tender_tenderDescr']
@@ -214,9 +216,9 @@ def buscar_dados_3s_checkout():
         resumo_pagamento['Ano'] = resumo_pagamento['business_dt'].dt.year
         resumo_pagamento['Sistema'] = '3SCheckout'
         
-        # Ordenar colunas
+        # ✅ Ordenar colunas COM order_picture_id
         colunas_pagamento = [
-            "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
+            "order_picture_id", "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
             "Código Grupo Everest", "Meio de Pagamento", "Fat.Total", "Serv/Tx", "Fat.Real",
             "Mês", "Ano", "Sistema"
         ]

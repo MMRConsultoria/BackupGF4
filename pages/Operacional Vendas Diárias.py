@@ -914,49 +914,23 @@ with st.spinner("⏳ Processando..."):
             except:
                 return float("nan")
         
-        #def _ns_header(s: str) -> str:
-        #    import unicodedata, re
-        #    s = str(s or "").strip().lower()
-        #    s = unicodedata.normalize("NFD", s)
-        #    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
-        #    return re.sub(r"[^a-z0-9]+", " ", s).strip()
-        #def _fmt_brl(v: float) -> str:
-        #    try:
-        #        v = float(v)
-        #    except:
-        #        return "R$ 0,00"
-        #    s = f"{v:,.2f}"
-        #    # vira padrão brasileiro: milhar com ponto e decimal com vírgula
-        #    s = s.replace(",", "_").replace(".", ",").replace("_", ".")
-        #    return f"R$ {s}"
-
-        # sua função de normalização (já fornecida)
         def _ns_header(s: str) -> str:
             import unicodedata, re
             s = str(s or "").strip().lower()
             s = unicodedata.normalize("NFD", s)
             s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
             return re.sub(r"[^a-z0-9]+", " ", s).strip()
-        
-        # normaliza a coluna Sistema e detecta substring "lancamento manual"
-        sistema_norm = df_final["Sistema"].astype(str).apply(_ns_header)
-        # usa contains para detectar em qualquer parte do texto (não sensível a NaN)
-        is_manual = sistema_norm.str.contains("lancamento manual", regex=False, na=False)
-        
-        # máscaras existentes (mantém o resto da lógica)
-        M_in = df_final["M"].astype(str).str.strip()
-        N_in = df_final["N"].astype(str).str.strip()
-        is_dup_M = M_in.isin(dados_existentes)
-        is_dup_N = N_in.isin(dados_n_existentes)
-        
-        mask_manual_dup_M = is_dup_M & is_manual
-        mask_suspeitos = ((~is_dup_M) & is_dup_N) | mask_manual_dup_M
-        mask_novos     = (~is_dup_M) & (~is_dup_N)
-        mask_dup_M     = is_dup_M & (~is_manual)
-        
-        df_suspeitos = df_final.loc[mask_suspeitos].copy()
-        df_novos     = df_final.loc[mask_novos].copy()
-        df_dup_M     = df_final.loc[mask_dup_M].copy()
+        def _fmt_brl(v: float) -> str:
+            try:
+                v = float(v)
+            except:
+                return "R$ 0,00"
+            s = f"{v:,.2f}"
+            # vira padrão brasileiro: milhar com ponto e decimal com vírgula
+            s = s.replace(",", "_").replace(".", ",").replace("_", ".")
+            return f"R$ {s}"
+
+       
 
         
         def inferir_sistema_mes_ano(df: pd.DataFrame):

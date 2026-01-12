@@ -1,4 +1,5 @@
     
+
 # pages/OperacionalVendasDiarias.py
 
 import streamlit as st
@@ -315,57 +316,30 @@ with st.spinner("⏳ Processando..."):
     # 📄 Aba 1 - Upload e Processamento
     # ================================
     
-
     with aba1:
         # ========== BOTÃO 3S CHECKOUT ==========
-        st.markdown("#### 🔄 Sincronização")
+        st.markdown("### 🔄 Atualização Automática 3S Checkout")
         
-        # CSS Robusto: Ataca diretamente o botão que contém a nossa KEY
-        st.markdown("""
-            <style>
-            /* Procura o botão que tem o atributo 'key' igual a 'btn_3s_checkout' */
-            div[data-testid="stButton"] button:has(div[p="btn_3s_checkout"]),
-            div[data-testid="stButton"] button[key="btn_3s_checkout"],
-            .stButton > button:has(div:contains("Atualizar 3S Checkout")) {
-                background-color: rgb(255, 75, 75) !important;
-                color: white !important;
-                border: 1px solid rgb(255, 75, 75) !important;
-                border-radius: 4px !important;
-                padding: 0.25rem 0.75rem !important;
-            }
-
-            /* Garante que o texto dentro do botão seja branco */
-            div[data-testid="stButton"] button:has(div[p="btn_3s_checkout"]) p {
-                color: white !important;
-            }
+        if st.button("🔄 Atualizar 3S Checkout", type="primary", use_container_width=True):
+            st.session_state.modo_3s = True
+            st.session_state.df_final = None  # limpa upload manual
             
-            /* Efeito Hover */
-            div[data-testid="stButton"] button:has(div[p="btn_3s_checkout"]):hover {
-                background-color: rgb(200, 0, 0) !important;
-                border-color: rgb(200, 0, 0) !important;
-            }
-            </style>
-        """, unsafe_allow_html=True)
-        
-        col_btn, _ = st.columns([1.5, 8.5])
-        
-        with col_btn:
-            # A KEY aqui deve ser EXATAMENTE igual à do CSS acima
-            if st.button("Atualizar 3S Checkout", key="btn_3s_checkout"):
-                limpar_estado_aba_google()
-                with st.spinner("Buscando dados..."):
-                    resumo_3s, erro_3s, total_registros = buscar_dados_3s_checkout()
-        
-                    if erro_3s:
-                        st.error(f"❌ Erro: {erro_3s}")
-                    elif resumo_3s is not None and not resumo_3s.empty:
-                        st.session_state.resumo_3s = resumo_3s
-                        st.session_state.total_registros_3s = total_registros
-                        st.rerun()
-                    else:
-                        st.warning("⚠️ Sem dados.")
-   
+            # ✅ LIMPA ABA 2
+            limpar_estado_aba_google()
             
+            with st.spinner("Buscando dados do banco..."):
+                resumo_3s, erro_3s, total_registros = buscar_dados_3s_checkout()
+                
+                if erro_3s:
+                    st.error(f"❌ Erro ao buscar dados: {erro_3s}")
+                elif resumo_3s is not None and not resumo_3s.empty:
+                    # Salvar no session_state
+                    st.session_state.resumo_3s = resumo_3s
+                    st.session_state.total_registros_3s = total_registros
+                    st.rerun()
+                else:
+                    st.warning("⚠️ Nenhum dado encontrado para o período.")
+        
         # ========== EXIBIR RESULTADO 3S ==========
         if st.session_state.modo_3s and "resumo_3s" in st.session_state:
             resumo_3s = st.session_state.resumo_3s
@@ -1497,17 +1471,8 @@ with st.spinner("⏳ Processando..."):
         # ------------------------ HEADER / BOTÕES ------------------------
         LINK_SHEET = "https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU/edit?usp=sharing"
         # ✅ Aceita TANTO df_final (upload) QUANTO resumo_3s (3S Checkout)
-        df_final = st.session_state.get("df_final")
-        resumo_3s = st.session_state.get("resumo_3s")
-        
-        if isinstance(df_final, pd.DataFrame) and not df_final.empty:
-            df_sess = df_final
-        elif isinstance(resumo_3s, pd.DataFrame) and not resumo_3s.empty:
-            df_sess = resumo_3s
-        else:
-            df_sess = None
-        
-        has_df = df_sess is not None   
+        df_sess = st.session_state.get("df_final") or st.session_state.get("resumo_3s")
+        has_df = isinstance(df_sess, pd.DataFrame) and not df_sess.empty    
 
     
         c1, c2, c3, c4 = st.columns([1, 1, 1, 1])

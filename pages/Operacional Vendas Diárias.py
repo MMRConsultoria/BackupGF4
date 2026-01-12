@@ -317,11 +317,14 @@ with st.spinner("⏳ Processando..."):
     
     with aba1:
         # ========== BOTÃO 3S CHECKOUT ==========
-        st.markdown("### 🔄 Atualização Automática 3S Checkout")
-        
-        if st.button("🔄 Atualizar 3S Checkout", type="primary", use_container_width=True):
-            st.session_state.modo_3s = True
-            st.session_state.df_final = None  # limpa upload manual
+        st.markdown("#### 🔄 Atualização Automática 3S Checkout")
+
+        col_btn, _ = st.columns([1, 6])  # coluna estreita à esquerda
+        with col_btn:
+            if st.button("🔄 Atualizar 3S", key="btn_3s_left"):
+                st.session_state.modo_3s = True
+                st.session_state.df_final = None  # limpa upload manual
+                # restante do fluxo...
             
             # ✅ LIMPA ABA 2
             limpar_estado_aba_google()

@@ -317,7 +317,7 @@ with st.spinner("⏳ Processando..."):
     
     with aba1:
         # ========== BOTÃO 3S CHECKOUT ==========
-        st.markdown("#### 🔄 Atualização Automática 3S Checkout")
+        #st.markdown("#### 🔄 Atualização Automática 3S Checkout")
 
         col_btn, _ = st.columns([1, 6])  # coluna estreita à esquerda
         with col_btn:

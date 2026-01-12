@@ -44,19 +44,51 @@ def limpar_estado_aba_google():
 # CSS para esconder só a barra superior
 # ======================
 # ADICIONE AQUI:
+# ======= CSS QUE TRAVA O BOTÃO (COLE NO TOPO DO ARQUIVO) =======
 st.markdown(
     """
     <style>
-    /* Estilo específico para o botão dentro da div 'botao-vermelho' */
+    /* Container fixo que NÃO encolhe */
+    div.botao-vermelho {
+        display: inline-flex !important;
+        flex: 0 0 220px !important;    /* NÃO encolher; largura fixa */
+        min-width: 220px !important;
+        max-width: 220px !important;
+        box-sizing: border-box !important;
+        margin: 8px 0 !important;
+    }
+
+    /* Botão ocupa 100% do container fixo e não quebra texto */
     div.botao-vermelho > button {
+        width: 100% !important;
+        height: 40px !important;
+        min-height: 40px !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        box-sizing: border-box !important;
+
+        /* Estética (opcional) */
         background-color: #ff4b4b !important;
         color: white !important;
+        font-weight: 600 !important;
+        font-size: 14px !important;
+        border-radius: 6px !important;
         border: none !important;
-        padding: 4px 10px !important;
-        font-size: 12px !important;
-        height: auto !important;
-        width: auto !important;
+        padding: 0 12px !important;
+        box-shadow: none !important;
     }
+
+    /* Se Streamlit usar elementos internos (<p>, <span>) */
+    div.botao-vermelho > button * {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+    }
+
     div.botao-vermelho > button:hover {
         background-color: #ff3333 !important;
         color: white !important;
@@ -65,7 +97,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
 st.markdown("""
     <style>
         [data-testid="stToolbar"] {
@@ -141,17 +172,18 @@ with st.spinner("⏳ Processando..."):
             from datetime import datetime, timedelta
             agora_brasil = datetime.utcnow() - timedelta(hours=3)
             ontem = (agora_brasil - timedelta(days=1)).date()
+            data_inicio = ontem - timedelta(days=29)  # últimos 30 dias incluindo ontem
             
             # ✅ FILTRO SQL: Adicionado "AND business_dt <= %s"
             query = """
                 SELECT store_code, business_dt, total_gross, custom_properties, order_code, state_id
                 FROM public.order_picture
-                WHERE business_dt >= '2024-12-01'
+                WHERE business_dt >= %s
                   AND business_dt <= %s
                   AND store_code NOT IN ('0000', '0001', '9999')
                   AND state_id = 5
             """
-            df = pd.read_sql(query, conn, params=(ontem,))
+            df = pd.read_sql(query, conn, params=(data_inicio, ontem))
             
             
             # 1. Converter datas
@@ -342,40 +374,33 @@ with st.spinner("⏳ Processando..."):
     with aba1:
         # ========== BOTÃO 3S CHECKOUT ==========
         st.markdown("### 🔄 Atualização Automática 3S Checkout")
-        
-        # Colunas: pequena à esquerda para o botão, resto do conteúdo à direita
-        col_btn, col_rest = st.columns([1, 9])
     
-        with col_btn:
-            # div com classe para aplicar CSS apenas a este botão
-            st.markdown('<div class="botao-vermelho">', unsafe_allow_html=True)
+        # wrapper flex para manter o botão à esquerda e o conteúdo à direita
+        st.markdown('<div style="display:flex; align-items:flex-start; gap:20px;">', unsafe_allow_html=True)
     
-            # Botão pequeno e discreto — não usar use_container_width para não esticar
-            if st.button("🔄 Atualizar 3S Checkout", key="btn_3s_vermelho"):
-                st.session_state.modo_3s = True
-                st.session_state.df_final = None  # limpa upload manual
+        # container fixo para o botão — largura fixa definida pelo CSS global (.botao-vermelho)
+        st.markdown('<div class="botao-vermelho">', unsafe_allow_html=True)
+        if st.button("🔄 Atualizar 3S Checkout", key="btn_3s_vermelho"):
+            st.session_state.modo_3s = True
+            st.session_state.df_final = None  # limpa upload manual
+            limpar_estado_aba_google()
     
-                # ✅ LIMPA ABA 2
-                limpar_estado_aba_google()
+            with st.spinner("Buscando dados do banco..."):
+                resumo_3s, erro_3s, total_registros = buscar_dados_3s_checkout()
+                if erro_3s:
+                    st.error(f"❌ Erro ao buscar dados: {erro_3s}")
+                elif resumo_3s is not None and not resumo_3s.empty:
+                    st.session_state.resumo_3s = resumo_3s
+                    st.session_state.total_registros_3s = total_registros
+                    st.rerun()
+                else:
+                    st.warning("⚠️ Nenhum dado encontrado para o período.")
+        st.markdown('</div>', unsafe_allow_html=True)
     
-                with st.spinner("Buscando dados do banco..."):
-                    resumo_3s, erro_3s, total_registros = buscar_dados_3s_checkout()
-    
-                    if erro_3s:
-                        st.error(f"❌ Erro ao buscar dados: {erro_3s}")
-                    elif resumo_3s is not None and not resumo_3s.empty:
-                        # Salvar no session_state
-                        st.session_state.resumo_3s = resumo_3s
-                        st.session_state.total_registros_3s = total_registros
-                        st.rerun()
-                    else:
-                        st.warning("⚠️ Nenhum dado encontrado para o período.")
-    
-            st.markdown('</div>', unsafe_allow_html=True)
-    
-        with col_rest:
-            # Resto do conteúdo da aba (tabela, filtros, etc.)
-            pass
+        # Conteúdo principal da aba (ocupando o resto do espaço)
+        st.markdown('<div style="flex:1 1 auto;">', unsafe_allow_html=True)
+        # -------------------- coloque aqui o resto do conteúdo da aba (tabelas, filtros etc.) --------------------
+        st.markdown('</div>', unsafe_allow_html=True)
         
         # ========== EXIBIR RESULTADO 3S ==========
         if st.session_state.modo_3s and "resumo_3s" in st.session_state:

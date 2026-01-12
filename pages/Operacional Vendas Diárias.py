@@ -1471,8 +1471,17 @@ with st.spinner("⏳ Processando..."):
         # ------------------------ HEADER / BOTÕES ------------------------
         LINK_SHEET = "https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU/edit?usp=sharing"
         # ✅ Aceita TANTO df_final (upload) QUANTO resumo_3s (3S Checkout)
-        df_sess = st.session_state.get("df_final") or st.session_state.get("resumo_3s")
-        has_df = isinstance(df_sess, pd.DataFrame) and not df_sess.empty    
+        df_final = st.session_state.get("df_final")
+        resumo_3s = st.session_state.get("resumo_3s")
+        
+        if isinstance(df_final, pd.DataFrame) and not df_final.empty:
+            df_sess = df_final
+        elif isinstance(resumo_3s, pd.DataFrame) and not resumo_3s.empty:
+            df_sess = resumo_3s
+        else:
+            df_sess = None
+        
+        has_df = df_sess is not None
 
     
         c1, c2, c3, c4 = st.columns([1, 1, 1, 1])

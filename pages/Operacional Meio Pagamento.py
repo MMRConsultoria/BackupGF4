@@ -87,6 +87,20 @@ def _rename_cols_formato2(df: pd.DataFrame) -> pd.DataFrame:
     return df.rename(columns=new_names)
 
 # ======================
+# Helper para escolher primeiro DF válido
+# ======================
+def first_nonempty_df(*candidates):
+    for x in candidates:
+        if x is None:
+            continue
+        if isinstance(x, pd.DataFrame):
+            if not x.empty:
+                return x
+        else:
+            return x
+    return None
+
+# ======================
 # Leitura robusta por assinatura (xls/xlsx/xlsm)
 # ======================
 def _sniff_excel_kind(uploaded_file) -> str:
@@ -874,7 +888,10 @@ with st.spinner("⏳ Processando..."):
         st.markdown("🔗 [Abrir planilha Faturamento Meio Pagamento](https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU)")
     
         # ✅ Aceita TANTO df_meio_pagamento (upload) QUANTO resumo_3s_mp (3S Checkout)
-        df_para_enviar = st.session_state.get("resumo_3s_mp") or st.session_state.get("df_meio_pagamento")
+        df_para_enviar = first_nonempty_df(
+            st.session_state.get("resumo_3s_mp"),
+            st.session_state.get("df_meio_pagamento")
+        )
         
         if df_para_enviar is None or df_para_enviar.empty:
             st.warning("⚠️ Primeiro faça o upload e o processamento na Aba 1 ou rode a atualização 3S Checkout.")

@@ -197,7 +197,7 @@ def buscar_dados_3s_checkout():
         resumo_vendas = resumo_vendas.sort_values(by=['Data_Ordenada', 'Loja']).drop(columns='Data_Ordenada')
         
         # ========================================
-        # PROCESSAR order_picture_tender (ABA PAGAMENTO) ✅ DESCONTANDO TROCO
+        # PROCESSAR order_picture_tender (ABA PAGAMENTO) ✅ RESUMIDO
         # ========================================
         if not df_tender.empty:
             # Converter colunas numéricas
@@ -215,62 +215,57 @@ def buscar_dados_3s_checkout():
                 errors='coerce'
             ).fillna(0)
             
-            # Criar colunas da aba PAGAMENTO
-            resumo_pagamento = df_tender.copy()
-            
-            # ✅ TROCO
-            resumo_pagamento["Troco"] = resumo_pagamento["change_amount"]
-            
-            # ✅ Fat.Real líquido (descontando troco)
-            resumo_pagamento["Fat.Real"] = resumo_pagamento["tender_amount"] - resumo_pagamento["Troco"]
-            
-            # Impedir Fat.Real negativo por dados ruins
-            resumo_pagamento["Fat.Real"] = resumo_pagamento["Fat.Real"].clip(lower=0)
-            
-            resumo_pagamento["Serv/Tx"] = resumo_pagamento["tender_tip_amount"]
-            resumo_pagamento["Fat.Total"] = resumo_pagamento["Fat.Real"] + resumo_pagamento["Serv/Tx"]
+            # Calcular Fat.Real e Fat.Total
+            df_tender["Fat.Real"] = (df_tender["tender_amount"] - df_tender["change_amount"]).clip(lower=0)
+            df_tender["Serv/Tx"] = df_tender["tender_tip_amount"]
+            df_tender["Fat.Total"] = df_tender["Fat.Real"] + df_tender["Serv/Tx"]
             
             # ✅ PROCV - Buscar dados do pedido (store_code, data, etc)
-            resumo_pagamento = resumo_pagamento.merge(
+            df_tender = df_tender.merge(
                 df_op[['order_picture_id', 'store_code', 'business_dt']],
                 on='order_picture_id',
                 how='left'
             )
             
-            resumo_pagamento['Código Everest'] = resumo_pagamento['store_code'].astype(str).str.lstrip('0').str.strip()
-            resumo_pagamento['Data'] = pd.to_datetime(resumo_pagamento['business_dt'], errors='coerce').dt.strftime('%d/%m/%Y')
-            resumo_pagamento['Dia da Semana'] = pd.to_datetime(resumo_pagamento['business_dt'], errors='coerce').dt.day_name().map(dias_traducao)
+            df_tender['Código Everest'] = df_tender['store_code'].astype(str).str.lstrip('0').str.strip()
+            df_tender['Data'] = pd.to_datetime(df_tender['business_dt'], errors='coerce').dt.strftime('%d/%m/%Y')
+            df_tender['Dia da Semana'] = pd.to_datetime(df_tender['business_dt'], errors='coerce').dt.day_name().map(dias_traducao)
             
             # PROCV com Tabela Empresa
-            resumo_pagamento = pd.merge(
-                resumo_pagamento, 
+            df_tender = pd.merge(
+                df_tender, 
                 df_empresa[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]], 
                 on="Código Everest", 
                 how="left"
             )
             
-            resumo_pagamento["Loja"] = resumo_pagamento["Loja"].astype(str).str.strip().str.lower()
+            df_tender["Loja"] = df_tender["Loja"].astype(str).str.strip().str.lower()
             
             # Colunas adicionais
-            resumo_pagamento['Mês'] = pd.to_datetime(resumo_pagamento['business_dt'], errors='coerce').dt.strftime('%b').str.lower()
-            resumo_pagamento["Mês"] = resumo_pagamento["Mês"].map(meses)
-            resumo_pagamento['Ano'] = pd.to_datetime(resumo_pagamento['business_dt'], errors='coerce').dt.year
-            resumo_pagamento['Sistema'] = '3SCheckout'
+            df_tender['Mês'] = pd.to_datetime(df_tender['business_dt'], errors='coerce').dt.strftime('%b').str.lower()
+            df_tender["Mês"] = df_tender["Mês"].map(meses)
+            df_tender['Ano'] = pd.to_datetime(df_tender['business_dt'], errors='coerce').dt.year
+            df_tender['Sistema'] = '3SCheckout'
             
-            # Selecionar e ordenar colunas ✅ COM TROCO
-            colunas_pagamento = [
-                "order_picture_id", "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
-                "Código Grupo Everest", "Meio de Pagamento", "Fat.Total", "Serv/Tx", "Fat.Real",
-                "Troco", "Mês", "Ano", "Sistema"
-            ]
-            resumo_pagamento = resumo_pagamento[[c for c in colunas_pagamento if c in resumo_pagamento.columns]]
+            # ✅ AGRUPAR por Data, Loja e Meio de Pagamento
+            resumo_pagamento = df_tender.groupby(
+                ['Data', 'Dia da Semana', 'Meio de Pagamento', 'Loja', 'Código Everest', 'Grupo', 'Código Grupo Everest', 'Mês', 'Ano', 'Sistema'],
+                dropna=False
+            ).agg({
+                'Fat.Total': 'sum'
+            }).reset_index()
             
             # Arredondar valores
-            for col in ["Fat.Total", "Serv/Tx", "Fat.Real", "Troco"]:
-                if col in resumo_pagamento.columns:
-                    resumo_pagamento[col] = resumo_pagamento[col].round(2)
+            resumo_pagamento['Fat.Total'] = resumo_pagamento['Fat.Total'].round(2)
             
-            # Ordenar
+            # ✅ ORDENAR colunas conforme solicitado
+            colunas_pagamento = [
+                "Data", "Dia da Semana", "Meio de Pagamento", "Loja", "Código Everest", 
+                "Grupo", "Código Grupo Everest", "Fat.Total", "Mês", "Ano", "Sistema"
+            ]
+            resumo_pagamento = resumo_pagamento[colunas_pagamento]
+            
+            # Ordenar por data e loja
             resumo_pagamento['Data_Ordenada'] = pd.to_datetime(resumo_pagamento['Data'], format='%d/%m/%Y', errors='coerce')
             resumo_pagamento = resumo_pagamento.sort_values(by=['Data_Ordenada', 'Loja', 'Meio de Pagamento']).drop(columns='Data_Ordenada')
         else:

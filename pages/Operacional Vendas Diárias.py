@@ -1051,18 +1051,22 @@ with st.spinner("⏳ Processando..."):
                     df_final["Ano"] = df_final["Ano"].apply(to_intstr)
             
                 # ==== M e N com a data correta (YYYY-MM-DD)
+                # ==== M e N com a data correta (YYYY-MM-DD) + Sistema
                 fat_col = "Fat.Total" if "Fat.Total" in df_final.columns else "Fat Total"
                 df_final[fat_col] = pd.to_numeric(df_final[fat_col], errors="coerce").fillna(0)
                 loja_str = df_final["Loja"].astype(str)
-            
-                # M = yyyy-mm-dd + Fat.Total + Loja
+                sistema_str = df_final["Sistema"].astype(str).str.strip()
+                
+                # M = yyyy-mm-dd + Fat.Total + Loja + Sistema
                 df_final["M"] = (df_final["_Data_ymd"].fillna("") +
                                  df_final[fat_col].astype(str) +
-                                 loja_str).str.strip()
-            
-                # N = yyyy-mm-dd + Codigo
+                                 loja_str +
+                                 sistema_str).str.strip()
+                
+                # N = yyyy-mm-dd + Codigo + Sistema
                 df_final["N"] = (df_final["_Data_ymd"].fillna("") +
-                                 df_final[cod_col].astype(str)).str.strip()
+                                 df_final[cod_col].astype(str) +
+                                 sistema_str).str.strip()
             
                 # Limpa coluna auxiliar
                 df_final.drop(columns=["_Data_ymd"], errors="ignore", inplace=True)
@@ -1126,20 +1130,28 @@ with st.spinner("⏳ Processando..."):
                     df_final = df_final.rename(columns=rename_map)
         
                 # M/N finais (garantia)
+                # M/N finais (garantia) + Sistema
                 fat_col = "Fat.Total" if "Fat.Total" in df_final.columns else "Fat Total"
                 df_final["Data_Formatada"] = pd.to_datetime(
                     df_final["Data"], origin="1899-12-30", unit="D", errors="coerce"
                 ).dt.strftime("%Y-%m-%d")
                 df_final[fat_col] = pd.to_numeric(df_final[fat_col], errors="coerce").fillna(0)
+                sistema_str = df_final["Sistema"].astype(str).str.strip()
+                
                 df_final["M"] = (df_final["Data_Formatada"].fillna("") +
                                  df_final[fat_col].astype(str) +
-                                 df_final["Loja"].astype(str)).str.strip()
+                                 df_final["Loja"].astype(str) +
+                                 sistema_str).str.strip()
+                
                 if "Codigo Everest" in df_final.columns:
                     df_final["Codigo Everest"] = pd.to_numeric(df_final["Codigo Everest"], errors="coerce").fillna(0).astype(int).astype(str)
                 elif "Código Everest" in df_final.columns:
                     df_final["Código Everest"] = pd.to_numeric(df_final["Código Everest"], errors="coerce").fillna(0).astype(int).astype(str)
+                
                 cod_col = "Codigo Everest" if "Codigo Everest" in df_final.columns else "Código Everest"
-                df_final["N"] = (df_final["Data_Formatada"].fillna("") + df_final[cod_col].astype(str)).str.strip()
+                df_final["N"] = (df_final["Data_Formatada"].fillna("") + 
+                                 df_final[cod_col].astype(str) +
+                                 sistema_str).str.strip()
                 df_final = df_final.drop(columns=["Data_Formatada"], errors="ignore")
         
                 # reindex
@@ -1832,10 +1844,13 @@ with st.spinner("⏳ Processando..."):
                         if col_ano:
                             row_out[col_ano] = ano_val
                         # M / N
+                        # M / N + Sistema
                         if col_M:
-                            row_out[col_M] = M_val
+                            sis_val = str(d.get("Sistema", "") or "").strip()
+                            row_out[col_M] = (data_ymd + str(fat_total) + loja + sis_val) if col_M else None
                         if col_N:
-                            row_out[col_N] = N_val
+                            sis_val = str(d.get("Sistema", "") or "").strip()
+                            row_out[col_N] = (data_ymd + cod_emp + sis_val) if col_N else None
                         # --- Sistema ---
                         if col_sis:
                             sis_val = str(d.get("Sistema", "") or "").strip()

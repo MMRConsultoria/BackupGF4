@@ -326,22 +326,22 @@ with st.spinner("⏳ Processando..."):
                 st.session_state.df_final = None  # limpa upload manual
                 # restante do fluxo...
             
-            # ✅ LIMPA ABA 2
-            limpar_estado_aba_google()
-            
-            with st.spinner("Buscando dados do banco..."):
-                resumo_3s, erro_3s, total_registros = buscar_dados_3s_checkout()
+                # ✅ LIMPA ABA 2
+                limpar_estado_aba_google()
                 
-                if erro_3s:
-                    st.error(f"❌ Erro ao buscar dados: {erro_3s}")
-                elif resumo_3s is not None and not resumo_3s.empty:
-                    # Salvar no session_state
-                    st.session_state.resumo_3s = resumo_3s
-                    st.session_state.total_registros_3s = total_registros
-                    st.rerun()
-                else:
-                    st.warning("⚠️ Nenhum dado encontrado para o período.")
-        
+                with st.spinner("Buscando dados do banco..."):
+                    resumo_3s, erro_3s, total_registros = buscar_dados_3s_checkout()
+                    
+                    if erro_3s:
+                        st.error(f"❌ Erro ao buscar dados: {erro_3s}")
+                    elif resumo_3s is not None and not resumo_3s.empty:
+                        # Salvar no session_state
+                        st.session_state.resumo_3s = resumo_3s
+                        st.session_state.total_registros_3s = total_registros
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ Nenhum dado encontrado para o período.")
+            
         # ========== EXIBIR RESULTADO 3S ==========
         if st.session_state.modo_3s and "resumo_3s" in st.session_state:
             resumo_3s = st.session_state.resumo_3s

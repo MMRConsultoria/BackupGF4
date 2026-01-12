@@ -320,51 +320,50 @@ with st.spinner("⏳ Processando..."):
         # ========== BOTÃO 3S CHECKOUT ==========
         st.markdown("#### 🔄 Sincronização")
         
-        # CSS usando um seletor de container para garantir a cor
+        # CSS Robusto: Ataca diretamente o botão que contém a nossa KEY
         st.markdown("""
             <style>
-            /* Estiliza o botão dentro da div com a classe 'botao-vermelho' */
-            div.botao-vermelho > div [data-testid="stButton"] button {
-                background-color: #FF4B4B !important;
+            /* Procura o botão que tem o atributo 'key' igual a 'btn_3s_checkout' */
+            div[data-testid="stButton"] button:has(div[p="btn_3s_checkout"]),
+            div[data-testid="stButton"] button[key="btn_3s_checkout"],
+            .stButton > button:has(div:contains("Atualizar 3S Checkout")) {
+                background-color: rgb(255, 75, 75) !important;
                 color: white !important;
-                border: 1px solid #FF4B4B !important;
+                border: 1px solid rgb(255, 75, 75) !important;
                 border-radius: 4px !important;
-                padding: 4px 12px !important;
-                transition: all 0.2s ease;
+                padding: 0.25rem 0.75rem !important;
+            }
+
+            /* Garante que o texto dentro do botão seja branco */
+            div[data-testid="stButton"] button:has(div[p="btn_3s_checkout"]) p {
+                color: white !important;
             }
             
-            /* Hover */
-            div.botao-vermelho > div [data-testid="stButton"] button:hover {
-                background-color: #D32F2F !important;
-                border-color: #D32F2F !important;
-                color: white !important;
+            /* Efeito Hover */
+            div[data-testid="stButton"] button:has(div[p="btn_3s_checkout"]):hover {
+                background-color: rgb(200, 0, 0) !important;
+                border-color: rgb(200, 0, 0) !important;
             }
             </style>
         """, unsafe_allow_html=True)
         
-        col_btn, col_espaco = st.columns([1.5, 8.5])
+        col_btn, _ = st.columns([1.5, 8.5])
         
         with col_btn:
-            # Envolvemos o botão em uma div com a classe que criamos no CSS
-            st.markdown('<div class="botao-vermelho">', unsafe_allow_html=True)
-            btn_clicado = st.button("Atualizar 3S Checkout", key="btn_3s_checkout")
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            if btn_clicado:
+            # A KEY aqui deve ser EXATAMENTE igual à do CSS acima
+            if st.button("Atualizar 3S Checkout", key="btn_3s_checkout"):
                 limpar_estado_aba_google()
-                with st.spinner("Buscando dados do banco..."):
+                with st.spinner("Buscando dados..."):
                     resumo_3s, erro_3s, total_registros = buscar_dados_3s_checkout()
         
                     if erro_3s:
-                        st.error(f"❌ Erro ao buscar dados: {erro_3s}")
+                        st.error(f"❌ Erro: {erro_3s}")
                     elif resumo_3s is not None and not resumo_3s.empty:
                         st.session_state.resumo_3s = resumo_3s
                         st.session_state.total_registros_3s = total_registros
-                        st.success(f"✅ {total_registros} registros carregados!")
                         st.rerun()
                     else:
-                        st.warning("⚠️ Nenhum dado encontrado.")
-            
+                        st.warning("⚠️ Sem dados.")
    
             
         # ========== EXIBIR RESULTADO 3S ==========

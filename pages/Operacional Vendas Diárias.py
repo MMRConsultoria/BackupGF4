@@ -339,7 +339,7 @@ with st.spinner("⏳ Processando..."):
     # 📄 Aba 1 - Upload e Processamento
     # ================================
     
-       with aba1:
+    with aba1:
         # ========== BOTÃO 3S CHECKOUT ==========
         st.markdown("### 🔄 Atualização Automática 3S Checkout")
         

@@ -202,7 +202,8 @@ def excel_file_smart(uploaded_file):
         uploaded_file.seek(0)
     except Exception:
         pass
-    eng = "xlrd" if kind == "xls' else 'openpyxl'" if False else ("openpyxl" if kind != "xls" else "xlrd")  # fallback
+
+    eng = "xlrd" if kind == "xls" else "openpyxl"
     try:
         return pd.ExcelFile(uploaded_file, engine=eng)
     except Exception as e1:

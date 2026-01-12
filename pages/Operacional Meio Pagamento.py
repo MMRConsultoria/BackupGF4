@@ -345,7 +345,9 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
     """Busca dados do 3S Checkout direto do banco e processa para Meio de Pagamento"""
     conn = get_db_conn()
     try:
-        ontem = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        # Ajuste para fuso horário de Brasília (UTC-3) e define "ontem" como limite máximo
+        agora_brasil = datetime.utcnow() - timedelta(hours=3)
+        ontem = (agora_brasil - timedelta(days=1)).date()
         
         # BASE (order_picture) p/ VOID_TYPE + store/date
         query_op = """
@@ -361,6 +363,9 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
               AND state_id = 5
         """
         df_op = pd.read_sql(query_op, conn, params=(ontem,))
+        
+        if df_op.empty:
+            return None, f"Nenhum dado encontrado até {ontem.strftime('%d/%m/%Y')}", 0
         if df_op.empty:
             return None, "Nenhum dado encontrado", 0
 

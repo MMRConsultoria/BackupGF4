@@ -1,4 +1,4 @@
-
+    
 # pages/OperacionalVendasDiarias.py
 
 import streamlit as st
@@ -315,53 +315,58 @@ with st.spinner("⏳ Processando..."):
     # 📄 Aba 1 - Upload e Processamento
     # ================================
     
+
     with aba1:
         # ========== BOTÃO 3S CHECKOUT ==========
-        # Aba 1 - Upload e Processamento (trecho do botão 3S)
         st.markdown("#### 🔄 Sincronização")
         
-        # CSS (coloque uma vez no topo da página, mas pode ficar aqui também)
+        # CSS Refinado: Garante que o fundo e o texto não fiquem "metade/metade"
         st.markdown("""
-        <style>
-        /* Estiliza botões (atenção: afeta todos os botões) */
-        div.stButton > button {
-            background-color: #d32f2f !important;
-            color: white !important;
-            border: none !important;
-            padding: 0.25rem 0.6rem !important;
-            font-size: 0.9rem !important;
-            height: 32px !important;
-        }
-        div.stButton > button:hover {
-            background-color: #b71c1c !important;
-        }
-        </style>
+            <style>
+            /* Seletor ultra-específico para o botão com a key btn_3s_checkout */
+            button[kind="primary"][key="btn_3s_checkout"], 
+            div[data-testid="stButton"] > button:has(div[p="btn_3s_checkout"]),
+            .stButton button[key="btn_3s_checkout"] {
+                background-color: #FF4B4B !important;
+                color: white !important;
+                border: 1px solid #FF4B4B !important;
+                border-radius: 4px !important;
+                padding: 4px 12px !important;
+            }
+        
+            /* Hover: Vermelho um pouco mais escuro */
+            div[data-testid="stButton"] button[key="btn_3s_checkout"]:hover {
+                background-color: #D32F2F !important;
+                border-color: #D32F2F !important;
+                color: white !important;
+            }
+            </style>
         """, unsafe_allow_html=True)
         
-        # Colunas para posicionar o botão à esquerda (coluna estreita)
-        col_btn, _ = st.columns([1, 6])
+        # Layout: Botão pequeno à esquerda
+        col_btn, col_espaco = st.columns([1.5, 8.5])
+        
         with col_btn:
-            # botão pequeno — toda a ação (limpar + spinner + buscar) deve ficar DENTRO do if
-            if st.button("🔄 Atualizar 3S", key="btn_3s_left"):
-                st.session_state.modo_3s = True
-                st.session_state.df_final = None  # limpa upload manual
-        
-                # ✅ LIMPA ABA 2 (só quando clicar)
+            if st.button("Atualizar 3S Checkout", key="btn_3s_checkout"):
+                # 1. Limpa estados anteriores
                 limpar_estado_aba_google()
-        
-                # A busca fica só aqui — assim não roda no load da página
+                
+                # 2. Executa a busca (apenas uma vez)
                 with st.spinner("Buscando dados do banco..."):
                     resumo_3s, erro_3s, total_registros = buscar_dados_3s_checkout()
         
                     if erro_3s:
                         st.error(f"❌ Erro ao buscar dados: {erro_3s}")
                     elif resumo_3s is not None and not resumo_3s.empty:
-                        # Salvar no session_state
+                        # Salva no session_state
                         st.session_state.resumo_3s = resumo_3s
                         st.session_state.total_registros_3s = total_registros
+                        st.success(f"✅ {total_registros} registros carregados!")
                         st.rerun()
                     else:
                         st.warning("⚠️ Nenhum dado encontrado para o período.")
+            
+   
             
         # ========== EXIBIR RESULTADO 3S ==========
         if st.session_state.modo_3s and "resumo_3s" in st.session_state:

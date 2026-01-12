@@ -235,6 +235,4 @@ if st.session_state["resumo_pagamento"] is not None:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True
     )
-    except Exception as e:
-        st.error("❌ Erro ao gerar o Excel:")
-        st.exception(e)
+   

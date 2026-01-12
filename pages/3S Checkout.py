@@ -102,12 +102,13 @@ def buscar_dados_3s_checkout():
         df_op = pd.read_sql(query_op, conn, params=(ontem,))
         
         # ========================================
-        # QUERY 2: order_picture_tender (PAGAMENTOS)
+        # QUERY 2: order_picture_tender (PAGAMENTOS) ✅ COM change_amount
         # ========================================
         query_tender = """
             SELECT 
                 order_picture_id,
                 tender_amount,
+                change_amount,
                 details
             FROM public.order_picture_tender
             WHERE order_picture_id IN (
@@ -196,9 +197,13 @@ def buscar_dados_3s_checkout():
         resumo_vendas = resumo_vendas.sort_values(by=['Data_Ordenada', 'Loja']).drop(columns='Data_Ordenada')
         
         # ========================================
-        # PROCESSAR order_picture_tender (ABA PAGAMENTO)
+        # PROCESSAR order_picture_tender (ABA PAGAMENTO) ✅ DESCONTANDO TROCO
         # ========================================
         if not df_tender.empty:
+            # Converter colunas numéricas
+            df_tender["tender_amount"] = pd.to_numeric(df_tender["tender_amount"], errors="coerce").fillna(0)
+            df_tender["change_amount"] = pd.to_numeric(df_tender["change_amount"], errors="coerce").fillna(0)
+            
             # Extrair dados do JSON details
             tender_props = df_tender['details'].apply(parse_props)
             
@@ -212,9 +217,18 @@ def buscar_dados_3s_checkout():
             
             # Criar colunas da aba PAGAMENTO
             resumo_pagamento = df_tender.copy()
-            resumo_pagamento['Fat.Real'] = pd.to_numeric(resumo_pagamento['tender_amount'], errors='coerce').fillna(0)
-            resumo_pagamento['Serv/Tx'] = resumo_pagamento['tender_tip_amount']
-            resumo_pagamento['Fat.Total'] = resumo_pagamento['Fat.Real'] + resumo_pagamento['Serv/Tx']
+            
+            # ✅ TROCO
+            resumo_pagamento["Troco"] = resumo_pagamento["change_amount"]
+            
+            # ✅ Fat.Real líquido (descontando troco)
+            resumo_pagamento["Fat.Real"] = resumo_pagamento["tender_amount"] - resumo_pagamento["Troco"]
+            
+            # Impedir Fat.Real negativo por dados ruins
+            resumo_pagamento["Fat.Real"] = resumo_pagamento["Fat.Real"].clip(lower=0)
+            
+            resumo_pagamento["Serv/Tx"] = resumo_pagamento["tender_tip_amount"]
+            resumo_pagamento["Fat.Total"] = resumo_pagamento["Fat.Real"] + resumo_pagamento["Serv/Tx"]
             
             # ✅ PROCV - Buscar dados do pedido (store_code, data, etc)
             resumo_pagamento = resumo_pagamento.merge(
@@ -243,16 +257,16 @@ def buscar_dados_3s_checkout():
             resumo_pagamento['Ano'] = pd.to_datetime(resumo_pagamento['business_dt'], errors='coerce').dt.year
             resumo_pagamento['Sistema'] = '3SCheckout'
             
-            # Selecionar e ordenar colunas
+            # Selecionar e ordenar colunas ✅ COM TROCO
             colunas_pagamento = [
                 "order_picture_id", "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
                 "Código Grupo Everest", "Meio de Pagamento", "Fat.Total", "Serv/Tx", "Fat.Real",
-                "Mês", "Ano", "Sistema"
+                "Troco", "Mês", "Ano", "Sistema"
             ]
             resumo_pagamento = resumo_pagamento[[c for c in colunas_pagamento if c in resumo_pagamento.columns]]
             
             # Arredondar valores
-            for col in ["Fat.Total", "Serv/Tx", "Fat.Real"]:
+            for col in ["Fat.Total", "Serv/Tx", "Fat.Real", "Troco"]:
                 if col in resumo_pagamento.columns:
                     resumo_pagamento[col] = resumo_pagamento[col].round(2)
             

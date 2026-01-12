@@ -944,10 +944,10 @@ with st.spinner("⏳ Processando..."):
         
             df_final.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
         
-            # Construir chave de duplicidade "M"
+            # Construir chave de duplicidade "M" (inclui Sistema)
             df_final['M'] = (
                 pd.to_datetime(df_final['Data'], format='%d/%m/%Y').dt.strftime('%Y-%m-%d')
-                + df_final['Meio de Pagamento'] + df_final['Loja']
+                + df_final['Meio de Pagamento'] + df_final['Loja'] + df_final['Sistema']
             )
             
             # valor para float

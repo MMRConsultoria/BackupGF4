@@ -317,38 +317,42 @@ with st.spinner("⏳ Processando..."):
     
     with aba1:
         # ========== BOTÃO 3S CHECKOUT ==========
-        #st.markdown("#### 🔄 Atualização Automática 3S Checkout")
-
-            st.markdown("""
-            <div id="btn-3s-container">
-            </div>
-            <style>
-            #btn-3s-container > div > button {
-                background-color: #d32f2f !important;
-                color: white !important;
-                border: none !important;
-                width: 100%;
-            }
-            #btn-3s-container > div > button:hover {
-                background-color: #b71c1c !important;
-            }
-            </style>
-            """, unsafe_allow_html=True)
-            
-            col_btn, _ = st.columns([1, 5])
-            with col_btn:
-                st.markdown('<div id="btn-3s-container">', unsafe_allow_html=True)
-                if st.button("🔄 Atualizar 3S", key="btn_3s_left"):
-                    # seu código
-                    pass
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-                # ✅ LIMPA ABA 2
+        # Aba 1 - Upload e Processamento (trecho do botão 3S)
+        st.markdown("#### 🔄 Sincronização")
+        
+        # CSS (coloque uma vez no topo da página, mas pode ficar aqui também)
+        st.markdown("""
+        <style>
+        /* Estiliza botões (atenção: afeta todos os botões) */
+        div.stButton > button {
+            background-color: #d32f2f !important;
+            color: white !important;
+            border: none !important;
+            padding: 0.25rem 0.6rem !important;
+            font-size: 0.9rem !important;
+            height: 32px !important;
+        }
+        div.stButton > button:hover {
+            background-color: #b71c1c !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # Colunas para posicionar o botão à esquerda (coluna estreita)
+        col_btn, _ = st.columns([1, 6])
+        with col_btn:
+            # botão pequeno — toda a ação (limpar + spinner + buscar) deve ficar DENTRO do if
+            if st.button("🔄 Atualizar 3S", key="btn_3s_left"):
+                st.session_state.modo_3s = True
+                st.session_state.df_final = None  # limpa upload manual
+        
+                # ✅ LIMPA ABA 2 (só quando clicar)
                 limpar_estado_aba_google()
-                
+        
+                # A busca fica só aqui — assim não roda no load da página
                 with st.spinner("Buscando dados do banco..."):
                     resumo_3s, erro_3s, total_registros = buscar_dados_3s_checkout()
-                    
+        
                     if erro_3s:
                         st.error(f"❌ Erro ao buscar dados: {erro_3s}")
                     elif resumo_3s is not None and not resumo_3s.empty:

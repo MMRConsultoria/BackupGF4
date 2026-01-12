@@ -43,6 +43,29 @@ def limpar_estado_aba_google():
 # ======================
 # CSS para esconder só a barra superior
 # ======================
+# ADICIONE AQUI:
+st.markdown(
+    """
+    <style>
+    /* Estilo específico para o botão dentro da div 'botao-vermelho' */
+    div.botao-vermelho > button {
+        background-color: #ff4b4b !important;
+        color: white !important;
+        border: none !important;
+        padding: 4px 10px !important;
+        font-size: 12px !important;
+        height: auto !important;
+        width: auto !important;
+    }
+    div.botao-vermelho > button:hover {
+        background-color: #ff3333 !important;
+        color: white !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.markdown("""
     <style>
         [data-testid="stToolbar"] {
@@ -316,29 +339,43 @@ with st.spinner("⏳ Processando..."):
     # 📄 Aba 1 - Upload e Processamento
     # ================================
     
-    with aba1:
+       with aba1:
         # ========== BOTÃO 3S CHECKOUT ==========
         st.markdown("### 🔄 Atualização Automática 3S Checkout")
         
-        if st.button("🔄 Atualizar 3S Checkout", type="primary", use_container_width=True):
-            st.session_state.modo_3s = True
-            st.session_state.df_final = None  # limpa upload manual
-            
-            # ✅ LIMPA ABA 2
-            limpar_estado_aba_google()
-            
-            with st.spinner("Buscando dados do banco..."):
-                resumo_3s, erro_3s, total_registros = buscar_dados_3s_checkout()
-                
-                if erro_3s:
-                    st.error(f"❌ Erro ao buscar dados: {erro_3s}")
-                elif resumo_3s is not None and not resumo_3s.empty:
-                    # Salvar no session_state
-                    st.session_state.resumo_3s = resumo_3s
-                    st.session_state.total_registros_3s = total_registros
-                    st.rerun()
-                else:
-                    st.warning("⚠️ Nenhum dado encontrado para o período.")
+        # Colunas: pequena à esquerda para o botão, resto do conteúdo à direita
+        col_btn, col_rest = st.columns([1, 9])
+    
+        with col_btn:
+            # div com classe para aplicar CSS apenas a este botão
+            st.markdown('<div class="botao-vermelho">', unsafe_allow_html=True)
+    
+            # Botão pequeno e discreto — não usar use_container_width para não esticar
+            if st.button("🔄 Atualizar 3S Checkout", key="btn_3s_vermelho"):
+                st.session_state.modo_3s = True
+                st.session_state.df_final = None  # limpa upload manual
+    
+                # ✅ LIMPA ABA 2
+                limpar_estado_aba_google()
+    
+                with st.spinner("Buscando dados do banco..."):
+                    resumo_3s, erro_3s, total_registros = buscar_dados_3s_checkout()
+    
+                    if erro_3s:
+                        st.error(f"❌ Erro ao buscar dados: {erro_3s}")
+                    elif resumo_3s is not None and not resumo_3s.empty:
+                        # Salvar no session_state
+                        st.session_state.resumo_3s = resumo_3s
+                        st.session_state.total_registros_3s = total_registros
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ Nenhum dado encontrado para o período.")
+    
+            st.markdown('</div>', unsafe_allow_html=True)
+    
+        with col_rest:
+            # Resto do conteúdo da aba (tabela, filtros, etc.)
+            pass
         
         # ========== EXIBIR RESULTADO 3S ==========
         if st.session_state.modo_3s and "resumo_3s" in st.session_state:

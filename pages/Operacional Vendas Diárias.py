@@ -320,22 +320,21 @@ with st.spinner("⏳ Processando..."):
         # ========== BOTÃO 3S CHECKOUT ==========
         st.markdown("#### 🔄 Sincronização")
         
-        # CSS Refinado: Garante que o fundo e o texto não fiquem "metade/metade"
+        # CSS usando um seletor de container para garantir a cor
         st.markdown("""
             <style>
-            /* Seletor ultra-específico para o botão com a key btn_3s_checkout */
-            button[kind="primary"][key="btn_3s_checkout"], 
-            div[data-testid="stButton"] > button:has(div[p="btn_3s_checkout"]),
-            .stButton button[key="btn_3s_checkout"] {
+            /* Estiliza o botão dentro da div com a classe 'botao-vermelho' */
+            div.botao-vermelho > div [data-testid="stButton"] button {
                 background-color: #FF4B4B !important;
                 color: white !important;
                 border: 1px solid #FF4B4B !important;
                 border-radius: 4px !important;
                 padding: 4px 12px !important;
+                transition: all 0.2s ease;
             }
-        
-            /* Hover: Vermelho um pouco mais escuro */
-            div[data-testid="stButton"] button[key="btn_3s_checkout"]:hover {
+            
+            /* Hover */
+            div.botao-vermelho > div [data-testid="stButton"] button:hover {
                 background-color: #D32F2F !important;
                 border-color: #D32F2F !important;
                 color: white !important;
@@ -343,28 +342,28 @@ with st.spinner("⏳ Processando..."):
             </style>
         """, unsafe_allow_html=True)
         
-        # Layout: Botão pequeno à esquerda
         col_btn, col_espaco = st.columns([1.5, 8.5])
         
         with col_btn:
-            if st.button("Atualizar 3S Checkout", key="btn_3s_checkout"):
-                # 1. Limpa estados anteriores
+            # Envolvemos o botão em uma div com a classe que criamos no CSS
+            st.markdown('<div class="botao-vermelho">', unsafe_allow_html=True)
+            btn_clicado = st.button("Atualizar 3S Checkout", key="btn_3s_checkout")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            if btn_clicado:
                 limpar_estado_aba_google()
-                
-                # 2. Executa a busca (apenas uma vez)
                 with st.spinner("Buscando dados do banco..."):
                     resumo_3s, erro_3s, total_registros = buscar_dados_3s_checkout()
         
                     if erro_3s:
                         st.error(f"❌ Erro ao buscar dados: {erro_3s}")
                     elif resumo_3s is not None and not resumo_3s.empty:
-                        # Salva no session_state
                         st.session_state.resumo_3s = resumo_3s
                         st.session_state.total_registros_3s = total_registros
                         st.success(f"✅ {total_registros} registros carregados!")
                         st.rerun()
                     else:
-                        st.warning("⚠️ Nenhum dado encontrado para o período.")
+                        st.warning("⚠️ Nenhum dado encontrado.")
             
    
             

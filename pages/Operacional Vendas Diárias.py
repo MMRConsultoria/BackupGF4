@@ -319,29 +319,29 @@ with st.spinner("⏳ Processando..."):
         # ========== BOTÃO 3S CHECKOUT ==========
         #st.markdown("#### 🔄 Atualização Automática 3S Checkout")
 
-        st.markdown("""
-        <div id="btn-3s-container">
-        </div>
-        <style>
-        #btn-3s-container > div > button {
-            background-color: #d32f2f !important;
-            color: white !important;
-            border: none !important;
-            width: 100%;
-        }
-        #btn-3s-container > div > button:hover {
-            background-color: #b71c1c !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        col_btn, _ = st.columns([1, 5])
-        with col_btn:
-            st.markdown('<div id="btn-3s-container">', unsafe_allow_html=True)
-            if st.button("🔄 Atualizar 3S", key="btn_3s_left"):
-                # seu código
-                pass
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("""
+            <div id="btn-3s-container">
+            </div>
+            <style>
+            #btn-3s-container > div > button {
+                background-color: #d32f2f !important;
+                color: white !important;
+                border: none !important;
+                width: 100%;
+            }
+            #btn-3s-container > div > button:hover {
+                background-color: #b71c1c !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            col_btn, _ = st.columns([1, 5])
+            with col_btn:
+                st.markdown('<div id="btn-3s-container">', unsafe_allow_html=True)
+                if st.button("🔄 Atualizar 3S", key="btn_3s_left"):
+                    # seu código
+                    pass
+                st.markdown('</div>', unsafe_allow_html=True)
             
                 # ✅ LIMPA ABA 2
                 limpar_estado_aba_google()

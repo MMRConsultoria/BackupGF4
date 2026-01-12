@@ -113,9 +113,10 @@ with st.spinner("⏳ Processando..."):
         """Busca dados do 3S Checkout direto do banco e processa"""
         conn = get_db_conn()
         try:
-            # ✅ CALCULA A DATA DE ONTEM
+            # Ajuste para fuso horário de Brasília (UTC-3) e define "ontem" como limite máximo
             from datetime import datetime, timedelta
-            ontem = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+            agora_brasil = datetime.utcnow() - timedelta(hours=3)
+            ontem = (agora_brasil - timedelta(days=1)).date()
             
             # ✅ FILTRO SQL: Adicionado "AND business_dt <= %s"
             query = """

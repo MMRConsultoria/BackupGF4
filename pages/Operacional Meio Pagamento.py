@@ -1093,3 +1093,53 @@ with st.spinner("⏳ Processando..."):
                         st.info("ℹ️ Nenhum novo registro para enviar.")
                     if duplicados:
                         st.warning(f"⚠️ {len(duplicados)} registros duplicados não foram enviados.")
+# ===== Atualiza CACHE_FILTRADO APÓS atualizar a base principal ======
+try:
+    # usa df_para_enviar (mantém Data no formato legível antes da conversão para serial)
+    cache_df = df_para_enviar.copy()
+
+    # garante coluna Data como date
+    cache_df['__dt__'] = pd.to_datetime(cache_df['Data'], dayfirst=True, errors='coerce').dt.date
+
+    # calcula primeiro e último dia do mês ANTERIOR completo
+    hoje = date.today()
+    primeiro_dia_mes_atual = date(hoje.year, hoje.month, 1)
+    ultimo_dia_mes_anterior = primeiro_dia_mes_atual - timedelta(days=1)
+    primeiro_dia_mes_anterior = date(ultimo_dia_mes_anterior.year, ultimo_dia_mes_anterior.month, 1)
+
+    # filtra somente o mês anterior completo
+    mask = (cache_df['__dt__'] >= primeiro_dia_mes_anterior) & (cache_df['__dt__'] <= ultimo_dia_mes_anterior)
+    cache_mes_anterior = cache_df.loc[mask].copy()
+
+    # garante o header (usa variável header já definida no seu código)
+    cache_header = header[:] if 'header' in locals() else list(cache_mes_anterior.columns)
+
+    # reindexa colunas e prepara valores para gravar
+    for c in cache_header:
+        if c not in cache_mes_anterior.columns:
+            cache_mes_anterior[c] = ""
+    cache_mes_anterior = cache_mes_anterior.reindex(columns=cache_header, fill_value="")
+
+    cache_values = cache_mes_anterior.fillna("").values.tolist()
+
+    # abre planilha e aba CACHE_FILTRADO (cria se não existir)
+    sh_fatur = gc.open("Faturamento Meio Pagamento")
+    try:
+        sh_cache = sh_fatur.worksheet("CACHE_FILTRADO")
+    except Exception:
+        sh_cache = sh_fatur.add_worksheet(title="CACHE_FILTRADO", rows=str(max(1000, len(cache_values) + 10)), cols=str(len(cache_header)))
+
+    # limpa e grava header + dados
+    try:
+        sh_cache.clear()
+        if cache_values:
+            sh_cache.update("A1", [cache_header] + cache_values)
+        else:
+            sh_cache.update("A1", [cache_header])
+        st.info(f"✅ CACHE_FILTRADO atualizado: {primeiro_dia_mes_anterior.strftime('%d/%m/%Y')} a {ultimo_dia_mes_anterior.strftime('%d/%m/%Y')} (linhas: {len(cache_values)})")
+    except Exception as e:
+        st.error(f"Erro ao gravar CACHE_FILTRADO: {e}")
+except Exception as e:
+    st.error(f"Falha ao preparar CACHE_FILTRADO: {e}")
+# ===== fim atualização cache ======
+

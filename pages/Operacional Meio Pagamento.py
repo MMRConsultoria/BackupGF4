@@ -676,7 +676,7 @@ with st.spinner("⏳ Processando..."):
                 mensagem = f"""
                 ⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):<br>{meios_nao_localizados_str}
                 <br>✏️ Atualize a tabela clicando 
-                <a href='https://docs.google.com/spreadsheets/d/1QfmPRZBzbdd2lQA8uajnqWnb3mAmxwLgUwzDM4FtYeA' target='_blank'><strong>aqui</strong></a>.
+                <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
                 """
                 st.markdown(mensagem, unsafe_allow_html=True)
             else:
@@ -951,14 +951,14 @@ with st.spinner("⏳ Processando..."):
                             st.markdown(f"""
                             ⚠️ {len(empresas_nao_localizadas)} Código(s) Everest sem correspondência:<br>{empresas_nao_localizadas_str}
                             <br>✏️ Atualize a tabela clicando 
-                            <a href='https://docs.google.com/spreadsheets/d/1QfmPRZBzbdd2lQA8uajnqWnb3mAmxwLgUwzDM4FtYeA' target='_blank'><strong>aqui</strong></a>.
+                            <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
                             """, unsafe_allow_html=True)
                         if len(meios_nao_localizados) > 0:
                             meios_nao_localizados_str = "<br>".join(meios_nao_localizados)
                             st.markdown(f"""
                             ⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):<br>{meios_nao_localizados_str}
                             <br>✏️ Atualize a tabela clicando 
-                            <a href='https://docs.google.com/spreadsheets/d/1QfmPRZBzbdd2lQA8uajnqWnb3mAmxwLgUwzDM4FtYeA' target='_blank'><strong>aqui</strong></a>.
+                            <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
                             """, unsafe_allow_html=True)
 
                 except Exception as e:

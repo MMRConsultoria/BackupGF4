@@ -570,7 +570,7 @@ with st.spinner("⏳ Processando..."):
     credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
     credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
     gc = gspread.authorize(credentials)
-    planilha = gc.open("Vendas diarias")
+    planilha = gc.open("tabelas")
 
     # Tabela Empresa
     df_empresa = pd.DataFrame(planilha.worksheet("Tabela Empresa").get_all_records())
@@ -676,7 +676,7 @@ with st.spinner("⏳ Processando..."):
                 mensagem = f"""
                 ⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):<br>{meios_nao_localizados_str}
                 <br>✏️ Atualize a tabela clicando 
-                <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
+                <a href='https://docs.google.com/spreadsheets/d/1QfmPRZBzbdd2lQA8uajnqWnb3mAmxwLgUwzDM4FtYeA' target='_blank'><strong>aqui</strong></a>.
                 """
                 st.markdown(mensagem, unsafe_allow_html=True)
             else:
@@ -951,14 +951,14 @@ with st.spinner("⏳ Processando..."):
                             st.markdown(f"""
                             ⚠️ {len(empresas_nao_localizadas)} Código(s) Everest sem correspondência:<br>{empresas_nao_localizadas_str}
                             <br>✏️ Atualize a tabela clicando 
-                            <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
+                            <a href='https://docs.google.com/spreadsheets/d/1QfmPRZBzbdd2lQA8uajnqWnb3mAmxwLgUwzDM4FtYeA' target='_blank'><strong>aqui</strong></a>.
                             """, unsafe_allow_html=True)
                         if len(meios_nao_localizados) > 0:
                             meios_nao_localizados_str = "<br>".join(meios_nao_localizados)
                             st.markdown(f"""
                             ⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):<br>{meios_nao_localizados_str}
                             <br>✏️ Atualize a tabela clicando 
-                            <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
+                            <a href='https://docs.google.com/spreadsheets/d/1QfmPRZBzbdd2lQA8uajnqWnb3mAmxwLgUwzDM4FtYeA' target='_blank'><strong>aqui</strong></a>.
                             """, unsafe_allow_html=True)
 
                 except Exception as e:
@@ -968,7 +968,7 @@ with st.spinner("⏳ Processando..."):
     # 🔄 Aba 2
     # ======================
     with tab2:
-        st.markdown("🔗 [Abrir planilha Faturamento Meio Pagamento](https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU)")
+        st.markdown("🔗 [Abrir planilha Faturamento Meio Pagamento](https://docs.google.com/spreadsheets/d/1GSI291SEeeU9MtOWkGwsKGCGMi_xXMSiQnL_9GhXxfU/edit?gid=1278257122#gid)")
 
         # ✅ Aceita TANTO df_meio_pagamento (upload) QUANTO resumo_3s_mp (3S Checkout)
         df_para_enviar = first_nonempty_df(
@@ -1038,7 +1038,7 @@ with st.spinner("⏳ Processando..."):
                     df_final[col] = df_final[col].apply(lambda x: int(x) if pd.notnull(x) and str(x).strip() != "" else "")
 
             # Planilha destino
-            aba_destino = gc.open("Vendas diarias").worksheet("Faturamento Meio Pagamento")
+            aba_destino = gc.open("Faturamento Meio Pagamento").worksheet("Faturamento Meio Pagamento")
             valores_existentes = aba_destino.get_all_values()
 
             if valores_existentes:

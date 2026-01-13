@@ -2530,7 +2530,7 @@ with st.spinner("⏳ Processando..."):
         del _gc
     
         # ---------------- Leitura ----------------
-        ws_ext = sh.worksheet("Fat Sistema Externo")
+        #ws_ext = sh.worksheet("Fat Sistema Externo")
         vals_ext = ws_ext.get_all_values()
         if len(vals_ext) < 2:
             st.error("Aba 'Fat Sistema Externo' vazia.")
@@ -2538,7 +2538,7 @@ with st.spinner("⏳ Processando..."):
         header_ext, rows_ext = vals_ext[0], vals_ext[1:]
         df_ext = pd.DataFrame(rows_ext, columns=[c.strip() for c in header_ext])
     
-        ws_mp = sh.worksheet("Faturamento Meio Pagamento")
+        #ws_mp = sh.worksheet("Faturamento Meio Pagamento")
         vals_mp = ws_mp.get_all_values()
         if len(vals_mp) < 2:
             st.error("Aba 'Faturamento Meio Pagamento' vazia.")

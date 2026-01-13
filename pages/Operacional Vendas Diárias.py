@@ -2516,7 +2516,12 @@ with st.spinner("⏳ Processando..."):
             credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
             _gc = gspread.authorize(credentials)
     
-        sh = _gc.open("Vendas diarias")
+        # Abre a planilha pelo ID (substitua pelo seu ID)
+        sh = _gc.open_by_key("1GSI291SEeeU9MtOWkGwsKGCGMi_xXMSiQnL_9GhXxfU")
+        
+        # Acessa as abas normalmente
+        ws_ext = sh.worksheet("Fat Sistema Externo")
+        ws_mp = sh.worksheet("Faturamento Meio Pagamento")
         del _gc  # remove o cliente para não “aparecer”
     
         # ---------------- Leitura ----------------

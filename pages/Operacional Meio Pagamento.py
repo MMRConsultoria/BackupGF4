@@ -1093,85 +1093,66 @@ with st.spinner("⏳ Processando..."):
                         st.info("ℹ️ Nenhum novo registro para enviar.")
                     if duplicados:
                         st.warning(f"⚠️ {len(duplicados)} registros duplicados não foram enviados.")
-# ===== ROTINA INDEPENDENTE: RECRIA CACHE_FILTRADO COM TODO O MÊS ANTERIOR (FIX: comparação de datas) =====
+# ===== ROTINA INDEPENDENTE: COPIA E COLA MÊS ANTERIOR (SEM ALTERAR FORMATOS) =====
 try:
-    valores_planilha = aba_destino.get_all_values()
+    # 1. Lê todos os valores da aba principal exatamente como aparecem
+    valores_origem = aba_destino.get_all_values()
 
-    if not valores_planilha or len(valores_planilha) == 0:
-        st.warning("⚠️ A aba 'Faturamento Meio Pagamento' está vazia — CACHE_FILTRADO não será atualizado.")
+    if not valores_origem or len(valores_origem) <= 1:
+        st.warning("⚠️ Sem dados suficientes na aba principal para atualizar o cache.")
     else:
-        plan_header = [h.strip() for h in valores_planilha[0]]
-        plan_rows = valores_planilha[1:] if len(valores_planilha) > 1 else []
-        df_sheet = pd.DataFrame(plan_rows, columns=plan_header) if plan_rows else pd.DataFrame(columns=plan_header)
-
-        # ==== normaliza coluna Data (serial do Sheets ou texto dd/mm/YYYY) para datetime64[ns] ====
-        if "Data" in df_sheet.columns:
-            num = pd.to_numeric(df_sheet["Data"], errors="coerce")
-
-            # serial -> datetime (para índices onde num não é NaN)
-            if num.notna().any():
-                dt_num = pd.to_timedelta(num.fillna(0), unit="D") + pd.Timestamp("1899-12-30")
-                dt_num = pd.to_datetime(dt_num, errors="coerce")
-            else:
-                dt_num = pd.Series(pd.NaT, index=df_sheet.index)
-
-            # texto -> datetime
-            dt_txt = pd.to_datetime(df_sheet["Data"], dayfirst=True, errors="coerce")
-
-            # combina: onde num existe usa dt_num, senão dt_txt
-            dt_comb = dt_num.where(num.notna(), dt_txt)
-
-            # garante dtype datetime64[ns]
-            df_sheet["__dt__"] = pd.to_datetime(dt_comb, errors="coerce")
-        else:
-            st.error("❌ Não foi encontrada a coluna 'Data' na aba 'Faturamento Meio Pagamento'. CACHE_FILTRADO não atualizado.")
-            df_sheet["__dt__"] = pd.NaT
-
-        # ==== calcula período do mês ANTERIOR completo como Timestamps do pandas ====
+        header_cache = valores_origem[0]
+        dados_corpo = valores_origem[1:]
+        
+        # Criamos um DataFrame temporário apenas para facilitar o filtro por data
+        df_temp = pd.DataFrame(dados_corpo, columns=header_cache)
+        
+        # Identifica o período do mês anterior
         hoje = date.today()
         primeiro_dia_mes_atual = date(hoje.year, hoje.month, 1)
         ultimo_dia_mes_anterior = primeiro_dia_mes_atual - timedelta(days=1)
         primeiro_dia_mes_anterior = date(ultimo_dia_mes_anterior.year, ultimo_dia_mes_anterior.month, 1)
+        
+        # Converte a coluna Data para filtro (sem alterar o valor original que será colado)
+        # Tenta converter serial ou texto dd/mm/yyyy
+        def converter_data_filtro(x):
+            try:
+                if str(x).isdigit(): # Serial do Sheets
+                    return (pd.Timestamp("1899-12-30") + pd.Timedelta(days=float(x))).date()
+                return pd.to_datetime(x, dayfirst=True).date()
+            except:
+                return None
 
-        start_ts = pd.Timestamp(primeiro_dia_mes_anterior)                # ex: 2025-12-01 00:00:00
-        end_ts = pd.Timestamp(ultimo_dia_mes_anterior) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
-        # ex: 2025-12-31 23:59:59.999999
+        df_temp['__dt_filtro__'] = df_temp['Data'].apply(converter_data_filtro)
+        
+        # Filtra as linhas que pertencem ao mês anterior
+        mask = (df_temp['__dt_filtro__'] >= primeiro_dia_mes_anterior) & \
+               (df_temp['__dt_filtro__'] <= ultimo_dia_mes_anterior)
+        
+        # Seleciona apenas as linhas filtradas e remove a coluna auxiliar de filtro
+        dados_filtrados = df_temp.loc[mask].drop(columns=['__dt_filtro__']).values.tolist()
 
-        # ==== filtra comparando datetime64[ns] com Timestamps (compatível) ====
-        df_sheet["__dt__"] = pd.to_datetime(df_sheet["__dt__"], errors="coerce")
-        mask_periodo = (df_sheet["__dt__"] >= start_ts) & (df_sheet["__dt__"] <= end_ts)
-        df_periodo = df_sheet.loc[mask_periodo].copy()
-
-        # ==== prepara header e garante colunas ====
-        cache_header = header[:] if 'header' in locals() else plan_header[:]
-        for c in cache_header:
-            if c not in df_periodo.columns:
-                df_periodo[c] = ""
-        df_periodo = df_periodo.reindex(columns=cache_header, fill_value="")
-
-        # formata Data no padrão dd/mm/YYYY (legível) a partir de __dt__
-        if "__dt__" in df_periodo.columns and "Data" in df_periodo.columns:
-            df_periodo["Data"] = df_periodo["__dt__"].dt.strftime("%d/%m/%Y").fillna("")
-
-        cache_values = df_periodo.fillna("").values.tolist()
-
-        # === grava no CACHE_FILTRADO (apaga tudo antes) ===
+        # 2. Acessa a aba CACHE_FILTRADO
         sh_fatur = gc.open("Faturamento Meio Pagamento")
         try:
             sh_cache = sh_fatur.worksheet("CACHE_FILTRADO")
-        except Exception:
-            sh_cache = sh_fatur.add_worksheet(title="CACHE_FILTRADO", rows=str(max(1000, len(cache_values) + 10)), cols=str(len(cache_header)))
+        except:
+            sh_cache = sh_fatur.add_worksheet(title="CACHE_FILTRADO", rows="1000", cols=str(len(header_cache)))
 
-        try:
-            sh_cache.clear()
-            if cache_values:
-                sh_cache.update("A1", [cache_header] + cache_values)
-            else:
-                sh_cache.update("A1", [cache_header])
-            st.info(f"✅ CACHE_FILTRADO recriado: {primeiro_dia_mes_anterior.strftime('%d/%m/%Y')} a {ultimo_dia_mes_anterior.strftime('%d/%m/%Y')} (linhas: {len(cache_values)})")
-        except Exception as e:
-            st.error(f"Erro ao gravar CACHE_FILTRADO: {e}")
+        # 3. Apaga tudo e cola: Cabeçalho + Dados Filtrados
+        sh_cache.clear()
+        
+        # Monta a lista final para upload (Cabeçalho + Linhas)
+        lista_final = [header_cache] + dados_filtrados
+        
+        if len(lista_final) > 1:
+            # USER_ENTERED garante que o Sheets interprete os números e moedas como eles são
+            sh_cache.update("A1", lista_final, value_input_option="USER_ENTERED")
+            st.info(f"✅ CACHE_FILTRADO atualizado: {len(dados_filtrados)} linhas do mês anterior copiadas.")
+        else:
+            sh_cache.update("A1", [header_cache])
+            st.warning("⚠️ Nenhuma linha encontrada para o mês anterior.")
 
 except Exception as e:
-    st.error(f"Falha ao recriar CACHE_FILTRADO: {e}")
-# ===== fim rotina recriar cache =====
+    st.error(f"Falha ao copiar dados para o cache: {e}")
+# ===== FIM DA ROTINA =====

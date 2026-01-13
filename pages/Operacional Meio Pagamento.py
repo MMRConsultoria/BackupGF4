@@ -1093,9 +1093,8 @@ with st.spinner("⏳ Processando..."):
                         st.info("ℹ️ Nenhum novo registro para enviar.")
                     if duplicados:
                         st.warning(f"⚠️ {len(duplicados)} registros duplicados não foram enviados.")
-# ===== ROTINA INDEPENDENTE: RECRIA CACHE_FILTRADO COM TODO O MÊS ANTERIOR (ROBUSTO) =====
+# ===== ROTINA INDEPENDENTE: RECRIA CACHE_FILTRADO COM TODO O MÊS ANTERIOR (FIX: comparação de datas) =====
 try:
-    # leitura completa da aba "Faturamento Meio Pagamento"
     valores_planilha = aba_destino.get_all_values()
 
     if not valores_planilha or len(valores_planilha) == 0:
@@ -1105,82 +1104,64 @@ try:
         plan_rows = valores_planilha[1:] if len(valores_planilha) > 1 else []
         df_sheet = pd.DataFrame(plan_rows, columns=plan_header) if plan_rows else pd.DataFrame(columns=plan_header)
 
-        # prepara coluna __dt__ convertendo serial do Sheets OU texto dd/mm/YYYY
+        # ==== normaliza coluna Data (serial do Sheets ou texto dd/mm/YYYY) para datetime64[ns] ====
         if "Data" in df_sheet.columns:
-            # tenta converter como número (serial)
             num = pd.to_numeric(df_sheet["Data"], errors="coerce")
 
-            # converte serial para datetime (apenas onde num não é NaN)
-            dt_num = None
+            # serial -> datetime (para índices onde num não é NaN)
             if num.notna().any():
-                dt_num = (pd.to_timedelta(num.fillna(0), unit="D") + pd.Timestamp("1899-12-30"))
+                dt_num = pd.to_timedelta(num.fillna(0), unit="D") + pd.Timestamp("1899-12-30")
                 dt_num = pd.to_datetime(dt_num, errors="coerce")
+            else:
+                dt_num = pd.Series(pd.NaT, index=df_sheet.index)
 
-            # converte texto dd/mm/YYYY (aplica a todos — será usado onde num é NaN)
+            # texto -> datetime
             dt_txt = pd.to_datetime(df_sheet["Data"], dayfirst=True, errors="coerce")
 
-            # combina: usa dt_num quando num não é NaN, senão dt_txt
-            if dt_num is not None:
-                dt_comb = dt_num.where(num.notna(), dt_txt)
-            else:
-                dt_comb = dt_txt
+            # combina: onde num existe usa dt_num, senão dt_txt
+            dt_comb = dt_num.where(num.notna(), dt_txt)
 
-            # garante datetime64 dtype e cria coluna __dt__ com date()
-            dt_comb = pd.to_datetime(dt_comb, errors="coerce")
-            # Evita erro ao acessar .dt se dt_comb for objeto não datetime
-            if pd.api.types.is_datetime64_any_dtype(dt_comb):
-                df_sheet["__dt__"] = dt_comb.dt.date
-            else:
-                df_sheet["__dt__"] = pd.NaT
+            # garante dtype datetime64[ns]
+            df_sheet["__dt__"] = pd.to_datetime(dt_comb, errors="coerce")
         else:
             st.error("❌ Não foi encontrada a coluna 'Data' na aba 'Faturamento Meio Pagamento'. CACHE_FILTRADO não atualizado.")
             df_sheet["__dt__"] = pd.NaT
 
-        # calcula primeiro e último dia do mês ANTERIOR completo
+        # ==== calcula período do mês ANTERIOR completo como Timestamps do pandas ====
         hoje = date.today()
         primeiro_dia_mes_atual = date(hoje.year, hoje.month, 1)
         ultimo_dia_mes_anterior = primeiro_dia_mes_atual - timedelta(days=1)
         primeiro_dia_mes_anterior = date(ultimo_dia_mes_anterior.year, ultimo_dia_mes_anterior.month, 1)
 
-        # filtra somente o mês anterior completo
-        # Evita erro ao acessar .dt se coluna __dt__ não for datetime
-        if pd.api.types.is_datetime64_any_dtype(df_sheet["__dt__"]):
-            df_sheet["__dt__"] = pd.to_datetime(df_sheet["__dt__"], errors="coerce").dt.date
-        else:
-            df_sheet["__dt__"] = pd.NaT
+        start_ts = pd.Timestamp(primeiro_dia_mes_anterior)                # ex: 2025-12-01 00:00:00
+        end_ts = pd.Timestamp(ultimo_dia_mes_anterior) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+        # ex: 2025-12-31 23:59:59.999999
 
-        mask_periodo = (df_sheet["__dt__"] >= primeiro_dia_mes_anterior) & (df_sheet["__dt__"] <= ultimo_dia_mes_anterior)
+        # ==== filtra comparando datetime64[ns] com Timestamps (compatível) ====
+        df_sheet["__dt__"] = pd.to_datetime(df_sheet["__dt__"], errors="coerce")
+        mask_periodo = (df_sheet["__dt__"] >= start_ts) & (df_sheet["__dt__"] <= end_ts)
         df_periodo = df_sheet.loc[mask_periodo].copy()
 
-        # prepara header para gravar no CACHE_FILTRADO
+        # ==== prepara header e garante colunas ====
         cache_header = header[:] if 'header' in locals() else plan_header[:]
-
-        # garante colunas e ordenação
         for c in cache_header:
             if c not in df_periodo.columns:
                 df_periodo[c] = ""
         df_periodo = df_periodo.reindex(columns=cache_header, fill_value="")
 
-        # formata Data no padrão dd/mm/YYYY para o cache (sem usar .dt diretamente)
-        if "Data" in df_periodo.columns:
-            def _fmt_date(x):
-                try:
-                    return x.strftime("%d/%m/%Y") if pd.notnull(x) else ""
-                except Exception:
-                    return ""
-            df_periodo["Data"] = df_periodo["__dt__"].apply(_fmt_date)
+        # formata Data no padrão dd/mm/YYYY (legível) a partir de __dt__
+        if "__dt__" in df_periodo.columns and "Data" in df_periodo.columns:
+            df_periodo["Data"] = df_periodo["__dt__"].dt.strftime("%d/%m/%Y").fillna("")
 
-        # prepara valores a gravar
         cache_values = df_periodo.fillna("").values.tolist()
 
-        # abre planilha e aba CACHE_FILTRADO (cria se não existir)
+        # === grava no CACHE_FILTRADO (apaga tudo antes) ===
         sh_fatur = gc.open("Faturamento Meio Pagamento")
         try:
             sh_cache = sh_fatur.worksheet("CACHE_FILTRADO")
         except Exception:
             sh_cache = sh_fatur.add_worksheet(title="CACHE_FILTRADO", rows=str(max(1000, len(cache_values) + 10)), cols=str(len(cache_header)))
 
-        # limpa totalmente o cache e grava header + dados do mês anterior
         try:
             sh_cache.clear()
             if cache_values:

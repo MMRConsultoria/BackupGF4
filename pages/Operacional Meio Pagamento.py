@@ -1093,9 +1093,9 @@ with st.spinner("⏳ Processando..."):
                         st.info("ℹ️ Nenhum novo registro para enviar.")
                     if duplicados:
                         st.warning(f"⚠️ {len(duplicados)} registros duplicados não foram enviados.")
-# ===== ROTINA INDEPENDENTE: RECRIA CACHE_FILTRADO COM TODO O MÊS ANTERIOR =====
+# ===== ROTINA INDEPENDENTE: RECRIA CACHE_FILTRADO COM TODO O MÊS ANTERIOR (ROBUSTO) =====
 try:
-    # leitura completa da aba "Faturamento Meio Pagamento" (onde gravamos os dados principais)
+    # leitura completa da aba "Faturamento Meio Pagamento"
     valores_planilha = aba_destino.get_all_values()
 
     if not valores_planilha or len(valores_planilha) == 0:
@@ -1103,24 +1103,31 @@ try:
     else:
         plan_header = [h.strip() for h in valores_planilha[0]]
         plan_rows = valores_planilha[1:] if len(valores_planilha) > 1 else []
-
-        # monta DataFrame com os dados atuais da aba destino
         df_sheet = pd.DataFrame(plan_rows, columns=plan_header) if plan_rows else pd.DataFrame(columns=plan_header)
 
-        # tenta normalizar coluna Data (pode vir como serial ou texto)
+        # prepara coluna __dt__ convertendo serial do Sheets OU texto dd/mm/YYYY
         if "Data" in df_sheet.columns:
-            # primeiro tenta converter como número (serial do Sheets)
-            df_sheet["__data_num__"] = pd.to_numeric(df_sheet["Data"], errors="coerce")
-            # serial -> date
-            mask_num = df_sheet["__data_num__"].notna()
-            if mask_num.any():
-                df_sheet.loc[mask_num, "__dt__"] = (pd.to_timedelta(df_sheet.loc[mask_num, "__data_num__"].astype(float), unit="D")
-                                                   + pd.Timestamp("1899-12-30")).dt.date
-            # para os demais, tenta parsear dd/mm/yyyy
-            mask_txt = ~mask_num
-            if mask_txt.any():
-                df_sheet.loc[mask_txt, "__dt__"] = pd.to_datetime(df_sheet.loc[mask_txt, "Data"], dayfirst=True, errors="coerce").dt.date
-            df_sheet.drop(columns=["__data_num__"], inplace=True, errors="ignore")
+            # tenta converter como número (serial)
+            num = pd.to_numeric(df_sheet["Data"], errors="coerce")
+
+            # converte serial para datetime (apenas onde num não é NaN)
+            dt_num = None
+            if num.notna().any():
+                dt_num = (pd.to_timedelta(num.fillna(0), unit="D") + pd.Timestamp("1899-12-30"))
+                dt_num = pd.to_datetime(dt_num, errors="coerce")
+
+            # converte texto dd/mm/YYYY (aplica a todos — será usado onde num é NaN)
+            dt_txt = pd.to_datetime(df_sheet["Data"], dayfirst=True, errors="coerce")
+
+            # combina: usa dt_num quando num não é NaN, senão dt_txt
+            if dt_num is not None:
+                dt_comb = dt_num.where(num.notna(), dt_txt)
+            else:
+                dt_comb = dt_txt
+
+            # garante datetime64 dtype e cria coluna __dt__ com date()
+            dt_comb = pd.to_datetime(dt_comb, errors="coerce")
+            df_sheet["__dt__"] = dt_comb.dt.date
         else:
             st.error("❌ Não foi encontrada a coluna 'Data' na aba 'Faturamento Meio Pagamento'. CACHE_FILTRADO não atualizado.")
             df_sheet["__dt__"] = pd.NaT
@@ -1136,18 +1143,23 @@ try:
         mask_periodo = (df_sheet["__dt__"] >= primeiro_dia_mes_anterior) & (df_sheet["__dt__"] <= ultimo_dia_mes_anterior)
         df_periodo = df_sheet.loc[mask_periodo].copy()
 
-        # prepara header para gravar no CACHE_FILTRADO: usa 'header' existente se disponível, senão usa header da planilha destino
+        # prepara header para gravar no CACHE_FILTRADO
         cache_header = header[:] if 'header' in locals() else plan_header[:]
 
-        # garante colunas presentes e ordenação
+        # garante colunas e ordenação
         for c in cache_header:
             if c not in df_periodo.columns:
                 df_periodo[c] = ""
         df_periodo = df_periodo.reindex(columns=cache_header, fill_value="")
 
-        # formata Data no padrão dd/mm/YYYY para o cache (legível)
+        # formata Data no padrão dd/mm/YYYY para o cache (sem usar .dt diretamente)
         if "Data" in df_periodo.columns:
-            df_periodo["Data"] = pd.to_datetime(df_periodo["__dt__"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
+            def _fmt_date(x):
+                try:
+                    return x.strftime("%d/%m/%Y") if pd.notnull(x) else ""
+                except Exception:
+                    return ""
+            df_periodo["Data"] = df_periodo["__dt__"].apply(_fmt_date)
 
         # prepara valores a gravar
         cache_values = df_periodo.fillna("").values.tolist()
@@ -1165,9 +1177,8 @@ try:
             if cache_values:
                 sh_cache.update("A1", [cache_header] + cache_values)
             else:
-                # grava apenas o cabeçalho se não houver linhas do mês anterior
                 sh_cache.update("A1", [cache_header])
-            st.info(f"✅ CACHE_FILTRADO recriado com o mês anterior: {primeiro_dia_mes_anterior.strftime('%d/%m/%Y')} a {ultimo_dia_mes_anterior.strftime('%d/%m/%Y')} (linhas: {len(cache_values)})")
+            st.info(f"✅ CACHE_FILTRADO recriado: {primeiro_dia_mes_anterior.strftime('%d/%m/%Y')} a {ultimo_dia_mes_anterior.strftime('%d/%m/%Y')} (linhas: {len(cache_values)})")
         except Exception as e:
             st.error(f"Erro ao gravar CACHE_FILTRADO: {e}")
 

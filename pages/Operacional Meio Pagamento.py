@@ -1127,7 +1127,11 @@ try:
 
             # garante datetime64 dtype e cria coluna __dt__ com date()
             dt_comb = pd.to_datetime(dt_comb, errors="coerce")
-            df_sheet["__dt__"] = dt_comb.dt.date
+            # Evita erro ao acessar .dt se dt_comb for objeto não datetime
+            if pd.api.types.is_datetime64_any_dtype(dt_comb):
+                df_sheet["__dt__"] = dt_comb.dt.date
+            else:
+                df_sheet["__dt__"] = pd.NaT
         else:
             st.error("❌ Não foi encontrada a coluna 'Data' na aba 'Faturamento Meio Pagamento'. CACHE_FILTRADO não atualizado.")
             df_sheet["__dt__"] = pd.NaT
@@ -1139,7 +1143,12 @@ try:
         primeiro_dia_mes_anterior = date(ultimo_dia_mes_anterior.year, ultimo_dia_mes_anterior.month, 1)
 
         # filtra somente o mês anterior completo
-        df_sheet["__dt__"] = pd.to_datetime(df_sheet["__dt__"], errors="coerce").dt.date
+        # Evita erro ao acessar .dt se coluna __dt__ não for datetime
+        if pd.api.types.is_datetime64_any_dtype(df_sheet["__dt__"]):
+            df_sheet["__dt__"] = pd.to_datetime(df_sheet["__dt__"], errors="coerce").dt.date
+        else:
+            df_sheet["__dt__"] = pd.NaT
+
         mask_periodo = (df_sheet["__dt__"] >= primeiro_dia_mes_anterior) & (df_sheet["__dt__"] <= ultimo_dia_mes_anterior)
         df_periodo = df_sheet.loc[mask_periodo].copy()
 

@@ -930,9 +930,6 @@ with st.spinner("⏳ Processando..."):
             s = s.replace(",", "_").replace(".", ",").replace("_", ".")
             return f"R$ {s}"
 
-       
-
-        
         def inferir_sistema_mes_ano(df: pd.DataFrame):
            
             # 1️⃣ Se existir Sistema explícito, respeita

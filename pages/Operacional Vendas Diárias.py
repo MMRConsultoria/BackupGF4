@@ -2518,11 +2518,16 @@ with st.spinner("⏳ Processando..."):
     
         # Abre a planilha pelo ID (substitua pelo seu ID)
         sh = _gc.open_by_key("1GSI291SEeeU9MtOWkGwsKGCGMi_xXMSiQnL_9GhXxfU")
-        
-        # Acessa as abas normalmente
-        ws_ext = sh.worksheet("Fat Sistema Externo")
-        ws_mp = sh.worksheet("Faturamento Meio Pagamento")
-        del _gc  # remove o cliente para não “aparecer”
+
+        # 1. Abre a planilha antiga para pegar o Sistema Externo
+        sh_vendas = _gc.open("Vendas diarias")
+        ws_ext = sh_vendas.worksheet("Fat Sistema Externo")
+
+        # 2. Abre a NOVA planilha para pegar o Meio de Pagamento
+        sh_meio_pagto = _gc.open_by_key("1GSI291SEeeU9MtOWkGwsKGCGMi_xXMSiQnL_9GhXxfU")
+        ws_mp = sh_meio_pagto.worksheet("Faturamento Meio Pagamento")
+
+        del _gc
     
         # ---------------- Leitura ----------------
         ws_ext = sh.worksheet("Fat Sistema Externo")

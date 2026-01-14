@@ -1084,75 +1084,60 @@ with st.spinner("⏳ Processando..."):
                 if "Código Everest" in df_final.columns else []
             todas_lojas_ok = len(lojas_nao_cadastradas) == 0
 
-            if todas_lojas_ok and st.button("📥 Enviar dados para o Google Sheets", key="btn_enviar_para_sheets"):
-                with st.spinner("🔄 Atualizando..."):
-                    if novos_dados:
+            
+            # ====================================================== 
+            # 📥 BOTÃO ÚNICO: ENVIAR E ATUALIZAR CACHE 
+            # ================================================ 
+            if st.button( "📥 Enviar dados e Atualizar Cache" , key= "btn_enviar_e_cache" ):
+                 with st.spinner( "🔄 Processando envio e atualizando cache..." ):
+                     # 1. Envio dos novos dados 
+                    se novos_dados:
                         aba_destino.append_rows(novos_dados)
-                        st.success(f"✅ {len(novos_dados)} novos registros enviados!")
-                    else:
-                        st.info("ℹ️ Nenhum novo registro para enviar.")
-                    if duplicados:
-                        st.warning(f"⚠️ {len(duplicados)} registros duplicados não foram enviados.")
-# ===== ROTINA INDEPENDENTE: COPIA E COLA MÊS ANTERIOR (SEM ALTERAR FORMATOS) =====
-try:
-    # 1. Lê todos os valores da aba principal exatamente como aparecem
-    valores_origem = aba_destino.get_all_values()
+                        st.success( f"✅ { len (novos_dados)} novos registros enviados!" )
+                     else :
+                        st.info( "ℹ️ Nenhum novo registro para envio." )
+                    
+                    se duplicados:
+                        st.warning( f"⚠️ { len (duplicados)} registros duplicados ignorados." )
 
-    if not valores_origem or len(valores_origem) <= 1:
-        st.warning("⚠️ Sem dados suficientes na aba principal para atualizar o cache.")
-    else:
-        header_cache = valores_origem[0]
-        dados_corpo = valores_origem[1:]
-        
-        # Criamos um DataFrame temporário apenas para facilitar o filtro por data
-        df_temp = pd.DataFrame(dados_corpo, columns=header_cache)
-        
-        # Identifica o período do mês anterior
-        hoje = date.today()
-        primeiro_dia_mes_atual = date(hoje.year, hoje.month, 1)
-        ultimo_dia_mes_anterior = primeiro_dia_mes_atual - timedelta(days=1)
-        primeiro_dia_mes_anterior = date(ultimo_dia_mes_anterior.year, ultimo_dia_mes_anterior.month, 1)
-        
-        # Converte a coluna Data para filtro (sem alterar o valor original que será colado)
-        # Tenta converter serial ou texto dd/mm/yyyy
-        def converter_data_filtro(x):
-            try:
-                if str(x).isdigit(): # Serial do Sheets
-                    return (pd.Timestamp("1899-12-30") + pd.Timedelta(days=float(x))).date()
-                return pd.to_datetime(x, dayfirst=True).date()
-            except:
-                return None
+                    # 2. Rotina de Cache (Executa logo após o envio) 
+                    try :
+                         # Recarrega os valores da aba principal (agora com os novos dados incluídos)
+                        valores_origem = aba_destino.get_all_values()
+                        header_cache = valores_origem[ 0 ]
+                        dados_corpo = valores_origem[ 1 :]
+                        
+                        df_temp = pd.DataFrame(dados_corpo, columns=header_cache)
+                        
+                        hoje = data.hoje()
+                        primeiro_dia_mes_atual = data(hoje.ano, hoje.mês, 1 )
+                        ultimo_dia_mes_anterior = primeiro_dia_mes_atual - timedelta(dias= 1 )
+                        primeiro_dia_mes_anterior = data(ultimo_dia_mes_anterior.ano, ultimo_dia_mes_anterior.mês, 1 )
+                        
+                        def  converter_dados_filtro ( x ):
+                             tente :
+                                 se  str (x).isdigit(): retorne (pd.Timestamp( "1899-12-30" ) + pd.Timedelta(days= float (x))).date()
+                                 retorne pd.to_datetime(x, dayfirst= True ).date()
+                             exceto : retorne  None
 
-        df_temp['__dt_filtro__'] = df_temp['Data'].apply(converter_data_filtro)
-        
-        # Filtra as linhas que pertencem ao mês anterior
-        mask = (df_temp['__dt_filtro__'] >= primeiro_dia_mes_anterior) & \
-               (df_temp['__dt_filtro__'] <= ultimo_dia_mes_anterior)
-        
-        # Seleciona apenas as linhas filtradas e remove a coluna auxiliar de filtro
-        dados_filtrados = df_temp.loc[mask].drop(columns=['__dt_filtro__']).values.tolist()
+                        df_temp[ '__dt_filtro__' ] = df_temp[ 'Data' ].apply(converter_data_filtro)
+                        máscara = (df_temp[ '__dt_filtro__' ] >= primeiro_dia_mes_anterior) & (df_temp[ '__dt_filtro__' ] <= ultimo_dia_mes_anterior)
+                        dados_filtrados = df_temp.loc[mask].drop(columns=[ '__dt_filtro__' ]).values.tolist()
 
-        # 2. Acessa a aba CACHE_FILTRADO
-        sh_fatur = gc.open("Faturamento Meio Pagamento")
-        try:
-            sh_cache = sh_fatur.worksheet("CACHE_FILTRADO")
-        except:
-            sh_cache = sh_fatur.add_worksheet(title="CACHE_FILTRADO", rows="1000", cols=str(len(header_cache)))
+                        tentar :
+                            sh_cache = sh_fatur.worksheet( "CACHE_FILTRADO" )
+                         exceto :
+                            sh_cache = sh_fatur.add_worksheet(title= "CACHE_FILTRADO" , rows= "1000" , cols= str ( len (header_cache)))
 
-        # 3. Apaga tudo e cola: Cabeçalho + Dados Filtrados
-        sh_cache.clear()
-        
-        # Monta a lista final para upload (Cabeçalho + Linhas)
-        lista_final = [header_cache] + dados_filtrados
-        
-        if len(lista_final) > 1:
-            # USER_ENTERED garante que o Sheets interprete os números e moedas como eles são
-            sh_cache.update("A1", lista_final, value_input_option="USER_ENTERED")
-            st.info(f"✅ CACHE_FILTRADO atualizado: {len(dados_filtrados)} linhas do mês anterior copiadas.")
-        else:
-            sh_cache.update("A1", [header_cache])
-            st.warning("⚠️ Nenhuma linha encontrada para o mês anterior.")
+                        sh_cache.limpar()
+                        lista_final = [header_cache] + dados_filtrados
+                        
+                        se  len (lista_final) > 1 :
+                            sh_cache.update( "A1" , lista_final, value_input_option= "USER_ENTERED" )
+                            st.info( f"✅ CACHE_FILTRADO atualizado com { len (dados_filtrados)} linhas do mês anterior." )
+                         else :
+                            sh_cache.update( "A1" , [header_cache])
+                            st.warning( "⚠️ Nenhuma linha do mês anterior encontrada para o cache." )
 
-except Exception as e:
-    st.error(f"Falha ao copiar dados para o cache: {e}")
-# ===== FIM DA ROTINA =====
+                    exceto Exception como e_cache:
+                        st.error( f"⚠️ Dados enviados, mas falha ao atualizar cache: {e_cache} " )

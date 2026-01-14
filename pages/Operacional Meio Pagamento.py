@@ -1038,7 +1038,9 @@ with st.spinner("⏳ Processando..."):
                     df_final[col] = df_final[col].apply(lambda x: int(x) if pd.notnull(x) and str(x).strip() != "" else "")
 
             # Planilha destino
-            aba_destino = gc.open("Faturamento Meio Pagamento").worksheet("Faturamento Meio Pagamento")
+            sh_fatur = gc.open("Faturamento Meio Pagamento")
+            aba_destino = sh_fatur.worksheet("Faturamento Meio Pagamento")
+            #aba_destino = gc.open("Faturamento Meio Pagamento").worksheet("Faturamento Meio Pagamento")
             valores_existentes = aba_destino.get_all_values()
 
             if valores_existentes:

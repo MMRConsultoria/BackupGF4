@@ -1086,58 +1086,59 @@ with st.spinner("⏳ Processando..."):
 
             
             # ====================================================== 
-            # 📥 BOTÃO ÚNICO: ENVIAR E ATUALIZAR CACHE 
-            # ================================================ 
-            if st.button( "📥 Enviar dados e Atualizar Cache" , key= "btn_enviar_e_cache" ):
-                 with st.spinner( "🔄 Processando envio e atualizando cache..." ):
-                     # 1. Envio dos novos dados 
-                    se novos_dados:
+            # =========================================================
+            # 📥 BOTÃO ÚNICO: ENVIAR E ATUALIZAR CACHE
+            # =========================================================
+            if st.button("📥 Enviar dados e Atualizar Cache", key="btn_enviar_e_cache"):
+                with st.spinner("🔄 Processando envio e atualizando cache..."):
+                    # 1. Envio dos novos dados
+                    if novos_dados:
                         aba_destino.append_rows(novos_dados)
-                        st.success( f"✅ { len (novos_dados)} novos registros enviados!" )
-                     else :
-                        st.info( "ℹ️ Nenhum novo registro para envio." )
+                        st.success(f"✅ {len(novos_dados)} novos registros enviados!")
+                    else:
+                        st.info("ℹ️ Nenhum novo registro para enviar.")
                     
-                    se duplicados:
-                        st.warning( f"⚠️ { len (duplicados)} registros duplicados ignorados." )
+                    if duplicados:
+                        st.warning(f"⚠️ {len(duplicados)} registros duplicados ignorados.")
 
-                    # 2. Rotina de Cache (Executa logo após o envio) 
-                    try :
-                         # Recarrega os valores da aba principal (agora com os novos dados incluídos)
+                    # 2. Rotina de Cache (Executa logo após o envio)
+                    try:
+                        # Recarrega os valores da aba principal (agora com os novos dados inclusos)
                         valores_origem = aba_destino.get_all_values()
-                        header_cache = valores_origem[ 0 ]
-                        dados_corpo = valores_origem[ 1 :]
+                        header_cache = valores_origem[0]
+                        dados_corpo = valores_origem[1:]
                         
                         df_temp = pd.DataFrame(dados_corpo, columns=header_cache)
                         
-                        hoje = data.hoje()
-                        primeiro_dia_mes_atual = data(hoje.ano, hoje.mês, 1 )
-                        ultimo_dia_mes_anterior = primeiro_dia_mes_atual - timedelta(dias= 1 )
-                        primeiro_dia_mes_anterior = data(ultimo_dia_mes_anterior.ano, ultimo_dia_mes_anterior.mês, 1 )
+                        hoje = date.today()
+                        primeiro_dia_mes_atual = date(hoje.year, hoje.month, 1)
+                        ultimo_dia_mes_anterior = primeiro_dia_mes_atual - timedelta(days=1)
+                        primeiro_dia_mes_anterior = date(ultimo_dia_mes_anterior.year, ultimo_dia_mes_anterior.month, 1)
                         
-                        def  converter_dados_filtro ( x ):
-                             tente :
-                                 se  str (x).isdigit(): retorne (pd.Timestamp( "1899-12-30" ) + pd.Timedelta(days= float (x))).date()
-                                 retorne pd.to_datetime(x, dayfirst= True ).date()
-                             exceto : retorne  None
+                        def converter_data_filtro(x):
+                            try:
+                                if str(x).isdigit(): return (pd.Timestamp("1899-12-30") + pd.Timedelta(days=float(x))).date()
+                                return pd.to_datetime(x, dayfirst=True).date()
+                            except: return None
 
-                        df_temp[ '__dt_filtro__' ] = df_temp[ 'Data' ].apply(converter_data_filtro)
-                        máscara = (df_temp[ '__dt_filtro__' ] >= primeiro_dia_mes_anterior) & (df_temp[ '__dt_filtro__' ] <= ultimo_dia_mes_anterior)
-                        dados_filtrados = df_temp.loc[mask].drop(columns=[ '__dt_filtro__' ]).values.tolist()
+                        df_temp['__dt_filtro__'] = df_temp['Data'].apply(converter_data_filtro)
+                        mask = (df_temp['__dt_filtro__'] >= primeiro_dia_mes_anterior) & (df_temp['__dt_filtro__'] <= ultimo_dia_mes_anterior)
+                        dados_filtrados = df_temp.loc[mask].drop(columns=['__dt_filtro__']).values.tolist()
 
-                        tentar :
-                            sh_cache = sh_fatur.worksheet( "CACHE_FILTRADO" )
-                         exceto :
-                            sh_cache = sh_fatur.add_worksheet(title= "CACHE_FILTRADO" , rows= "1000" , cols= str ( len (header_cache)))
+                        try:
+                            sh_cache = sh_fatur.worksheet("CACHE_FILTRADO")
+                        except:
+                            sh_cache = sh_fatur.add_worksheet(title="CACHE_FILTRADO", rows="1000", cols=str(len(header_cache)))
 
-                        sh_cache.limpar()
+                        sh_cache.clear()
                         lista_final = [header_cache] + dados_filtrados
                         
-                        se  len (lista_final) > 1 :
-                            sh_cache.update( "A1" , lista_final, value_input_option= "USER_ENTERED" )
-                            st.info( f"✅ CACHE_FILTRADO atualizado com { len (dados_filtrados)} linhas do mês anterior." )
-                         else :
-                            sh_cache.update( "A1" , [header_cache])
-                            st.warning( "⚠️ Nenhuma linha do mês anterior encontrada para o cache." )
+                        if len(lista_final) > 1:
+                            sh_cache.update("A1", lista_final, value_input_option="USER_ENTERED")
+                            st.info(f"✅ CACHE_FILTRADO atualizado com {len(dados_filtrados)} linhas do mês anterior.")
+                        else:
+                            sh_cache.update("A1", [header_cache])
+                            st.warning("⚠️ Nenhuma linha do mês anterior encontrada para o cache.")
 
-                    exceto Exception como e_cache:
-                        st.error( f"⚠️ Dados enviados, mas falha ao atualizar cache: {e_cache} " )
+                    except Exception as e_cache:
+                        st.error(f"⚠️ Dados enviados, mas falha ao atualizar cache: {e_cache}")

@@ -13,7 +13,7 @@ except Exception:
     build = None
 
 # ---------------- CONFIG ----------------
-MAIN_FOLDER_ID = "1LrbcStUAcvZV_dOYKBt-vgBHb9e1d6X"  # pasta principal
+MAIN_FOLDER_ID = "1LrbcStUAcvZV_dOYKBt-vgBHb9e1d6X-"  # pasta principal
 ID_PLANILHA_ORIGEM = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
 ABA_ORIGEM = "Fat Sistema Externo"
 MAPA_ABAS = {"Faturamento": "Importado Fat", "Meio Pagamento": "Meio Pagamento", "Desconto": "Desconto"}

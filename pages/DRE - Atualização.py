@@ -6,7 +6,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import gspread
 import time
 
-# tenta importar Drive API (opcional)
+# opcional: Drive API para listar pastas
 try:
     from googleapiclient.discovery import build
     from googleapiclient.errors import HttpError
@@ -15,7 +15,7 @@ except Exception:
     HttpError = Exception
 
 # -----------------------
-# CONFIGURAÇÃO
+# CONFIGURAÇÕES
 # -----------------------
 DEFAULT_FOLDER_IDS = [
     "1ptFvtxYjISfB19S7bU9olMLmAxDTBkOh",
@@ -23,34 +23,29 @@ DEFAULT_FOLDER_IDS = [
 ]
 DEFAULT_ORIGIN_SPREADSHEET = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
 DEFAULT_ORIGIN_SHEET = "Fat Sistema Externo"
-DEFAULT_DATA_MINIMA = (datetime.now() - timedelta(days=365)).date()  # padrão 365 dias
+DEFAULT_DATA_MINIMA = (datetime.now() - timedelta(days=365)).date()
 
-# Abas fixas para atualizar
-ABAS_FIXAS = [
-    "Meio Pagamento",
-    "Desconto",
-    "Volumetria",
-    "Importado Fat",  # visual será "Faturamento"
-]
+# Operações/abas fixas que o usuário quer controlar (rótulos visuais no grid)
+OPERACOES = ["Desconto", "Meio Pagamento", "Faturamento"]
+# Mapeamento visual -> aba real (Faturamento -> Importado Fat)
+ABA_MAP = {"Faturamento": "Importado Fat", "Meio Pagamento": "Meio Pagamento", "Desconto": "Desconto"}
 
 # -----------------------
 # UI
 # -----------------------
-st.set_page_config(page_title="Atualização e Auditoria - Meio de Pagamento", layout="wide")
-st.title("📊 Atualização e Auditoria — Faturamento x Meio de Pagamento")
+st.set_page_config(page_title="Atualização por Operação — Faturamento x Meio de Pagamento", layout="wide")
+st.title("📋 Seleção por Operação — Atualização de Planilhas")
 
 st.markdown("""
 <style>
-.card { background: #ffffff; border-radius: 10px; padding: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom:12px; }
+.row-name { font-weight: 600; }
 .small-muted { color:#6c757d; font-size:0.9em; }
-.planilha-row { display: flex; align-items: center; margin-bottom: 6px; }
-.planilha-name { flex: 1; }
-.aba-select { width: 200px; margin-left: 12px; }
+.header-cell { font-weight:700; }
 </style>
 """, unsafe_allow_html=True)
 
 # -----------------------
-# AUTENTICAÇÃO gspread (+ Drive opcional)
+# AUTENTICAÇÃO GSPREAD (+ Drive opcional)
 # -----------------------
 @st.cache_resource
 def autenticar_gspread():
@@ -75,7 +70,7 @@ except Exception as e:
 st.markdown(f"<div class='small-muted'>Service account: <b>{service_account_email}</b></div>", unsafe_allow_html=True)
 
 # -----------------------
-# FUNÇÕES AUXILIARES
+# FUNÇÕES AUX
 # -----------------------
 def listar_arquivos_pasta(drive_service, pasta_id):
     arquivos = []
@@ -90,9 +85,6 @@ def listar_arquivos_pasta(drive_service, pasta_id):
             page_token = resp.get("nextPageToken", None)
             if not page_token:
                 break
-        except HttpError as e:
-            st.error(f"Erro listando pasta {pasta_id}: {e}")
-            break
         except Exception as e:
             st.error(f"Erro listando pasta {pasta_id}: {e}")
             break
@@ -114,8 +106,7 @@ def carregar_origem(gc, origin_spreadsheet_id, origin_sheet_name):
 
 def detectar_grupo_relcomp(sh):
     try:
-        abas = sh.worksheets()
-        aba_rel = next((a for a in abas if "rel comp" in a.title.lower()), None)
+        aba_rel = next((a for a in sh.worksheets() if "rel comp" in a.title.lower()), None)
         if not aba_rel:
             return None
         v = aba_rel.acell("B4").value
@@ -152,18 +143,15 @@ folder_ids_text = st.sidebar.text_area("IDs das pastas (uma por linha) — opcio
 folder_ids = [s.strip() for s in folder_ids_text.splitlines() if s.strip()]
 
 # -----------------------
-# CARREGA PLANILHAS DAS PASTAS
+# CARREGA A LISTA DE PLANILHAS (a partir das pastas)
 # -----------------------
 planilhas = []
 if drive_service and folder_ids:
     for fid in folder_ids:
-        try:
-            arquivos = listar_arquivos_pasta(drive_service, fid)
-            if arquivos:
-                for a in arquivos:
-                    planilhas.append({"id": a["id"], "name": a["name"], "folder_id": fid})
-        except Exception as e:
-            st.error(f"Erro listando pasta {fid}: {e}")
+        arquivos = listar_arquivos_pasta(drive_service, fid)
+        if arquivos:
+            for a in arquivos:
+                planilhas.append({"id": a["id"], "name": a["name"], "folder_id": fid})
 else:
     if not drive_service:
         st.warning("Drive API não disponível — verifique googleapiclient/credentials.")
@@ -171,34 +159,96 @@ else:
         st.info("Insira IDs de pasta no sidebar para listar planilhas automaticamente.")
 
 # -----------------------
-# SELEÇÃO: checkbox + selectbox para aba fixa
+# CONTROLES GLOBAIS (selecionar tudo por coluna)
 # -----------------------
-st.markdown("### Selecione as planilhas para atualizar e escolha a aba destino")
+st.markdown("### Escolha as operações por planilha")
+col_headers = st.columns([0.05, 0.45] + [0.15]*len(OPERACOES))
 
-selecionadas = []
-abas_selecionadas = {}
+with col_headers[0]:
+    st.write("")  # espaço para checkbox de linha
+with col_headers[1]:
+    st.markdown("**Planilha**")
+# criar checkboxes globais para cada operação
+global_ops_state = {}
+for i, op in enumerate(OPERACOES):
+    key = f"global_op_{op.replace(' ','_')}"
+    default = True
+    # se já existir estado anterior, mantemos; caso contrário, default True
+    val = st.checkbox(op, value=st.session_state.get(key, default), key=key)
+    global_ops_state[op] = val
 
+st.write("")  # separador visual
+
+# -----------------------
+# PREPARAR KEYS NA session_state PARA OS CHECKBOXES (inicializar)
+# -----------------------
+# Inicializa chave por planilha/operação com o valor global se não existir
 for p in planilhas:
-    cols = st.columns([0.05, 0.6, 0.35])
-    with cols[0]:
-        checked = st.checkbox("", value=True, key=f"chk_{p['id']}")
-    with cols[1]:
-        st.markdown(f"**{p['name']}**")
-    with cols[2]:
-        # substitui label "Importado Fat" por "Faturamento" visualmente
-        opcoes_aba = [aba if aba != "Importado Fat" else "Faturamento" for aba in ABAS_FIXAS]
-        aba_escolhida = st.selectbox(f"Aba destino {p['id']}", opcoes_aba, key=f"aba_{p['id']}")
-    if checked:
-        selecionadas.append(p)
-        # guarda aba escolhida real (troca "Faturamento" por "Importado Fat")
-        abas_selecionadas[p['id']] = "Importado Fat" if aba_escolhida == "Faturamento" else aba_escolhida
-
-st.write(f"Total selecionadas: {len(selecionadas)}")
+    pid = p["id"]
+    # checkbox linha selecionada
+    row_key = f"row_sel_{pid}"
+    if row_key not in st.session_state:
+        st.session_state[row_key] = True
+    for op in OPERACOES:
+        op_key = f"{pid}__{op.replace(' ','_')}"
+        if op_key not in st.session_state:
+            st.session_state[op_key] = global_ops_state.get(op, True)
 
 # -----------------------
-# EXECUÇÃO PARA SELECIONADAS
+# RENDERIZA GRID (tabela de checkboxes)
 # -----------------------
-if selecionadas:
+st.markdown("#### Seleção por planilha / operação")
+rows_container = st.container()
+with rows_container:
+    for p in planilhas:
+        pid = p["id"]
+        cols = st.columns([0.05, 0.45] + [0.15]*len(OPERACOES))
+        # checkbox para selecionar a linha inteira
+        with cols[0]:
+            row_checked = st.checkbox("", value=st.session_state.get(f"row_sel_{pid}", True), key=f"row_sel_{pid}")
+        with cols[1]:
+            st.markdown(f"<div class='row-name'>{p['name']}</div>", unsafe_allow_html=True)
+
+        # checkboxes por operação (visuais)
+        for j, op in enumerate(OPERACOES):
+            op_key = f"{pid}__{op.replace(' ','_')}"
+            with cols[2 + j]:
+                # se a linha não estiver selecionada, mostramos unchecked — mas mantemos estado no session_state
+                if row_checked:
+                    checked = st.checkbox("", value=st.session_state.get(op_key, True), key=op_key)
+                else:
+                    # ainda coloca o widget mas forçado para False visualmente; grava False no state
+                    # Para evitar que a checkbox reapareça true quando row é desmarcada, atualizamos state:
+                    st.session_state[op_key] = False
+                    checked = st.checkbox("", value=False, key=op_key)
+        st.write("")  # espaçamento leve
+
+# resumo de quantos pares selecionados (opções ativas)
+def contar_selecionados():
+    total_pairs = 0
+    planilhas_selecionadas = {}
+    for p in planilhas:
+        pid = p["id"]
+        row_key = f"row_sel_{pid}"
+        if not st.session_state.get(row_key, False):
+            continue
+        ops = []
+        for op in OPERACOES:
+            op_key = f"{pid}__{op.replace(' ','_')}"
+            if st.session_state.get(op_key, False):
+                ops.append(op)
+        if ops:
+            planilhas_selecionadas[pid] = ops
+            total_pairs += len(ops)
+    return total_pairs, planilhas_selecionadas
+
+total_pairs, planilhas_selecionadas = contar_selecionados()
+st.write(f"Total de (planilha × operação) selecionados: **{total_pairs}**")
+
+# -----------------------
+# EXECUÇÃO: carregar origem e executar atualizações por par planilha/aba
+# -----------------------
+if total_pairs > 0:
     with st.spinner("Carregando planilha origem..."):
         try:
             df_origem = carregar_origem(gc, origin_id, origin_sheet)
@@ -215,107 +265,95 @@ if selecionadas:
     with col_c:
         do_backup = st.checkbox("Fazer backup da aba destino antes de sobrescrever", value=True)
 
-    planilhas_config = {}
-    for p in selecionadas:
-        pid = p["id"]
-        try:
-            sh = gc.open_by_key(pid)
-        except Exception as e:
-            st.error(f"Não foi possível abrir planilha {pid}: {e}")
-            continue
-
-        with st.expander(f"Configurar: {sh.title}", expanded=False):
-            st.markdown(f"**Planilha:** {sh.title} — ID: {pid}")
-            grupo_detectado = detectar_grupo_relcomp(sh)
-            st.write(f"Grupo detectado (B4 de 'rel comp'): **{grupo_detectado or '— não detectado —'}**")
-
-            dest_aba = abas_selecionadas.get(pid, "Importado Fat")
-
-            # preview
-            df = df_origem.copy()
-            if grupo_detectado:
-                mask = df["Grupo"].astype(str).str.upper() == grupo_detectado
-            else:
-                mask = pd.Series([True] * len(df), index=df.index)
-            mask = mask & df["Data_dt"].notna() & (df["Data_dt"].dt.date >= data_min)
-            df_preview = df.loc[mask].copy()
-            st.write(f"Linhas a enviar: **{len(df_preview)}**")
-            if not df_preview.empty:
-                st.dataframe(df_preview.head(10).drop(columns=["Data_dt"], errors="ignore"), use_container_width=True)
-
-            planilhas_config[pid] = {
-                "spreadsheet": sh,
-                "dest_aba": dest_aba,
-                "backup": do_backup,
-                "dry_run": dry_run,
-                "df_preview": df_preview,
-                "grupo": grupo_detectado
-            }
-
-    if planilhas_config:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader("Executar atualização para planilhas configuradas")
-        confirm = st.checkbox("Confirmo e desejo executar a operação", key="confirm_exec")
-        if st.button("Executar agora") and confirm:
+    if st.checkbox("Confirmo e desejo executar a operação", key="confirm_exec"):
+        if st.button("Executar agora"):
             resultados = []
             logs = []
-            total = len(planilhas_config)
+            total_tasks = sum(len(ops) for ops in planilhas_selecionadas.values())
             progress = st.progress(0)
-            i = 0
-            for pid, cfg in planilhas_config.items():
-                i += 1
-                progress.progress(int(i/total*100))
-                sh = cfg["spreadsheet"]
-                dest = cfg["dest_aba"] or "Importado Fat"
-                df_send = cfg["df_preview"]
-                dry = cfg["dry_run"]
-                do_bkp = cfg["backup"]
+            i_task = 0
+
+            for pid, ops in planilhas_selecionadas.items():
+                # abrir planilha
                 try:
-                    if df_send is None or df_send.empty:
-                        resultados.append((pid, sh.title, 0, "SKIP", "Sem linhas"))
-                        logs.append(f"{sh.title}: Sem linhas para enviar.")
-                        continue
-
-                    try:
-                        ws_dest = sh.worksheet(dest)
-                        aba_existed = True
-                    except gspread.exceptions.WorksheetNotFound:
-                        ws_dest = None
-                        aba_existed = False
-
-                    if do_bkp and aba_existed:
-                        bname, berr = backup_worksheet(sh, dest)
-                        if berr:
-                            logs.append(f"{sh.title}: Falha backup -> {berr}")
-                        else:
-                            logs.append(f"{sh.title}: Backup criado -> {bname}")
-
-                    if dry:
-                        resultados.append((pid, sh.title, len(df_send), "DRY-RUN", "Não gravado"))
-                        logs.append(f"{sh.title}: Dry-run -> {len(df_send)} linhas preparadas.")
-                        continue
-
-                    if not aba_existed:
-                        ws_dest = sh.add_worksheet(title=dest, rows=str(max(1000, len(df_send)+10)), cols=str(max(20, len(df_send.columns))))
-                        time.sleep(0.5)
-
-                    ws_dest.clear()
-                    values = [df_send.columns.tolist()] + df_send.fillna("").astype(str).values.tolist()
-                    ws_dest.update("A1", values, value_input_option="USER_ENTERED")
-                    resultados.append((pid, sh.title, len(df_send), "OK", f"Gravado em '{dest}'"))
-                    logs.append(f"{sh.title}: {len(df_send)} linhas gravadas em '{dest}'.")
+                    sh = gc.open_by_key(pid)
+                    sheet_name = sh.title
                 except Exception as e:
-                    resultados.append((pid, sh.title, 0, "ERROR", str(e)))
-                    logs.append(f"{sh.title}: ERRO -> {e}")
-            progress.progress(100)
+                    logs.append(f"{pid}: erro abrindo planilha -> {e}")
+                    for op in ops:
+                        resultados.append((pid, f"(ID) {pid}", op, 0, "ERROR", f"Erro ao abrir planilha: {e}"))
+                    continue
+
+                # detectar grupo (para filtro)
+                grupo_detectado = detectar_grupo_relcomp(sh)
+
+                # preview df filtrado por grupo/data
+                df = df_origem.copy()
+                if grupo_detectado:
+                    mask = df["Grupo"].astype(str).str.upper() == grupo_detectado
+                else:
+                    mask = pd.Series([True] * len(df), index=df.index)
+                mask = mask & df["Data_dt"].notna() & (df["Data_dt"].dt.date >= data_min)
+                df_preview = df.loc[mask].copy()
+
+                if df_preview.empty:
+                    logs.append(f"{sheet_name}: sem linhas depois do filtro (grupo/data)")
+                    for op in ops:
+                        resultados.append((pid, sheet_name, op, 0, "SKIP", "Sem linhas após filtro"))
+                    # atualizar progress
+                    i_task += len(ops)
+                    progress.progress(int(i_task/total_tasks*100))
+                    continue
+
+                # para cada operação, gravar em sua aba correspondente
+                for op in ops:
+                    i_task += 1
+                    dest_aba = ABA_MAP.get(op, op)
+                    try:
+                        # verificar aba
+                        try:
+                            ws_dest = sh.worksheet(dest_aba)
+                            aba_existed = True
+                        except gspread.exceptions.WorksheetNotFound:
+                            ws_dest = None
+                            aba_existed = False
+
+                        # backup opcional
+                        if do_backup and aba_existed:
+                            bname, berr = backup_worksheet(sh, dest_aba)
+                            if berr:
+                                logs.append(f"{sheet_name}/{dest_aba}: falha backup -> {berr}")
+                            else:
+                                logs.append(f"{sheet_name}/{dest_aba}: backup criado -> {bname}")
+
+                        # dry-run
+                        if dry_run:
+                            resultados.append((pid, sheet_name, op, len(df_preview), "DRY-RUN", "Não gravado (dry-run)"))
+                            logs.append(f"{sheet_name}/{dest_aba}: dry-run -> {len(df_preview)} linhas preparadas.")
+                            progress.progress(int(i_task/total_tasks*100))
+                            continue
+
+                        # criar aba se não existir
+                        if not aba_existed:
+                            ws_dest = sh.add_worksheet(title=dest_aba, rows=str(max(1000, len(df_preview)+10)), cols=str(max(20, len(df_preview.columns))))
+                            time.sleep(0.4)
+
+                        # escrever dados
+                        ws_dest.clear()
+                        values = [df_preview.columns.tolist()] + df_preview.fillna("").astype(str).values.tolist()
+                        ws_dest.update("A1", values, value_input_option="USER_ENTERED")
+                        resultados.append((pid, sheet_name, op, len(df_preview), "OK", f"Gravado em '{dest_aba}'"))
+                        logs.append(f"{sheet_name}/{dest_aba}: {len(df_preview)} linhas gravadas.")
+                    except Exception as e:
+                        resultados.append((pid, sheet_name, op, 0, "ERROR", str(e)))
+                        logs.append(f"{sheet_name}/{dest_aba}: ERRO -> {e}")
+                    progress.progress(int(i_task/total_tasks*100))
+
             st.success("Operação finalizada")
-            df_res = pd.DataFrame(resultados, columns=["ID", "Nome", "Linhas Enviadas", "Status", "Detalhes"])
+            df_res = pd.DataFrame(resultados, columns=["ID","Planilha","Operação","Linhas","Status","Detalhes"])
             st.dataframe(df_res, use_container_width=True)
-            with st.expander("Logs"):
-                for line in logs:
-                    st.write(line)
-        else:
-            st.info("Marque a confirmação e clique em 'Executar agora' para aplicar as alterações.")
-        st.markdown('</div>', unsafe_allow_html=True)
+            with st.expander("Logs detalhados"):
+                for l in logs:
+                    st.write(l)
 else:
-    st.info("Nenhuma planilha selecionada. Desmarque as que não quiser atualizar na lista acima.")
+    st.info("Nenhuma operação selecionada. Marque as operações desejadas ao lado das planilhas.")

@@ -20,8 +20,9 @@ st.title("Atualização e Auditoria — Faturamento x Meio de Pagamento")
 # Configurações iniciais
 # -----------------------
 DEFAULT_FOLDER_IDS = [
-    # Cole aqui as IDs das pastas que quer listar
-    # Exemplo: "1ptFvtxYjISfB19S7bU9olMLmAxDTBkOh",
+    "1ptFvtxYjISfB19S7bU9olMLmAxDTBkOh"  # exemplo: Pasta Vendas Janeiro
+    
+    # adicione quantas forem necessárias
 ]
 DEFAULT_ORIGIN_SPREADSHEET = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
 DEFAULT_ORIGIN_SHEET = "Fat Sistema Externo"

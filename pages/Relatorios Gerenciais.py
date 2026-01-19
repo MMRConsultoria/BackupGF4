@@ -75,14 +75,10 @@ with st.spinner("⏳ Processando..."):
     df_meio_pagamento_base = pd.DataFrame(ws_tab_mp.get_all_records())
     
     # --- ADICIONE ESTA LIMPEZA AQUI ---
-    df_relatorio_base = df_relatorio_base.replace('-', 0)
-    df_relatorio_base = df_relatorio_base.replace('', 0) # Também trata vazios
+   
+    df_relatorio_base = df_relatorio_base.replace('-', 0).replace('', 0)
     
-    # Se houver colunas de valores financeiros, garanta que são floats
-    # Exemplo: se a coluna se chamar 'Valor'
-    if 'Valor' in df_relatorio_base.columns:
-        df_relatorio_base['Valor'] = pd.to_numeric(df_relatorio_base['Valor'], errors='coerce').fillna(0)
-        
+   
         
     
     

@@ -17,7 +17,7 @@ except Exception:
 # -----------------------------------------
 # Configurações (não exigir input do usuário)
 # -----------------------------------------
-# Cole aqui os IDs das pastas que devem ser listadas automaticamente
+# IDs das pastas a listar automaticamente
 DEFAULT_FOLDER_IDS = [
     "1ptFvtxYjISfB19S7bU9olMLmAxDTBkOh",  # sua pasta
     # adicione outros IDs de pasta se necessário
@@ -41,9 +41,9 @@ st.markdown("""
     box-shadow: 0 2px 6px rgba(0,0,0,0.06);
     margin-bottom: 16px;
 }
-.kv { color:#6c757d; font-size:0.9em; }
-.header-row { display:flex; gap:16px; align-items:center; justify-content:space-between; }
 .small-muted { color:#6c757d; font-size:0.9em; }
+.bad { color: #a94442; }
+.good { color: #3c763d; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -73,23 +73,33 @@ except Exception as e:
     st.stop()
 
 # -----------------------------------------
-# Funções utilitárias
+# Funções utilitárias (melhoradas)
 # -----------------------------------------
 def listar_arquivos_pasta(drive_service, pasta_id):
+    """
+    Lista arquivos do Drive dentro de uma pasta (suporta Shared Drives).
+    Retorna lista de dicts {id, name, mimeType, owners (if available), shortcutTargetId (if shortcut)}.
+    """
     arquivos = []
     if not drive_service:
         return arquivos
     page_token = None
-    query = f"'{pasta_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
+    # inclui campos úteis e shortcutDetails para tratar atalhos
+    fields = "nextPageToken, files(id, name, mimeType, parents, shortcutDetails)"
+    query = f"'{pasta_id}' in parents and trashed=false"
     while True:
         try:
             resp = drive_service.files().list(
                 q=query,
                 spaces="drive",
-                fields="nextPageToken, files(id, name)",
-                pageToken=page_token
+                fields=fields,
+                pageToken=page_token,
+                includeItemsFromAllDrives=True,
+                supportsAllDrives=True
             ).execute()
-            arquivos.extend(resp.get("files", []))
+            items = resp.get("files", [])
+            for f in items:
+                arquivos.append(f)
             page_token = resp.get("nextPageToken", None)
             if not page_token:
                 break
@@ -100,6 +110,17 @@ def listar_arquivos_pasta(drive_service, pasta_id):
             st.error(f"Error listing folder {pasta_id}: {e}")
             break
     return arquivos
+
+def testar_abrir_planilha(gc, file_id):
+    """
+    Tenta abrir a planilha via gspread.open_by_key para confirmar permissão.
+    Retorna (ok:bool, title_or_error:str)
+    """
+    try:
+        sh = gc.open_by_key(file_id)
+        return True, sh.title
+    except Exception as e:
+        return False, str(e)
 
 def carregar_origem(gc, spreadsheet_id, sheet_name):
     sh = gc.open_by_key(spreadsheet_id)
@@ -115,52 +136,91 @@ def carregar_origem(gc, spreadsheet_id, sheet_name):
     df["Data_dt"] = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
     return df
 
-def detectar_grupo_por_relcomp(sh):
-    try:
-        abas = sh.worksheets()
-        aba_rel = next((a for a in abas if "rel comp" in a.title.lower()), None)
-        if not aba_rel:
-            return None, None
-        grupo = aba_rel.acell("B4").value
-        extra = aba_rel.acell("B6").value if aba_rel.row_count >= 6 else None
-        grupo = grupo.strip().upper() if grupo else None
-        extra = extra.strip().upper() if extra else None
-        return grupo, extra
-    except Exception:
-        return None, None
+# -----------------------------------------
+# Auto-listar planilhas candidatas com diagnóstico
+# -----------------------------------------
+def auto_listar_e_diagnosticar():
+    candidatas = []
+    diag = []  # lista de diagnósticos por pasta
+    if not DEFAULT_FOLDER_IDS:
+        return candidatas, diag
 
-# -----------------------------------------
-# Auto-listar planilhas candidatas (executa ao carregar o app)
-# -----------------------------------------
+    for fid in DEFAULT_FOLDER_IDS:
+        info = {"folder_id": fid, "drive_api_ok": bool(drive_service), "listed_files": [], "errors": []}
+        if not drive_service:
+            info["errors"].append("Drive API cliente não disponível (biblioteca googleapiclient não inicializada).")
+            diag.append(info)
+            continue
+
+        # 1) tenta listar arquivos na pasta
+        try:
+            arquivos = listar_arquivos_pasta(drive_service, fid)
+            info["listed_files_raw_count"] = len(arquivos)
+            if not arquivos:
+                info["errors"].append("Nenhum arquivo listado — pode ser permissão ou pasta incorreta.")
+            else:
+                # filtra apenas planilhas (ou tenta aplicar)
+                for f in arquivos:
+                    # se for atalho, tenta recuperar targetId
+                    if f.get("shortcutDetails") and f["shortcutDetails"].get("targetId"):
+                        target_id = f["shortcutDetails"].get("targetId")
+                        f_id = target_id
+                    else:
+                        f_id = f["id"]
+                    # testa abrir via gspread para confirmar permissão
+                    ok, title_or_err = testar_abrir_planilha(gc, f_id)
+                    entry = {
+                        "id": f_id,
+                        "listed_name": f.get("name"),
+                        "mimeType": f.get("mimeType"),
+                        "gspread_ok": ok,
+                        "gspread_title_or_error": title_or_err
+                    }
+                    info["listed_files"].append(entry)
+                    if ok:
+                        # considerar apenas arquivos que são planilha do Google (mimeType check opcional)
+                        candidatas.append({"id": f_id, "name": title_or_err, "folder_id": fid})
+        except Exception as e:
+            info["errors"].append(str(e))
+        diag.append(info)
+    return candidatas, diag
+
 if "candidatas" not in st.session_state:
-    st.session_state.candidatas = []
-    # Tenta listar automaticamente das pastas configuradas
-    if drive_service and DEFAULT_FOLDER_IDS:
-        with st.spinner("Listando planilhas nas pastas configuradas..."):
-            for fid in DEFAULT_FOLDER_IDS:
-                arquivos = listar_arquivos_pasta(drive_service, fid)
-                for a in arquivos:
-                    st.session_state.candidatas.append({"id": a["id"], "name": a["name"], "folder_id": fid})
-    # Se não encontrou nada, tentamos apenas deixar a lista vazia (o app mostrará instruções)
-    # Você pode adicionar aqui DEFAULT_MANUAL_SPREADSHEET_IDS se quiser incluir alguns hardcoded.
+    with st.spinner("Listando automaticamente planilhas nas pastas configuradas..."):
+        st.session_state.candidatas, st.session_state.diag = auto_listar_e_diagnosticar()
 
 # -----------------------------------------
-# Topbar com ações (refresh)
+# Topbar com ações (refresh) e diagnóstico
 # -----------------------------------------
-col1, col2 = st.columns([3, 1])
+col1, col2, col3 = st.columns([3, 2, 1])
 with col1:
     st.markdown(f"<div class='small-muted'>Service account: <b>{service_account_email}</b></div>", unsafe_allow_html=True)
 with col2:
-    if st.button("🔄 Recarregar lista"):
-        # reload candidatas
-        st.session_state.candidatas = []
-        if drive_service and DEFAULT_FOLDER_IDS:
-            with st.spinner("Relendo planilhas nas pastas..."):
-                for fid in DEFAULT_FOLDER_IDS:
-                    arquivos = listar_arquivos_pasta(drive_service, fid)
-                    for a in arquivos:
-                        st.session_state.candidatas.append({"id": a["id"], "name": a["name"], "folder_id": fid})
+    if st.button("🔍 Ver diagnóstico"):
+        st.session_state.candidatas, st.session_state.diag = auto_listar_e_diagnosticar()
         st.experimental_rerun()
+with col3:
+    if st.button("🔄 Recarregar lista"):
+        st.session_state.candidatas, st.session_state.diag = auto_listar_e_diagnosticar()
+        st.experimental_rerun()
+
+# -----------------------------------------
+# Mostrar diagnóstico (se solicitado)
+# -----------------------------------------
+if st.session_state.get("diag"):
+    st.markdown("<​div class='card'>", unsafe_allow_html=True)
+    st.subheader("Diagnóstico de listagem por pasta")
+    for d in st.session_state.diag:
+        st.markdown(f"**Pasta ID:** {d['folder_id']}")
+        if d.get("errors"):
+            for e in d["errors"]:
+                st.markdown(f"- <span class='bad'>Erro:</span> {e}", unsafe_allow_html=True)
+        st.markdown(f"- Drive API disponível: {'✅' if d.get('drive_api_ok') else '❌'}")
+        st.markdown(f"- Arquivos listados (raw): {d.get('listed_files_raw_count', 0)}")
+        if d.get("listed_files"):
+            df_listed = pd.DataFrame(d["listed_files"])
+            st.dataframe(df_listed, use_container_width=True)
+    st.markdown("<​/div>", unsafe_allow_html=True)
 
 # -----------------------------------------
 # Abas principais
@@ -172,17 +232,24 @@ tab1, tab2 = st.tabs(["Atualização", "Auditoria Faturamento X Meio Pagamento"]
 # -------------------------
 with tab1:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("Passo 1 — Planilhas candidatas")
+    st.subheader("Passo 1 — Planilhas candidatas (listagem automática)")
     if not st.session_state.candidatas:
-        st.info("Nenhuma planilha candidata foi encontrada automaticamente. Verifique: 1) DEFAULT_FOLDER_IDS; 2) se o service account tem acesso às PASTAS configuradas; 3) clique em '🔄 Recarregar lista'.")
-        st.markdown("Se preferir, edite `DEFAULT_FOLDER_IDS` no código e adicione os IDs das pastas que deseja listar automaticamente.")
+        st.info("Nenhuma planilha candidata foi encontrada automaticamente.")
+        st.markdown("Possíveis causas e ações:")
+        st.markdown("""
+        - Verifique se o ID da pasta em DEFAULT_FOLDER_IDS está correto.<br>
+        - Compartilhe a pasta com o service account: <b>{}</b> (papel Visualizador ou Editor).<br>
+        - Se as planilhas estiverem em um Shared Drive (Unidade), verifique permissão e se o service account tem acesso à Unidade.<br>
+        - Certifique-se de que a Drive API esteja ativada no projeto Google Cloud da service account.<br>
+        - Use o botão <b>🔍 Ver diagnóstico</b> para ver o que a API retornou (erros / arquivos listados / tentativas de abertura com gspread).
+        """.format(service_account_email), unsafe_allow_html=True)
     else:
         df_c = pd.DataFrame(st.session_state.candidatas)
         df_display = df_c[["name", "id", "folder_id"]].rename(columns={"name": "Nome", "id": "ID", "folder_id": "Pasta ID"})
         st.dataframe(df_display, use_container_width=True)
-        options = [f"{r['name']} ({r['id']})" for r in st.session_state.candidatas]
-        selecionadas = st.multiselect("Selecione as planilhas para preparar atualização", options, default=[], key="sel_planilhas")
-    st.markdown('</div>', unsafe_allow_html=True)
+        # seleção automática vazia por padrão; usuário não precisa digitar (seleção opcional)
+        selecionadas = st.multiselect("Selecione as planilhas para preparar atualização (opcional)", [f"{r['name']} ({r['id']})" for r in st.session_state.candidatas], default=[], key="sel_planilhas")
+    st.markdown("<​/div>", unsafe_allow_html=True)
 
     # carregar origem automaticamente (apenas quando houver seleção)
     if st.session_state.candidatas and st.session_state.get("sel_planilhas"):
@@ -207,23 +274,27 @@ with tab1:
                 continue
 
             st.markdown(f"### {sh.title}")
-            grupo_detectado, extra_detectado = detectar_grupo_por_relcomp(sh)
-            colA, colB = st.columns([2, 1])
-            with colA:
-                st.write(f"Grupo detectado (B4 de 'rel comp'): **{grupo_detectado or '— não detectado —'}**")
-                # se não detectado, usamos texto detectado (não há input conforme pedido)
-                grupo_final = (grupo_detectado or "").strip().upper()
-            with colB:
-                st.write(f"Filtro extra (B6): **{extra_detectado or '— não detectado —'}**")
+            # detectar grupo por rel comp (B4)
+            grupo_detectado = None
+            try:
+                grupo_detectado, extra_detectado = None, None
+                abas = sh.worksheets()
+                aba_rel = next((a for a in abas if "rel comp" in a.title.lower()), None)
+                if aba_rel:
+                    grupo_detectado = (aba_rel.acell("B4").value or "").strip().upper()
+            except Exception:
+                grupo_detectado = None
+
+            grupo_final = (grupo_detectado or "").strip().upper()
+            st.write(f"Grupo detectado (B4 de 'rel comp'): **{grupo_final or '— não detectado —'}**")
 
             # escolher aba destino automaticamente: tenta achar "Importado_Fat", senão primeira aba
             abas = [ws.title for ws in sh.worksheets()]
             preferred = "Importado_Fat"
             dest_aba = preferred if preferred in abas else abas[0] if abas else "Importado_Fat"
+            st.write(f"Aba destino selecionada automaticamente: **{dest_aba}**")
 
-            st.write(f"Aba destino selecionada automaticamente: **{dest_aba}** (se quiser mudar, edite o nome aqui no código)")
-
-            # preview dos dados filtrados
+            # preview filtrado
             df = df_origem.copy()
             if grupo_final:
                 mask = df["Grupo"].astype(str).str.upper() == grupo_final
@@ -239,7 +310,6 @@ with tab1:
             planilhas_config[pid] = {
                 "spreadsheet": sh,
                 "grupo": grupo_final,
-                "extra": extra_detectado,
                 "dest_aba": dest_aba,
                 "df_preview": df_filtrado
             }
@@ -249,7 +319,6 @@ with tab1:
         if planilhas_config:
             st.markdown('<div class="card">', unsafe_allow_html=True)
             st.subheader("Passo 3 — Confirmar e executar")
-            st.write("Aviso: esta ação irá sobrescrever a aba destino selecionada em cada planilha.")
             confirm = st.checkbox("Confirmo que desejo enviar os dados filtrados para as planilhas/abas selecionadas", key="confirm_send_auto")
             if st.button("Executar Atualização Agora") and confirm:
                 resultados = []
@@ -269,7 +338,6 @@ with tab1:
                                 ws_dest = sh.worksheet(dest_aba)
                             except gspread.exceptions.WorksheetNotFound:
                                 ws_dest = sh.add_worksheet(title=dest_aba, rows=str(max(1000, len(df_send)+10)), cols=str(len(df_send.columns)))
-                            # opcional: fazer backup da aba antes de limpar (pode ser adicionado)
                             ws_dest.clear()
                             valores = [df_send.columns.tolist()] + df_send.fillna("").astype(str).values.tolist()
                             ws_dest.update("A1", valores, value_input_option="USER_ENTERED")
@@ -290,6 +358,5 @@ with tab2:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("Auditoria — Faturamento x Meio Pagamento")
     st.write("Nesta aba você pode estender a implementação para comparar o Faturamento (origem) x Meio de Pagamento (planilha específica).")
-    st.write("- Carregar aqui os dados de 'Faturamento Meio Pagamento' e 'Tabela Meio Pagamento' e gerar relatórios de divergência.")
-    st.info("Se quiser, eu adiciono as rotinas de auditoria (somas por data/PDV, diferenças, linhas inválidas) conforme suas regras.")
+    st.info("Use o botão 🔍 'Ver diagnóstico' para ver detalhes da listagem automática.")
     st.markdown('</div>', unsafe_allow_html=True)

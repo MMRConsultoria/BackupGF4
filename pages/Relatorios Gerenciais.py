@@ -1942,8 +1942,27 @@ with st.spinner("⏳ Processando..."):
             df_relatorio["Valor (R$)"] = pd.to_numeric(df_relatorio["Valor (R$)"], errors="coerce").fillna(0)
             
             # Datas mínimas e máximas
-            data_min = df_relatorio["Data"].min().date()
-            data_max = df_relatorio["Data"].max().date()
+            # Converte coluna Data para datetime de forma segura
+            df_relatorio["Data"] = pd.to_datetime(df_relatorio["Data"], dayfirst=True, errors="coerce")
+            
+            # Remove linhas sem Data se necessário (opcional)
+            df_relatorio = df_relatorio.dropna(subset=["Data"])
+            
+            # Verifica se existem datas válidas
+            valid_dates = df_relatorio["Data"].dropna()
+            if valid_dates.empty:
+                st.warning("⚠️ Não há datas válidas na base (Faturamento Meio Pagamento).")
+                st.stop()
+            
+            # Datas mínimas e máximas como objetos date
+            data_min = valid_dates.min().date()
+            data_max = valid_dates.max().date()
+
+
+
+            
+            #data_min = df_relatorio["Data"].min().date()
+            #data_max = df_relatorio["Data"].max().date()
     
             # ===== FILTROS GERAIS =====
             # 📅 Seleção de data

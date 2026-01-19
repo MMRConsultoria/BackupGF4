@@ -65,11 +65,8 @@ with st.spinner("⏳ Processando..."):
     ws_mp = sh_meio_pagto.worksheet("Faturamento Meio Pagamento")
     df_relatorio_base = pd.DataFrame(ws_mp.get_all_records())
     
-    # Abrir a planilha correta onde está a "Tabela Meio de Pagamento"
     sh_tabela_meio_pagto = gc.open_by_key("1QfmPRZBzbdd2lQA8uajnqWnb3mAmxwLgUwzDM4FtYeA")
-    
-    # Carrega "Tabela Meio Pagamento"
-    ws_tab_mp = sh_tabela_meio_pagto.worksheet("Tabela Meio de Pagamento")
+    ws_tab_mp = sh_tabela_meio_pagto.worksheet("Tabela Meio Pagamento")
     df_meio_pagamento_base = pd.DataFrame(ws_tab_mp.get_all_records())
     # ================================
     # 2. Configuração inicial do app

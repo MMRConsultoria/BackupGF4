@@ -165,7 +165,7 @@ with col2:
 # -----------------------------------------
 # Abas principais
 # -----------------------------------------
-tab1, tab2 = st.tabs(["Atualização", "Auditoria Faturamento X Meio Pagamento"])
+tab1, tab2 = st.tabs(["Atualização DRE"])
 
 # -------------------------
 # ABA 1: Atualização

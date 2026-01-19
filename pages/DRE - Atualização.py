@@ -16,10 +16,11 @@ except Exception:
     HttpError = Exception
 
 # -----------------------
-# CONFIGURAÇÃO (edite se necessário)
+# CONFIGURAÇÕES (edite se necessário)
 # -----------------------
 DEFAULT_FOLDER_IDS = [
-    "1ptFvtxYjISfB19S7bU9olMLmAxDTBkOh",  # coloque aqui as pastas que quer listar automaticamente
+    "1ptFvtxYjISfB19S7bU9olMLmAxDTBkOh",
+    "1F2Py4eeoqxqrHptgoeUODNXDCUddoU1u",
 ]
 
 DEFAULT_ORIGIN_SPREADSHEET = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
@@ -33,7 +34,6 @@ st.set_page_config(page_title="Atualização e Auditoria - Meio de Pagamento", l
 st.markdown("""
 <style>
 .card { background: #ffffff; border-radius: 10px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin-bottom:16px; }
-.kv { color:#6c757d; font-size:0.9em; }
 .small-muted { color:#6c757d; font-size:0.9em; }
 </style>
 """, unsafe_allow_html=True)
@@ -51,7 +51,7 @@ def autenticar_gspread():
     drive_service = None
     if build:
         try:
-            drive_service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+            drive_service = build("drive", "v3", credentials=credentials)
         except Exception:
             drive_service = None
     return gc, drive_service, credentials_dict.get("client_email")
@@ -63,50 +63,38 @@ except Exception as e:
     st.stop()
 
 # -----------------------
-# UTILITÁRIAS
+# FUNÇÕES (baseadas no seu código que funcionou)
 # -----------------------
 def listar_arquivos_pasta(drive_service, pasta_id):
     arquivos = []
-    if not drive_service:
-        return arquivos
     page_token = None
-    query = f"'{pasta_id}' in parents and trashed=false"
+    query = f"'{pasta_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
     while True:
         try:
             resp = drive_service.files().list(
                 q=query,
                 spaces="drive",
-                fields="nextPageToken, files(id, name, mimeType, shortcutDetails)",
-                pageToken=page_token,
-                includeItemsFromAllDrives=True,
-                supportsAllDrives=True
+                fields="nextPageToken, files(id, name)",
+                pageToken=page_token
             ).execute()
-            items = resp.get("files", [])
-            arquivos.extend(items)
+            arquivos.extend(resp.get("files", []))
             page_token = resp.get("nextPageToken", None)
             if not page_token:
                 break
         except HttpError as e:
-            st.error(f"Drive API error listing folder {pasta_id}: {e}")
+            st.error(f"Erro listando pasta {pasta_id}: {e}")
             break
         except Exception as e:
-            st.error(f"Error listing folder {pasta_id}: {e}")
+            st.error(f"Erro listando pasta {pasta_id}: {e}")
             break
     return arquivos
 
-def testar_abrir_planilha(gc, file_id):
-    try:
-        sh = gc.open_by_key(file_id)
-        return True, sh.title
-    except Exception as e:
-        return False, str(e)
-
-def carregar_origem_df(gc, spreadsheet_id, sheet_name):
-    sh = gc.open_by_key(spreadsheet_id)
-    ws = sh.worksheet(sheet_name)
+def carregar_origem(gc, origin_spreadsheet_id, origin_sheet_name):
+    sh = gc.open_by_key(origin_spreadsheet_id)
+    ws = sh.worksheet(origin_sheet_name)
     vals = ws.get_all_values()
     if not vals or len(vals) < 2:
-        raise RuntimeError(f"Aba origem '{sheet_name}' vazia ou sem dados.")
+        raise RuntimeError(f"Aba origem '{origin_sheet_name}' vazia ou sem dados.")
     df = pd.DataFrame(vals[1:], columns=vals[0])
     df.columns = [c.strip() for c in df.columns]
     if "Grupo" not in df.columns or "Data" not in df.columns:
@@ -127,17 +115,12 @@ def detectar_grupo_relcomp(sh):
         return None
 
 def backup_worksheet(sh, ws_title):
-    """
-    Faz backup simples: copia conteúdo para uma nova aba com sufixo timestamp.
-    Retorna o título da aba de backup.
-    """
     try:
         ws = sh.worksheet(ws_title)
     except Exception:
         return None, "Worksheet not found"
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_name = f"{ws_title}_backup_{ts}"
-    # cria backup com mesmas col/linhas aproximadas
     rows = max(1000, ws.row_count)
     cols = max(20, ws.col_count)
     try:
@@ -150,7 +133,7 @@ def backup_worksheet(sh, ws_title):
         return None, str(e)
 
 # -----------------------
-# AUTO-LISTAGEM COM DIAGNÓSTICO
+# AUTO-LISTAGEM (usa o método que você confirmou funcionar)
 # -----------------------
 def auto_listar_planilhas():
     candidatas = []
@@ -158,9 +141,9 @@ def auto_listar_planilhas():
     if not DEFAULT_FOLDER_IDS:
         return candidatas, diag
     for fid in DEFAULT_FOLDER_IDS:
-        info = {"folder_id": fid, "drive_ok": bool(drive_service), "listed": [], "errors": []}
+        info = {"folder_id": fid, "listed": [], "errors": []}
         if not drive_service:
-            info["errors"].append("Drive API não disponível (googleapiclient não inicializada).")
+            info["errors"].append("Drive API não disponível.")
             diag.append(info)
             continue
         arquivos = listar_arquivos_pasta(drive_service, fid)
@@ -168,16 +151,10 @@ def auto_listar_planilhas():
             info["errors"].append("Nenhum arquivo listado — verifique permissão/ID.")
         else:
             for f in arquivos:
-                # se for shortcut, get target
-                if f.get("shortcutDetails") and f["shortcutDetails"].get("targetId"):
-                    fid_target = f["shortcutDetails"].get("targetId")
-                else:
-                    fid_target = f["id"]
-                ok, title_or_err = testar_abrir_planilha(gc, fid_target)
-                entry = {"id": fid_target, "listed_name": f.get("name"), "mimeType": f.get("mimeType"), "gspread_ok": ok, "gspread_title_or_error": title_or_err}
+                entry = {"id": f.get("id"), "listed_name": f.get("name")}
                 info["listed"].append(entry)
-                if ok:
-                    candidatas.append({"id": fid_target, "name": title_or_err, "folder_id": fid})
+                # adiciona à lista de candidatas (sem testar gspread para não falhar em alguns casos)
+                candidatas.append({"id": f.get("id"), "name": f.get("name"), "folder_id": fid})
         diag.append(info)
     return candidatas, diag
 
@@ -186,7 +163,7 @@ if "candidatas" not in st.session_state:
         st.session_state.candidatas, st.session_state.diag = auto_listar_planilhas()
 
 # -----------------------
-# TOP BAR (diagnóstico / reload)
+# TOPBAR: exibe service account e botões
 # -----------------------
 col1, col2, col3 = st.columns([3, 2, 1])
 with col1:
@@ -200,14 +177,11 @@ with col3:
         st.session_state.candidatas, st.session_state.diag = auto_listar_planilhas()
         st.experimental_rerun()
 
-# -----------------------
-# EXIBE DIAGNÓSTICO (opcional)
-# -----------------------
+# mostra diagnóstico resumido (opcional)
 if st.session_state.get("diag"):
-    with st.expander("Ver diagnóstico detalhado", expanded=False):
+    with st.expander("Diagnóstico de listagem", expanded=False):
         for d in st.session_state.diag:
             st.markdown(f"**Pasta ID:** {d['folder_id']}")
-            st.write(f"- Drive API disponível: {d['drive_ok']}")
             if d.get("errors"):
                 for e in d["errors"]:
                     st.error(e)
@@ -216,9 +190,9 @@ if st.session_state.get("diag"):
                 st.dataframe(df_diag, use_container_width=True)
 
 # -----------------------
-# ABAS PRINCIPAIS
+# ABAS principais
 # -----------------------
-tab1, tab2 = st.tabs(["Atualização (Operacional)", "Auditoria / Logs"])
+tab1, tab2 = st.tabs(["Atualização", "Auditoria / Logs"])
 
 # -----------------------
 # ABA Atualização
@@ -227,30 +201,35 @@ with tab1:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("1) Planilhas candidatas (seleção)")
 
-    selecionadas = []  # inicializa para evitar erro
+    # garante que 'selecionadas' exista sempre
+    selecionadas = []
+
     if not st.session_state.candidatas:
         st.info("Nenhuma planilha encontrada automaticamente. Verifique permissões e DEFAULT_FOLDER_IDS.")
         st.markdown("Compartilhe as pastas com o service account exibido no topo.")
     else:
-        df_c = pd.DataFrame(st.session_state.candidatas)[["name", "id", "folder_id"]].rename(columns={"name":"Nome","id":"ID","folder_id":"Pasta ID"})
+        df_c = pd.DataFrame(st.session_state.candidatas)[["name", "id", "folder_id"]].rename(
+            columns={"name": "Nome", "id": "ID", "folder_id": "Pasta ID"}
+        )
         st.dataframe(df_c, use_container_width=True)
         options = [f"{r['name']} ({r['id']})" for r in st.session_state.candidatas]
         selecionadas = st.multiselect("Selecione as planilhas para atualizar", options, default=[], key="sel_planilhas")
+
     st.markdown('</div>', unsafe_allow_html=True)
 
+    # processamento quando há seleção
     if selecionadas:
-        # carrega origem (apenas uma vez)
+        # carrega origem
         with st.spinner("Carregando planilha origem..."):
             try:
-                df_origem = carregar_origem_df(gc, DEFAULT_ORIGIN_SPREADSHEET, DEFAULT_ORIGIN_SHEET)
+                df_origem = carregar_origem(gc, DEFAULT_ORIGIN_SPREADSHEET, DEFAULT_ORIGIN_SHEET)
             except Exception as e:
                 st.error(f"Falha ao carregar origem: {e}")
                 st.stop()
+        st.success("Planilha origem carregada.")
 
         st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader("2) Configurar por planilha")
-        st.write("Para cada planilha selecionada você pode escolher a aba destino (ou criar uma nova). Os dados serão filtrados por Grupo detectado em 'rel comp' (B4) e por data mínima definida abaixo.")
-        # parâmetros globais
+        st.subheader("2) Configuração por planilha")
         col_a, col_b, col_c = st.columns([2,1,1])
         with col_a:
             data_min = st.date_input("Data mínima (filtrar)", value=DEFAULT_DATA_MINIMA)
@@ -273,7 +252,6 @@ with tab1:
                 grupo_detectado = detectar_grupo_relcomp(sh)
                 st.write(f"Grupo detectado (B4 de 'rel comp'): **{grupo_detectado or '— não detectado —'}**")
 
-                # abas existentes + opção criar nova
                 abas = [ws.title for ws in sh.worksheets()]
                 dest_options = abas + ["__CRIAR_NOVA_ABA__"]
                 dest_choice = st.selectbox("Escolha a aba destino", dest_options, index=0 if abas else len(dest_options)-1, key=f"dest_{pid}")
@@ -281,7 +259,7 @@ with tab1:
                 if dest_choice == "__CRIAR_NOVA_ABA__":
                     new_aba_name = st.text_input("Nome da nova aba", value="Importado_Fat", key=f"newname_{pid}")
 
-                # gerar preview
+                # preview
                 df = df_origem.copy()
                 if grupo_detectado:
                     mask = df["Grupo"].astype(str).str.upper() == grupo_detectado
@@ -292,6 +270,7 @@ with tab1:
                 st.write(f"Linhas a enviar: **{len(df_preview)}**")
                 if not df_preview.empty:
                     st.dataframe(df_preview.head(10).drop(columns=["Data_dt"], errors="ignore"), use_container_width=True)
+
                 planilhas_config[pid] = {
                     "spreadsheet": sh,
                     "dest_aba": (new_aba_name if dest_choice == "__CRIAR_NOVA_ABA__" else dest_choice),
@@ -302,15 +281,14 @@ with tab1:
                 }
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # confirmação e execução
+        # executar
         if planilhas_config:
             st.markdown('<div class="card">', unsafe_allow_html=True)
             st.subheader("3) Confirmar e executar")
-            st.write("Revise as configurações acima. Se estiver tudo ok, confirme e execute.")
             confirm = st.checkbox("Confirmo e desejo executar a operação", key="confirm_exec")
             if st.button("Executar agora") and confirm:
                 resultados = []
-                log_text = []
+                logs = []
                 total = len(planilhas_config)
                 progress = st.progress(0)
                 i = 0
@@ -322,17 +300,13 @@ with tab1:
                     df_send = cfg["df_preview"]
                     dry = cfg["dry_run"]
                     do_bkp = cfg["backup"]
-                    status = "OK"
-                    details = ""
                     try:
                         if df_send is None or df_send.empty:
-                            status = "SKIP"
-                            details = "Sem linhas para enviar."
-                            resultados.append((pid, sh.title, 0, status, details))
-                            log_text.append(f"{sh.title}: {details}")
+                            resultados.append((pid, sh.title, 0, "SKIP", "Sem linhas"))
+                            logs.append(f"{sh.title}: Sem linhas para enviar.")
                             continue
 
-                        # criar aba se não existir
+                        # verificar existência da aba
                         try:
                             ws_dest = sh.worksheet(dest)
                             aba_existed = True
@@ -344,37 +318,36 @@ with tab1:
                         if do_bkp and aba_existed:
                             bname, berr = backup_worksheet(sh, dest)
                             if berr:
-                                log_text.append(f"{sh.title}: Falha backup -> {berr}")
+                                logs.append(f"{sh.title}: Falha backup -> {berr}")
                             else:
-                                log_text.append(f"{sh.title}: Backup criado -> {bname}")
+                                logs.append(f"{sh.title}: Backup criado -> {bname}")
 
-                        # se dry-run apenas registra
+                        # dry-run
                         if dry:
-                            details = "Dry-run: não foram feitas alterações."
-                            resultados.append((pid, sh.title, len(df_send), "DRY-RUN", details))
-                            log_text.append(f"{sh.title}: Dry-run -> {len(df_send)} linhas preparadas.")
+                            resultados.append((pid, sh.title, len(df_send), "DRY-RUN", "Não gravado"))
+                            logs.append(f"{sh.title}: Dry-run -> {len(df_send)} linhas preparadas.")
                             continue
 
                         # criar aba se necessário
                         if not aba_existed:
                             ws_dest = sh.add_worksheet(title=dest, rows=str(max(1000, len(df_send)+10)), cols=str(max(20, len(df_send.columns))))
-                            time.sleep(0.5)  # dar tempo para criação
+                            time.sleep(0.5)
 
-                        # limpar e escrever
+                        # escrever
                         ws_dest.clear()
                         values = [df_send.columns.tolist()] + df_send.fillna("").astype(str).values.tolist()
                         ws_dest.update("A1", values, value_input_option="USER_ENTERED")
-                        resultados.append((pid, sh.title, len(df_send), "OK", "Dados gravados"))
-                        log_text.append(f"{sh.title}: {len(df_send)} linhas gravadas em '{dest}'.")
+                        resultados.append((pid, sh.title, len(df_send), "OK", f"Gravado em '{dest}'"))
+                        logs.append(f"{sh.title}: {len(df_send)} linhas gravadas em '{dest}'.")
                     except Exception as e:
                         resultados.append((pid, sh.title, 0, "ERROR", str(e)))
-                        log_text.append(f"{sh.title}: ERRO -> {e}")
+                        logs.append(f"{sh.title}: ERRO -> {e}")
                 progress.progress(100)
                 st.success("Operação finalizada")
                 df_res = pd.DataFrame(resultados, columns=["ID", "Nome", "Linhas Enviadas", "Status", "Detalhes"])
                 st.dataframe(df_res, use_container_width=True)
                 with st.expander("Logs"):
-                    for line in log_text:
+                    for line in logs:
                         st.write(line)
             else:
                 st.info("Marque a confirmação e clique em 'Executar agora' para aplicar as alterações.")
@@ -387,6 +360,5 @@ with tab2:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("Auditoria e logs")
     st.write("- Use a aba Atualização para preparar e executar a atualização.")
-    st.write("- Use o diagnóstico (🔍 Ver diagnóstico) se nenhuma planilha aparecer.")
-    st.write("- Posso acrescentar relatórios de divergência automaticamente (Faturamento x Meio Pagamento) se desejar.")
+    st.write("- Se nada aparecer na listagem automática, verifique se a pasta está compartilhada com o service account mostrado no topo.")
     st.markdown('</div>', unsafe_allow_html=True)

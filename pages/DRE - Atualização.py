@@ -15,7 +15,7 @@ except Exception:
     HttpError = Exception
 
 # Page config
-st.set_page_config(page_title="Atualização e Auditoria - Profissional", layout="wide")
+st.set_page_config(page_title="Atualização e Auditoria", layout="wide")
 
 # CSS básico para "cards"
 st.markdown(

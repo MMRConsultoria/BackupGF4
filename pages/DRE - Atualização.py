@@ -25,9 +25,7 @@ DEFAULT_ORIGIN_SPREADSHEET = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
 DEFAULT_ORIGIN_SHEET = "Fat Sistema Externo"
 DEFAULT_DATA_MINIMA = (datetime.now() - timedelta(days=365)).date()
 
-# Operações/abas fixas que o usuário quer controlar (rótulos visuais no grid)
 OPERACOES = ["Desconto", "Meio Pagamento", "Faturamento"]
-# Mapeamento visual -> aba real (Faturamento -> Importado Fat)
 ABA_MAP = {"Faturamento": "Importado Fat", "Meio Pagamento": "Meio Pagamento", "Desconto": "Desconto"}
 
 # -----------------------
@@ -133,7 +131,7 @@ def backup_worksheet(sh, ws_title):
         return None, str(e)
 
 # -----------------------
-# SIDEBAR: parâmetros
+# SIDEBAR
 # -----------------------
 st.sidebar.header("Parâmetros")
 origin_id = st.sidebar.text_input("ID planilha origem", value=DEFAULT_ORIGIN_SPREADSHEET)
@@ -159,201 +157,156 @@ else:
         st.info("Insira IDs de pasta no sidebar para listar planilhas automaticamente.")
 
 # -----------------------
-# CONTROLES GLOBAIS (selecionar tudo por coluna)
+# FORMULÁRIO: seleção por planilha / operação
 # -----------------------
-st.markdown("### Escolha as operações por planilha")
-col_headers = st.columns([0.05, 0.45] + [0.15]*len(OPERACOES))
+st.markdown("### Escolha as operações por planilha (marque o que deseja atualizar)")
 
-with col_headers[0]:
-    st.write("")  # espaço para checkbox de linha
-with col_headers[1]:
-    st.markdown("**Planilha**")
-# criar checkboxes globais para cada operação
-global_ops_state = {}
-for i, op in enumerate(OPERACOES):
-    key = f"global_op_{op.replace(' ','_')}"
-    default = True
-    # se já existir estado anterior, mantemos; caso contrário, default True
-    val = st.checkbox(op, value=st.session_state.get(key, default), key=key)
-    global_ops_state[op] = val
+with st.form("selection_form"):
+    # cabeçalho
+    cols = st.columns([0.05, 0.6] + [0.12]*len(OPERACOES))
+    cols[0].write("")  # espaço para checkbox linha
+    cols[1].markdown("**Planilha**")
+    for i, op in enumerate(OPERACOES):
+        cols[2 + i].markdown(f"**{op}**")
 
-st.write("")  # separador visual
-
-# -----------------------
-# PREPARAR KEYS NA session_state PARA OS CHECKBOXES (inicializar)
-# -----------------------
-# Inicializa chave por planilha/operação com o valor global se não existir
-for p in planilhas:
-    pid = p["id"]
-    # checkbox linha selecionada
-    row_key = f"row_sel_{pid}"
-    if row_key not in st.session_state:
-        st.session_state[row_key] = True
-    for op in OPERACOES:
-        op_key = f"{pid}__{op.replace(' ','_')}"
-        if op_key not in st.session_state:
-            st.session_state[op_key] = global_ops_state.get(op, True)
-
-# -----------------------
-# RENDERIZA GRID (tabela de checkboxes)
-# -----------------------
-st.markdown("#### Seleção por planilha / operação")
-rows_container = st.container()
-with rows_container:
+    # renderiza linhas - cada checkbox tem key estável
     for p in planilhas:
         pid = p["id"]
-        cols = st.columns([0.05, 0.45] + [0.15]*len(OPERACOES))
-        # checkbox para selecionar a linha inteira
-        with cols[0]:
-            row_checked = st.checkbox("", value=st.session_state.get(f"row_sel_{pid}", True), key=f"row_sel_{pid}")
-        with cols[1]:
-            st.markdown(f"<div class='row-name'>{p['name']}</div>", unsafe_allow_html=True)
-
-        # checkboxes por operação (visuais)
+        row_cols = st.columns([0.05, 0.6] + [0.12]*len(OPERACOES))
+        # checkbox para habilitar a linha
+        row_checked = row_cols[0].checkbox("", value=True, key=f"sel_row__{pid}")
+        row_cols[1].markdown(f"{p['name']}")
         for j, op in enumerate(OPERACOES):
-            op_key = f"{pid}__{op.replace(' ','_')}"
-            with cols[2 + j]:
-                # se a linha não estiver selecionada, mostramos unchecked — mas mantemos estado no session_state
-                if row_checked:
-                    checked = st.checkbox("", value=st.session_state.get(op_key, True), key=op_key)
-                else:
-                    # ainda coloca o widget mas forçado para False visualmente; grava False no state
-                    # Para evitar que a checkbox reapareça true quando row é desmarcada, atualizamos state:
-                    st.session_state[op_key] = False
-                    checked = st.checkbox("", value=False, key=op_key)
-        st.write("")  # espaçamento leve
+            # cada checkbox por operação tem key estável: sel__<pid>__<op>
+            op_key = f"sel__{pid}__{op.replace(' ','_')}"
+            # mostramos o checkbox normalmente — nada mais é alterado durante o uso do form
+            row_cols[2 + j].checkbox("", value=False, key=op_key)
 
-# resumo de quantos pares selecionados (opções ativas)
-def contar_selecionados():
-    total_pairs = 0
+    # botões do form (ao submeter, só aí a seleção é lida)
+    submitted = st.form_submit_button("Atualizar / Enviar seleções")
+
+# -----------------------
+# AO SUBMETER O FORM: processar seleções
+# -----------------------
+if submitted:
+    # monta lista de pares (planilha, lista_ops) a partir dos valores do form (session_state)
     planilhas_selecionadas = {}
     for p in planilhas:
         pid = p["id"]
-        row_key = f"row_sel_{pid}"
+        row_key = f"sel_row__{pid}"
         if not st.session_state.get(row_key, False):
             continue
         ops = []
         for op in OPERACOES:
-            op_key = f"{pid}__{op.replace(' ','_')}"
+            op_key = f"sel__{pid}__{op.replace(' ','_')}"
             if st.session_state.get(op_key, False):
                 ops.append(op)
         if ops:
             planilhas_selecionadas[pid] = ops
-            total_pairs += len(ops)
-    return total_pairs, planilhas_selecionadas
 
-total_pairs, planilhas_selecionadas = contar_selecionados()
-st.write(f"Total de (planilha × operação) selecionados: **{total_pairs}**")
+    total_pairs = sum(len(ops) for ops in planilhas_selecionadas.values())
+    st.write(f"Total de (planilha × operação) selecionados: **{total_pairs}**")
 
-# -----------------------
-# EXECUÇÃO: carregar origem e executar atualizações por par planilha/aba
-# -----------------------
-if total_pairs > 0:
-    with st.spinner("Carregando planilha origem..."):
-        try:
-            df_origem = carregar_origem(gc, origin_id, origin_sheet)
-        except Exception as e:
-            st.error(f"Falha ao carregar origem: {e}")
-            st.stop()
-    st.success("Planilha origem carregada.")
+    if total_pairs == 0:
+        st.info("Nenhuma operação marcada. Marque ao menos uma operação por planilha antes de atualizar.")
+    else:
+        # carregamos origem e pedimos confirmações (data_min, dry-run, backup)
+        with st.spinner("Carregando planilha origem..."):
+            try:
+                df_origem = carregar_origem(gc, origin_id, origin_sheet)
+            except Exception as e:
+                st.error(f"Falha ao carregar origem: {e}")
+                st.stop()
+        st.success("Planilha origem carregada.")
 
-    col_a, col_b, col_c = st.columns([2,1,1])
-    with col_a:
-        data_min = st.date_input("Data mínima (filtrar)", value=data_minima)
-    with col_b:
-        dry_run = st.checkbox("Dry-run (não grava)", value=True)
-    with col_c:
-        do_backup = st.checkbox("Fazer backup da aba destino antes de sobrescrever", value=True)
+        col_a, col_b, col_c = st.columns([2,1,1])
+        with col_a:
+            data_min = st.date_input("Data mínima (filtrar)", value=data_minima)
+        with col_b:
+            dry_run = st.checkbox("Dry-run (não grava)", value=True)
+        with col_c:
+            do_backup = st.checkbox("Fazer backup da aba destino antes de sobrescrever", value=True)
 
-    if st.checkbox("Confirmo e desejo executar a operação", key="confirm_exec"):
-        if st.button("Executar agora"):
-            resultados = []
-            logs = []
-            total_tasks = sum(len(ops) for ops in planilhas_selecionadas.values())
-            progress = st.progress(0)
-            i_task = 0
+        if st.checkbox("Confirmo e desejo executar a operação", key="confirm_exec_final"):
+            if st.button("Executar agora"):
+                resultados = []
+                logs = []
+                total_tasks = total_pairs
+                progress = st.progress(0)
+                i_task = 0
 
-            for pid, ops in planilhas_selecionadas.items():
-                # abrir planilha
-                try:
-                    sh = gc.open_by_key(pid)
-                    sheet_name = sh.title
-                except Exception as e:
-                    logs.append(f"{pid}: erro abrindo planilha -> {e}")
-                    for op in ops:
-                        resultados.append((pid, f"(ID) {pid}", op, 0, "ERROR", f"Erro ao abrir planilha: {e}"))
-                    continue
-
-                # detectar grupo (para filtro)
-                grupo_detectado = detectar_grupo_relcomp(sh)
-
-                # preview df filtrado por grupo/data
-                df = df_origem.copy()
-                if grupo_detectado:
-                    mask = df["Grupo"].astype(str).str.upper() == grupo_detectado
-                else:
-                    mask = pd.Series([True] * len(df), index=df.index)
-                mask = mask & df["Data_dt"].notna() & (df["Data_dt"].dt.date >= data_min)
-                df_preview = df.loc[mask].copy()
-
-                if df_preview.empty:
-                    logs.append(f"{sheet_name}: sem linhas depois do filtro (grupo/data)")
-                    for op in ops:
-                        resultados.append((pid, sheet_name, op, 0, "SKIP", "Sem linhas após filtro"))
-                    # atualizar progress
-                    i_task += len(ops)
-                    progress.progress(int(i_task/total_tasks*100))
-                    continue
-
-                # para cada operação, gravar em sua aba correspondente
-                for op in ops:
-                    i_task += 1
-                    dest_aba = ABA_MAP.get(op, op)
+                for pid, ops in planilhas_selecionadas.items():
+                    # abrir planilha
                     try:
-                        # verificar aba
-                        try:
-                            ws_dest = sh.worksheet(dest_aba)
-                            aba_existed = True
-                        except gspread.exceptions.WorksheetNotFound:
-                            ws_dest = None
-                            aba_existed = False
-
-                        # backup opcional
-                        if do_backup and aba_existed:
-                            bname, berr = backup_worksheet(sh, dest_aba)
-                            if berr:
-                                logs.append(f"{sheet_name}/{dest_aba}: falha backup -> {berr}")
-                            else:
-                                logs.append(f"{sheet_name}/{dest_aba}: backup criado -> {bname}")
-
-                        # dry-run
-                        if dry_run:
-                            resultados.append((pid, sheet_name, op, len(df_preview), "DRY-RUN", "Não gravado (dry-run)"))
-                            logs.append(f"{sheet_name}/{dest_aba}: dry-run -> {len(df_preview)} linhas preparadas.")
-                            progress.progress(int(i_task/total_tasks*100))
-                            continue
-
-                        # criar aba se não existir
-                        if not aba_existed:
-                            ws_dest = sh.add_worksheet(title=dest_aba, rows=str(max(1000, len(df_preview)+10)), cols=str(max(20, len(df_preview.columns))))
-                            time.sleep(0.4)
-
-                        # escrever dados
-                        ws_dest.clear()
-                        values = [df_preview.columns.tolist()] + df_preview.fillna("").astype(str).values.tolist()
-                        ws_dest.update("A1", values, value_input_option="USER_ENTERED")
-                        resultados.append((pid, sheet_name, op, len(df_preview), "OK", f"Gravado em '{dest_aba}'"))
-                        logs.append(f"{sheet_name}/{dest_aba}: {len(df_preview)} linhas gravadas.")
+                        sh = gc.open_by_key(pid)
+                        sheet_name = sh.title
                     except Exception as e:
-                        resultados.append((pid, sheet_name, op, 0, "ERROR", str(e)))
-                        logs.append(f"{sheet_name}/{dest_aba}: ERRO -> {e}")
-                    progress.progress(int(i_task/total_tasks*100))
+                        logs.append(f"{pid}: erro abrindo planilha -> {e}")
+                        for op in ops:
+                            resultados.append((pid, f"(ID) {pid}", op, 0, "ERROR", f"Erro ao abrir planilha: {e}"))
+                        for _ in ops:
+                            i_task += 1
+                            progress.progress(int(i_task/total_tasks*100))
+                        continue
 
-            st.success("Operação finalizada")
-            df_res = pd.DataFrame(resultados, columns=["ID","Planilha","Operação","Linhas","Status","Detalhes"])
-            st.dataframe(df_res, use_container_width=True)
-            with st.expander("Logs detalhados"):
-                for l in logs:
-                    st.write(l)
-else:
-    st.info("Nenhuma operação selecionada. Marque as operações desejadas ao lado das planilhas.")
+                    grupo_detectado = detectar_grupo_relcomp(sh)
+                    df = df_origem.copy()
+                    if grupo_detectado:
+                        mask = df["Grupo"].astype(str).str.upper() == grupo_detectado
+                    else:
+                        mask = pd.Series([True] * len(df), index=df.index)
+                    mask = mask & df["Data_dt"].notna() & (df["Data_dt"].dt.date >= data_min)
+                    df_preview = df.loc[mask].copy()
+
+                    if df_preview.empty:
+                        logs.append(f"{sheet_name}: sem linhas depois do filtro (grupo/data)")
+                        for op in ops:
+                            resultados.append((pid, sheet_name, op, 0, "SKIP", "Sem linhas após filtro"))
+                            i_task += 1
+                            progress.progress(int(i_task/total_tasks*100))
+                        continue
+
+                    for op in ops:
+                        i_task += 1
+                        dest_aba = ABA_MAP.get(op, op)
+                        try:
+                            try:
+                                ws_dest = sh.worksheet(dest_aba)
+                                aba_existed = True
+                            except gspread.exceptions.WorksheetNotFound:
+                                ws_dest = None
+                                aba_existed = False
+
+                            if do_backup and aba_existed:
+                                bname, berr = backup_worksheet(sh, dest_aba)
+                                if berr:
+                                    logs.append(f"{sheet_name}/{dest_aba}: falha backup -> {berr}")
+                                else:
+                                    logs.append(f"{sheet_name}/{dest_aba}: backup -> {bname}")
+
+                            if dry_run:
+                                resultados.append((pid, sheet_name, op, len(df_preview), "DRY-RUN", "Não gravado (dry-run)"))
+                                logs.append(f"{sheet_name}/{dest_aba}: dry-run -> {len(df_preview)} linhas.")
+                                progress.progress(int(i_task/total_tasks*100))
+                                continue
+
+                            if not aba_existed:
+                                ws_dest = sh.add_worksheet(title=dest_aba, rows=str(max(1000, len(df_preview)+10)), cols=str(max(20, len(df_preview.columns))))
+                                time.sleep(0.3)
+
+                            ws_dest.clear()
+                            values = [df_preview.columns.tolist()] + df_preview.fillna("").astype(str).values.tolist()
+                            ws_dest.update("A1", values, value_input_option="USER_ENTERED")
+                            resultados.append((pid, sheet_name, op, len(df_preview), "OK", f"Gravado em '{dest_aba}'"))
+                            logs.append(f"{sheet_name}/{dest_aba}: {len(df_preview)} linhas gravadas.")
+                        except Exception as e:
+                            resultados.append((pid, sheet_name, op, 0, "ERROR", str(e)))
+                            logs.append(f"{sheet_name}/{dest_aba}: ERRO -> {e}")
+                        progress.progress(int(i_task/total_tasks*100))
+
+                st.success("Operação finalizada")
+                df_res = pd.DataFrame(resultados, columns=["ID","Planilha","Operação","Linhas","Status","Detalhes"])
+                st.dataframe(df_res, use_container_width=True)
+                with st.expander("Logs detalhados"):
+                    for l in logs:
+                        st.write(l)

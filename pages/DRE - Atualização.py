@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from oauth2client.service_account import ServiceAccountCredentials
 import gspread
 
-# tenta importar Drive API (opcional)
 try:
     from googleapiclient.discovery import build
     from googleapiclient.errors import HttpError
@@ -13,24 +12,27 @@ except Exception:
     build = None
     HttpError = Exception
 
-st.set_page_config(page_title="Atualização e Auditoria - Meio de Pagamento", layout="wide")
-st.title("Atualização e Auditoria — Faturamento x Meio de Pagamento")
+st.set_page_config(page_title="Atualização e Auditoria Profissional", layout="wide")
 
-# -----------------------
-# Configurações iniciais
-# -----------------------
-DEFAULT_FOLDER_IDS = [
-    "1ptFvtxYjISfB19S7bU9olMLmAxDTBkOh"  # exemplo: Pasta Vendas Janeiro
-    
-    # adicione quantas forem necessárias
-]
-DEFAULT_ORIGIN_SPREADSHEET = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
-DEFAULT_ORIGIN_SHEET = "Fat Sistema Externo"
-DEFAULT_DATA_MINIMA = datetime.now() - timedelta(days=365)  # últimos 365 dias
+# CSS para estilizar caixas e títulos
+st.markdown("""
+<style>
+.card {
+    background-color: #f9f9f9;
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgb(0 0 0 / 0.1);
+    margin-bottom: 20px;
+}
+h2 {
+    color: #2c3e50;
+}
+</style>
+""", unsafe_allow_html=True)
 
-# -----------------------
-# Autenticação gspread (+drive opcional)
-# -----------------------
+st.title("📊 Atualização e Auditoria — Faturamento x Meio de Pagamento")
+
+# Autenticação
 @st.cache_resource
 def autenticar_gspread():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -47,9 +49,31 @@ def autenticar_gspread():
 
 gc, drive_service = autenticar_gspread()
 
-# -----------------------
-# Funções utilitárias
-# -----------------------
+# Sidebar com configurações
+with st.sidebar:
+    st.header("⚙️ Configurações")
+    origin_id = st.text_input("ID da planilha origem", value="1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU")
+    origin_sheet = st.text_input("Aba origem", value="Fat Sistema Externo")
+    data_minima = st.date_input("Data mínima", value=datetime.now() - timedelta(days=365))
+    folder_ids_text = st.text_area("IDs das pastas (uma por linha)", height=100)
+    folder_ids = [x.strip() for x in folder_ids_text.splitlines() if x.strip()]
+    manual_ids_text = st.text_area("IDs ou URLs de planilhas manuais (uma por linha)", height=100)
+    manual_ids = []
+    for line in manual_ids_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if "docs.google.com/spreadsheets" in line:
+            parts = line.split("/d/")
+            if len(parts) > 1:
+                manual_ids.append(parts[1].split("/")[0])
+            else:
+                manual_ids.append(line)
+        else:
+            manual_ids.append(line)
+    listar_btn = st.button("🔍 Listar planilhas candidatas")
+
+# Função para listar arquivos na pasta
 def listar_arquivos_pasta(drive_service, pasta_id):
     arquivos = []
     page_token = None
@@ -69,66 +93,49 @@ def listar_arquivos_pasta(drive_service, pasta_id):
             break
     return arquivos
 
-def carregar_origem(gc, origin_spreadsheet_id, origin_sheet_name):
-    sh = gc.open_by_key(origin_spreadsheet_id)
-    ws = sh.worksheet(origin_sheet_name)
-    vals = ws.get_all_values()
-    if not vals or len(vals) < 2:
-        raise RuntimeError(f"Aba origem '{origin_sheet_name}' vazia ou sem dados.")
-    df = pd.DataFrame(vals[1:], columns=vals[0])
-    df.columns = [c.strip() for c in df.columns]
-    if "Grupo" not in df.columns or "Data" not in df.columns:
-        raise RuntimeError("Aba origem precisa conter as colunas 'Grupo' e 'Data'.")
-    df["Grupo"] = df["Grupo"].astype(str).str.strip().str.upper()
-    df["Data_dt"] = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
-    return df
+# Listar planilhas candidatas
+candidatas = []
 
-# -----------------------
-# Sidebar: parâmetros
-# -----------------------
-st.sidebar.header("Parâmetros")
-origin_id = st.sidebar.text_input("ID planilha origem", value=DEFAULT_ORIGIN_SPREADSHEET)
-origin_sheet = st.sidebar.text_input("Aba origem (na planilha origem)", value=DEFAULT_ORIGIN_SHEET)
-data_minima = st.sidebar.date_input("Data mínima (incluir)", value=DEFAULT_DATA_MINIMA.date())
-
-folder_ids_text = st.sidebar.text_area("IDs das pastas (uma por linha) — opcional", value="\n".join(DEFAULT_FOLDER_IDS), height=80)
-folder_ids = [s.strip() for s in folder_ids_text.splitlines() if s.strip()]
-
-# -----------------------
-# Listar arquivos nas pastas e mostrar
-# -----------------------
-if drive_service and folder_ids:
-    st.header("Arquivos encontrados nas pastas configuradas")
-    for fid in folder_ids:
-        st.subheader(f"Pasta ID: {fid}")
-        try:
-            arquivos = listar_arquivos_pasta(drive_service, fid)
-            if arquivos:
+if listar_btn:
+    with st.spinner("Buscando planilhas nas pastas..."):
+        if drive_service and folder_ids:
+            for fid in folder_ids:
+                arquivos = listar_arquivos_pasta(drive_service, fid)
                 for a in arquivos:
-                    st.write(f"- {a['name']} (ID: {a['id']})")
-            else:
-                st.write("Nenhum arquivo encontrado ou sem permissão.")
-        except Exception as e:
-            st.error(f"Erro ao listar pasta {fid}: {e}")
-else:
-    st.info("Drive API não disponível ou nenhuma pasta configurada para listar.")
+                    candidatas.append({"id": a["id"], "name": a["name"], "folder_id": fid})
+        # Adiciona manuais
+        for mid in manual_ids:
+            try:
+                sh = gc.open_by_key(mid)
+                candidatas.append({"id": mid, "name": sh.title, "folder_id": None})
+            except Exception as e:
+                st.warning(f"Falha abrindo planilha manual '{mid}': {e}")
 
-# -----------------------
-# Teste rápido de acesso a planilha compartilhada
-# -----------------------
-st.header("Teste de acesso a planilha compartilhada")
-creds = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
-st.write("Service account client_email:", creds.get("client_email"))
-
-test_id = st.text_input("Cole aqui o ID da planilha para testar acesso", "")
-
-if st.button("Testar acesso"):
-    if not test_id.strip():
-        st.warning("Por favor, insira um ID válido.")
+    if not candidatas:
+        st.warning("Nenhuma planilha encontrada.")
     else:
-        try:
-            sh = gc.open_by_key(test_id.strip())
-            st.success(f"Acesso OK: título = {sh.title}")
-        except Exception as e:
-            st.error(f"Falha ao abrir planilha: {e}")
-            st.info("Se falhar, compartilhe a planilha com o e-mail acima (client_email) e tente novamente.")
+        st.success(f"{len(candidatas)} planilhas encontradas.")
+
+# Exibir resultados em uma caixa estilizada
+if candidatas:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.subheader("Planilhas candidatas")
+    df_cand = pd.DataFrame(candidatas)
+    df_cand_display = df_cand[["name", "id", "folder_id"]].rename(columns={"name": "Nome", "id": "ID", "folder_id": "Pasta ID"})
+    st.dataframe(df_cand_display, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# Aqui você pode continuar com a lógica de seleção, pré-visualização e atualização, usando colunas e expanders para organizar melhor.
+
+# Exemplo simples de seleção
+if candidatas:
+    st.subheader("Selecione as planilhas para atualizar")
+    options = [f"{c['name']} ({c['id']})" for c in candidatas]
+    selecionadas = st.multiselect("Planilhas", options, default=options)
+
+    if selecionadas:
+        st.info(f"Você selecionou {len(selecionadas)} planilhas para atualizar.")
+        # Aqui você pode adicionar botões para avançar, mostrar prévias, etc.
+
+# Rodar o app com:
+# streamlit run seu_arquivo.py

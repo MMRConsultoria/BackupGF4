@@ -68,6 +68,24 @@ with st.spinner("⏳ Processando..."):
     sh_tabela_meio_pagto = gc.open_by_key("1QfmPRZBzbdd2lQA8uajnqWnb3mAmxwLgUwzDM4FtYeA")
     ws_tab_mp = sh_tabela_meio_pagto.worksheet("Tabela Meio Pagamento")
     df_meio_pagamento_base = pd.DataFrame(ws_tab_mp.get_all_records())
+    
+    
+    # Carrega os dados
+    df_relatorio_base = pd.DataFrame(ws_mp.get_all_records())
+    df_meio_pagamento_base = pd.DataFrame(ws_tab_mp.get_all_records())
+    
+    # --- ADICIONE ESTA LIMPEZA AQUI ---
+    df_relatorio_base = df_relatorio_base.replace('-', 0)
+    df_relatorio_base = df_relatorio_base.replace('', 0) # Também trata vazios
+    
+    # Se houver colunas de valores financeiros, garanta que são floats
+    # Exemplo: se a coluna se chamar 'Valor'
+    if 'Valor' in df_relatorio_base.columns:
+        df_relatorio_base['Valor'] = pd.to_numeric(df_relatorio_base['Valor'], errors='coerce').fillna(0)
+        
+        
+    
+    
     # ================================
     # 2. Configuração inicial do app
     # ================================

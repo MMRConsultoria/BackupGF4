@@ -1934,10 +1934,13 @@ with st.spinner("⏳ Processando..."):
                 .str.replace(" ", "")
                 .str.replace(".", "")
                 .str.replace(",", ".")
-                .astype(float)
+                .replace("-", "0")
+                #.astype(float)
             )
-            df_relatorio["Data"] = pd.to_datetime(df_relatorio["Data"], dayfirst=True, errors="coerce")
-    
+            #df_relatorio["Data"] = pd.to_datetime(df_relatorio["Data"], dayfirst=True, errors="coerce")
+
+            df_relatorio["Valor (R$)"] = pd.to_numeric(df_relatorio["Valor (R$)"], errors="coerce").fillna(0)
+            
             # Datas mínimas e máximas
             data_min = df_relatorio["Data"].min().date()
             data_max = df_relatorio["Data"].max().date()

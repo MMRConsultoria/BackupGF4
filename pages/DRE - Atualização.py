@@ -1,176 +1,282 @@
 import streamlit as st
 import pandas as pd
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from oauth2client.service_account import ServiceAccountCredentials
 import gspread
 
-# Import googleapiclient com tratamento de erro
+# tenta importar Drive API (opcional)
 try:
     from googleapiclient.discovery import build
-except ModuleNotFoundError:
-    st.error(
-       "Módulo 'googleapiclient' não encontrado. "
-       "Instale 'google-api-python-client' (local: pip install google-api-python-client) "
-       "ou adicione ao requirements.txt do app: google-api-python-client"
-    )
+    from googleapiclient.errors import HttpError
+except Exception:
     build = None
+    HttpError = Exception
 
-st.set_page_config(page_title="Atualização e Auditoria", layout="wide")
+st.set_page_config(page_title="Atualização e Auditoria - Meio de Pagamento", layout="wide")
+st.title("Atualização e Auditoria — Faturamento x Meio de Pagamento")
 
-st.title("Sistema de Atualização e Auditoria")
+# -----------------------
+# Configurações iniciais
+# -----------------------
+# Valores padrão — ajuste conforme seu ambiente
+DEFAULT_FOLDER_IDS = [
+    # cole aqui as IDs das pastas a listar (opcional)
+    # "1ptFvtxYjISfB19S7bU9olMLmAxDTBkOh",
+    # "1F2Py4eeoqxqrHptgoeUODNXDCUddoU1u",
+]
+DEFAULT_ORIGIN_SPREADSHEET = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
+DEFAULT_ORIGIN_SHEET = "Fat Sistema Externo"
+DEFAULT_DATA_MINIMA = datetime.now() - timedelta(days=365)  # exemplo: últimos 365 dias
 
-# Autenticação Google Sheets e Drive
+# -----------------------
+# Autenticação gspread (+drive opcional)
+# -----------------------
 @st.cache_resource
 def autenticar_gspread():
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
-    ]
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
     credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
     gc = gspread.authorize(credentials)
     drive_service = None
     if build:
-        drive_service = build('drive', 'v3', credentials=credentials)
+        try:
+            drive_service = build("drive", "v3", credentials=credentials)
+        except Exception:
+            drive_service = None
     return gc, drive_service
 
 gc, drive_service = autenticar_gspread()
 
-# Parâmetros fixos (ajuste conforme seu caso)
-ID_PLANILHA_ORIGEM = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
-NOME_ABA_ORIGEM = "Fat Sistema Externo"
-IDS_PASTAS_DESTINO = [
-    "1ptFvtxYjISfB19S7bU9olMLmAxDTBkOh",
-    "1F2Py4eeoqxqrHptgoeUODNXDCUddoU1u",
-    "1GdGvFRvikkFR1S-R9lGRfiPW0T1XD9FG"
-]
-DATA_MINIMA = datetime(2025, 1, 1)
-
+# -----------------------
+# Funções utilitárias
+# -----------------------
 def listar_arquivos_pasta(drive_service, pasta_id):
+    """Retorna lista de dicts {'id','name'} de spreadsheets na pasta."""
     arquivos = []
     page_token = None
     query = f"'{pasta_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
     while True:
         try:
-            response = drive_service.files().list(
-                q=query,
-                spaces='drive',
-                fields='nextPageToken, files(id, name)',
-                pageToken=page_token
-            ).execute()
-            arquivos.extend(response.get('files', []))
-            page_token = response.get('nextPageToken', None)
-            if page_token is None:
+            resp = drive_service.files().list(q=query, spaces="drive", fields="nextPageToken, files(id, name)", pageToken=page_token).execute()
+            arquivos.extend(resp.get("files", []))
+            page_token = resp.get("nextPageToken", None)
+            if not page_token:
                 break
+        except HttpError as e:
+            st.error(f"Erro listando pasta {pasta_id}: {e}")
+            break
         except Exception as e:
-            st.error(f"Erro ao listar arquivos na pasta {pasta_id}: {e}")
+            st.error(f"Erro listando pasta {pasta_id}: {e}")
             break
     return arquivos
 
-def atualizar_planilhas_varias_pastas(
-    gc,
-    drive_service,
-    id_planilha_origem,
-    nome_aba_origem,
-    ids_pastas_destino,
-    data_minima=None,
-):
-    planilha_origem = gc.open_by_key(id_planilha_origem)
-    aba_origem = planilha_origem.worksheet(nome_aba_origem)
-    dados = aba_origem.get_all_values()
-    if not dados or len(dados) < 2:
-        st.error(f"Aba '{nome_aba_origem}' está vazia ou não tem dados suficientes.")
-        return 0, []
+def obter_candidatas_de_pastas(drive_service, folder_ids):
+    """Retorna lista de candidatos (id, name) consultando cada pasta."""
+    resultados = []
+    for fid in folder_ids:
+        if drive_service:
+            arquivos = listar_arquivos_pasta(drive_service, fid)
+            for a in arquivos:
+                resultados.append({"id": a["id"], "name": a["name"], "folder_id": fid})
+        else:
+            # sem drive_service, não conseguimos listar automaticamente
+            pass
+    return resultados
 
-    df = pd.DataFrame(dados[1:], columns=dados[0])
+def carregar_origem(gc, origin_spreadsheet_id, origin_sheet_name):
+    sh = gc.open_by_key(origin_spreadsheet_id)
+    ws = sh.worksheet(origin_sheet_name)
+    vals = ws.get_all_values()
+    if not vals or len(vals) < 2:
+        raise RuntimeError(f"Aba origem '{origin_sheet_name}' vazia ou sem dados.")
+    df = pd.DataFrame(vals[1:], columns=vals[0])
     df.columns = [c.strip() for c in df.columns]
-
     if "Grupo" not in df.columns or "Data" not in df.columns:
-        st.error("Colunas 'Grupo' e/ou 'Data' não encontradas na origem.")
-        return 0, []
-
+        raise RuntimeError("Aba origem precisa conter as colunas 'Grupo' e 'Data'.")
     df["Grupo"] = df["Grupo"].astype(str).str.strip().str.upper()
-    df["Data"] = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
+    df["Data_dt"] = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
+    return df
 
-    total_atualizados = 0
-    falhas = []
+def detectar_grupo_por_relcomp(spreadsheet):
+    """Tenta encontrar aba 'rel comp' e ler B4 (Grupo) e B6 (filtro extra)."""
+    try:
+        abas = spreadsheet.worksheets()
+        aba_rel = next((a for a in abas if "rel comp" in a.title.lower()), None)
+        if not aba_rel:
+            return None, None
+        grupo = aba_rel.acell("B4").value
+        extra = aba_rel.acell("B6").value if aba_rel.row_count >= 6 else None
+        grupo = grupo.strip().upper() if grupo else None
+        extra = extra.strip().upper() if extra else None
+        return grupo, extra
+    except Exception:
+        return None, None
 
-    for id_pasta in ids_pastas_destino:
-        arquivos = listar_arquivos_pasta(drive_service, id_pasta) if drive_service else []
-        if not arquivos:
-            falhas.append(f"Pasta {id_pasta} está vazia ou inacessível.")
-            continue
+# -----------------------
+# Sidebar: parâmetros
+# -----------------------
+st.sidebar.header("Parâmetros")
+origin_id = st.sidebar.text_input("ID planilha origem", value=DEFAULT_ORIGIN_SPREADSHEET)
+origin_sheet = st.sidebar.text_input("Aba origem (na planilha origem)", value=DEFAULT_ORIGIN_SHEET)
+data_minima = st.sidebar.date_input("Data mínima (incluir)", value=DEFAULT_DATA_MINIMA.date())
+# receber lista de folder ids (multiline) ou manual entry de spreadsheet IDs caso Drive API não disponível
+use_drive = build is not None and drive_service is not None
+if use_drive:
+    st.sidebar.markdown("Drive API: disponível — será listado automaticamente o conteúdo das pastas.")
+else:
+    st.sidebar.markdown("Drive API: indisponível — insira manualmente IDs de planilhas destino (uma por linha).")
 
-        for arquivo in arquivos:
-            try:
-                planilha_destino = gc.open_by_key(arquivo['id'])
-                abas = planilha_destino.worksheets()
-                aba_filtro = next((aba for aba in abas if "rel comp" in aba.title.lower()), None)
-                if not aba_filtro:
-                    falhas.append(f"{arquivo['name']} - Aba 'rel comp' não encontrada")
-                    continue
+folder_ids_text = st.sidebar.text_area("IDs das pastas (uma por linha) — opcional", value="\n".join(DEFAULT_FOLDER_IDS), height=80)
+folder_ids = [s.strip() for s in folder_ids_text.splitlines() if s.strip()]
 
-                grupo_aba = aba_filtro.acell("B4").value
-                if not grupo_aba:
-                    falhas.append(f"{arquivo['name']} - Grupo em B4 vazio")
-                    continue
-                grupo_aba = grupo_aba.strip().upper()
+manual_spreadsheets_text = st.sidebar.text_area("IDs ou URLs de planilhas destino (uma por linha) — usado se Drive API indisponível ou para adicionar manualmente", height=120)
+manual_ids = []
+for line in manual_spreadsheets_text.splitlines():
+    line = line.strip()
+    if not line:
+        continue
+    # extrai id se for URL
+    if "docs.google.com/spreadsheets" in line:
+        parts = line.split("/d/")
+        if len(parts) > 1:
+            id_part = parts[1].split("/")[0]
+            manual_ids.append(id_part)
+        else:
+            manual_ids.append(line)
+    else:
+        manual_ids.append(line)
 
-                def linha_valida(linha):
-                    grupo = str(linha["Grupo"]).strip().upper()
-                    data = linha["Data"]
-                    if pd.isna(data):
-                        return False
-                    if data_minima and data < data_minima:
-                        return False
-                    return grupo == grupo_aba
+# botão para listar candidatos
+if st.sidebar.button("Listar planilhas candidatas"):
+    st.session_state.candidatas = []
+    # 1) obtém a lista por pastas (se drive disponível)
+    if folder_ids and use_drive:
+        with st.spinner("Listando planilhas nas pastas..."):
+            candidatas = obter_candidatas_de_pastas(drive_service, folder_ids)
+            st.session_state.candidatas = candidatas
+    else:
+        st.session_state.candidatas = []
 
-                df_filtrado = df[df.apply(linha_valida, axis=1)]
+    # 2) adiciona manuais (ids)
+    for mid in manual_ids:
+        try:
+            sh = gc.open_by_key(mid)
+            st.session_state.candidatas.append({"id": mid, "name": sh.title, "folder_id": None})
+        except Exception as e:
+            st.warning(f"Falha abrindo planilha manual '{mid}': {e}")
 
-                if df_filtrado.empty:
-                    falhas.append(f"{arquivo['name']} - Nenhum dado para grupo '{grupo_aba}'")
-                    continue
+# inicializa lista vazia se não existir
+if "candidatas" not in st.session_state:
+    st.session_state.candidatas = []
 
-                try:
-                    aba_destino = planilha_destino.worksheet("Importado_Fat")
-                except gspread.exceptions.WorksheetNotFound:
-                    aba_destino = planilha_destino.add_worksheet(title="Importado_Fat", rows="1000", cols=str(len(df_filtrado.columns)))
+# mostra candidatos encontrados
+st.header("Passo 1 — Candidatas à atualização")
+if not st.session_state.candidatas:
+    st.info("Nenhuma planilha candidata listada ainda. Use a sidebar para listar por pastas ou colar IDs/URLs manualmente e clique 'Listar planilhas candidatas'.")
+else:
+    df_cand = pd.DataFrame(st.session_state.candidatas)
+    df_cand_display = df_cand[["name", "id", "folder_id"]].rename(columns={"name": "Nome", "id": "ID", "folder_id": "Pasta ID"})
+    st.dataframe(df_cand_display, use_container_width=True)
 
-                aba_destino.clear()
-                valores = [df_filtrado.columns.tolist()] + df_filtrado.values.tolist()
-                aba_destino.update(valores)
+    # seletor de quais planilhas atualizar
+    options_for_select = [f"{r['name']} || {r['id']}" for r in st.session_state.candidatas]
+    selected = st.multiselect("Selecione as planilhas que deseja preparar para atualização", options_for_select, default=options_for_select)
+    selected_ids = [opt.split("||")[-1].strip() for opt in selected]
 
-                total_atualizados += 1
+    # Carrega origem (uma vez)
+    loaded_origin = None
+    try:
+        with st.spinner("Carregando planilha origem..."):
+            loaded_origin = carregar_origem(gc, origin_id, origin_sheet)
+        st.success("Planilha origem carregada.")
+    except Exception as e:
+        st.error(f"Falha ao carregar origem: {e}")
+        st.stop()
 
-            except Exception as e:
-                falhas.append(f"{arquivo['name']} - Erro: {e}")
+    # Para cada planilha selecionada, obter abas e detectar grupo
+    st.markdown("## Passo 2 — Configurar cada planilha selecionada")
+    planilhas_config = {}
+    for pid in selected_ids:
+        try:
+            sh = gc.open_by_key(pid)
+            st.subheader(f"{sh.title}  —  {pid}")
+            # detectar grupo via rel comp
+            grupo_detectado, extra_detectado = detectar_grupo_por_relcomp(sh)
+            col1, col2 = st.columns([2, 2])
+            with col1:
+                st.write(f"Grupo detectado (B4 de 'rel comp'): {grupo_detectado or '— não detectado —'}")
+                grupo_override = st.text_input(f"Grupo a usar (se vazio usa detectado) — {pid}", value=grupo_detectado or "", key=f"grupo_override_{pid}")
+            with col2:
+                st.write(f"Filtro extra detectado (B6): {extra_detectado or '— não detectado —'}")
+                extra_override = st.text_input(f"Filtro extra (se necessário) — {pid}", value=extra_detectado or "", key=f"extra_override_{pid}")
 
-    return total_atualizados, falhas
+            # listar abas existentes e escolher aba destino
+            abas = [ws.title for ws in sh.worksheets()]
+            abas_display = abas + ["__CRIAR_NOVA_ABA__"]
+            chosen_aba = st.selectbox(f"Escolha aba de destino para atualizar em {sh.title}", abas_display, key=f"dest_aba_{pid}")
+            new_aba_name = ""
+            if chosen_aba == "__CRIAR_NOVA_ABA__":
+                new_aba_name = st.text_input(f"Nome da nova aba para criar em {sh.title}", value="Importado_Fat", key=f"nova_aba_{pid}")
 
-# Criar abas
-tab_atualizacao, tab_auditoria = st.tabs(["Atualização", "Auditoria Faturamento X Meio Pagamento"])
+            # calcular prévia: filtrar origem usando Grupo/extra/data_minima
+            grupo_final = (grupo_override.strip().upper() if grupo_override and grupo_override.strip() else (grupo_detectado or "")).strip().upper()
+            extra_final = extra_override.strip().upper() if extra_override and extra_override.strip() else (extra_detectado or "")
+            df = loaded_origin.copy()
+            mask = df["Grupo"].astype(str).str.upper() == grupo_final if grupo_final else pd.Series([True]*len(df), index=df.index)
+            mask = mask & df["Data_dt"].notna() & (df["Data_dt"].dt.date >= data_minima)
+            df_filtrado = df.loc[mask].copy()
+            st.write(f"Linhas que seriam enviadas para essa planilha: {len(df_filtrado)}")
+            if len(df_filtrado) > 0:
+                with st.expander("Ver amostra (10 linhas)"):
+                    st.dataframe(df_filtrado.head(10).drop(columns=["Data_dt"], errors="ignore"), use_container_width=True)
 
-with tab_atualizacao:
-    st.header("Atualização das Planilhas")
-    if st.button("Executar Atualização"):
-        with st.spinner("Atualizando planilhas..."):
-            total, falhas = atualizar_planilhas_varias_pastas(
-                gc,
-                drive_service,
-                ID_PLANILHA_ORIGEM,
-                NOME_ABA_ORIGEM,
-                IDS_PASTAS_DESTINO,
-                data_minima=DATA_MINIMA
-            )
-        st.success(f"Total de planilhas atualizadas: {total}")
-        if falhas:
-            st.warning("Falhas encontradas:")
-            for f in falhas:
-                st.write(f"- {f}")
+            planilhas_config[pid] = {
+                "spreadsheet": sh,
+                "grupo": grupo_final,
+                "extra": extra_final,
+                "dest_aba": new_aba_name.strip() if chosen_aba == "__CRIAR_NOVA_ABA__" else chosen_aba,
+                "df_preview": df_filtrado
+            }
+        except Exception as e:
+            st.error(f"Erro abrindo planilha {pid}: {e}")
 
-with tab_auditoria:
-    st.header("Auditoria Faturamento X Meio Pagamento")
-    st.info("Aqui você pode implementar a lógica de auditoria que desejar.")
-    # Exemplo: carregar dados, comparar, mostrar tabelas, gráficos, etc.
-    st.write("Funcionalidade em desenvolvimento...")
+    # Botão para executar atualização (somente se existir ao menos 1 selecionada)
+    if planilhas_config:
+        st.markdown("---")
+        confirmar = st.checkbox("Eu confirmo que desejo enviar os dados selecionados para as planilhas/abas escolhidas", key="confirm_update")
+        if st.button("Executar Atualização Agora") and confirmar:
+            resultados = []
+            with st.spinner("Enviando atualizações..."):
+                for pid, conf in planilhas_config.items():
+                    sh = conf["spreadsheet"]
+                    df_send = conf["df_preview"]
+                    dest_aba = conf["dest_aba"] or "Importado_Fat"
+                    try:
+                        if df_send is None or df_send.empty:
+                            resultados.append((pid, sh.title, 0, "Sem linhas para enviar"))
+                            continue
+                        # garante colunas (remove coluna Data_dt auxiliar)
+                        if "Data_dt" in df_send.columns:
+                            df_send = df_send.drop(columns=["Data_dt"])
+                        # criar aba se não existir
+                        try:
+                            ws_dest = sh.worksheet(dest_aba)
+                        except gspread.exceptions.WorksheetNotFound:
+                            ws_dest = sh.add_worksheet(title=dest_aba, rows=str(max(1000, len(df_send)+10)), cols=str(len(df_send.columns)))
+                        # limpar e enviar
+                        ws_dest.clear()
+                        valores = [df_send.columns.tolist()] + df_send.fillna("").astype(str).values.tolist()
+                        ws_dest.update("A1", valores, value_input_option="USER_ENTERED")
+                        resultados.append((pid, sh.title, len(df_send), "OK"))
+                    except Exception as e:
+                        resultados.append((pid, sh.title, 0, f"ERRO: {e}"))
+
+            # Exibir resumo
+            st.success("Processo concluído. Resumo:")
+            df_res = pd.DataFrame(resultados, columns=["ID", "Nome", "Linhas Enviadas", "Status"])
+            st.dataframe(df_res, use_container_width=True)
+            # limpa seleção se quiser
+            st.session_state.candidatas = st.session_state.candidatas  # mantém lista
+    else:
+        st.info("Nenhuma configuração de planilhas pronta para atualização. Selecione ao menos uma planilha acima.")

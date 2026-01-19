@@ -226,6 +226,8 @@ tab1, tab2 = st.tabs(["Atualização (Operacional)", "Auditoria / Logs"])
 with tab1:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("1) Planilhas candidatas (seleção)")
+
+    selecionadas = []  # inicializa para evitar erro
     if not st.session_state.candidatas:
         st.info("Nenhuma planilha encontrada automaticamente. Verifique permissões e DEFAULT_FOLDER_IDS.")
         st.markdown("Compartilhe as pastas com o service account exibido no topo.")

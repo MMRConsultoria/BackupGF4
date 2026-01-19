@@ -13,7 +13,7 @@ except Exception:
     build = None
 
 # ---------------- CONFIG ----------------
-MAIN_FOLDER_ID = "1LrbcStUAcvZV_dOYKBt-vgBHb9e1d6X"  # pasta principal fornecida por você
+MAIN_FOLDER_ID = "1LrbcStUAcvZV_dOYKBt-vgBHb9e1d6X"  # pasta principal
 ID_PLANILHA_ORIGEM = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
 ABA_ORIGEM = "Fat Sistema Externo"
 MAPA_ABAS = {"Faturamento": "Importado Fat", "Meio Pagamento": "Meio Pagamento", "Desconto": "Desconto"}
@@ -46,15 +46,15 @@ if not drive_service:
     st.error("Drive API não inicializada (googleapiclient). Verifique dependências e permissões.")
     st.stop()
 
-# ---------------- HELPERS para Drive ----------------
+# ---------------- HELPERS para Drive (usar _drive para evitar hashing do objeto) ----------------
 @st.cache_data(ttl=300)
-def list_subfolders(drive, parent_id):
+def list_subfolders(_drive, parent_id):
     """Retorna lista de subpastas imediatas (id,name) do parent_id."""
     folders = []
     page_token = None
     q = f"'{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
     while True:
-        resp = drive.files().list(q=q, fields="nextPageToken, files(id, name)", pageToken=page_token).execute()
+        resp = _drive.files().list(q=q, fields="nextPageToken, files(id, name)", pageToken=page_token).execute()
         files = resp.get("files", [])
         for f in files:
             folders.append({"id": f["id"], "name": f["name"]})
@@ -64,34 +64,39 @@ def list_subfolders(drive, parent_id):
     return folders
 
 @st.cache_data(ttl=300)
-def list_all_descendant_folders(drive, root_id):
+def list_all_descendant_folders(_drive, root_id):
     """Busca recursivamente todas as subpastas a partir do root_id (inclui root_id como primeiro)."""
     all_folders = []
     queue = [root_id]
+    seen = set()
     while queue:
         pid = queue.pop(0)
-        # obter informações da pasta atual
+        if pid in seen:
+            continue
+        seen.add(pid)
         try:
-            resp_meta = drive.files().get(fileId=pid, fields="id, name").execute()
+            resp_meta = _drive.files().get(fileId=pid, fields="id, name").execute()
             all_folders.append({"id": resp_meta["id"], "name": resp_meta.get("name", "")})
         except Exception:
-            # se não for possível obter meta, pula
             pass
-        # listar filhas imediatas
-        children = list_subfolders(drive, pid)
+        try:
+            children = list_subfolders(_drive, pid)
+        except Exception:
+            children = []
         for c in children:
-            queue.append(c["id"])
+            if c["id"] not in seen:
+                queue.append(c["id"])
     return all_folders
 
 @st.cache_data(ttl=300)
-def list_spreadsheets_in_folders(drive, folder_ids):
+def list_spreadsheets_in_folders(_drive, folder_ids):
     """Retorna planilhas (id,name,parent_folder_id) encontradas nas folder_ids."""
     sheets = []
     for fid in folder_ids:
         page_token = None
         q = f"'{fid}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
         while True:
-            resp = drive.files().list(q=q, fields="nextPageToken, files(id, name)", pageToken=page_token).execute()
+            resp = _drive.files().list(q=q, fields="nextPageToken, files(id, name)", pageToken=page_token).execute()
             files = resp.get("files", [])
             for f in files:
                 sheets.append({"id": f["id"], "name": f["name"], "parent_folder_id": fid})
@@ -132,13 +137,11 @@ if not subfolders:
 
 # Exibir multiselect com os nomes das subpastas
 sub_names = [f"{s['name']} ({s['id']})" for s in subfolders]
-# por padrão selecionamos todas para conveniência
 sel = st.multiselect("Subpastas (selecione uma ou mais)", options=sub_names, default=sub_names)
 
 # map selected display back to ids
 selected_folder_ids = []
 for s in sel:
-    # extrair id entre parênteses ao final
     if s.strip().endswith(")"):
         try:
             fid = s.split("(")[-1].strip(")")
@@ -153,21 +156,16 @@ if not selected_folder_ids:
 # se busca recursiva, expandir cada selected to its descendants (inclui a própria selected)
 all_folder_ids_to_scan = set()
 if recursive:
-    # para cada selected folder, buscar seus descendentes
     for fid in selected_folder_ids:
         try:
             descendants = list_all_descendant_folders(drive_service, fid)
             for d in descendants:
                 all_folder_ids_to_scan.add(d["id"])
         except Exception:
-            # se falhar, ao menos inclua a própria pasta
             all_folder_ids_to_scan.add(fid)
 else:
-    # apenas as selecionadas
     all_folder_ids_to_scan.update(selected_folder_ids)
 
-# Também incluir arquivos diretamente na pasta principal se exista planilhas lá?
-# (opcional) — aqui deixamos apenas as selecionadas.
 st.success(f"Será escaneado {len(all_folder_ids_to_scan)} pasta(s).")
 
 # ---------------- Buscar planilhas nas pastas selecionadas ----------------
@@ -224,8 +222,8 @@ with st.form("selection_form"):
 
     submit = st.form_submit_button("Enviar seleções")
 
+# ---------------- Execução (simulada por padrão) ----------------
 if submit:
-    # montar lista de tarefas
     tarefas = []
     for _, row in edited.iterrows():
         pid = row["ID_Planilha"]
@@ -248,7 +246,6 @@ if submit:
             st.info(status_text)
             try:
                 if not dry_run:
-                    # Exemplo: abrir planilha, opcional backup e gravar df_preview
                     sh = gc.open_by_key(t["id"])
                     if do_backup:
                         try:
@@ -258,8 +255,7 @@ if submit:
                             logs.append(f"{t['planilha']}/{t['aba']}: backup criado")
                         except Exception as e:
                             logs.append(f"{t['planilha']}/{t['aba']}: backup falhou ou aba não existe -> {e}")
-                    # AQUI: lógica real para carregar origem (ID_PLANILHA_ORIGEM/ABA_ORIGEM), filtrar e escrever.
-                    # Por segurança, não escrevemos automaticamente sem sua confirmação explícita.
+                    # Aqui insira a lógica real: carregar origem (ID_PLANILHA_ORIGEM/ABA_ORIGEM), filtrar e escrever
                     time.sleep(0.2)
                     logs.append(f"{t['planilha']}/{t['operacao']}: gravaria dados (simulado)")
                 else:

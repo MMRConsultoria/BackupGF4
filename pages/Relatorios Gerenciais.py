@@ -54,11 +54,20 @@ with st.spinner("⏳ Processando..."):
     credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
     gc = gspread.authorize(credentials)
     planilha_empresa = gc.open("Vendas diarias")
-    
-    
-    
     df_empresa = pd.DataFrame(planilha_empresa.worksheet("Tabela Empresa").get_all_records())
     
+    # ==========================================
+    # Nova Conexão: Planilha Meios de Pagamento
+    # ==========================================
+    sh_meio_pagto = gc.open_by_key("1GSI291SEeeU9MtOWkGwsKGCGMi_xXMSiQnL_9GhXxfU")
+    
+    # Carrega "Faturamento Meio Pagamento"
+    ws_mp = sh_meio_pagto.worksheet("Faturamento Meio Pagamento")
+    df_relatorio_base = pd.DataFrame(ws_mp.get_all_records())
+    
+    # Carrega "Tabela Meio Pagamento"
+    ws_tab_mp = sh_meio_pagto.worksheet("Tabela Meio Pagamento")
+    df_meio_pagamento_base = pd.DataFrame(ws_tab_mp.get_all_records())
     # ================================
     # 2. Configuração inicial do app
     # ================================
@@ -1856,28 +1865,17 @@ with st.spinner("⏳ Processando..."):
             </div>
             """, unsafe_allow_html=True)
             
-            # Carrega a planilha (caso ainda não tenha feito antes)
-            planilha = gc.open("Vendas diarias")
-    
-            # Aba com dados analíticos
-            aba_relatorio = planilha.worksheet("Faturamento Meio Pagamento")
-            df_relatorio = pd.DataFrame(aba_relatorio.get_all_records())
+            # --- NOVA LEITURA (Copiando do que foi carregado no início) ---
+            df_relatorio = df_relatorio_base.copy()
             df_relatorio.columns = df_relatorio.columns.str.strip()
     
-            # Aba com o tipo de pagamento
-            aba_meio_pagamento = planilha.worksheet("Tabela Meio Pagamento")
-            df_meio_pagamento = pd.DataFrame(aba_meio_pagamento.get_all_records())
+            df_meio_pagamento = df_meio_pagamento_base.copy()
             df_meio_pagamento.columns = df_meio_pagamento.columns.str.strip()
-    
+            # --------------------------------------------------------------
+
             # Normaliza colunas usadas no merge
             df_relatorio["Meio de Pagamento"] = df_relatorio["Meio de Pagamento"].astype(str).str.strip().str.upper()
-            df_meio_pagamento["Meio de Pagamento"] = df_meio_pagamento["Meio de Pagamento"].astype(str).str.strip().str.upper()
-            df_meio_pagamento["Tipo de Pagamento"] = df_meio_pagamento["Tipo de Pagamento"].astype(str).str.strip().str.upper()
-
-            # --- Antes deste bloco você já fez:
-            # df_relatorio["Meio de Pagamento"] = ...
-            # df_meio_pagamento["Meio de Pagamento"] = ...
-            # df_meio_pagamento["Tipo de Pagamento"] = ...
+            
             
             # ⬇️ USE ESTE BLOCO NO LUGAR DO MERGE ANTIGO
             # 1) Saber se o relatório já tem "Tipo de Pagamento"
@@ -2327,14 +2325,13 @@ with st.spinner("⏳ Processando..."):
             # ========================
             with aba_previsao_fc:
                 
-                # Carrega planilha e abas
-                planilha = gc.open("Vendas diarias")
-                aba_fat = planilha.worksheet("Faturamento Meio Pagamento")
-                aba_empresa = planilha.worksheet("Tabela Empresa")
+                # Usa os dados já carregados no início
+                df_fat = df_relatorio_base.copy()
+                df_empresa = df_empresa.copy()  # ou df_empresa_base se você tiver renomeado
             
                 # --- Dados principais ---
-                df_fat = pd.DataFrame(aba_fat.get_all_records())
-                df_empresa = pd.DataFrame(aba_empresa.get_all_records())
+                #df_fat = pd.DataFrame(aba_fat.get_all_records())
+                #df_empresa = pd.DataFrame(aba_empresa.get_all_records())
             
                 # --- Normalizações ---
                 df_fat.columns = df_fat.columns.str.strip()

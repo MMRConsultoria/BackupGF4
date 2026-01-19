@@ -4,12 +4,21 @@ import json
 from datetime import datetime
 from oauth2client.service_account import ServiceAccountCredentials
 import gspread
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 
-st.set_page_config(page_title="Atualizar Planilhas Google", layout="wide")
+# Import googleapiclient com tratamento de erro
+try:
+    from googleapiclient.discovery import build
+except ModuleNotFoundError:
+    st.error(
+       "Módulo 'googleapiclient' não encontrado. "
+       "Instale 'google-api-python-client' (local: pip install google-api-python-client) "
+       "ou adicione ao requirements.txt do app: google-api-python-client"
+    )
+    build = None
 
-st.title("Atualização Automática de Planilhas Google")
+st.set_page_config(page_title="Atualização e Auditoria", layout="wide")
+
+st.title("Sistema de Atualização e Auditoria")
 
 # Autenticação Google Sheets e Drive
 @st.cache_resource
@@ -21,13 +30,15 @@ def autenticar_gspread():
     credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
     credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
     gc = gspread.authorize(credentials)
-    drive_service = build('drive', 'v3', credentials=credentials)
+    drive_service = None
+    if build:
+        drive_service = build('drive', 'v3', credentials=credentials)
     return gc, drive_service
 
 gc, drive_service = autenticar_gspread()
 
-# Parâmetros fixos (pode adaptar para inputs do usuário)
-ID_PLANILHA_ORIGEM = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"  # Exemplo
+# Parâmetros fixos (ajuste conforme seu caso)
+ID_PLANILHA_ORIGEM = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
 NOME_ABA_ORIGEM = "Fat Sistema Externo"
 IDS_PASTAS_DESTINO = [
     "1ptFvtxYjISfB19S7bU9olMLmAxDTBkOh",
@@ -52,7 +63,7 @@ def listar_arquivos_pasta(drive_service, pasta_id):
             page_token = response.get('nextPageToken', None)
             if page_token is None:
                 break
-        except HttpError as e:
+        except Exception as e:
             st.error(f"Erro ao listar arquivos na pasta {pasta_id}: {e}")
             break
     return arquivos
@@ -86,7 +97,7 @@ def atualizar_planilhas_varias_pastas(
     falhas = []
 
     for id_pasta in ids_pastas_destino:
-        arquivos = listar_arquivos_pasta(drive_service, id_pasta)
+        arquivos = listar_arquivos_pasta(drive_service, id_pasta) if drive_service else []
         if not arquivos:
             falhas.append(f"Pasta {id_pasta} está vazia ou inacessível.")
             continue
@@ -105,9 +116,6 @@ def atualizar_planilhas_varias_pastas(
                     falhas.append(f"{arquivo['name']} - Grupo em B4 vazio")
                     continue
                 grupo_aba = grupo_aba.strip().upper()
-
-                filtro_extra_aba = aba_filtro.acell("B6").value
-                filtro_extra_aba = filtro_extra_aba.strip().upper() if filtro_extra_aba else None
 
                 def linha_valida(linha):
                     grupo = str(linha["Grupo"]).strip().upper()
@@ -140,18 +148,29 @@ def atualizar_planilhas_varias_pastas(
 
     return total_atualizados, falhas
 
-if st.button("Atualizar Planilhas"):
-    with st.spinner("Atualizando planilhas..."):
-        total, falhas = atualizar_planilhas_varias_pastas(
-            gc,
-            drive_service,
-            ID_PLANILHA_ORIGEM,
-            NOME_ABA_ORIGEM,
-            IDS_PASTAS_DESTINO,
-            data_minima=DATA_MINIMA
-        )
-    st.success(f"Total de planilhas atualizadas: {total}")
-    if falhas:
-        st.warning("Falhas encontradas:")
-        for f in falhas:
-            st.write(f"- {f}")
+# Criar abas
+tab_atualizacao, tab_auditoria = st.tabs(["Atualização", "Auditoria Faturamento X Meio Pagamento"])
+
+with tab_atualizacao:
+    st.header("Atualização das Planilhas")
+    if st.button("Executar Atualização"):
+        with st.spinner("Atualizando planilhas..."):
+            total, falhas = atualizar_planilhas_varias_pastas(
+                gc,
+                drive_service,
+                ID_PLANILHA_ORIGEM,
+                NOME_ABA_ORIGEM,
+                IDS_PASTAS_DESTINO,
+                data_minima=DATA_MINIMA
+            )
+        st.success(f"Total de planilhas atualizadas: {total}")
+        if falhas:
+            st.warning("Falhas encontradas:")
+            for f in falhas:
+                st.write(f"- {f}")
+
+with tab_auditoria:
+    st.header("Auditoria Faturamento X Meio Pagamento")
+    st.info("Aqui você pode implementar a lógica de auditoria que desejar.")
+    # Exemplo: carregar dados, comparar, mostrar tabelas, gráficos, etc.
+    st.write("Funcionalidade em desenvolvimento...")

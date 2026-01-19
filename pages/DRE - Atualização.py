@@ -140,11 +140,9 @@ folder_ids_text = st.sidebar.text_area("IDs das pastas (uma por linha) — opcio
 folder_ids = [s.strip() for s in folder_ids_text.splitlines() if s.strip()]
 
 # -----------------------
-# LISTAGEM (compacta) e preparação das opções
+# LISTAGEM e seleção via checkboxes (sem tabela resumo)
 # -----------------------
-planilhas = []  # garante que exista mesmo que nada seja listado
-diagnostico = []
-
+planilhas = []
 if drive_service and folder_ids:
     for fid in folder_ids:
         try:
@@ -152,27 +150,9 @@ if drive_service and folder_ids:
             if arquivos:
                 for a in arquivos:
                     planilhas.append({"id": a["id"], "name": a["name"], "folder_id": fid})
-            else:
-                diagnostico.append({"folder_id": fid, "error": "Nenhum arquivo encontrado ou sem permissão."})
         except Exception as e:
-            diagnostico.append({"folder_id": fid, "error": str(e)})
-else:
-    if not drive_service:
-        diagnostico.append({"folder_id": None, "error": "Drive API não disponível."})
-    if not folder_ids:
-        diagnostico.append({"folder_id": None, "error": "Nenhuma pasta configurada em DEFAULT_FOLDER_IDS ou no sidebar."})
+            st.error(f"Erro listando pasta {fid}: {e}")
 
-# mostra resumo compacto (não lista linha a linha)
-st.header("Planilhas encontradas (resumo)")
-if planilhas:
-    df_plan = pd.DataFrame(planilhas)[["name", "id", "folder_id"]].rename(columns={"name":"Nome","id":"ID","folder_id":"Pasta ID"})
-    st.dataframe(df_plan, use_container_width=True)
-else:
-    st.info("Nenhuma planilha encontrada automaticamente. Verifique permissões e DEFAULT_FOLDER_IDS.")
-
-# -----------------------
-# SELEÇÃO: lista de checkboxes só com nomes, todas marcadas por padrão
-# -----------------------
 st.markdown("### Selecione as planilhas para atualizar (desmarque as que NÃO quer atualizar)")
 
 selecionadas = []
@@ -189,7 +169,6 @@ else:
 # EXECUÇÃO PARA SELECIONADAS
 # -----------------------
 if selecionadas:
-    # carrega origem apenas uma vez
     with st.spinner("Carregando planilha origem..."):
         try:
             df_origem = carregar_origem(gc, origin_id, origin_sheet)
@@ -198,7 +177,6 @@ if selecionadas:
             st.stop()
     st.success("Planilha origem carregada.")
 
-    # parâmetros globais
     col_a, col_b, col_c = st.columns([2,1,1])
     with col_a:
         data_min = st.date_input("Data mínima (filtrar)", value=data_minima)
@@ -228,7 +206,6 @@ if selecionadas:
             if dest_choice == "__CRIAR_NOVA_ABA__":
                 new_aba_name = st.text_input("Nome da nova aba", value="Importado_Fat", key=f"newname_{pid}")
 
-            # preview
             df = df_origem.copy()
             if grupo_detectado:
                 mask = df["Grupo"].astype(str).str.upper() == grupo_detectado
@@ -249,7 +226,6 @@ if selecionadas:
                 "grupo": grupo_detectado
             }
 
-    # confirmação e execução
     if planilhas_config:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.subheader("Executar atualização para planilhas configuradas")
@@ -274,7 +250,6 @@ if selecionadas:
                         logs.append(f"{sh.title}: Sem linhas para enviar.")
                         continue
 
-                    # verificar existência da aba
                     try:
                         ws_dest = sh.worksheet(dest)
                         aba_existed = True
@@ -282,7 +257,6 @@ if selecionadas:
                         ws_dest = None
                         aba_existed = False
 
-                    # backup
                     if do_bkp and aba_existed:
                         bname, berr = backup_worksheet(sh, dest)
                         if berr:
@@ -290,18 +264,15 @@ if selecionadas:
                         else:
                             logs.append(f"{sh.title}: Backup criado -> {bname}")
 
-                    # dry-run
                     if dry:
                         resultados.append((pid, sh.title, len(df_send), "DRY-RUN", "Não gravado"))
                         logs.append(f"{sh.title}: Dry-run -> {len(df_send)} linhas preparadas.")
                         continue
 
-                    # criar aba se necessário
                     if not aba_existed:
                         ws_dest = sh.add_worksheet(title=dest, rows=str(max(1000, len(df_send)+10)), cols=str(max(20, len(df_send.columns))))
                         time.sleep(0.5)
 
-                    # escrever
                     ws_dest.clear()
                     values = [df_send.columns.tolist()] + df_send.fillna("").astype(str).values.tolist()
                     ws_dest.update("A1", values, value_input_option="USER_ENTERED")

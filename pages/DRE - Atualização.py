@@ -162,7 +162,7 @@ else:
     if not folder_ids:
         diagnostico.append({"folder_id": None, "error": "Nenhuma pasta configurada em DEFAULT_FOLDER_IDS ou no sidebar."})
 
-# mostra resumo compactado (não lista linha a linha)
+# mostra resumo compacto (não lista linha a linha)
 st.header("Planilhas encontradas (resumo)")
 if planilhas:
     df_plan = pd.DataFrame(planilhas)[["name", "id", "folder_id"]].rename(columns={"name":"Nome","id":"ID","folder_id":"Pasta ID"})
@@ -171,12 +171,19 @@ else:
     st.info("Nenhuma planilha encontrada automaticamente. Verifique permissões e DEFAULT_FOLDER_IDS.")
 
 # -----------------------
-# SELEÇÃO: todas pré-selecionadas por padrão
+# SELEÇÃO: lista de checkboxes só com nomes, todas marcadas por padrão
 # -----------------------
-st.markdown("### Seleção de planilhas para atualização")
-options = [f"{p['name']} ({p['id']})" for p in planilhas]
-# default = options -> seleciona tudo por padrão
-selecionadas = st.multiselect("Desmarque as que NÃO quer atualizar (todas selecionadas por padrão):", options, default=options)
+st.markdown("### Selecione as planilhas para atualizar (desmarque as que NÃO quer atualizar)")
+
+selecionadas = []
+if planilhas:
+    for p in planilhas:
+        checked = st.checkbox(p["name"], value=True, key=f"chk_{p['id']}")
+        if checked:
+            selecionadas.append(p)
+    st.write(f"Total selecionadas: {len(selecionadas)}")
+else:
+    st.info("Nenhuma planilha encontrada para seleção.")
 
 # -----------------------
 # EXECUÇÃO PARA SELECIONADAS
@@ -201,8 +208,8 @@ if selecionadas:
         do_backup = st.checkbox("Fazer backup da aba destino antes de sobrescrever", value=True)
 
     planilhas_config = {}
-    for opt in selecionadas:
-        pid = opt.split("(")[-1].strip(")")
+    for p in selecionadas:
+        pid = p["id"]
         try:
             sh = gc.open_by_key(pid)
         except Exception as e:
@@ -314,4 +321,4 @@ if selecionadas:
             st.info("Marque a confirmação e clique em 'Executar agora' para aplicar as alterações.")
         st.markdown('</div>', unsafe_allow_html=True)
 else:
-    st.info("Nenhuma planilha selecionada. As opções acima já aparecem com todas selecionadas por padrão; desmarque as que não quiser atualizar.")
+    st.info("Nenhuma planilha selecionada. Desmarque as que não quiser atualizar na lista acima.")

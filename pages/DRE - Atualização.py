@@ -14,27 +14,40 @@ except Exception:
     build = None
     HttpError = Exception
 
-# Page config
+# -----------------------------------------
+# Configurações (não exigir input do usuário)
+# -----------------------------------------
+# Cole aqui os IDs das pastas que devem ser listadas automaticamente
+DEFAULT_FOLDER_IDS = [
+    "1ptFvtxYjISfB19S7bU9olMLmAxDTBkOh",  # sua pasta
+    # adicione outros IDs de pasta se necessário
+]
+
+# Planilha origem (padrão)
+DEFAULT_ORIGIN_SPREADSHEET = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
+DEFAULT_ORIGIN_SHEET = "Fat Sistema Externo"
+DEFAULT_DATA_MINIMA = (datetime.now() - timedelta(days=365)).date()
+
+# -----------------------------------------
+# Streamlit page config & CSS
+# -----------------------------------------
 st.set_page_config(page_title="Atualização e Auditoria", layout="wide")
+st.markdown("""
+<style>
+.card {
+    background: #ffffff;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    margin-bottom: 16px;
+}
+.kv { color:#6c757d; font-size:0.9em; }
+.header-row { display:flex; gap:16px; align-items:center; justify-content:space-between; }
+.small-muted { color:#6c757d; font-size:0.9em; }
+</style>
+""", unsafe_allow_html=True)
 
-# CSS básico para "cards"
-st.markdown(
-    """
-    <style>
-    .card {
-        background: #ffffff;
-        border-radius: 8px;
-        padding: 16px;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.08);
-        margin-bottom: 12px;
-    }
-    .small-muted { color: #6c757d; font-size: 0.9em }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-st.title("📊 Atualização e Auditoria — Faturamento x Meio de Pagamento")
+st.title("📊 Atualização e Auditoria — Faturamento x Meio Pagamento")
 
 # -----------------------------------------
 # Autenticação gspread + Drive (opcional)
@@ -53,7 +66,11 @@ def autenticar_gspread():
             drive_service = None
     return gc, drive_service, credentials_dict.get("client_email")
 
-gc, drive_service, service_account_email = autenticar_gspread()
+try:
+    gc, drive_service, service_account_email = autenticar_gspread()
+except Exception as e:
+    st.error("Erro na autenticação com Google. Verifique st.secrets['GOOGLE_SERVICE_ACCOUNT'].")
+    st.stop()
 
 # -----------------------------------------
 # Funções utilitárias
@@ -66,7 +83,12 @@ def listar_arquivos_pasta(drive_service, pasta_id):
     query = f"'{pasta_id}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
     while True:
         try:
-            resp = drive_service.files().list(q=query, spaces="drive", fields="nextPageToken, files(id, name)", pageToken=page_token).execute()
+            resp = drive_service.files().list(
+                q=query,
+                spaces="drive",
+                fields="nextPageToken, files(id, name)",
+                pageToken=page_token
+            ).execute()
             arquivos.extend(resp.get("files", []))
             page_token = resp.get("nextPageToken", None)
             if not page_token:
@@ -108,61 +130,37 @@ def detectar_grupo_por_relcomp(sh):
         return None, None
 
 # -----------------------------------------
-# Sidebar - configurações
-# -----------------------------------------
-with st.sidebar:
-    st.header("⚙️ Configurações")
-    st.markdown(f"<div class='small-muted'>Service account: <b>{service_account_email}</b></div>", unsafe_allow_html=True)
-    st.write("")
-    origin_id = st.text_input("ID da planilha origem", value="1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU")
-    origin_sheet = st.text_input("Aba origem (na planilha origem)", value="Fat Sistema Externo")
-    data_minima = st.date_input("Data mínima (incluir)", value=(datetime.now() - timedelta(days=365)).date())
-    st.write("---")
-    st.markdown("Pastas para listar (uma ID por linha)")
-    folder_ids_text = st.text_area("IDs das pastas (opcional)", value="", height=120)
-    folder_ids = [x.strip() for x in folder_ids_text.splitlines() if x.strip()]
-    st.write("---")
-    st.markdown("IDs/URLs de planilhas (manuais) — uma por linha")
-    manual_text = st.text_area("Planilhas manuais (opcional)", value="", height=120)
-    st.write("")
-    st.button("Listar planilhas candidatas", key="btn_list_cand")
-
-# -----------------------------------------
-# Session state inicialização
+# Auto-listar planilhas candidatas (executa ao carregar o app)
 # -----------------------------------------
 if "candidatas" not in st.session_state:
-    st.session_state.candidatas = []  # lista de dicts {'id','name','folder_id'}
-
-# -----------------------------------------
-# Ações ao clicar em listar candidatas
-# -----------------------------------------
-if st.session_state.get("btn_list_cand", False) or st.button("Atualizar lista (debug)", key="btn_debug_refresh"):
     st.session_state.candidatas = []
-    # 1) listar por pastas (se Drive API estiver disponível)
-    if drive_service and folder_ids:
-        with st.spinner("Listando arquivos nas pastas..."):
-            for fid in folder_ids:
+    # Tenta listar automaticamente das pastas configuradas
+    if drive_service and DEFAULT_FOLDER_IDS:
+        with st.spinner("Listando planilhas nas pastas configuradas..."):
+            for fid in DEFAULT_FOLDER_IDS:
                 arquivos = listar_arquivos_pasta(drive_service, fid)
                 for a in arquivos:
                     st.session_state.candidatas.append({"id": a["id"], "name": a["name"], "folder_id": fid})
-    # 2) adicionar manuais (se fornecidos)
-    for line in manual_text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if "docs.google.com/spreadsheets" in line:
-            parts = line.split("/d/")
-            if len(parts) > 1:
-                mid = parts[1].split("/")[0]
-            else:
-                mid = line
-        else:
-            mid = line
-        try:
-            sh = gc.open_by_key(mid)
-            st.session_state.candidatas.append({"id": mid, "name": sh.title, "folder_id": None})
-        except Exception as e:
-            st.warning(f"Falha abrindo planilha manual '{mid}': {e}")
+    # Se não encontrou nada, tentamos apenas deixar a lista vazia (o app mostrará instruções)
+    # Você pode adicionar aqui DEFAULT_MANUAL_SPREADSHEET_IDS se quiser incluir alguns hardcoded.
+
+# -----------------------------------------
+# Topbar com ações (refresh)
+# -----------------------------------------
+col1, col2 = st.columns([3, 1])
+with col1:
+    st.markdown(f"<div class='small-muted'>Service account: <b>{service_account_email}</b></div>", unsafe_allow_html=True)
+with col2:
+    if st.button("🔄 Recarregar lista"):
+        # reload candidatas
+        st.session_state.candidatas = []
+        if drive_service and DEFAULT_FOLDER_IDS:
+            with st.spinner("Relendo planilhas nas pastas..."):
+                for fid in DEFAULT_FOLDER_IDS:
+                    arquivos = listar_arquivos_pasta(drive_service, fid)
+                    for a in arquivos:
+                        st.session_state.candidatas.append({"id": a["id"], "name": a["name"], "folder_id": fid})
+        st.experimental_rerun()
 
 # -----------------------------------------
 # Abas principais
@@ -173,67 +171,65 @@ tab1, tab2 = st.tabs(["Atualização", "Auditoria Faturamento X Meio Pagamento"]
 # ABA 1: Atualização
 # -------------------------
 with tab1:
-    st.markdown("<​div class='card'>", unsafe_allow_html=True)
+    st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("Passo 1 — Planilhas candidatas")
     if not st.session_state.candidatas:
-        st.info("Nenhuma planilha candidata listada ainda. Use a sidebar para listar por pastas ou colar IDs/URLs manuais e clique 'Listar planilhas candidatas'.")
+        st.info("Nenhuma planilha candidata foi encontrada automaticamente. Verifique: 1) DEFAULT_FOLDER_IDS; 2) se o service account tem acesso às PASTAS configuradas; 3) clique em '🔄 Recarregar lista'.")
+        st.markdown("Se preferir, edite `DEFAULT_FOLDER_IDS` no código e adicione os IDs das pastas que deseja listar automaticamente.")
     else:
         df_c = pd.DataFrame(st.session_state.candidatas)
         df_display = df_c[["name", "id", "folder_id"]].rename(columns={"name": "Nome", "id": "ID", "folder_id": "Pasta ID"})
         st.dataframe(df_display, use_container_width=True)
-        # seleção
         options = [f"{r['name']} ({r['id']})" for r in st.session_state.candidatas]
-        selecionadas = st.multiselect("Selecione as planilhas que deseja preparar para atualização", options, default=options[:0], key="sel_planilhas")
-    st.markdown("<​/div>", unsafe_allow_html=True)
+        selecionadas = st.multiselect("Selecione as planilhas para preparar atualização", options, default=[], key="sel_planilhas")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    # carregar origem (antes de configurar cada planilha)
-    if st.session_state.candidatas and selecionadas:
+    # carregar origem automaticamente (apenas quando houver seleção)
+    if st.session_state.candidatas and st.session_state.get("sel_planilhas"):
         with st.spinner("Carregando planilha origem..."):
             try:
-                df_origem = carregar_origem(gc, origin_id, origin_sheet)
-                st.success("Planilha origem carregada com sucesso.")
+                df_origem = carregar_origem(gc, DEFAULT_ORIGIN_SPREADSHEET, DEFAULT_ORIGIN_SHEET)
             except Exception as e:
                 st.error(f"Falha ao carregar origem: {e}")
                 st.stop()
+        st.success("Planilha origem carregada.")
 
-        # configurar cada planilha selecionada
-        st.markdown("<​div class='card'>", unsafe_allow_html=True)
-        st.subheader("Passo 2 — Configurar cada planilha selecionada")
+        # Configurar cada planilha selecionada
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.subheader("Passo 2 — Configurar e revisar por planilha")
         planilhas_config = {}
-        for opt in selecionadas:
+        for opt in st.session_state.sel_planilhas:
             pid = opt.split("(")[-1].strip(")")
             try:
                 sh = gc.open_by_key(pid)
             except Exception as e:
-                st.error(f"Não foi possível abrir {pid}: {e}")
+                st.error(f"Erro abrindo planilha {pid}: {e}")
                 continue
 
             st.markdown(f"### {sh.title}")
             grupo_detectado, extra_detectado = detectar_grupo_por_relcomp(sh)
-            col1, col2 = st.columns([2, 1])
-            with col1:
+            colA, colB = st.columns([2, 1])
+            with colA:
                 st.write(f"Grupo detectado (B4 de 'rel comp'): **{grupo_detectado or '— não detectado —'}**")
-                grupo_override = st.text_input("Grupo a usar (se vazio usa detectado)", value=grupo_detectado or "", key=f"grupo_{pid}")
-            with col2:
+                # se não detectado, usamos texto detectado (não há input conforme pedido)
+                grupo_final = (grupo_detectado or "").strip().upper()
+            with colB:
                 st.write(f"Filtro extra (B6): **{extra_detectado or '— não detectado —'}**")
-                extra_override = st.text_input("Filtro extra (opcional)", value=extra_detectado or "", key=f"extra_{pid}")
 
-            # listar abas existentes e escolha de aba destino
+            # escolher aba destino automaticamente: tenta achar "Importado_Fat", senão primeira aba
             abas = [ws.title for ws in sh.worksheets()]
-            abas_choice = abas + ["__CRIAR_NOVA_ABA__"]
-            dest_aba = st.selectbox("Escolha a aba de destino para atualizar", abas_choice, key=f"dest_{pid}")
-            new_aba_name = ""
-            if dest_aba == "__CRIAR_NOVA_ABA__":
-                new_aba_name = st.text_input("Nome da nova aba", value="Importado_Fat", key=f"newaba_{pid}")
+            preferred = "Importado_Fat"
+            dest_aba = preferred if preferred in abas else abas[0] if abas else "Importado_Fat"
 
-            # gerar preview filtrado
-            grupo_final = (grupo_override.strip().upper() if grupo_override and grupo_override.strip() else (grupo_detectado or "")).strip().upper()
+            st.write(f"Aba destino selecionada automaticamente: **{dest_aba}** (se quiser mudar, edite o nome aqui no código)")
+
+            # preview dos dados filtrados
             df = df_origem.copy()
             if grupo_final:
                 mask = df["Grupo"].astype(str).str.upper() == grupo_final
             else:
                 mask = pd.Series([True] * len(df), index=df.index)
-            mask = mask & df["Data_dt"].notna() & (df["Data_dt"].dt.date >= data_minima)
+            mask = mask & df["Data_dt"].notna() & (df["Data_dt"].dt.date >= DEFAULT_DATA_MINIMA)
             df_filtrado = df.loc[mask].copy()
             st.write(f"Linhas que seriam enviadas: **{len(df_filtrado)}**")
             if not df_filtrado.empty:
@@ -243,20 +239,21 @@ with tab1:
             planilhas_config[pid] = {
                 "spreadsheet": sh,
                 "grupo": grupo_final,
-                "extra": extra_override.strip().upper() if extra_override else extra_detectado,
-                "dest_aba": new_aba_name.strip() if dest_aba == "__CRIAR_NOVA_ABA__" else dest_aba,
+                "extra": extra_detectado,
+                "dest_aba": dest_aba,
                 "df_preview": df_filtrado
             }
-        st.markdown("<​/div>", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        # passo final: confirmação e execução
+        # confirmação e execução
         if planilhas_config:
-            st.markdown("<​div class='card'>", unsafe_allow_html=True)
+            st.markdown('<div class="card">', unsafe_allow_html=True)
             st.subheader("Passo 3 — Confirmar e executar")
-            confirm = st.checkbox("Confirmo que desejo enviar os dados selecionados para as planilhas/abas escolhidas", key="confirm_send")
+            st.write("Aviso: esta ação irá sobrescrever a aba destino selecionada em cada planilha.")
+            confirm = st.checkbox("Confirmo que desejo enviar os dados filtrados para as planilhas/abas selecionadas", key="confirm_send_auto")
             if st.button("Executar Atualização Agora") and confirm:
                 resultados = []
-                with st.spinner("Executando envios..."):
+                with st.spinner("Enviando dados para planilhas..."):
                     for pid, conf in planilhas_config.items():
                         sh = conf["spreadsheet"]
                         df_send = conf["df_preview"]
@@ -272,28 +269,27 @@ with tab1:
                                 ws_dest = sh.worksheet(dest_aba)
                             except gspread.exceptions.WorksheetNotFound:
                                 ws_dest = sh.add_worksheet(title=dest_aba, rows=str(max(1000, len(df_send)+10)), cols=str(len(df_send.columns)))
+                            # opcional: fazer backup da aba antes de limpar (pode ser adicionado)
                             ws_dest.clear()
                             valores = [df_send.columns.tolist()] + df_send.fillna("").astype(str).values.tolist()
                             ws_dest.update("A1", valores, value_input_option="USER_ENTERED")
                             resultados.append((pid, sh.title, len(df_send), "OK"))
                         except Exception as e:
                             resultados.append((pid, sh.title, 0, f"ERRO: {e}"))
-                st.success("Processo concluído. Resumo abaixo:")
+                st.success("Processo concluído. Resumo:")
                 df_res = pd.DataFrame(resultados, columns=["ID", "Nome", "Linhas Enviadas", "Status"])
                 st.dataframe(df_res, use_container_width=True)
             else:
-                st.info("Marque a caixa de confirmação e clique em 'Executar Atualização Agora' para enviar.")
-            st.markdown("<​/div>", unsafe_allow_html=True)
+                st.info("Marque a confirmação e clique em 'Executar Atualização Agora' para prosseguir.")
+            st.markdown('</div>', unsafe_allow_html=True)
 
 # -------------------------
 # ABA 2: Auditoria
 # -------------------------
 with tab2:
-    st.markdown("<​div class='card'>", unsafe_allow_html=True)
+    st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("Auditoria — Faturamento x Meio Pagamento")
-    st.write("Aqui você pode implementar comparações entre os dados de faturamento e os meios de pagamento.")
-    st.write("- Carregue os dados fonte (origem) e os dados de 'Faturamento Meio Pagamento' / 'Tabela Meio Pagamento'.")
-    st.write("- Realize validações: somas por data, por PDV, divergências, linhas com valores não numéricos, etc.")
-    st.write("")
-    st.info("Implementação de auditoria personalizada pode ser adicionada conforme regras do seu negócio.")
-    st.markdown("<​/div>", unsafe_allow_html=True)
+    st.write("Nesta aba você pode estender a implementação para comparar o Faturamento (origem) x Meio de Pagamento (planilha específica).")
+    st.write("- Carregar aqui os dados de 'Faturamento Meio Pagamento' e 'Tabela Meio Pagamento' e gerar relatórios de divergência.")
+    st.info("Se quiser, eu adiciono as rotinas de auditoria (somas por data/PDV, diferenças, linhas inválidas) conforme suas regras.")
+    st.markdown('</div>', unsafe_allow_html=True)

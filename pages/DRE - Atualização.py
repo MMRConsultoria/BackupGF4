@@ -13,7 +13,7 @@ except Exception:
 # ---------------- CONFIG ----------------
 DEFAULT_FOLDER_IDS = [
     # coloque aqui as folder IDs que contêm suas planilhas (deixe vazio se não usar)
-    # Ex: "1ptFvtxYjISfB19S7bU9olMLmAxDTBkOh",
+    "1ptFvtxYjISfB19S7bU9olMLmAxDTBkOh",
 ]
 
 st.set_page_config(page_title="Tabela com Checkboxes", layout="wide")

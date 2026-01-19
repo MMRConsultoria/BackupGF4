@@ -25,6 +25,14 @@ DEFAULT_ORIGIN_SPREADSHEET = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
 DEFAULT_ORIGIN_SHEET = "Fat Sistema Externo"
 DEFAULT_DATA_MINIMA = (datetime.now() - timedelta(days=365)).date()  # padrão 365 dias
 
+# Abas fixas para atualizar
+ABAS_FIXAS = [
+    "Meio Pagamento",
+    "Desconto",
+    "Volumetria",
+    "Importado Fat",  # visual será "Faturamento"
+]
+
 # -----------------------
 # UI
 # -----------------------
@@ -35,6 +43,9 @@ st.markdown("""
 <style>
 .card { background: #ffffff; border-radius: 10px; padding: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); margin-bottom:12px; }
 .small-muted { color:#6c757d; font-size:0.9em; }
+.planilha-row { display: flex; align-items: center; margin-bottom: 6px; }
+.planilha-name { flex: 1; }
+.aba-select { width: 200px; margin-left: 12px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -140,11 +151,8 @@ data_minima = st.sidebar.date_input("Data mínima (incluir)", value=DEFAULT_DATA
 folder_ids_text = st.sidebar.text_area("IDs das pastas (uma por linha) — opcional", value="\n".join(DEFAULT_FOLDER_IDS), height=120)
 folder_ids = [s.strip() for s in folder_ids_text.splitlines() if s.strip()]
 
-# escolha número de colunas para os quadros
-num_colunas = st.sidebar.slider("Colunas na seleção (visual)", min_value=1, max_value=6, value=3)
-
 # -----------------------
-# CARREGA PLANILHAS DAS PASTAS (sem mostrar tabela resumo)
+# CARREGA PLANILHAS DAS PASTAS
 # -----------------------
 planilhas = []
 if drive_service and folder_ids:
@@ -163,33 +171,34 @@ else:
         st.info("Insira IDs de pasta no sidebar para listar planilhas automaticamente.")
 
 # -----------------------
-# SELETOR: checkboxes organizados em colunas (quadros)
+# SELEÇÃO: checkbox + selectbox para aba fixa
 # -----------------------
-st.markdown("### Selecione as planilhas para atualizar (desmarque as que NÃO quer atualizar)")
-
-# checkbox para selecionar tudo/desmarcar tudo
-select_all = st.checkbox("Selecionar tudo", value=True, key="select_all_toggle")
+st.markdown("### Selecione as planilhas para atualizar e escolha a aba destino")
 
 selecionadas = []
-if planilhas:
-    # cria colunas visuais
-    cols = st.columns(num_colunas)
-    # distribuição por índice (mod) para preencher colunas lado-a-lado
-    for i, p in enumerate(planilhas):
-        col = cols[i % num_colunas]
-        # use o estado 'select_all' como valor inicial
-        checked = col.checkbox(p["name"], value=select_all, key=f"chk_{p['id']}")
-        if checked:
-            selecionadas.append(p)
-    st.write(f"Total selecionadas: {len(selecionadas)}")
-else:
-    st.info("Nenhuma planilha encontrada para seleção.")
+abas_selecionadas = {}
+
+for p in planilhas:
+    cols = st.columns([0.05, 0.6, 0.35])
+    with cols[0]:
+        checked = st.checkbox("", value=True, key=f"chk_{p['id']}")
+    with cols[1]:
+        st.markdown(f"**{p['name']}**")
+    with cols[2]:
+        # substitui label "Importado Fat" por "Faturamento" visualmente
+        opcoes_aba = [aba if aba != "Importado Fat" else "Faturamento" for aba in ABAS_FIXAS]
+        aba_escolhida = st.selectbox(f"Aba destino {p['id']}", opcoes_aba, key=f"aba_{p['id']}")
+    if checked:
+        selecionadas.append(p)
+        # guarda aba escolhida real (troca "Faturamento" por "Importado Fat")
+        abas_selecionadas[p['id']] = "Importado Fat" if aba_escolhida == "Faturamento" else aba_escolhida
+
+st.write(f"Total selecionadas: {len(selecionadas)}")
 
 # -----------------------
-# PROCESSO DE ATUALIZAÇÃO
+# EXECUÇÃO PARA SELECIONADAS
 # -----------------------
 if selecionadas:
-    # carrega origem uma vez
     with st.spinner("Carregando planilha origem..."):
         try:
             df_origem = carregar_origem(gc, origin_id, origin_sheet)
@@ -198,7 +207,6 @@ if selecionadas:
             st.stop()
     st.success("Planilha origem carregada.")
 
-    # parâmetros globais de execução
     col_a, col_b, col_c = st.columns([2,1,1])
     with col_a:
         data_min = st.date_input("Data mínima (filtrar)", value=data_minima)
@@ -221,12 +229,7 @@ if selecionadas:
             grupo_detectado = detectar_grupo_relcomp(sh)
             st.write(f"Grupo detectado (B4 de 'rel comp'): **{grupo_detectado or '— não detectado —'}**")
 
-            abas = [ws.title for ws in sh.worksheets()]
-            dest_options = abas + ["__CRIAR_NOVA_ABA__"]
-            dest_choice = st.selectbox("Escolha a aba destino", dest_options, index=0 if abas else len(dest_options)-1, key=f"dest_{pid}")
-            new_aba_name = ""
-            if dest_choice == "__CRIAR_NOVA_ABA__":
-                new_aba_name = st.text_input("Nome da nova aba", value="Importado_Fat", key=f"newname_{pid}")
+            dest_aba = abas_selecionadas.get(pid, "Importado Fat")
 
             # preview
             df = df_origem.copy()
@@ -242,14 +245,13 @@ if selecionadas:
 
             planilhas_config[pid] = {
                 "spreadsheet": sh,
-                "dest_aba": (new_aba_name if dest_choice == "__CRIAR_NOVA_ABA__" else dest_choice),
+                "dest_aba": dest_aba,
                 "backup": do_backup,
                 "dry_run": dry_run,
                 "df_preview": df_preview,
                 "grupo": grupo_detectado
             }
 
-    # confirmação e execução
     if planilhas_config:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.subheader("Executar atualização para planilhas configuradas")
@@ -264,7 +266,7 @@ if selecionadas:
                 i += 1
                 progress.progress(int(i/total*100))
                 sh = cfg["spreadsheet"]
-                dest = cfg["dest_aba"] or "Importado_Fat"
+                dest = cfg["dest_aba"] or "Importado Fat"
                 df_send = cfg["df_preview"]
                 dry = cfg["dry_run"]
                 do_bkp = cfg["backup"]
@@ -274,7 +276,6 @@ if selecionadas:
                         logs.append(f"{sh.title}: Sem linhas para enviar.")
                         continue
 
-                    # verificar existência da aba
                     try:
                         ws_dest = sh.worksheet(dest)
                         aba_existed = True
@@ -282,7 +283,6 @@ if selecionadas:
                         ws_dest = None
                         aba_existed = False
 
-                    # backup
                     if do_bkp and aba_existed:
                         bname, berr = backup_worksheet(sh, dest)
                         if berr:
@@ -290,18 +290,15 @@ if selecionadas:
                         else:
                             logs.append(f"{sh.title}: Backup criado -> {bname}")
 
-                    # dry-run
                     if dry:
                         resultados.append((pid, sh.title, len(df_send), "DRY-RUN", "Não gravado"))
                         logs.append(f"{sh.title}: Dry-run -> {len(df_send)} linhas preparadas.")
                         continue
 
-                    # criar aba se necessário
                     if not aba_existed:
                         ws_dest = sh.add_worksheet(title=dest, rows=str(max(1000, len(df_send)+10)), cols=str(max(20, len(df_send.columns))))
                         time.sleep(0.5)
 
-                    # escrever
                     ws_dest.clear()
                     values = [df_send.columns.tolist()] + df_send.fillna("").astype(str).values.tolist()
                     ws_dest.update("A1", values, value_input_option="USER_ENTERED")
@@ -321,4 +318,4 @@ if selecionadas:
             st.info("Marque a confirmação e clique em 'Executar agora' para aplicar as alterações.")
         st.markdown('</div>', unsafe_allow_html=True)
 else:
-    st.info("Nenhuma planilha selecionada. Desmarque as que não quiser atualizar nos quadros acima.")
+    st.info("Nenhuma planilha selecionada. Desmarque as que não quiser atualizar na lista acima.")

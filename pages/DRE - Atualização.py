@@ -119,7 +119,7 @@ if not subfolders:
     st.stop()
 
 sub_names = [f"{s['name']} ({s['id']})" for s in subfolders]
-#selected = st.multiselect("Selecione as subpastas a incluir:", options=sub_names, default=sub_names)
+selected = st.multiselect("Selecione as subpastas a incluir:", options=sub_names, default=sub_names)
 
 selected_folder_ids = []
 for s in selected:

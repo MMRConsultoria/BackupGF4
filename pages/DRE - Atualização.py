@@ -20,17 +20,27 @@ MAPA_ABAS = {"Faturamento": "Importado Fat", "Meio Pagamento": "Meio Pagamento",
 
 st.set_page_config(page_title="Atualizador DRE", layout="wide")
 
-# --- CSS PARA COMPACTAÇÃO MÁXIMA ---
+# --- CSS PARA COMPACTAÇÃO EXTREMA ---
 st.markdown(
     """
     <style>
-    .block-container { padding-top: 2rem; padding-bottom: 0rem; }
-    div.stVerticalBlock > div { margin-bottom: 0.2rem; }
-    div[data-testid="stVerticalBlock"] > div { padding-top: 0rem; padding-bottom: 0rem; }
+    .block-container { padding-top: 1rem; padding-bottom: 0rem; }
+    /* Remove espaços entre blocos verticais */
+    div.stVerticalBlock > div { margin-bottom: -1.2rem !important; padding-top: 0rem !important; }
+    
     h1 { margin-top: -1rem; margin-bottom: 0.5rem; font-size: 1.8rem; }
+    
+    /* Ajuste específico para a linha de checkboxes e tabelas */
+    .global-selection-container { 
+        margin-bottom: -20px !important; 
+        padding-bottom: 0px !important;
+    }
+    
+    /* Diminui o espaço interno das tabelas */
     [data-testid="stTable"] td, [data-testid="stTable"] th { padding: 2px 6px !important; }
-    .global-selection-container { padding-top: 0px; padding-bottom: 0px; margin-top: 10px; margin-bottom: 5px; }
-    hr { margin: 0.5rem 0px !important; }
+    
+    /* Força as colunas das tabelas a subirem */
+    [data-testid="stHorizontalBlock"] { margin-top: -10px !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -163,5 +173,3 @@ if selecionadas_ids:
 
             if st.button("🚀 INICIAR ATUALIZAÇÃO", use_container_width=True):
                 st.info("Processando...")
-        else:
-            st.warning("Nenhuma planilha encontrada.")

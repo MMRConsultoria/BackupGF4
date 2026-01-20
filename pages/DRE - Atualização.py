@@ -111,7 +111,7 @@ def list_spreadsheets_in_folders(_drive, folder_ids):
     return unique
 
 # ---------------- UI: PASSO 0 - PERÍODO (DE / ATÉ) ----------------
-st.markdown("### 📅 1) Período de atualização (formato exigido: dd/mm/aaaa)")
+#st.markdown("### 📅 1) Período de atualização (formato exigido: dd/mm/aaaa)")
 col_start, col_end = st.columns(2)
 
 # valores default: últimos 30 dias

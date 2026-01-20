@@ -13,14 +13,13 @@ except Exception:
     build = None
 
 # ---------------- CONFIG ----------------
-# Observação: ID com hífen conforme sua URL
-MAIN_FOLDER_ID = "1LrbcStUAcvZV_dOYKBt-vgBHb9e1d6X-"
+MAIN_FOLDER_ID = "1LrbcStUAcvZV_dOYKBt-vgBHb9e1d6X-"  # ID da pasta principal (use o ID com hífen se necessário)
 ID_PLANILHA_ORIGEM = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
 ABA_ORIGEM = "Fat Sistema Externo"
 MAPA_ABAS = {"Faturamento": "Importado Fat", "Meio Pagamento": "Meio Pagamento", "Desconto": "Desconto"}
 
 st.set_page_config(page_title="Atualizador — selecionar subpastas", layout="wide")
-st.title("Atualizador DRE")
+st.title("🚀 Atualizador de Planilhas por Subpastas")
 
 # ---------------- AUTENTICAÇÃO ----------------
 @st.cache_resource
@@ -64,30 +63,6 @@ def list_subfolders(_drive, parent_id):
     return folders
 
 @st.cache_data(ttl=300)
-def list_all_descendant_folders(_drive, root_id):
-    all_folders = []
-    queue = [root_id]
-    seen = set()
-    while queue:
-        pid = queue.pop(0)
-        if pid in seen:
-            continue
-        seen.add(pid)
-        try:
-            resp_meta = _drive.files().get(fileId=pid, fields="id, name").execute()
-            all_folders.append({"id": resp_meta["id"], "name": resp_meta.get("name", "")})
-        except Exception:
-            pass
-        try:
-            children = list_subfolders(_drive, pid)
-        except Exception:
-            children = []
-        for c in children:
-            if c["id"] not in seen:
-                queue.append(c["id"])
-    return all_folders
-
-@st.cache_data(ttl=300)
 def list_spreadsheets_in_folders(_drive, folder_ids):
     sheets = []
     for fid in folder_ids:
@@ -111,7 +86,6 @@ def list_spreadsheets_in_folders(_drive, folder_ids):
     return unique
 
 # ---------------- UI: PASSO 0 - PERÍODO (DE / ATÉ) ----------------
-#st.markdown("### 📅 1) Período de atualização (formato exigido: dd/mm/aaaa)")
 col_start, col_end = st.columns(2)
 
 # valores default: últimos 30 dias
@@ -123,27 +97,19 @@ with col_start:
 with col_end:
     data_ate = st.date_input("Até (dd/mm/aaaa)", value=default_end, help="Escolha a data final (formato dd/mm/aaaa)")
 
-# formatação e validação
+# validação e formatação
 data_de_str = data_de.strftime("%d/%m/%Y")
 data_ate_str = data_ate.strftime("%d/%m/%Y")
 
 if data_ate < data_de:
     st.error("Data 'Até' deve ser igual ou posterior à data 'De'. Ajuste o período.")
     st.stop()
-#else:
-    #st.info(f"Dados serão filtrados entre {data_de_str} e {data_ate_str} (inclusive).")
+else:
+    st.info(f"Dados serão filtrados entre {data_de_str} e {data_ate_str} (inclusive).")
 
 st.markdown("---")
 
-# ---------------- UI: PASSO 1 - PASTAS ----------------
-#st.markdown("### 📂 2) Seleção de Pastas")
-#col_rec, col_info = st.columns([0.35, 0.65])
-with col_rec:
-    recursive = st.checkbox("Buscar recursivamente (incluir sub-subpastas)", value=False)
-#with col_info:
-    #st.write(f"Pasta principal: `{MAIN_FOLDER_ID}`")
-
-# Listar subpastas imediatas para o usuário escolher
+# ---------------- LISTAR E SELECIONAR SUBPASTAS (sem título/checkboxs extras) ----------------
 try:
     subfolders = list_subfolders(drive_service, MAIN_FOLDER_ID)
 except Exception as e:
@@ -167,19 +133,8 @@ if not selected_folder_ids:
     st.warning("Selecione ao menos uma subpasta para prosseguir.")
     st.stop()
 
-# Expandir se recursivo
-all_folder_ids_to_scan = set()
-if recursive:
-    for fid in selected_folder_ids:
-        try:
-            descendants = list_all_descendant_folders(drive_service, fid)
-            for d in descendants:
-                all_folder_ids_to_scan.add(d["id"])
-        except Exception:
-            all_folder_ids_to_scan.add(fid)
-else:
-    all_folder_ids_to_scan.update(selected_folder_ids)
-
+# não recursivo: apenas as pastas selecionadas
+all_folder_ids_to_scan = set(selected_folder_ids)
 st.success(f"Serão escaneadas {len(all_folder_ids_to_scan)} pasta(s).")
 
 # ---------------- BUSCAR PLANILHAS NAS PASTAS SELECIONADAS ----------------
@@ -202,12 +157,11 @@ df["Meio Pagamento"] = True
 df["Faturamento"] = True
 df = df[["Planilha", "Folder_ID", "ID_Planilha", "Desconto", "Meio Pagamento", "Faturamento"]].sort_values("Planilha").reset_index(drop=True)
 
-st.markdown("### 📝 3) Ajuste as operações por planilha")
+# ---------------- TABELA E FORM (seleção de operações) ----------------
 if not hasattr(st, "data_editor"):
     st.error("Seu Streamlit não tem `st.data_editor`. Atualize o Streamlit: pip install --upgrade streamlit")
     st.stop()
 
-# ---------------- Form com data_editor ----------------
 with st.form("selection_form"):
     edited = st.data_editor(
         df,
@@ -235,7 +189,6 @@ with st.form("selection_form"):
 
 # ---------------- EXECUÇÃO (simulada por padrão) ----------------
 if submit:
-    # monta tarefas conforme seleção
     tarefas = []
     for _, row in edited.iterrows():
         if row["Desconto"]:
@@ -264,9 +217,8 @@ if submit:
                             logs.append(f"{t['planilha']}/{t['aba']}: backup criado")
                         except Exception as e:
                             logs.append(f"{t['planilha']}/{t['aba']}: backup falhou ou aba não existe -> {e}")
-                    # Aqui você adiciona a lógica real de leitura da origem (ID_PLANILHA_ORIGEM/ABA_ORIGEM),
-                    # filtra com data >= data_de e <= data_ate e grava na aba destino.
-                    # Por segurança, esse exemplo só simula a gravação.
+                    # Aqui: implementar leitura da origem (ID_PLANILHA_ORIGEM/ABA_ORIGEM),
+                    # filtrar por data_de <= data <= data_ate e escrever na aba destino.
                     time.sleep(0.2)
                     logs.append(f"{t['planilha']}/{t['operacao']}: gravaria dados para {data_de_str}→{data_ate_str} (simulado)")
                 else:

@@ -176,14 +176,14 @@ with st.form("selection_form"):
         hide_index=True
     )
 
-    st.markdown("---")
-    col1, col2 = st.columns(2)
-    with col1:
-        dry_run = st.checkbox("Dry-run (não grava)", value=True)
-    with col2:
-        do_backup = st.checkbox("Criar backup da aba destino (se existir)", value=True)
+    #st.markdown("---")
+    #col1, col2 = st.columns(2)
+    #with col1:
+    #    dry_run = st.checkbox("Dry-run (não grava)", value=True)
+    #with col2:
+    #    do_backup = st.checkbox("Criar backup da aba destino (se existir)", value=True)
 
-    submit = st.form_submit_button("🚀 INICIAR ATUALIZAÇÃO", use_container_width=True)
+    #submit = st.form_submit_button("🚀 INICIAR ATUALIZAÇÃO", use_container_width=True)
 
 # ---------------- EXECUÇÃO (simulada por padrão) ----------------
 if submit:

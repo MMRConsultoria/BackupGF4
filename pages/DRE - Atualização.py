@@ -131,7 +131,7 @@ if data_ate < data_de:
     st.error("Data 'Até' deve ser igual ou posterior à data 'De'. Ajuste o período.")
     st.stop()
 else:
-    st.info(f"Dados serão filtrados entre {data_de_str} e {data_ate_str} (inclusive).")
+    #st.info(f"Dados serão filtrados entre {data_de_str} e {data_ate_str} (inclusive).")
 
 st.markdown("---")
 

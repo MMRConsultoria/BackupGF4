@@ -20,7 +20,7 @@ ABA_ORIGEM = "Fat Sistema Externo"
 MAPA_ABAS = {"Faturamento": "Importado Fat", "Meio Pagamento": "Meio Pagamento", "Desconto": "Desconto"}
 
 st.set_page_config(page_title="Atualizador — selecionar subpastas", layout="wide")
-st.title("🚀 Atualizador de Planilhas por Subpastas")
+st.title("Atualizador DRE")
 
 # ---------------- AUTENTICAÇÃO ----------------
 @st.cache_resource

@@ -34,7 +34,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("Atualizador DRE")
+st.title("Atualizado DRE")
 
 # ---------------- AUTENTICAÇÃO ----------------
 @st.cache_resource

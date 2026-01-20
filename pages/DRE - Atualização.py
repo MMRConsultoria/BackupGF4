@@ -85,8 +85,8 @@ def list_spreadsheets_in_folders(_drive, folder_ids):
 @st.cache_data(ttl=300)
 def get_conf_map(sheet_ids, target_name):
     """
-    Usado apenas para exibir a coluna conf na interface.
-    Não será re-verificado no momento da atualização.
+    Verifica se a planilha contém (em qualquer aba) a substring target_name.
+    Retorna dict {sheet_id: bool}
     """
     res = {}
     target_clean = target_name.strip().lower()
@@ -94,8 +94,9 @@ def get_conf_map(sheet_ids, target_name):
         try:
             sh = gc.open_by_key(sid)
             titles = [ws.title.strip().lower() for ws in sh.worksheets()]
-            res[sid] = target_clean in titles
-        except:
+            # marca True se qualquer aba contiver a substring target_clean
+            res[sid] = any(target_clean in t for t in titles)
+        except Exception:
             res[sid] = False
     return res
 
@@ -105,7 +106,14 @@ def read_codes_from_config_sheet(gsheet):
     Retorna tupla (b2, b3) com strings ou (None, None).
     """
     try:
-        ws = gsheet.worksheet(TARGET_SHEET_NAME)
+        # busca worksheet com nome que contenha TARGET_SHEET_NAME (mais robusto)
+        ws = None
+        for w in gsheet.worksheets():
+            if TARGET_SHEET_NAME.strip().lower() in w.title.strip().lower():
+                ws = w
+                break
+        if ws is None:
+            return None, None
         b2 = ws.acell("B2").value
         b3 = ws.acell("B3").value
         b2 = str(b2).strip() if b2 and str(b2).strip() != "" else None
@@ -227,7 +235,8 @@ if s_ids:
                     (df_final["Faturamento"] == True)
                 ].copy()
                 
-                if df_marcadas.empty:
+                total = len(df_marcadas)
+                if total == 0:
                     st.warning("Nenhuma planilha marcada para atualização.")
                     st.stop()
                 
@@ -236,7 +245,6 @@ if s_ids:
                     sh_origem = gc.open_by_key(ID_PLANILHA_ORIGEM)
                     ws_origem = sh_origem.worksheet(ABA_ORIGEM)
                     headers_origem, df_origem = get_headers_and_df_from_ws(ws_origem)
-                    # Se o DataFrame veio com todos valores como strings, mantemos assim e só convertimos Data depois
                 except Exception as e:
                     st.error(f"Erro ao abrir planilha origem: {e}")
                     st.stop()
@@ -250,16 +258,15 @@ if s_ids:
                 if not col_grupo:
                     st.error("Não foi possível identificar a coluna de Grupo (coluna F) na origem. Verifique o header da aba origem.")
                     st.stop()
-                # col_loja pode ser None (se não existir) — tratamos adiante
                 
                 # Filtra pela data escolhida no UI
                 df_origem = filter_df_by_date_range(df_origem, col_data, data_de, data_ate)
                 
                 progresso = st.progress(0)
                 logs = []
-                total = len(df_marcadas)
                 
-                for idx, row in df_marcadas.iterrows():
+                # Use enumerate para índice sequencial 0..total-1 ao atualizar progresso
+                for i, (_, row) in enumerate(df_marcadas.iterrows()):
                     try:
                         nome_planilha = row["Planilha"]
                         id_dest = row["ID_Planilha"]
@@ -269,14 +276,14 @@ if s_ids:
                             sh_destino = gc.open_by_key(id_dest)
                         except Exception as e:
                             logs.append(f"{nome_planilha}: Erro abrindo planilha destino -> {e}")
-                            progresso.progress((idx+1)/total)
+                            progresso.progress(min((i+1)/total, 1.0))
                             continue
                         
                         # Lê B2/B3 da aba Configurações Não Apagar da planilha destino
                         b2, b3 = read_codes_from_config_sheet(sh_destino)
                         if not b2:
                             logs.append(f"{nome_planilha}: B2 (código do grupo) não encontrado em '{TARGET_SHEET_NAME}'. Pulando.")
-                            progresso.progress((idx+1)/total)
+                            progresso.progress(min((i+1)/total, 1.0))
                             continue
                         
                         # Filtra df_origem por grupo (col_grupo) e opcionalmente por loja (col_loja)
@@ -286,7 +293,7 @@ if s_ids:
                         
                         if df_filtro.empty:
                             logs.append(f"{nome_planilha}: Nenhum registro encontrado para grupo '{b2}'{(' e loja ' + b3) if b3 else ''}.")
-                            progresso.progress((idx+1)/total)
+                            progresso.progress(min((i+1)/total, 1.0))
                             continue
                         
                         # Atualiza aba Importado_Fat na planilha destino (apaga tudo e escreve o filtrado)
@@ -294,18 +301,12 @@ if s_ids:
                             try:
                                 ws_dest = sh_destino.worksheet("Importado_Fat")
                             except Exception:
-                                # cria se não existir
                                 ws_dest = sh_destino.add_worksheet(title="Importado_Fat", rows=max(1000, len(df_filtro)+10), cols=max(10, len(df_filtro.columns)))
                             
                             ws_dest.clear()
                             
-                            # Monta valores com cabeçalho original (headers_origem) — se preferir, usar df_filtro.columns
-                            # Converter df_filtro para valores na mesma ordem de headers_origem (se header coincide)
-                            # Se houver mismatch de colunas, usamos df_filtro.columns
                             headers_to_write = df_filtro.columns.tolist()
                             values = [headers_to_write] + df_filtro[headers_to_write].values.tolist()
-                            
-                            # Atualiza a planilha destino
                             ws_dest.update("A1", values)
                             
                             logs.append(f"{nome_planilha}: Atualizado Importado_Fat com {len(df_filtro)} linhas.")
@@ -314,7 +315,7 @@ if s_ids:
                     except Exception as e:
                         logs.append(f"{row.get('Planilha', '??')}: Erro geral -> {e}")
                     
-                    progresso.progress((idx+1)/total)
+                    progresso.progress(min((i+1)/total, 1.0))
                 
                 st.success("Atualização concluída!")
                 st.write("\n".join(logs))

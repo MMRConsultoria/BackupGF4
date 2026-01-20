@@ -15,8 +15,6 @@ except Exception:
 # ---------------- CONFIG ----------------
 PASTA_PRINCIPAL_ID = "0B1owaTi3RZnFfm4tTnhfZ2l0VHo4bWNMdHhKS3ZlZzR1ZjRSWWJSSUFxQTJtUExBVlVTUW8"
 TARGET_SHEET_NAME = "Configurações Não Apagar"
-
-# Planilha origem (Fat Sistema Externo)
 ID_PLANILHA_ORIGEM = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
 ABA_ORIGEM = "Fat Sistema Externo"
 
@@ -110,7 +108,6 @@ def read_codes_from_config_sheet(gsheet):
         return None, None
 
 def get_headers_and_df_raw(ws):
-    """Lê os valores exatamente como estão na planilha (como strings)"""
     vals = ws.get_all_values()
     if not vals: return [], pd.DataFrame()
     headers = [str(h).strip() for h in vals[0]]
@@ -121,6 +118,17 @@ def detect_date_col(headers):
     for h in headers:
         if "data" in h.lower(): return h
     return None
+
+def tratar_numericos(df, headers):
+    """Converte colunas G, H, I, J (índices 6, 7, 8, 9) para numérico se existirem"""
+    indices_valor = [6, 7, 8, 9] # G, H, I, J
+    for idx in indices_valor:
+        if idx < len(headers):
+            col_name = headers[idx]
+            # Substitui vírgula por ponto para conversão e trata strings vazias/hifens
+            df[col_name] = df[col_name].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+            df[col_name] = pd.to_numeric(df[col_name], errors='coerce').fillna(0)
+    return df
 
 # ---------------- INTERFACE ----------------
 col_d1, col_d2 = st.columns(2)
@@ -141,10 +149,10 @@ if s_ids:
     with st.spinner("Buscando planilhas..."):
         planilhas = list_spreadsheets_in_folders(drive_service, s_ids)
         if planilhas:
-            df = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
-            df = df.rename(columns={"name": "Planilha", "id": "ID_Planilha"})
-            conf_map = get_conf_map(df["ID_Planilha"].tolist(), TARGET_SHEET_NAME)
-            df["conf"] = df["ID_Planilha"].map(conf_map).astype(bool)
+            df_list = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
+            df_list = df_list.rename(columns={"name": "Planilha", "id": "ID_Planilha"})
+            conf_map = get_conf_map(df_list["ID_Planilha"].tolist(), TARGET_SHEET_NAME)
+            df_list["conf"] = df_list["ID_Planilha"].map(conf_map).astype(bool)
             
             st.markdown('<div class="global-selection-container">', unsafe_allow_html=True)
             c1, c2, c3, _ = st.columns([1.2, 1.2, 1.2, 5])
@@ -153,7 +161,7 @@ if s_ids:
             with c3: s_fat = st.checkbox("Faturamento", value=True)
             st.markdown('</div>', unsafe_allow_html=True)
             
-            df["Desconto"], df["Meio Pagamento"], df["Faturamento"] = s_desc, s_mp, s_fat
+            df_list["Desconto"], df_list["Meio Pagamento"], df_list["Faturamento"] = s_desc, s_mp, s_fat
             config = {
                 "Planilha": st.column_config.TextColumn("Planilha", disabled=True),
                 "conf": st.column_config.CheckboxColumn("Conf", disabled=True),
@@ -162,26 +170,28 @@ if s_ids:
                 "Meio Pagamento": st.column_config.CheckboxColumn("M.Pag"),
                 "Faturamento": st.column_config.CheckboxColumn("Fat."),
             }
-            meio = len(df) // 2 + (len(df) % 2)
+            meio = len(df_list) // 2 + (len(df_list) % 2)
             col_t1, col_t2 = st.columns(2)
-            with col_t1: edit_esq = st.data_editor(df.iloc[:meio], key="t1", use_container_width=True, column_config=config, hide_index=True)
-            with col_t2: edit_dir = st.data_editor(df.iloc[meio:], key="t2", use_container_width=True, column_config=config, hide_index=True)
+            with col_t1: edit_esq = st.data_editor(df_list.iloc[:meio], key="t1", use_container_width=True, column_config=config, hide_index=True)
+            with col_t2: edit_dir = st.data_editor(df_list.iloc[meio:], key="t2", use_container_width=True, column_config=config, hide_index=True)
             
             if st.button("🚀 INICIAR ATUALIZAÇÃO", use_container_width=True):
-                df_final = pd.concat([edit_esq, edit_dir], ignore_index=True)
-                df_marcadas = df_final[(df_final["Desconto"]) | (df_final["Meio Pagamento"]) | (df_final["Faturamento"])].copy()
+                df_final_edit = pd.concat([edit_esq, edit_dir], ignore_index=True)
+                df_marcadas = df_final_edit[(df_final_edit["Desconto"]) | (df_final_edit["Meio Pagamento"]) | (df_final_edit["Faturamento"])].copy()
                 
                 if df_marcadas.empty:
                     st.warning("Nenhuma planilha marcada.")
                     st.stop()
 
-                # 1. LER ORIGEM (APENAS LEITURA)
                 try:
                     sh_origem = gc.open_by_key(ID_PLANILHA_ORIGEM)
                     ws_origem = sh_origem.worksheet(ABA_ORIGEM)
                     headers_orig, df_orig = get_headers_and_df_raw(ws_origem)
+                    
+                    # Trata colunas G,H,I,J como números na origem para garantir cálculos
+                    df_orig = tratar_numericos(df_orig, headers_orig)
+                    
                     col_data_orig = detect_date_col(headers_orig)
-                    # Filtro de data na origem (convertendo temporariamente para filtrar)
                     df_orig_temp = df_orig.copy()
                     df_orig_temp['_dt'] = pd.to_datetime(df_orig_temp[col_data_orig], errors='coerce', dayfirst=True)
                     df_orig_filtrado = df_orig.loc[(df_orig_temp['_dt'] >= pd.to_datetime(data_de)) & (df_orig_temp['_dt'] <= pd.to_datetime(data_ate))]
@@ -199,10 +209,8 @@ if s_ids:
                         if not b2:
                             logs.append(f"{row['Planilha']}: B2 não encontrado."); continue
 
-                        # Filtro por Grupo (Col F) e Loja (Col D)
-                        # Col F é index 5, Col D é index 3
-                        col_f_name = headers_orig[5]
-                        col_d_name = headers_orig[3]
+                        col_f_name = headers_orig[5] # Grupo
+                        col_d_name = headers_orig[3] # Loja
                         
                         df_para_inserir = df_orig_filtrado[df_orig_filtrado[col_f_name].astype(str).str.strip() == b2].copy()
                         if b3:
@@ -211,24 +219,22 @@ if s_ids:
                         if df_para_inserir.empty:
                             logs.append(f"{row['Planilha']}: Sem dados para o filtro."); continue
 
-                        # 2. ATUALIZAR DESTINO (SEM ALTERAR FORMATOS)
                         try:
                             ws_dest = sh_dest.worksheet("Importado_Fat")
                         except:
                             ws_dest = sh_dest.add_worksheet("Importado_Fat", 1000, 30)
                         
                         headers_dest, df_dest = get_headers_and_df_raw(ws_dest)
+                        df_dest = tratar_numericos(df_dest, headers_dest)
                         
                         if df_dest.empty:
-                            # Se vazia, escreve tudo
-                            final_vals = [headers_orig] + df_para_inserir.values.tolist()
+                            df_final_ws = df_para_inserir
+                            h_final = headers_orig
                         else:
-                            # Remove apenas o período do grupo/loja específico
                             col_dt_dest = detect_date_col(headers_dest) or col_data_orig
                             df_dest_temp = df_dest.copy()
                             df_dest_temp['_dt'] = pd.to_datetime(df_dest_temp[col_dt_dest], errors='coerce', dayfirst=True)
                             
-                            # Máscara para identificar o que DEVE SAIR (mesmo período + mesmo grupo/loja)
                             to_remove = (df_dest_temp['_dt'] >= pd.to_datetime(data_de)) & (df_dest_temp['_dt'] <= pd.to_datetime(data_ate))
                             if col_f_name in df_dest.columns:
                                 to_remove &= (df_dest[col_f_name].astype(str).str.strip() == b2)
@@ -236,12 +242,16 @@ if s_ids:
                                 to_remove &= (df_dest[col_d_name].astype(str).str.strip() == b3)
                             
                             df_restante = df_dest.loc[~to_remove]
-                            # Combina o que sobrou com o novo (mantendo as colunas da origem)
                             df_final_ws = pd.concat([df_restante, df_para_inserir], ignore_index=True)
-                            final_vals = [headers_dest if headers_dest else headers_orig] + df_final_ws.values.tolist()
+                            h_final = headers_dest if headers_dest else headers_orig
+
+                        # Prepara lista de listas para o gspread
+                        # O gspread enviará os números como números graças ao value_input_option='USER_ENTERED'
+                        final_vals = [h_final] + df_final_ws[h_final].values.tolist()
 
                         ws_dest.clear()
-                        ws_dest.update("A1", final_vals)
+                        # USER_ENTERED faz com que o Sheets interprete strings de números como números reais
+                        ws_dest.update("A1", final_vals, value_input_option='USER_ENTERED')
                         logs.append(f"{row['Planilha']}: Sucesso ({len(df_para_inserir)} linhas)")
                     except Exception as e:
                         logs.append(f"{row['Planilha']}: Erro: {e}")

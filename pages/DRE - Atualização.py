@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, date
 from oauth2client.service_account import ServiceAccountCredentials
 import gspread
 
-# Drive API
+# Drive API (opcional)
 try:
     from googleapiclient.discovery import build
 except Exception:
@@ -16,12 +16,17 @@ except Exception:
 MAIN_FOLDER_ID = "1LrbcStUAcvZV_dOYKBt-vgBHb9e1d6X-"
 ID_PLANILHA_ORIGEM = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
 ABA_ORIGEM = "Fat Sistema Externo"
-MAPA_ABAS = {"Faturamento": "Importado Fat", "Meio Pagamento": "Meio Pagamento", "Desconto": "Desconto"}
+MAPA_ABAS = {
+    "Faturamento": "Importado Fat",
+    "Meio Pagamento": "Meio Pagamento",
+    "Desconto": "Desconto",
+}
 
 st.set_page_config(page_title="Atualizador DRE", layout="wide")
 
 # --- CSS PARA REDUZIR ESPAÇAMENTO ---
-st.markdown("""
+st.markdown(
+    """
     <style>
     /* Reduz o espaço no topo da página */
     .block-container { padding-top: 3rem; padding-bottom: 0rem; }
@@ -29,19 +34,25 @@ st.markdown("""
     div.stVerticalBlock > div { margin-bottom: -0.1rem; }
     /* Reduz o espaço dos títulos */
     h1 { margin-top: -1rem; margin-bottom: 0.5rem; }
-    /* Esconde o rótulo vazio do multiselect para não ocupar espaço */
+    /* Esconde rótulos vazios de widgets (quando for usado) */
     label[data-testid="stWidgetLabel"] { min-height: 0px; margin-bottom: 0px; }
     /* Tentar reduzir padding nas células de tabelas */
     [data-testid="stTable"] td, [data-testid="stTable"] th { padding: 4px 8px !important; }
     </style>
-    """, unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
 
 st.title("Atualizador DRE")
+
 
 # ---------------- AUTENTICAÇÃO ----------------
 @st.cache_resource
 def autenticar():
-    scope = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
+    scope = [
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/spreadsheets",
+    ]
     creds_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     gc = gspread.authorize(creds)
@@ -53,6 +64,7 @@ def autenticar():
             drive = None
     return gc, drive
 
+
 try:
     gc, drive_service = autenticar()
 except Exception as e:
@@ -60,8 +72,9 @@ except Exception as e:
     st.stop()
 
 if not drive_service:
-    st.error("Drive API não inicializada. Verifique dependências e permissões.")
+    st.error("Drive API não inicializada. Verifique dependências/permissões.")
     st.stop()
+
 
 # ---------------- HELPERS DRIVE ----------------
 @st.cache_data(ttl=300)
@@ -70,7 +83,9 @@ def list_subfolders(_drive, parent_id):
     page_token = None
     q = f"'{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
     while True:
-        resp = _drive.files().list(q=q, fields="nextPageToken, files(id, name)", pageToken=page_token).execute()
+        resp = _drive.files().list(
+            q=q, fields="nextPageToken, files(id, name)", pageToken=page_token
+        ).execute()
         files = resp.get("files", [])
         for f in files:
             folders.append({"id": f["id"], "name": f["name"]})
@@ -79,6 +94,7 @@ def list_subfolders(_drive, parent_id):
             break
     return folders
 
+
 @st.cache_data(ttl=300)
 def list_spreadsheets_in_folders(_drive, folder_ids):
     sheets = []
@@ -86,13 +102,18 @@ def list_spreadsheets_in_folders(_drive, folder_ids):
         page_token = None
         q = f"'{fid}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
         while True:
-            resp = _drive.files().list(q=q, fields="nextPageToken, files(id, name)", pageToken=page_token).execute()
+            resp = _drive.files().list(
+                q=q, fields="nextPageToken, files(id, name)", pageToken=page_token
+            ).execute()
             files = resp.get("files", [])
             for f in files:
-                sheets.append({"id": f["id"], "name": f["name"], "parent_folder_id": fid})
+                sheets.append(
+                    {"id": f["id"], "name": f["name"], "parent_folder_id": fid}
+                )
             page_token = resp.get("nextPageToken", None)
             if not page_token:
                 break
+    # remover duplicatas por id, mantendo primeiro encontro
     seen = set()
     unique = []
     for s in sheets:
@@ -101,8 +122,12 @@ def list_spreadsheets_in_folders(_drive, folder_ids):
             unique.append(s)
     return unique
 
+
 # ---------------- Layout com Abas ----------------
-tab_atualizador, tab_auditoria = st.tabs(["Atualizador", "Auditoria (em desenvolvimento)"])
+tab_atualizador, tab_auditoria = st.tabs(
+    ["Atualizador", "Auditoria (em desenvolvimento)"]
+)
+
 
 with tab_atualizador:
     # ---------------- UI: PASSO 0 - PERÍODO ----------------
@@ -124,98 +149,170 @@ with tab_atualizador:
         # ---------------- LISTAR E SELECIONAR SUBPASTAS ----------------
         try:
             subfolders = list_subfolders(drive_service, MAIN_FOLDER_ID)
-            if not subfolders:
-                st.warning("Nenhuma subpasta encontrada dentro da pasta principal. Verifique se a service-account tem acesso ou se a pasta contém subpastas.")
+        except Exception as e:
+            st.error(f"Erro listando subpastas: {e}")
+            subfolders = []
+
+        if not subfolders:
+            st.warning(
+                "Nenhuma subpasta encontrada dentro da pasta principal. Verifique permissões."
+            )
+        else:
+            sub_names = [f"{s['name']} ({s['id']})" for s in subfolders]
+            # rótulo vazio para não exibir texto
+            selected = st.multiselect("", options=sub_names, default=sub_names)
+            selected_folder_ids = [
+                s.split("(")[-1].strip(")") for s in selected if "(" in s
+            ]
+
+            if not selected_folder_ids:
+                st.info("Nenhuma subpasta selecionada. Selecione para prosseguir.")
             else:
-                sub_names = [f"{s['name']} ({s['id']})" for s in subfolders]
-                # Rótulo removido ("") para eliminar os dizeres
-                selected = st.multiselect("", options=sub_names, default=sub_names)
-                selected_folder_ids = [s.split("(")[-1].strip(")") for s in selected if "(" in s]
+                # ---------------- BUSCAR PLANILHAS ----------------
+                with st.spinner("Buscando planilhas..."):
+                    try:
+                        planilhas = list_spreadsheets_in_folders(
+                            drive_service, list(selected_folder_ids)
+                        )
+                    except Exception as e:
+                        st.error(f"Erro ao listar planilhas: {e}")
+                        planilhas = []
 
-                if not selected_folder_ids:
-                    st.info("Nenhuma subpasta selecionada. Selecione as subpastas para prosseguir.")
+                if not planilhas:
+                    st.warning("Nenhuma planilha encontrada.")
                 else:
-                    # ---------------- BUSCAR PLANILHAS ----------------
-                    with st.spinner("Buscando planilhas..."):
-                        planilhas = list_spreadsheets_in_folders(drive_service, list(selected_folder_ids))
+                    df = pd.DataFrame(planilhas)
+                    df = df.rename(
+                        columns={
+                            "name": "Planilha",
+                            "id": "ID_Planilha",
+                            "parent_folder_id": "Folder_ID",
+                        }
+                    )
+                    df["Desconto"] = True
+                    df["Meio Pagamento"] = True
+                    df["Faturamento"] = True
+                    df = df[
+                        [
+                            "Planilha",
+                            "Folder_ID",
+                            "ID_Planilha",
+                            "Desconto",
+                            "Meio Pagamento",
+                            "Faturamento",
+                        ]
+                    ].sort_values("Planilha").reset_index(drop=True)
 
-                    if not planilhas:
-                        st.warning("Nenhuma planilha encontrada.")
-                    else:
-                        df = pd.DataFrame(planilhas)
-                        df = df.rename(columns={"name": "Planilha", "id": "ID_Planilha", "parent_folder_id": "Folder_ID"})
-                        df["Desconto"] = True
-                        df["Meio Pagamento"] = True
-                        df["Faturamento"] = True
-                        df = df[["Planilha", "Folder_ID", "ID_Planilha", "Desconto", "Meio Pagamento", "Faturamento"]].sort_values("Planilha").reset_index(drop=True)
+                    # ---------------- TABELA E FORM ----------------
+                    with st.form("selection_form"):
+                        edited = st.data_editor(
+                            df,
+                            num_rows="fixed",
+                            use_container_width=True,
+                            column_config={
+                                "Planilha": st.column_config.TextColumn(
+                                    "Planilha", disabled=True, width="large"
+                                ),
+                                "Folder_ID": None,  # Escondido para reduzir espaço
+                                "ID_Planilha": None,  # Escondido para reduzir espaço
+                                "Desconto": st.column_config.CheckboxColumn(
+                                    "Desconto", default=True
+                                ),
+                                "Meio Pagamento": st.column_config.CheckboxColumn(
+                                    "Meio Pagamento", default=True
+                                ),
+                                "Faturamento": st.column_config.CheckboxColumn(
+                                    "Faturamento", default=True
+                                ),
+                            },
+                            hide_index=True,
+                        )
+                        submit = st.form_submit_button(
+                            "🚀 INICIAR ATUALIZAÇÃO", use_container_width=True
+                        )
 
-                        # ---------------- TABELA E FORM ----------------
-                        with st.form("selection_form"):
-                            edited = st.data_editor(
-                                df,
-                                num_rows="fixed",
-                                use_container_width=True,
-                                column_config={
-                                    "Planilha": st.column_config.TextColumn("Planilha", disabled=True, width="large"),
-                                    "Folder_ID": None,  # Escondido para reduzir espaço
-                                    "ID_Planilha": None,  # Escondido para reduzir espaço
-                                    "Desconto": st.column_config.CheckboxColumn("Desconto", default=True),
-                                    "Meio Pagamento": st.column_config.CheckboxColumn("Meio Pagamento", default=True),
-                                    "Faturamento": st.column_config.CheckboxColumn("Faturamento", default=True),
-                                },
-                                hide_index=True
-                            )
-                            submit = st.form_submit_button("🚀 INICIAR ATUALIZAÇÃO", use_container_width=True)
+                    # ---------------- EXECUÇÃO ----------------
+                    if submit:
+                        # Configurações fixas
+                        DRY_RUN = True
+                        DO_BACKUP = True
 
-                        # ---------------- EXECUÇÃO ----------------
-                        if submit:
-                            # Configurações fixas
-                            DRY_RUN = True
-                            DO_BACKUP = True
+                        tarefas = []
+                        for _, row in edited.iterrows():
+                            if row["Desconto"]:
+                                tarefas.append(
+                                    {
+                                        "planilha": row["Planilha"],
+                                        "id": row["ID_Planilha"],
+                                        "operacao": "Desconto",
+                                        "aba": MAPA_ABAS["Desconto"],
+                                    }
+                                )
+                            if row["Meio Pagamento"]:
+                                tarefas.append(
+                                    {
+                                        "planilha": row["Planilha"],
+                                        "id": row["ID_Planilha"],
+                                        "operacao": "Meio Pagamento",
+                                        "aba": MAPA_ABAS["Meio Pagamento"],
+                                    }
+                                )
+                            if row["Faturamento"]:
+                                tarefas.append(
+                                    {
+                                        "planilha": row["Planilha"],
+                                        "id": row["ID_Planilha"],
+                                        "operacao": "Faturamento",
+                                        "aba": MAPA_ABAS["Faturamento"],
+                                    }
+                                )
 
-                            tarefas = []
-                            for _, row in edited.iterrows():
-                                if row["Desconto"]:
-                                    tarefas.append({"planilha": row["Planilha"], "id": row["ID_Planilha"], "operacao": "Desconto", "aba": MAPA_ABAS["Desconto"]})
-                                if row["Meio Pagamento"]:
-                                    tarefas.append({"planilha": row["Planilha"], "id": row["ID_Planilha"], "operacao": "Meio Pagamento", "aba": MAPA_ABAS["Meio Pagamento"]})
-                                if row["Faturamento"]:
-                                    tarefas.append({"planilha": row["Planilha"], "id": row["ID_Planilha"], "operacao": "Faturamento", "aba": MAPA_ABAS["Faturamento"]})
+                        if not tarefas:
+                            st.warning("Nenhuma operação selecionada.")
+                        else:
+                            st.write(f"Processando **{len(tarefas)}** tarefas...")
+                            progresso = st.progress(0)
+                            logs = []
+                            for i, t in enumerate(tarefas):
+                                try:
+                                    if not DRY_RUN:
+                                        sh = gc.open_by_key(t["id"])
+                                        # Lógica de backup e gravação aqui (mantida como no seu template)
+                                        if DO_BACKUP:
+                                            try:
+                                                ws = sh.worksheet(t["aba"])
+                                                timestamp = datetime.now().strftime(
+                                                    "%Y%m%d_%H%M%S"
+                                                )
+                                                sh.duplicate_sheet(
+                                                    ws.id,
+                                                    new_sheet_name=f"BACKUP_{t['aba']}_{timestamp}",
+                                                )
+                                                logs.append(
+                                                    f"{t['planilha']}/{t['aba']}: backup criado"
+                                                )
+                                            except Exception as e:
+                                                logs.append(
+                                                    f"{t['planilha']}/{t['aba']}: backup falhou ou aba não existe -> {e}"
+                                                )
+                                    else:
+                                        logs.append(
+                                            f"{t['planilha']}/{t['operacao']}: dry-run (não gravado)"
+                                        )
 
-                            if not tarefas:
-                                st.warning("Nenhuma operação selecionada.")
-                            else:
-                                st.write(f"Processando **{len(tarefas)}** tarefas...")
-                                progresso = st.progress(0)
-                                logs = []
-                                for i, t in enumerate(tarefas):
-                                    try:
-                                        if not DRY_RUN:
-                                            sh = gc.open_by_key(t["id"])
-                                            # Lógica de backup e gravação aqui (mantida como no seu template)
-                                            if DO_BACKUP:
-                                                try:
-                                                    ws = sh.worksheet(t["aba"])
-                                                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                                    sh.duplicate_sheet(ws.id, new_sheet_name=f"BACKUP_{t['aba']}_{timestamp}")
-                                                    logs.append(f"{t['planilha']}/{t['aba']}: backup criado")
-                                                except Exception as e:
-                                                    logs.append(f"{t['planilha']}/{t['aba']}: backup falhou ou aba não existe -> {e}")
-                                        else:
-                                            logs.append(f"{t['planilha']}/{t['operacao']}: dry-run (não gravado)")
+                                    # Simulação / Espera curta
+                                    time.sleep(0.1)
+                                    progresso.progress((i + 1) / len(tarefas))
+                                except Exception as e:
+                                    logs.append(f"{t['planilha']}: ERRO -> {e}")
+                                    st.error(f"Erro em {t['planilha']}: {e}")
+                                    progresso.progress((i + 1) / len(tarefas))
 
-                                        # Simulação / Espera curta
-                                        time.sleep(0.1)
-                                        progresso.progress((i + 1) / len(tarefas))
-                                    except Exception as e:
-                                        logs.append(f"{t['planilha']}: ERRO -> {e}")
-                                        st.error(f"Erro em {t['planilha']}: {e}")
-                                        progresso.progress((i + 1) / len(tarefas))
+                            st.success("Concluído!")
+                            if logs:
+                                st.write("Logs:")
+                                st.write("\n".join(logs))
 
-                                st.success("Concluído!")
-                                if logs:
-                                    st.write("Logs:")
-                                    st.write("\n".join(logs))
 
 with tab_auditoria:
     st.header("Auditoria (em desenvolvimento)")
@@ -224,7 +321,10 @@ with tab_auditoria:
     st.write("- Visualizar logs detalhados")
     st.write("- Rodar verificações automatizadas")
     st.write("")
-    st.info("Funcionalidades planejadas: comparação de dados entre planilhas, validação de tipos, registros de divergência e relatório de auditoria exportável.")
+    st.info(
+        "Funcionalidades planejadas: comparação de dados entre planilhas, validação de tipos, registros de divergência e relatório de auditoria exportável."
+    )
+
     # Espaço para upload/inputs iniciais (exemplo)
     uploaded = st.file_uploader("Enviar arquivo de auditoria (opcional)", type=["csv", "xlsx", "txt"])
     if uploaded is not None:
@@ -240,9 +340,10 @@ with tab_auditoria:
 
     st.write("---")
     st.write("Notas rápidas para desenvolvedor:")
-    st.code("""
-# Aqui você pode implementar:
+    st.code(
+        """# Aqui você pode implementar:
 # - funções de comparação entre df_relatorio_base e df_audit
 # - rotinas para marcar divergências e exportar CSVs de relatório
 # - painel de filtros (data, loja, tipo) para reproduzir problemas
-    """)
+"""
+    )

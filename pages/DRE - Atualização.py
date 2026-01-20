@@ -13,7 +13,7 @@ except Exception:
     build = None
 
 # ---------------- CONFIG ----------------
-MAIN_FOLDER_ID = "1LrbcStUAcvZV_dOYKBt-vgBHb9e1d6X-"  # <- defina sua pasta raiz aqui (corrigi o erro)
+MAIN_FOLDER_ID = "1LrbcStUAcvZV_dOYKBt-vgBHb9e1d6X-"
 ID_PLANILHA_ORIGEM = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
 ABA_ORIGEM = "Fat Sistema Externo"
 MAPA_ABAS = {
@@ -233,7 +233,7 @@ with tab_atualizador:
 
                     # ---------------- EXECUÇÃO ----------------
                     if submit:
-                        # Configurações fixas (pode expor como toggles se preferir)
+                        # Configurações fixas
                         DRY_RUN = True
                         DO_BACKUP = True
 

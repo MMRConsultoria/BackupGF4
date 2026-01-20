@@ -20,17 +20,34 @@ MAPA_ABAS = {"Faturamento": "Importado Fat", "Meio Pagamento": "Meio Pagamento",
 
 st.set_page_config(page_title="Atualizador DRE", layout="wide")
 
-# --- CSS PARA COMPACTAÇÃO MÁXIMA ---
+# --- CSS CORRIGIDO PARA ESPAÇAMENTO COMPACTO SEM SOBREPOSIÇÃO ---
 st.markdown(
     """
     <style>
+    /* Reduz o preenchimento superior da página */
     .block-container { padding-top: 1rem; padding-bottom: 0rem; }
-    div.stVerticalBlock > div { margin-bottom: -1.0rem; }
-    div[data-testid="stVerticalBlock"] > div { padding-top: 0rem; padding-bottom: 0rem; }
+    
+    /* Reduz o espaço entre todos os elementos do Streamlit */
+    [data-testid="stVerticalBlock"] > div {
+        margin-bottom: -0.5rem !important;
+        padding-top: 0rem !important;
+        padding-bottom: 0rem !important;
+    }
+    
+    /* Título mais compacto */
     h1 { margin-top: -1rem; margin-bottom: 0.5rem; font-size: 1.8rem; }
+    
+    /* Ajuste fino para a linha de checkboxes */
+    .global-selection-container { 
+        margin-top: 5px !important;
+        margin-bottom: 5px !important;
+    }
+    
+    /* Compacta as células das tabelas */
     [data-testid="stTable"] td, [data-testid="stTable"] th { padding: 2px 6px !important; }
-    .global-selection-container { padding-top: 0px; padding-bottom: 0px; margin-top: 10px; margin-bottom: 5px; }
-    hr { margin: 0.5rem 0px !important; }
+    
+    /* Remove o espaço extra abaixo dos widgets de seleção */
+    .stMultiSelect, .stSelectbox, .stDateInput { margin-bottom: 0.5rem !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -131,7 +148,7 @@ if selecionadas_ids:
             df_base = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
             df_base = df_base.rename(columns={"name": "Planilha", "id": "ID_Planilha", "parent_folder_id": "Folder_ID"})
             
-            # Seleção global compacta
+            # Seleção global
             st.markdown('<div class="global-selection-container">', unsafe_allow_html=True)
             c1, c2, c3, _ = st.columns([1.2, 1.2, 1.2, 5])
             with c1: sel_desc = st.checkbox("Desconto", value=True, key="global_desc")

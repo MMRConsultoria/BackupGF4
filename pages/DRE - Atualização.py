@@ -138,8 +138,8 @@ st.markdown("---")
 # ---------------- UI: PASSO 1 - PASTAS ----------------
 #st.markdown("### 📂 2) Seleção de Pastas")
 #col_rec, col_info = st.columns([0.35, 0.65])
-#with col_rec:
-    #recursive = st.checkbox("Buscar recursivamente (incluir sub-subpastas)", value=False)
+with col_rec:
+    recursive = st.checkbox("Buscar recursivamente (incluir sub-subpastas)", value=False)
 #with col_info:
     #st.write(f"Pasta principal: `{MAIN_FOLDER_ID}`")
 

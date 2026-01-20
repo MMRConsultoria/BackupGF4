@@ -14,9 +14,7 @@ except Exception:
 
 # ---------------- CONFIG ----------------
 PASTA_PRINCIPAL_ID = "0B1owaTi3RZnFfm4tTnhfZ2l0VHo4bWNMdHhKS3ZlZzR1ZjRSWWJSSUFxQTJtUExBVlVTUW8"
-ID_PLANILHA_ORIGEM = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
-ABA_ORIGEM = "Fat Sistema Externo"
-MAPA_ABAS = {"Faturamento": "Importado Fat", "Meio Pagamento": "Meio Pagamento", "Desconto": "Desconto"}
+TARGET_SHEET_NAME = "Configurações Não Apagar"  # nome da aba que queremos verificar
 
 st.set_page_config(page_title="Atualizador DRE", layout="wide")
 
@@ -24,29 +22,15 @@ st.set_page_config(page_title="Atualizador DRE", layout="wide")
 st.markdown(
     """
     <style>
-    /* Reduz o preenchimento superior da página */
     .block-container { padding-top: 1rem; padding-bottom: 0rem; }
-    
-    /* Reduz o espaço entre todos os elementos do Streamlit */
     [data-testid="stVerticalBlock"] > div {
         margin-bottom: -0.5rem !important;
         padding-top: 0rem !important;
         padding-bottom: 0rem !important;
     }
-    
-    /* Título mais compacto */
     h1 { margin-top: -1rem; margin-bottom: 0.5rem; font-size: 1.8rem; }
-    
-    /* Ajuste fino para a linha de checkboxes */
-    .global-selection-container { 
-        margin-top: 5px !important;
-        margin-bottom: 5px !important;
-    }
-    
-    /* Compacta as células das tabelas */
+    .global-selection-container { margin-top: 5px !important; margin-bottom: 5px !important; }
     [data-testid="stTable"] td, [data-testid="stTable"] th { padding: 2px 6px !important; }
-    
-    /* Remove o espaço extra abaixo dos widgets de seleção */
     .stMultiSelect, .stSelectbox, .stDateInput { margin-bottom: 0.5rem !important; }
     </style>
     """,
@@ -107,6 +91,7 @@ def list_spreadsheets_in_folders(_drive, folder_ids):
                 sheets.append({"id": f["id"], "name": f["name"], "parent_folder_id": fid})
             page_token = resp.get("nextPageToken", None)
             if not page_token: break
+    # remover duplicados por id
     seen = set()
     unique = []
     for s in sheets:
@@ -114,6 +99,21 @@ def list_spreadsheets_in_folders(_drive, folder_ids):
             seen.add(s["id"])
             unique.append(s)
     return unique
+
+# Checa se cada planilha possui a aba TARGET_SHEET_NAME (case-insensitive).
+@st.cache_data(ttl=300)
+def get_conf_map(sheet_ids, target_name=TARGET_SHEET_NAME):
+    res = {}
+    for sid in sheet_ids:
+        try:
+            sh = gc.open_by_key(sid)
+            titles = [ws.title for ws in sh.worksheets()]
+            exists = any(t.strip().lower() == target_name.strip().lower() for t in titles)
+            res[sid] = exists
+        except Exception:
+            # se der erro (permissão, não encontrado, etc) assume False
+            res[sid] = False
+    return res
 
 # ---------------- FILTROS DE DATA ----------------
 col_d1, col_d2 = st.columns(2)
@@ -148,6 +148,13 @@ if selecionadas_ids:
             df_base = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
             df_base = df_base.rename(columns={"name": "Planilha", "id": "ID_Planilha", "parent_folder_id": "Folder_ID"})
             
+            # Obter mapa conf (ID -> True/False)
+            with st.spinner("Verificando existência da aba 'Configurações Não Apagar'..."):
+                conf_map = get_conf_map(df_base["ID_Planilha"].tolist())
+            
+            # Adicionar coluna 'conf' (True/False) e garantir que seja booleana
+            df_base["conf"] = df_base["ID_Planilha"].map(conf_map).fillna(False).astype(bool)
+            
             # Seleção global
             st.markdown('<div class="global-selection-container">', unsafe_allow_html=True)
             c1, c2, c3, _ = st.columns([1.2, 1.2, 1.2, 5])
@@ -156,16 +163,24 @@ if selecionadas_ids:
             with c3: sel_fat = st.checkbox("Faturamento", value=True, key="global_fat")
             st.markdown('</div>', unsafe_allow_html=True)
             
+            # Aplica seleção global (não altera coluna 'conf')
             df_base["Desconto"] = sel_desc
             df_base["Meio Pagamento"] = sel_mp
             df_base["Faturamento"] = sel_fat
             
+            # Reordenar colunas para exibir: Planilha, conf, Desconto, Meio Pagamento, Faturamento
+            display_cols = ["Planilha", "conf", "Desconto", "Meio Pagamento", "Faturamento", "Folder_ID", "ID_Planilha"]
+            df_base = df_base.reindex(columns=display_cols)
+            
+            # Dividir para exibir em duas colunas
             meio = len(df_base) // 2 + (len(df_base) % 2)
             df_esq = df_base.iloc[:meio].copy()
             df_dir = df_base.iloc[meio:].copy()
 
+            # Configuração das colunas para data_editor:
             config_col = {
                 "Planilha": st.column_config.TextColumn("Planilha", disabled=True),
+                "conf": st.column_config.CheckboxColumn("Conf", disabled=True),  # não editável
                 "Folder_ID": None, "ID_Planilha": None,
                 "Desconto": st.column_config.CheckboxColumn("Desc."),
                 "Meio Pagamento": st.column_config.CheckboxColumn("M.Pag"),
@@ -179,6 +194,29 @@ if selecionadas_ids:
                 edit_dir = st.data_editor(df_dir, key="tab_dir", use_container_width=True, column_config=config_col, hide_index=True)
 
             if st.button("🚀 INICIAR ATUALIZAÇÃO", use_container_width=True):
-                st.info("Processando...")
+                df_final = pd.concat([edit_esq, edit_dir], ignore_index=True)
+                tarefas = []
+                for _, row in df_final.iterrows():
+                    if row.get("Desconto"):
+                        tarefas.append({"planilha": row["Planilha"], "id": row["ID_Planilha"], "op": "Desconto"})
+                    if row.get("Meio Pagamento"):
+                        tarefas.append({"planilha": row["Planilha"], "id": row["ID_Planilha"], "op": "Meio Pagamento"})
+                    if row.get("Faturamento"):
+                        tarefas.append({"planilha": row["Planilha"], "id": row["ID_Planilha"], "op": "Faturamento"})
+                if not tarefas:
+                    st.warning("Nenhuma operação selecionada.")
+                else:
+                    st.success(f"Iniciando processamento de {len(tarefas)} tarefas...")
+                    progresso = st.progress(0)
+                    logs = []
+                    for i, t in enumerate(tarefas):
+                        try:
+                            time.sleep(0.05)  # substituir pela lógica real
+                            logs.append(f"{t['planilha']} -> {t['op']}: simulado")
+                        except Exception as e:
+                            logs.append(f"{t['planilha']} -> {t['op']}: ERRO -> {e}")
+                        progresso.progress((i + 1) / len(tarefas))
+                    st.write("Logs:")
+                    st.write("\n".join(logs))
         else:
-            st.warning("Nenhuma planilha encontrada.")
+            st.warning("Nenhuma planilha encontrada nas subpastas selecionadas.")

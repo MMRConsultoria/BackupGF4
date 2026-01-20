@@ -22,7 +22,7 @@ MAPA_ABAS = {
     "Desconto": "Desconto",
 }
 
-st.set_page_config(page_title="Atualizador DRE", layout="wide")
+st.set_page_config(page_title="Atualizado DRE", layout="wide")
 
 # --- CSS PARA REDUZIR ESPAÇAMENTO ---
 st.markdown(

@@ -18,23 +18,17 @@ ID_PLANILHA_ORIGEM = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
 ABA_ORIGEM = "Fat Sistema Externo"
 MAPA_ABAS = {"Faturamento": "Importado Fat", "Meio Pagamento": "Meio Pagamento", "Desconto": "Desconto"}
 
-st.set_page_config(page_title="Atualizador — selecionar subpastas", layout="wide")
+st.set_page_config(page_title="Atualizador DRE", layout="wide")
 
 # --- CSS PARA DIMINUIR ESPAÇAMENTO ---
 st.markdown(
     """
     <style>
-    /* Reduz o espaço no topo da página */
     .block-container { padding-top: 1.5rem; padding-bottom: 0rem; }
-    /* Reduz o espaço entre os blocos verticais */
     div.stVerticalBlock > div { margin-bottom: -0.5rem; }
-    /* Reduz o espaço dos títulos */
     h1 { margin-top: -1rem; margin-bottom: 0.5rem; font-size: 1.8rem; }
-    /* Compacta as células do data_editor (tabela) */
     [data-testid="stTable"] td, [data-testid="stTable"] th { padding: 2px 5px !important; }
-    /* Ajusta altura de inputs e botões */
     .stButton button { margin-top: 0px; }
-    /* Remove margens extras de divisores */
     hr { margin: 0.5rem 0px !important; }
     </style>
     """,
@@ -62,10 +56,6 @@ try:
     gc, drive_service = autenticar()
 except Exception as e:
     st.error(f"Erro de autenticação: {e}")
-    st.stop()
-
-if not drive_service:
-    st.error("Drive API não inicializada.")
     st.stop()
 
 # ---------------- HELPERS DRIVE ----------------
@@ -132,13 +122,8 @@ except Exception as e:
     st.error(f"Erro listando subpastas: {e}")
     st.stop()
 
-if not subfolders:
-    st.warning("Nenhuma subpasta encontrada.")
-    st.stop()
-
 sub_names = [f"{s['name']} ({s['id']})" for s in subfolders]
 selected = st.multiselect("", options=sub_names, default=sub_names)
-
 selected_folder_ids = [s.split("(")[-1].strip(")") for s in selected if "(" in s]
 
 if not selected_folder_ids:
@@ -172,8 +157,8 @@ with st.form("selection_form"):
         use_container_width=True,
         column_config={
             "Planilha": st.column_config.TextColumn("Planilha", disabled=True, width="large"),
-            "Folder_ID": st.column_config.TextColumn("Pasta (ID)", disabled=True),
-            "ID_Planilha": st.column_config.TextColumn("ID Planilha", disabled=True),
+            "Folder_ID": None,  # OCULTA A COLUNA PASTA (ID)
+            "ID_Planilha": None, # OCULTA A COLUNA ID PLANILHA
             "Desconto": st.column_config.CheckboxColumn("Desconto", default=True),
             "Meio Pagamento": st.column_config.CheckboxColumn("Meio Pagamento", default=True),
             "Faturamento": st.column_config.CheckboxColumn("Faturamento", default=True),
@@ -202,7 +187,6 @@ if submit:
         logs = []
         for i, t in enumerate(tarefas):
             try:
-                # Simulação de processamento
                 time.sleep(0.1)
                 logs.append(f"{t['planilha']}/{t['operacao']}: Concluído (Simulado)")
             except Exception as e:

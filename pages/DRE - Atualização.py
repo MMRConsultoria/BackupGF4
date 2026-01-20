@@ -20,16 +20,14 @@ MAPA_ABAS = {"Faturamento": "Importado Fat", "Meio Pagamento": "Meio Pagamento",
 
 st.set_page_config(page_title="Atualizador DRE", layout="wide")
 
-# --- CSS PARA DIMINUIR ESPAÇAMENTO ---
+# --- CSS PARA COMPACTAR LAYOUT ---
 st.markdown(
     """
     <style>
     .block-container { padding-top: 1.5rem; padding-bottom: 0rem; }
-    div.stVerticalBlock > div { margin-bottom: -0.5rem; }
-    h1 { margin-top: -1rem; margin-bottom: 0.5rem; font-size: 1.8rem; }
+    div.stVerticalBlock > div { margin-bottom: -0.2rem; }
+    h1 { margin-top: -1rem; margin-bottom: 1rem; font-size: 1.8rem; }
     [data-testid="stTable"] td, [data-testid="stTable"] th { padding: 2px 5px !important; }
-    .stButton button { margin-top: 0px; }
-    hr { margin: 0.5rem 0px !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -96,103 +94,73 @@ def list_spreadsheets_in_folders(_drive, folder_ids):
             unique.append(s)
     return unique
 
-# ---------------- UI: PERÍODO ----------------
-col_start, col_end = st.columns(2)
-default_end = date.today()
-default_start = default_end - timedelta(days=30)
-
-with col_start:
-    data_de = st.date_input("De (dd/mm/aaaa)", value=default_start)
-with col_end:
-    data_ate = st.date_input("Até (dd/mm/aaaa)", value=default_end)
-
-data_de_str = data_de.strftime("%d/%m/%Y")
-data_ate_str = data_ate.strftime("%d/%m/%Y")
-
-if data_ate < data_de:
-    st.error("Data 'Até' deve ser posterior à 'De'.")
-    st.stop()
+# ---------------- FILTROS SUPERIORES ----------------
+col_f1, col_f2, col_f3 = st.columns([1, 1, 2])
+with col_f1:
+    data_de = st.date_input("De", value=date.today() - timedelta(days=30))
+with col_f2:
+    data_ate = st.date_input("Até", value=date.today())
+with col_f3:
+    try:
+        subfolders = list_subfolders(drive_service, MAIN_FOLDER_ID)
+        sub_names = [f"{s['name']} ({s['id']})" for s in subfolders]
+        selected = st.multiselect("Subpastas", options=sub_names, default=sub_names)
+        selected_folder_ids = [s.split("(")[-1].strip(")") for s in selected if "(" in s]
+    except:
+        selected_folder_ids = []
 
 st.markdown("---")
 
-# ---------------- SUBPASTAS ----------------
-try:
-    subfolders = list_subfolders(drive_service, MAIN_FOLDER_ID)
-except Exception as e:
-    st.error(f"Erro listando subpastas: {e}")
-    st.stop()
-
-sub_names = [f"{s['name']} ({s['id']})" for s in subfolders]
-selected = st.multiselect("", options=sub_names, default=sub_names)
-selected_folder_ids = [s.split("(")[-1].strip(")") for s in selected if "(" in s]
-
-if not selected_folder_ids:
-    st.warning("Selecione ao menos uma subpasta.")
-    st.stop()
-
-# ---------------- BUSCAR PLANILHAS ----------------
-with st.spinner("Buscando planilhas..."):
-    try:
+# ---------------- TABELAS LADO A LADO ----------------
+if selected_folder_ids:
+    with st.spinner("Buscando planilhas..."):
         planilhas = list_spreadsheets_in_folders(drive_service, list(selected_folder_ids))
-    except Exception as e:
-        st.error(f"Erro ao listar planilhas: {e}")
-        st.stop()
+        
+        if planilhas:
+            df_total = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
+            df_total["Desconto"] = True
+            df_total["Meio Pagamento"] = True
+            df_total["Faturamento"] = True
+            
+            # Divide o DataFrame em dois
+            meio = len(df_total) // 2 + (len(df_total) % 2)
+            df_esq = df_total.iloc[:meio]
+            df_dir = df_total.iloc[meio:]
 
-if not planilhas:
-    st.warning("Nenhuma planilha encontrada.")
-    st.stop()
+            # Configuração comum das colunas
+            config_col = {
+                "name": st.column_config.TextColumn("Planilha", disabled=True),
+                "id": None,
+                "parent_folder_id": None,
+                "Desconto": st.column_config.CheckboxColumn("Desc.", default=True),
+                "Meio Pagamento": st.column_config.CheckboxColumn("M.Pag", default=True),
+                "Faturamento": st.column_config.CheckboxColumn("Fat.", default=True),
+            }
 
-df = pd.DataFrame(planilhas)
-df = df.rename(columns={"name": "Planilha", "id": "ID_Planilha", "parent_folder_id": "Folder_ID"})
-df["Desconto"] = True
-df["Meio Pagamento"] = True
-df["Faturamento"] = True
-df = df[["Planilha", "Folder_ID", "ID_Planilha", "Desconto", "Meio Pagamento", "Faturamento"]].sort_values("Planilha").reset_index(drop=True)
+            # Renderiza as duas tabelas lado a lado
+            col_t1, col_t2 = st.columns(2)
+            
+            with col_t1:
+                edit_esq = st.data_editor(df_esq, key="tab_esq", use_container_width=True, column_config=config_col, hide_index=True)
+            
+            with col_t2:
+                edit_dir = st.data_editor(df_dir, key="tab_dir", use_container_width=True, column_config=config_col, hide_index=True)
 
-# ---------------- TABELA E FORM ----------------
-with st.form("selection_form"):
-    edited = st.data_editor(
-        df,
-        num_rows="fixed",
-        use_container_width=True,
-        column_config={
-            "Planilha": st.column_config.TextColumn("Planilha", disabled=True, width="large"),
-            "Folder_ID": None,  # OCULTA A COLUNA PASTA (ID)
-            "ID_Planilha": None, # OCULTA A COLUNA ID PLANILHA
-            "Desconto": st.column_config.CheckboxColumn("Desconto", default=True),
-            "Meio Pagamento": st.column_config.CheckboxColumn("Meio Pagamento", default=True),
-            "Faturamento": st.column_config.CheckboxColumn("Faturamento", default=True),
-        },
-        hide_index=True
-    )
-
-    submit = st.form_submit_button("🚀 INICIAR ATUALIZAÇÃO", use_container_width=True)
-
-# ---------------- EXECUÇÃO ----------------
-if submit:
-    tarefas = []
-    for _, row in edited.iterrows():
-        if row["Desconto"]:
-            tarefas.append({"planilha": row["Planilha"], "id": row["ID_Planilha"], "operacao": "Desconto", "aba": MAPA_ABAS["Desconto"]})
-        if row["Meio Pagamento"]:
-            tarefas.append({"planilha": row["Planilha"], "id": row["ID_Planilha"], "operacao": "Meio Pagamento", "aba": MAPA_ABAS["Meio Pagamento"]})
-        if row["Faturamento"]:
-            tarefas.append({"planilha": row["Planilha"], "id": row["ID_Planilha"], "operacao": "Faturamento", "aba": MAPA_ABAS["Faturamento"]})
-
-    if not tarefas:
-        st.warning("Nenhuma operação selecionada.")
-    else:
-        st.write(f"Processando **{len(tarefas)}** tarefas...")
-        progresso = st.progress(0)
-        logs = []
-        for i, t in enumerate(tarefas):
-            try:
-                time.sleep(0.1)
-                logs.append(f"{t['planilha']}/{t['operacao']}: Concluído (Simulado)")
-            except Exception as e:
-                logs.append(f"{t['planilha']}/{t['operacao']}: ERRO -> {e}")
-            progresso.progress((i + 1) / len(tarefas))
-
-        st.success("Processamento finalizado.")
-        st.write("Logs:")
-        st.write("\n".join(logs))
+            st.markdown("---")
+            
+            if st.button("🚀 INICIAR ATUALIZAÇÃO", use_container_width=True):
+                # Une os resultados das duas tabelas editadas
+                df_final = pd.concat([edit_esq, edit_dir])
+                tarefas = []
+                for _, row in df_final.iterrows():
+                    if row["Desconto"]: tarefas.append({"planilha": row["name"], "id": row["id"], "op": "Desconto"})
+                    if row["Meio Pagamento"]: tarefas.append({"planilha": row["name"], "id": row["id"], "op": "Meio Pagamento"})
+                    if row["Faturamento"]: tarefas.append({"planilha": row["name"], "id": row["id"], "op": "Faturamento"})
+                
+                if tarefas:
+                    st.success(f"Processando {len(tarefas)} tarefas...")
+                    # Lógica de execução...
+                else:
+                    st.warning("Nenhuma operação selecionada.")
+        else:
+            st.warning("Nenhuma planilha encontrada.")

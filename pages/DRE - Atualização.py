@@ -26,7 +26,7 @@ st.markdown("""
     /* Reduz o espaço no topo da página */
     .block-container { padding-top: 3rem; padding-bottom: 0rem; }
     /* Reduz o espaço entre os widgets */
-    div.stVerticalBlock > div { margin-bottom: -0.8rem; }
+    div.stVerticalBlock > div { margin-bottom: -0.1rem; }
     /* Reduz o espaço dos títulos */
     h1 { margin-top: -1rem; margin-bottom: 0.5rem; }
     /* Esconde o rótulo vazio do multiselect para não ocupar espaço */
@@ -34,7 +34,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("Atualizado DRE")
+st.title("Atualizador DRE")
 
 # ---------------- AUTENTICAÇÃO ----------------
 @st.cache_resource

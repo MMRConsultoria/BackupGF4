@@ -25,8 +25,8 @@ st.markdown(
     """
     <style>
     .block-container { padding-top: 1.5rem; padding-bottom: 0rem; }
-    div.stVerticalBlock > div { margin-bottom: -0.2rem; }
-    h1 { margin-top: -1rem; margin-bottom: 1rem; font-size: 1.8rem; }
+    div.stVerticalBlock > div { margin-bottom: -0.1rem; }
+    h1 { margin-top: 1rem; margin-bottom: 1rem; font-size: 1.0rem; }
     [data-testid="stTable"] td, [data-testid="stTable"] th { padding: 2px 5px !important; }
     /* Estilo para os botões de seleção global */
     .stCheckbox { margin-bottom: -15px; }

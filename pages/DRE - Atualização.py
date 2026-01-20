@@ -24,7 +24,7 @@ st.set_page_config(page_title="Atualizador DRE", layout="wide")
 st.markdown("""
     <style>
     /* Reduz o espaço no topo da página */
-    .block-container { padding-top: 1rem; padding-bottom: 0rem; }
+    .block-container { padding-top: 3rem; padding-bottom: 0rem; }
     /* Reduz o espaço entre os widgets */
     div.stVerticalBlock > div { margin-bottom: -0.8rem; }
     /* Reduz o espaço dos títulos */

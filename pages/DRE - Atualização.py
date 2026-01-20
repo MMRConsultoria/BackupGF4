@@ -30,7 +30,7 @@ st.markdown(
     h1 { margin-top: -1rem; margin-bottom: 0.5rem; font-size: 1.8rem; }
     [data-testid="stTable"] td, [data-testid="stTable"] th { padding: 2px 6px !important; }
     .global-selection-container { padding-top: 0px; padding-bottom: 0px; margin-top: 10px; margin-bottom: 5px; }
-    hr { margin: 0.5rem 0px !important; }
+    hr { margin: 0.1rem 0px !important; }
     </style>
     """,
     unsafe_allow_html=True,

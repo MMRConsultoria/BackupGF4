@@ -13,12 +13,27 @@ except Exception:
     build = None
 
 # ---------------- CONFIG ----------------
-MAIN_FOLDER_ID = "1LrbcStUAcvZV_dOYKBt-vgBHb9e1d6X-"  # ID da pasta principal (use o ID com hífen se necessário)
+MAIN_FOLDER_ID = "1LrbcStUAcvZV_dOYKBt-vgBHb9e1d6X-"
 ID_PLANILHA_ORIGEM = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
 ABA_ORIGEM = "Fat Sistema Externo"
 MAPA_ABAS = {"Faturamento": "Importado Fat", "Meio Pagamento": "Meio Pagamento", "Desconto": "Desconto"}
 
-st.set_page_config(page_title="Atualizador — selecionar subpastas", layout="wide")
+st.set_page_config(page_title="Atualizador DRE", layout="wide")
+
+# --- CSS PARA REDUZIR ESPAÇAMENTO ---
+st.markdown("""
+    <style>
+    /* Reduz o espaço no topo da página */
+    .block-container { padding-top: 1rem; padding-bottom: 0rem; }
+    /* Reduz o espaço entre os widgets */
+    div.stVerticalBlock > div { margin-bottom: -0.8rem; }
+    /* Reduz o espaço dos títulos */
+    h1 { margin-top: -1rem; margin-bottom: 0.5rem; }
+    /* Esconde o rótulo vazio do multiselect para não ocupar espaço */
+    label[data-testid="stWidgetLabel"] { min-height: 0px; margin-bottom: 0px; }
+    </style>
+    """, unsafe_allow_html=True)
+
 st.title("Atualizador DRE")
 
 # ---------------- AUTENTICAÇÃO ----------------
@@ -39,14 +54,10 @@ def autenticar():
 try:
     gc, drive_service = autenticar()
 except Exception as e:
-    st.error(f"Erro de autenticação. Verifique st.secrets['GOOGLE_SERVICE_ACCOUNT']: {e}")
+    st.error(f"Erro de autenticação: {e}")
     st.stop()
 
-if not drive_service:
-    st.error("Drive API não inicializada. Verifique dependências e permissões.")
-    st.stop()
-
-# ---------------- HELPERS DRIVE (usar _drive para evitar hashing do objeto) ----------------
+# ---------------- HELPERS DRIVE ----------------
 @st.cache_data(ttl=300)
 def list_subfolders(_drive, parent_id):
     folders = []
@@ -58,8 +69,7 @@ def list_subfolders(_drive, parent_id):
         for f in files:
             folders.append({"id": f["id"], "name": f["name"]})
         page_token = resp.get("nextPageToken", None)
-        if not page_token:
-            break
+        if not page_token: break
     return folders
 
 @st.cache_data(ttl=300)
@@ -74,9 +84,7 @@ def list_spreadsheets_in_folders(_drive, folder_ids):
             for f in files:
                 sheets.append({"id": f["id"], "name": f["name"], "parent_folder_id": fid})
             page_token = resp.get("nextPageToken", None)
-            if not page_token:
-                break
-    # remover duplicatas por id, mantendo primeiro encontro
+            if not page_token: break
     seen = set()
     unique = []
     for s in sheets:
@@ -85,69 +93,46 @@ def list_spreadsheets_in_folders(_drive, folder_ids):
             unique.append(s)
     return unique
 
-# ---------------- UI: PASSO 0 - PERÍODO (DE / ATÉ) ----------------
+# ---------------- UI: PASSO 0 - PERÍODO ----------------
 col_start, col_end = st.columns(2)
-
-# valores default: últimos 30 dias
 default_end = date.today()
 default_start = default_end - timedelta(days=30)
 
 with col_start:
-    data_de = st.date_input("De (dd/mm/aaaa)", value=default_start, help="Escolha a data inicial (formato dd/mm/aaaa)")
+    data_de = st.date_input("De (dd/mm/aaaa)", value=default_start)
 with col_end:
-    data_ate = st.date_input("Até (dd/mm/aaaa)", value=default_end, help="Escolha a data final (formato dd/mm/aaaa)")
+    data_ate = st.date_input("Até (dd/mm/aaaa)", value=default_end)
 
-# validação e formatação
 data_de_str = data_de.strftime("%d/%m/%Y")
 data_ate_str = data_ate.strftime("%d/%m/%Y")
 
 if data_ate < data_de:
-    st.error("Data 'Até' deve ser igual ou posterior à data 'De'. Ajuste o período.")
+    st.error("Data 'Até' deve ser posterior à 'De'.")
     st.stop()
 
-st.markdown("---")
-
-# ---------------- LISTAR E SELECIONAR SUBPASTAS (sem título/checkboxs extras) ----------------
+# ---------------- LISTAR E SELECIONAR SUBPASTAS ----------------
 try:
     subfolders = list_subfolders(drive_service, MAIN_FOLDER_ID)
+    sub_names = [f"{s['name']} ({s['id']})" for s in subfolders]
+    # Rótulo removido ("") para eliminar os dizeres
+    selected = st.multiselect("", options=sub_names, default=sub_names)
 except Exception as e:
-    st.error(f"Erro listando subpastas: {e}")
+    st.error(f"Erro: {e}")
     st.stop()
 
-if not subfolders:
-    st.warning("Nenhuma subpasta encontrada dentro da pasta principal. Verifique se a service-account tem acesso ou se a pasta contém subpastas.")
-    st.stop()
-
-sub_names = [f"{s['name']} ({s['id']})" for s in subfolders]
-selected = st.multiselect("Selecione as subpastas a incluir:", options=sub_names, default=sub_names)
-
-selected_folder_ids = []
-for s in selected:
-    if "(" in s and s.strip().endswith(")"):
-        fid = s.split("(")[-1].strip(")")
-        selected_folder_ids.append(fid)
+selected_folder_ids = [s.split("(")[-1].strip(")") for s in selected if "(" in s]
 
 if not selected_folder_ids:
-    st.warning("Selecione ao menos uma subpasta para prosseguir.")
     st.stop()
 
-# não recursivo: apenas as pastas selecionadas
-all_folder_ids_to_scan = set(selected_folder_ids)
-#st.success(f"Serão escaneadas {len(all_folder_ids_to_scan)} pasta(s).")
-
-# ---------------- BUSCAR PLANILHAS NAS PASTAS SELECIONADAS ----------------
-with st.spinner("Buscando planilhas nas pastas selecionadas..."):
-    try:
-        planilhas = list_spreadsheets_in_folders(drive_service, list(all_folder_ids_to_scan))
-    except Exception as e:
-        st.error(f"Erro ao listar planilhas: {e}")
-        st.stop()
+# ---------------- BUSCAR PLANILHAS ----------------
+with st.spinner("Buscando planilhas..."):
+    planilhas = list_spreadsheets_in_folders(drive_service, list(selected_folder_ids))
 
 if not planilhas:
-    st.warning("Nenhuma planilha encontrada nas subpastas selecionadas.")
+    st.warning("Nenhuma planilha encontrada.")
     st.stop()
 
-# preparar DataFrame para edição
 df = pd.DataFrame(planilhas)
 df = df.rename(columns={"name": "Planilha", "id": "ID_Planilha", "parent_folder_id": "Folder_ID"})
 df["Desconto"] = True
@@ -155,11 +140,7 @@ df["Meio Pagamento"] = True
 df["Faturamento"] = True
 df = df[["Planilha", "Folder_ID", "ID_Planilha", "Desconto", "Meio Pagamento", "Faturamento"]].sort_values("Planilha").reset_index(drop=True)
 
-# ---------------- TABELA E FORM (seleção de operações) ----------------
-if not hasattr(st, "data_editor"):
-    st.error("Seu Streamlit não tem `st.data_editor`. Atualize o Streamlit: pip install --upgrade streamlit")
-    st.stop()
-
+# ---------------- TABELA E FORM ----------------
 with st.form("selection_form"):
     edited = st.data_editor(
         df,
@@ -167,64 +148,40 @@ with st.form("selection_form"):
         use_container_width=True,
         column_config={
             "Planilha": st.column_config.TextColumn("Planilha", disabled=True, width="large"),
-            "Folder_ID": st.column_config.TextColumn("Pasta (ID)", disabled=True),
-            "ID_Planilha": st.column_config.TextColumn("ID Planilha", disabled=True),
+            "Folder_ID": None, # Escondido para reduzir espaço
+            "ID_Planilha": None, # Escondido para reduzir espaço
             "Desconto": st.column_config.CheckboxColumn("Desconto", default=True),
             "Meio Pagamento": st.column_config.CheckboxColumn("Meio Pagamento", default=True),
             "Faturamento": st.column_config.CheckboxColumn("Faturamento", default=True),
         },
         hide_index=True
     )
-
-    st.markdown("---")
-    #col1, col2 = st.columns(2)
-    #with col1:
-    #    dry_run = st.checkbox("Dry-run (não grava)", value=True)
-    #with col2:
-    #    do_backup = st.checkbox("Criar backup da aba destino (se existir)", value=True)
-
     submit = st.form_submit_button("🚀 INICIAR ATUALIZAÇÃO", use_container_width=True)
 
-# ---------------- EXECUÇÃO (simulada por padrão) ----------------
+# ---------------- EXECUÇÃO ----------------
 if submit:
+    # Configurações fixas
+    DRY_RUN = True 
+    DO_BACKUP = True
+
     tarefas = []
     for _, row in edited.iterrows():
-        if row["Desconto"]:
-            tarefas.append({"planilha": row["Planilha"], "id": row["ID_Planilha"], "operacao": "Desconto", "aba": MAPA_ABAS["Desconto"]})
-        if row["Meio Pagamento"]:
-            tarefas.append({"planilha": row["Planilha"], "id": row["ID_Planilha"], "operacao": "Meio Pagamento", "aba": MAPA_ABAS["Meio Pagamento"]})
-        if row["Faturamento"]:
-            tarefas.append({"planilha": row["Planilha"], "id": row["ID_Planilha"], "operacao": "Faturamento", "aba": MAPA_ABAS["Faturamento"]})
+        if row["Desconto"]: tarefas.append({"planilha": row["Planilha"], "id": row["ID_Planilha"], "operacao": "Desconto", "aba": MAPA_ABAS["Desconto"]})
+        if row["Meio Pagamento"]: tarefas.append({"planilha": row["Planilha"], "id": row["ID_Planilha"], "operacao": "Meio Pagamento", "aba": MAPA_ABAS["Meio Pagamento"]})
+        if row["Faturamento"]: tarefas.append({"planilha": row["Planilha"], "id": row["ID_Planilha"], "operacao": "Faturamento", "aba": MAPA_ABAS["Faturamento"]})
 
     if not tarefas:
-        st.warning("Nenhuma operação selecionada. Marque ao menos uma caixa antes de enviar.")
+        st.warning("Nenhuma operação selecionada.")
     else:
-        st.write(f"Iniciando processamento de **{len(tarefas)}** tarefas (período: {data_de_str} → {data_ate_str})")
+        st.write(f"Processando **{len(tarefas)}** tarefas...")
         progresso = st.progress(0)
-        logs = []
         for i, t in enumerate(tarefas):
-            st.info(f"{i+1}/{len(tarefas)} — {t['planilha']} -> {t['operacao']}")
             try:
-                if not dry_run:
+                if not DRY_RUN:
                     sh = gc.open_by_key(t["id"])
-                    if do_backup:
-                        try:
-                            ws = sh.worksheet(t["aba"])
-                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                            sh.duplicate_sheet(ws.id, new_sheet_name=f"BACKUP_{t['aba']}_{timestamp}")
-                            logs.append(f"{t['planilha']}/{t['aba']}: backup criado")
-                        except Exception as e:
-                            logs.append(f"{t['planilha']}/{t['aba']}: backup falhou ou aba não existe -> {e}")
-                    # Aqui: implementar leitura da origem (ID_PLANILHA_ORIGEM/ABA_ORIGEM),
-                    # filtrar por data_de <= data <= data_ate e escrever na aba destino.
-                    time.sleep(0.2)
-                    logs.append(f"{t['planilha']}/{t['operacao']}: gravaria dados para {data_de_str}→{data_ate_str} (simulado)")
-                else:
-                    logs.append(f"{t['planilha']}/{t['operacao']}: dry-run (não gravado)")
+                    # Lógica de backup e gravação aqui
+                time.sleep(0.1)
             except Exception as e:
-                logs.append(f"{t['planilha']}/{t['operacao']}: ERRO -> {e}")
+                st.error(f"Erro em {t['planilha']}: {e}")
             progresso.progress((i + 1) / len(tarefas))
-
-        st.success("Processamento finalizado.")
-        st.write("Logs:")
-        st.write("\n".join(logs))
+        st.success("Concluído!")

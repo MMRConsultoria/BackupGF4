@@ -13,7 +13,7 @@ except Exception:
     build = None
 
 # ---------------- CONFIG ----------------
-MAIN_FOLDER_ID = "1LrbcStUAcvZV_dOYKBt-vgBHb9e1d6X-"
+PASTA_PRINCIPAL_ID = "0B1owaTi3RZnFfm4tTnhfZ2l0VHo4bWNMdHhKS3ZlZzR1ZjRSWWJSSUFxQTJtUExBVlVTUW8"
 ID_PLANILHA_ORIGEM = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
 ABA_ORIGEM = "Fat Sistema Externo"
 MAPA_ABAS = {"Faturamento": "Importado Fat", "Meio Pagamento": "Meio Pagamento", "Desconto": "Desconto"}
@@ -28,8 +28,6 @@ st.markdown(
     div.stVerticalBlock > div { margin-bottom: -0.2rem; }
     h1 { margin-top: -1rem; margin-bottom: 1rem; font-size: 1.8rem; }
     [data-testid="stTable"] td, [data-testid="stTable"] th { padding: 2px 5px !important; }
-    
-    /* Ajuste de espaçamento para a linha amarela (Seleção Global) */
     .global-selection-container {
         padding-top: 15px;
         padding-bottom: 15px;
@@ -63,9 +61,8 @@ except Exception as e:
     st.error(f"Erro de autenticação: {e}")
     st.stop()
 
-# ---------------- HELPERS DRIVE ----------------
-@st.cache_data(ttl=300)
-def list_subfolders(_drive, parent_id):
+# ---------------- FUNÇÃO PARA LISTAR SUBPASTAS FILTRADAS ----------------
+def list_subfolders_filtered(_drive, parent_id, filtro_texto):
     folders = []
     page_token = None
     q = f"'{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
@@ -73,12 +70,14 @@ def list_subfolders(_drive, parent_id):
         resp = _drive.files().list(q=q, fields="nextPageToken, files(id, name)", pageToken=page_token).execute()
         files = resp.get("files", [])
         for f in files:
-            folders.append({"id": f["id"], "name": f["name"]})
+            if filtro_texto.lower() in f["name"].lower():
+                folders.append({"id": f["id"], "name": f["name"]})
         page_token = resp.get("nextPageToken", None)
         if not page_token:
             break
     return folders
 
+# ---------------- FUNÇÕES PARA LISTAR PLANILHAS ----------------
 @st.cache_data(ttl=300)
 def list_spreadsheets_in_folders(_drive, folder_ids):
     sheets = []
@@ -108,25 +107,26 @@ with col_d1:
 with col_d2:
     data_ate = st.date_input("Até", value=date.today())
 
+# Listar subpastas filtradas por "fechamento"
 try:
-    subfolders = list_subfolders(drive_service, MAIN_FOLDER_ID)
-    sub_names = [f"{s['name']} ({s['id']})" for s in subfolders]
-    selected = st.multiselect("Selecione as subpastas a incluir:", options=sub_names, default=sub_names)
-    selected_folder_ids = [s.split("(")[-1].strip(")") for s in selected if "(" in s]
-except:
-    selected_folder_ids = []
+    subpastas_fechamento = list_subfolders_filtered(drive_service, PASTA_PRINCIPAL_ID, "fechamento")
+    subpastas_opcoes = [f"{s['name']} ({s['id']})" for s in subpastas_fechamento]
+    selecionadas = st.multiselect("Selecione as subpastas com 'fechamento':", options=subpastas_opcoes)
+    selecionadas_ids = [s.split("(")[-1].strip(")") for s in selecionadas if "(" in s]
+except Exception as e:
+    st.error(f"Erro ao listar subpastas: {e}")
+    selecionadas_ids = []
 
 st.markdown("---")
 
-# ---------------- LOGICA DE SELEÇÃO GLOBAL ----------------
-if selected_folder_ids:
+# ---------------- TABELAS E SELEÇÃO GLOBAL ----------------
+if selecionadas_ids:
     with st.spinner("Buscando planilhas..."):
-        planilhas = list_spreadsheets_in_folders(drive_service, list(selected_folder_ids))
+        planilhas = list_spreadsheets_in_folders(drive_service, selecionadas_ids)
         
         if planilhas:
             df_base = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
             
-            # Container com classe CSS para controle de espaçamento
             st.markdown('<div class="global-selection-container">', unsafe_allow_html=True)
             st.write("**Marcar/Desmarcar todos:**")
             c1, c2, c3, _ = st.columns([1.2, 1.2, 1.2, 5])
@@ -135,7 +135,6 @@ if selected_folder_ids:
             with c3: sel_fat = st.checkbox("Faturamento", value=True)
             st.markdown('</div>', unsafe_allow_html=True)
             
-            # Aplicar seleção global
             df_base["Desconto"] = sel_desc
             df_base["Meio Pagamento"] = sel_mp
             df_base["Faturamento"] = sel_fat
@@ -171,7 +170,10 @@ if selected_folder_ids:
                 
                 if tarefas:
                     st.success(f"Processando {len(tarefas)} tarefas...")
+                    # Aqui você coloca a lógica para processar as tarefas
                 else:
                     st.warning("Nenhuma operação selecionada.")
         else:
-            st.warning("Nenhuma planilha encontrada.")
+            st.warning("Nenhuma planilha encontrada nas subpastas selecionadas.")
+else:
+    st.info("Selecione ao menos uma subpasta com 'fechamento' para continuar.")

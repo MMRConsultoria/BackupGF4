@@ -20,16 +20,21 @@ MAPA_ABAS = {"Faturamento": "Importado Fat", "Meio Pagamento": "Meio Pagamento",
 
 st.set_page_config(page_title="Atualizador DRE", layout="wide")
 
-# --- CSS PARA COMPACTAR LAYOUT ---
+# --- CSS PARA COMPACTAR E AJUSTAR ESPAÇAMENTOS ---
 st.markdown(
     """
     <style>
     .block-container { padding-top: 1.5rem; padding-bottom: 0rem; }
-    div.stVerticalBlock > div { margin-bottom: -0.1rem; }
-    h1 { margin-top: 1rem; margin-bottom: 1rem; font-size: 1.0rem; }
+    div.stVerticalBlock > div { margin-bottom: -0.2rem; }
+    h1 { margin-top: -1rem; margin-bottom: 1rem; font-size: 1.8rem; }
     [data-testid="stTable"] td, [data-testid="stTable"] th { padding: 2px 5px !important; }
-    /* Estilo para os botões de seleção global */
-    .stCheckbox { margin-bottom: -15px; }
+    
+    /* Ajuste de espaçamento para a linha amarela (Seleção Global) */
+    .global-selection-container {
+        padding-top: 15px;
+        padding-bottom: 15px;
+        margin-bottom: 10px;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -119,27 +124,26 @@ if selected_folder_ids:
         planilhas = list_spreadsheets_in_folders(drive_service, list(selected_folder_ids))
         
         if planilhas:
-            # Criar DataFrame base
             df_base = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
             
-            # Botões de Seleção Global
+            # Container com classe CSS para controle de espaçamento
+            st.markdown('<div class="global-selection-container">', unsafe_allow_html=True)
             st.write("**Marcar/Desmarcar todos:**")
-            c1, c2, c3, _ = st.columns([1, 1, 1, 5])
+            c1, c2, c3, _ = st.columns([1.2, 1.2, 1.2, 5])
             with c1: sel_desc = st.checkbox("Desconto", value=True)
             with c2: sel_mp = st.checkbox("Meio Pagto", value=True)
             with c3: sel_fat = st.checkbox("Faturamento", value=True)
+            st.markdown('</div>', unsafe_allow_html=True)
             
-            # Aplicar seleção global ao DataFrame
+            # Aplicar seleção global
             df_base["Desconto"] = sel_desc
             df_base["Meio Pagamento"] = sel_mp
             df_base["Faturamento"] = sel_fat
             
-            # Divide o DataFrame em dois para as colunas
             meio = len(df_base) // 2 + (len(df_base) % 2)
             df_esq = df_base.iloc[:meio]
             df_dir = df_base.iloc[meio:]
 
-            # Configuração das colunas da tabela
             config_col = {
                 "name": st.column_config.TextColumn("Planilha", disabled=True),
                 "id": None,
@@ -149,12 +153,9 @@ if selected_folder_ids:
                 "Faturamento": st.column_config.CheckboxColumn("Fat."),
             }
 
-            # Renderiza as duas tabelas lado a lado
             col_t1, col_t2 = st.columns(2)
-            
             with col_t1:
                 edit_esq = st.data_editor(df_esq, key="tab_esq", use_container_width=True, column_config=config_col, hide_index=True)
-            
             with col_t2:
                 edit_dir = st.data_editor(df_dir, key="tab_dir", use_container_width=True, column_config=config_col, hide_index=True)
 
@@ -170,7 +171,6 @@ if selected_folder_ids:
                 
                 if tarefas:
                     st.success(f"Processando {len(tarefas)} tarefas...")
-                    # Lógica de execução aqui...
                 else:
                     st.warning("Nenhuma operação selecionada.")
         else:

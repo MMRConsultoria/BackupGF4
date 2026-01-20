@@ -133,7 +133,7 @@ if not selected_folder_ids:
 
 # não recursivo: apenas as pastas selecionadas
 all_folder_ids_to_scan = set(selected_folder_ids)
-st.success(f"Serão escaneadas {len(all_folder_ids_to_scan)} pasta(s).")
+#st.success(f"Serão escaneadas {len(all_folder_ids_to_scan)} pasta(s).")
 
 # ---------------- BUSCAR PLANILHAS NAS PASTAS SELECIONADAS ----------------
 with st.spinner("Buscando planilhas nas pastas selecionadas..."):

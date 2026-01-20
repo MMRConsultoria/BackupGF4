@@ -251,7 +251,7 @@ if s_ids:
                 
                 # Detectar coluna de data na origem
                 col_data = detect_date_column_name(headers_origem) or "Data"
-                # Mapear colunas por letra: F (grupo) e D (loja)
+                # Mapear colunas por letra: F (grupo) e D (loja) a partir do header da origem
                 col_grupo = get_colname_by_letter_from_values_header(headers_origem, "F")
                 col_loja = get_colname_by_letter_from_values_header(headers_origem, "D")
                 
@@ -296,20 +296,88 @@ if s_ids:
                             progresso.progress(min((i+1)/total, 1.0))
                             continue
                         
-                        # Atualiza aba Importado_Fat na planilha destino (apaga tudo e escreve o filtrado)
+                        # --- Atualiza aba Importado_Fat na planilha destino (APAGA SÓ PERÍODO) ---
                         try:
+                            # obtém worksheet destino (cria se não existir)
                             try:
                                 ws_dest = sh_destino.worksheet("Importado_Fat")
                             except Exception:
                                 ws_dest = sh_destino.add_worksheet(title="Importado_Fat", rows=max(1000, len(df_filtro)+10), cols=max(10, len(df_filtro.columns)))
                             
-                            ws_dest.clear()
+                            # lê dados atuais da aba destino
+                            headers_dest, df_dest = get_headers_and_df_from_ws(ws_dest)
                             
-                            headers_to_write = df_filtro.columns.tolist()
-                            values = [headers_to_write] + df_filtro[headers_to_write].values.tolist()
-                            ws_dest.update("A1", values)
-                            
-                            logs.append(f"{nome_planilha}: Atualizado Importado_Fat com {len(df_filtro)} linhas.")
+                            if df_dest.empty:
+                                # Se não há dados, apenas escreve o filtrado
+                                headers_to_write = df_filtro.columns.tolist()
+                                values = [headers_to_write] + df_filtro[headers_to_write].values.tolist()
+                                ws_dest.clear()
+                                ws_dest.update("A1", values)
+                                logs.append(f"{nome_planilha}: Importado_Fat criado com {len(df_filtro)} linhas.")
+                            else:
+                                # detecta coluna de data na planilha destino (preferir header do destino)
+                                col_data_dest = detect_date_column_name(headers_dest) or col_data
+                                
+                                # Se existir coluna de grupo/loja no destino, usá-las para condicional de remoção
+                                has_col_grupo_dest = col_grupo in headers_dest
+                                has_col_loja_dest = col_loja in headers_dest
+                                
+                                # converte colunas de data para datetime para filtragem
+                                df_dest[col_data_dest] = safe_to_datetime_series(df_dest[col_data_dest])
+                                
+                                # cria máscara para manter linhas fora do período ou que não correspondam ao grupo/loja alvo
+                                mask_keep = pd.Series([True]*len(df_dest), index=df_dest.index)
+                                
+                                # condição para linhas que estão no período
+                                cond_period = (df_dest[col_data_dest] >= pd.to_datetime(data_de)) & (df_dest[col_data_dest] <= pd.to_datetime(data_ate))
+                                
+                                # condição para matching por grupo/loja quando colunas existirem
+                                if has_col_grupo_dest:
+                                    cond_group = df_dest[col_grupo].astype(str).str.strip().str.upper() == str(b2).strip().upper()
+                                else:
+                                    cond_group = pd.Series([True]*len(df_dest), index=df_dest.index)
+                                if b3 and has_col_loja_dest:
+                                    cond_store = df_dest[col_loja].astype(str).str.strip().str.upper() == str(b3).strip().upper()
+                                else:
+                                    cond_store = pd.Series([True]*len(df_dest), index=df_dest.index)
+                                
+                                # linhas que devem ser removidas = in period AND matches group AND matches store
+                                to_remove = cond_period & cond_group & cond_store
+                                
+                                # keep = not to_remove
+                                df_dest_keep = df_dest.loc[~to_remove].copy()
+                                
+                                # Agora prepare df_filtro para concatenar: alinhar colunas com destino
+                                # Preservar ordem de colunas do destino se possível
+                                headers_to_write = headers_dest.copy()
+                                # adicionar colunas do filtro que não existam ainda, mantendo ordem
+                                for c in df_filtro.columns:
+                                    if c not in headers_to_write:
+                                        headers_to_write.append(c)
+                                
+                                # reindex ambos dataframes para headers_to_write e preencher vazios
+                                df_dest_keep = df_dest_keep.reindex(columns=headers_to_write).fillna("")
+                                df_filtro_prep = df_filtro.reindex(columns=headers_to_write).fillna("")
+                                
+                                # concatenar: manter df_dest_keep (linhas fora do período) + df_filtro_prep (novas linhas)
+                                df_combined = pd.concat([df_dest_keep, df_filtro_prep], ignore_index=True)
+                                
+                                # opcional: ordenar por data se col_data_dest existir nas colunas
+                                if col_data_dest in df_combined.columns:
+                                    try:
+                                        df_combined[col_data_dest] = safe_to_datetime_series(df_combined[col_data_dest])
+                                        df_combined = df_combined.sort_values(by=col_data_dest).reset_index(drop=True)
+                                        # ao escrever, transformar datas para string no formato ISO ou dd/mm/YYYY conforme preferência
+                                        df_combined[col_data_dest] = df_combined[col_data_dest].dt.strftime("%Y-%m-%d").fillna("")
+                                    except Exception:
+                                        pass
+                                
+                                # escrever de volta na planilha destino
+                                values = [headers_to_write] + df_combined[headers_to_write].astype(str).values.tolist()
+                                ws_dest.clear()
+                                ws_dest.update("A1", values)
+                                
+                                logs.append(f"{nome_planilha}: Importado_Fat atualizado - {len(df_filtro)} linhas substituídas no período; total agora {len(df_combined)}.")
                         except Exception as e:
                             logs.append(f"{nome_planilha}: Erro escrevendo Importado_Fat -> {e}")
                     except Exception as e:

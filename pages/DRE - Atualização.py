@@ -25,7 +25,7 @@ st.markdown(
     """
     <style>
     .block-container { padding-top: 2rem; padding-bottom: 0rem; }
-    div.stVerticalBlock > div { margin-bottom: 0.5rem; }
+    div.stVerticalBlock > div { margin-bottom: 0.2rem; }
     div[data-testid="stVerticalBlock"] > div { padding-top: 0rem; padding-bottom: 0rem; }
     h1 { margin-top: -1rem; margin-bottom: 0.5rem; font-size: 1.8rem; }
     [data-testid="stTable"] td, [data-testid="stTable"] th { padding: 2px 6px !important; }

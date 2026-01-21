@@ -154,11 +154,130 @@ if "sheet_codes" not in st.session_state:
     st.session_state["sheet_codes"] = {}
 
 # ---------------- TABS ----------------
-tab_audit, tab_atual = st.tabs(["Auditoria", "Atualização"])
+tab_atual,tab_audit = st.tabs(["Atualização","Auditoria"])
 
 with tab_atual:
-    st.info("A aba Atualização está aqui, mas sem alterações para este ajuste.")
+    with tab_atual:
+    # Filtros dentro da aba Atualização
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        data_de = st.date_input("De", value=date.today() - timedelta(days=30))
+    with col_d2:
+        data_ate = st.date_input("Até", value=date.today())
 
+    try:
+        pastas_fech = list_child_folders(drive_service, PASTA_PRINCIPAL_ID, "fechamento")
+        map_p = {p["name"]: p["id"] for p in pastas_fech}
+        p_sel = st.selectbox("Pasta principal:", options=list(map_p.keys()))
+        subpastas = list_child_folders(drive_service, map_p[p_sel])
+        map_s = {s["name"]: s["id"] for s in subpastas}
+        s_sel = st.multiselect("Subpastas:", options=list(map_s.keys()), default=[])
+        s_ids = [map_s[n] for n in s_sel]
+    except Exception:
+        st.error("Erro ao listar pastas.")
+        st.stop()
+
+    if not s_ids:
+        st.info("Selecione as subpastas para listar as planilhas.")
+    else:
+        with st.spinner("Buscando planilhas..."):
+            planilhas = list_spreadsheets_in_folders(drive_service, s_ids)
+        if not planilhas:
+            st.warning("Nenhuma planilha encontrada.")
+        else:
+            df_list = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
+            df_list = df_list.rename(columns={"name": "Planilha", "id": "ID_Planilha"})
+            
+            st.markdown('<div class="global-selection-container">', unsafe_allow_html=True)
+            c1, c2, c3, _ = st.columns([1.2, 1.2, 1.2, 5])
+            with c1: s_desc = st.checkbox("Desconto", value=True, key="chk_desc")
+            with c2: s_mp = st.checkbox("Meio Pagto", value=True, key="chk_mp")
+            with c3: s_fat = st.checkbox("Faturamento", value=True, key="chk_fat")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            df_list["Desconto"], df_list["Meio Pagamento"], df_list["Faturamento"] = s_desc, s_mp, s_fat
+            config = {
+                "Planilha": st.column_config.TextColumn("Planilha", disabled=True),
+                "ID_Planilha": None, "parent_folder_id": None,
+                "Desconto": st.column_config.CheckboxColumn("Desc."),
+                "Meio Pagamento": st.column_config.CheckboxColumn("M.Pag"),
+                "Faturamento": st.column_config.CheckboxColumn("Fat."),
+            }
+            meio = len(df_list) // 2 + (len(df_list) % 2)
+            col_t1, col_t2 = st.columns(2)
+            with col_t1: edit_esq = st.data_editor(df_list.iloc[:meio], key="t1", use_container_width=True, column_config=config, hide_index=True)
+            with col_t2: edit_dir = st.data_editor(df_list.iloc[meio:], key="t2", use_container_width=True, column_config=config, hide_index=True)
+
+            if st.button("🚀 INICIAR ATUALIZAÇÃO", use_container_width=True):
+                df_final_edit = pd.concat([edit_esq, edit_dir], ignore_index=True)
+                df_marcadas = df_final_edit[(df_final_edit["Desconto"]) | (df_final_edit["Meio Pagamento"]) | (df_final_edit["Faturamento"])].copy()
+                if df_marcadas.empty:
+                    st.warning("Nenhuma planilha marcada.")
+                    st.stop()
+
+                try:
+                    sh_origem = gc.open_by_key(ID_PLANILHA_ORIGEM)
+                    ws_origem = sh_origem.worksheet(ABA_ORIGEM)
+                    headers_orig, df_orig = get_headers_and_df_raw(ws_origem)
+                    df_orig = tratar_numericos(df_orig, headers_orig)
+                    col_data_orig = detect_date_col(headers_orig)
+                    df_orig_temp = df_orig.copy()
+                    df_orig_temp['_dt'] = pd.to_datetime(df_orig_temp[col_data_orig], dayfirst=True, errors='coerce').dt.date
+                    mask_orig = (df_orig_temp['_dt'] >= data_de) & (df_orig_temp['_dt'] <= data_ate)
+                    df_orig_filtrado = df_orig.loc[mask_orig].copy()
+                except Exception as e:
+                    st.error(f"Erro na origem: {e}"); st.stop()
+
+                progresso = st.progress(0)
+                logs = []
+                total = len(df_marcadas)
+
+                for i, (_, row) in enumerate(df_marcadas.iterrows()):
+                    try:
+                        sid = row["ID_Planilha"]
+                        cached = st.session_state["sheet_codes"].get(sid)
+                        if cached: b2, b3 = cached
+                        else:
+                            sh_dest = gc.open_by_key(sid)
+                            b2, b3 = read_codes_from_config_sheet(sh_dest)
+                            st.session_state["sheet_codes"][sid] = (b2, b3)
+
+                        if not b2:
+                            logs.append(f"{row['Planilha']}: Sem config."); continue
+
+                        col_f_name, col_d_name = headers_orig[5], headers_orig[3]
+                        df_para_inserir = df_orig_filtrado[df_orig_filtrado[col_f_name].astype(str).str.strip() == b2].copy()
+                        if b3: df_para_inserir = df_para_inserir[df_para_inserir[col_d_name].astype(str).str.strip() == b3]
+
+                        if df_para_inserir.empty:
+                            logs.append(f"{row['Planilha']}: Sem dados."); continue
+
+                        sh_dest = gc.open_by_key(sid)
+                        try: ws_dest = sh_dest.worksheet("Importado_Fat")
+                        except: ws_dest = sh_dest.add_worksheet("Importado_Fat", 1000, 30)
+
+                        headers_dest, df_dest = get_headers_and_df_raw(ws_dest)
+                        df_dest = tratar_numericos(df_dest, headers_dest)
+
+                        if df_dest.empty:
+                            df_final_ws, h_final = df_para_inserir, headers_orig
+                        else:
+                            col_dt_dest = detect_date_col(headers_dest) or col_data_orig
+                            df_dest_temp = df_dest.copy()
+                            df_dest_temp['_dt'] = pd.to_datetime(df_dest_temp[col_dt_dest], dayfirst=True, errors='coerce').dt.date
+                            to_remove = (df_dest_temp['_dt'] >= data_de) & (df_dest_temp['_dt'] <= data_ate)
+                            if col_f_name in df_dest.columns: to_remove &= (df_dest[col_f_name].astype(str).str.strip() == b2)
+                            if b3 and col_d_name in df_dest.columns: to_remove &= (df_dest[col_d_name].astype(str).str.strip() == b3)
+                            df_final_ws = pd.concat([df_dest.loc[~to_remove], df_para_inserir], ignore_index=True)
+                            h_final = headers_dest if headers_dest else headers_orig
+
+                        send_df = df_final_ws[h_final].copy().where(pd.notna(df_final_ws[h_final]), "")
+                        ws_dest.clear()
+                        ws_dest.update("A1", [h_final] + send_df.values.tolist(), value_input_option='USER_ENTERED')
+                        logs.append(f"{row['Planilha']}: Sucesso.")
+                    except Exception as e: logs.append(f"{row['Planilha']}: Erro: {e}")
+                    progresso.progress(min((i + 1) / total, 1.0))
+                st.success("Concluído!"); st.write("\n".join(logs))
 with tab_audit:
     st.header("Auditoria (independente)")
     st.markdown("Escolha pasta principal, subpastas, ano e mês — a auditoria será executada só no período selecionado.")

@@ -353,7 +353,23 @@ with tab_verif:
         else:
             df_list_ver = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
             df_list_ver = df_list_ver.rename(columns={"name": "Planilha", "id": "ID_Planilha"})
-            st.dataframe(df_list_ver[["Planilha", "ID_Planilha"]], use_container_width=True)
+
+            # Prepara dados para exibir tabela com cache atual
+            data_display = []
+            for _, row in df_list_ver.iterrows():
+                sid = row["ID_Planilha"]
+                nm = row["Planilha"]
+                b2b3 = st.session_state.get("sheet_codes", {}).get(sid, (None, None))
+                has_conf = b2b3[0] is not None  # se B2 existe, considera que tem config
+                data_display.append({
+                    "Planilha": nm,
+                    "Config": "Sim" if has_conf else "Não",
+                    "B2": b2b3[0] or "",
+                    "B3": b2b3[1] or "",
+                })
+            df_display = pd.DataFrame(data_display)
+
+            st.dataframe(df_display, use_container_width=True)
 
             if st.button("🔎 Verificar presença da aba de configuração e buscar B2/B3"):
                 progresso = st.progress(0)
@@ -367,12 +383,14 @@ with tab_verif:
                         b2, b3 = read_codes_from_config_sheet(sh)
                         has_conf = b2 is not None
                         results.append({"Planilha": nm, "ID_Planilha": sid, "has_config": has_conf, "B2": b2, "B3": b3})
-                        # salva no cache de sessão (mesmo quando None, para evitar re-ler)
                         st.session_state["sheet_codes"][sid] = (b2, b3)
                     except Exception as e:
                         results.append({"Planilha": nm, "ID_Planilha": sid, "has_config": False, "B2": None, "B3": None, "error": str(e)})
                     progresso.progress(min((i + 1) / total, 1.0))
                 df_res = pd.DataFrame(results)
-                st.success("Verificação concluída. Resultados:")
-                st.dataframe(df_res.fillna(""), use_container_width=True)
-                st.info("Os códigos B2/B3 encontrados foram salvos na sessão e serão reutilizados na aba 'Atualização' para reduzir leituras adicionais.")
+                st.success("Verificação concluída. Resultados atualizados:")
+                # Atualiza a tabela exibida com os novos dados
+                df_display = df_res[["Planilha", "has_config", "B2", "B3"]].copy()
+                df_display.rename(columns={"has_config": "Config"}, inplace=True)
+                df_display["Config"] = df_display["Config"].apply(lambda x: "Sim" if x else "Não")
+                st.dataframe(df_display.fillna(""), use_container_width=True)

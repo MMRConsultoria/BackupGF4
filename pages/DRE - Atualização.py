@@ -317,7 +317,7 @@ with tab_atual:
 # ---------------- ABA: AUDITORIA (com AgGrid e seleção por checkbox) ----------------
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 import pandas as pd
-from st_aggrid.shared import GridReturn
+
 
 with tab_audit:
     st.header("Auditoria")

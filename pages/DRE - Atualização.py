@@ -206,7 +206,7 @@ with tab_atual:
                     prog.progress((i+1)/total)
                     log_placeholder.text("\n".join(logs))
             
-                status_placeholder.success("Atualização concluída!")
+                status_placeholder.success("Em Execução!")
                 
                 # Carregar Origem Faturamento
                 try:

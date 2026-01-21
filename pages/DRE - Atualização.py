@@ -200,7 +200,7 @@ with tab_atual:
                 for i, (_, row) in enumerate(df_marcadas.iterrows()):
                     try:
                         # ... seu código de atualização ...
-                        logs.append(f"{row['Planilha']}: Sucesso.")
+                        logs.append(f"{row['Planilha']}:.")
                     except Exception as e:
                         logs.append(f"{row['Planilha']}: Erro {e}")
                     prog.progress((i+1)/total)

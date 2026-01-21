@@ -1,4 +1,4 @@
-Tenho esse código, preciso de algumas alterações. 1 - as colunas valores G, H, I e J estão vindo como texto, o correto é valores em R$ , o melhor seria não alterar nenhuma configuração da planilha original. Onde vem subpastas, quero deixar sempre em branco, o usuário que escolhe qual pasta quer colocar
+
 
 import streamlit as st
 import pandas as pd

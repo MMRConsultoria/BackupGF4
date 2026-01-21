@@ -157,20 +157,19 @@ if "sheet_codes" not in st.session_state:
 tab_atual, tab_verif, tab_audit = st.tabs(["Atualização", "Verificar Configurações", "Auditoria"])
 
 with tab_atual:
-    # Filtros dentro da aba Atualização
     col_d1, col_d2 = st.columns(2)
     with col_d1:
-        data_de = st.date_input("De", value=date.today() - timedelta(days=30))
+        data_de = st.date_input("De", value=date.today() - timedelta(days=30), key="atual_data_de")
     with col_d2:
-        data_ate = st.date_input("Até", value=date.today())
+        data_ate = st.date_input("Até", value=date.today(), key="atual_data_ate")
 
     try:
         pastas_fech = list_child_folders(drive_service, PASTA_PRINCIPAL_ID, "fechamento")
         map_p = {p["name"]: p["id"] for p in pastas_fech}
-        p_sel = st.selectbox("Pasta principal:", options=list(map_p.keys()))
+        p_sel = st.selectbox("Pasta principal:", options=list(map_p.keys()), key="atual_pasta_principal")
         subpastas = list_child_folders(drive_service, map_p[p_sel])
         map_s = {s["name"]: s["id"] for s in subpastas}
-        s_sel = st.multiselect("Subpastas:", options=list(map_s.keys()), default=[])
+        s_sel = st.multiselect("Subpastas:", options=list(map_s.keys()), default=[], key="atual_subpastas")
         s_ids = [map_s[n] for n in s_sel]
     except Exception:
         st.error("Erro ao listar pastas.")
@@ -187,12 +186,10 @@ with tab_atual:
             df_list = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
             df_list = df_list.rename(columns={"name": "Planilha", "id": "ID_Planilha"})
             
-            st.markdown('<div class="global-selection-container">', unsafe_allow_html=True)
             c1, c2, c3, _ = st.columns([1.2, 1.2, 1.2, 5])
-            with c1: s_desc = st.checkbox("Desconto", value=True, key="chk_desc")
-            with c2: s_mp = st.checkbox("Meio Pagto", value=True, key="chk_mp")
-            with c3: s_fat = st.checkbox("Faturamento", value=True, key="chk_fat")
-            st.markdown('</div>', unsafe_allow_html=True)
+            with c1: s_desc = st.checkbox("Desconto", value=True, key="atual_chk_desc")
+            with c2: s_mp = st.checkbox("Meio Pagto", value=True, key="atual_chk_mp")
+            with c3: s_fat = st.checkbox("Faturamento", value=True, key="atual_chk_fat")
 
             df_list["Desconto"], df_list["Meio Pagamento"], df_list["Faturamento"] = s_desc, s_mp, s_fat
             config = {
@@ -204,10 +201,10 @@ with tab_atual:
             }
             meio = len(df_list) // 2 + (len(df_list) % 2)
             col_t1, col_t2 = st.columns(2)
-            with col_t1: edit_esq = st.data_editor(df_list.iloc[:meio], key="t1", use_container_width=True, column_config=config, hide_index=True)
-            with col_t2: edit_dir = st.data_editor(df_list.iloc[meio:], key="t2", use_container_width=True, column_config=config, hide_index=True)
+            with col_t1: edit_esq = st.data_editor(df_list.iloc[:meio], key="atual_t1", use_container_width=True, column_config=config, hide_index=True)
+            with col_t2: edit_dir = st.data_editor(df_list.iloc[meio:], key="atual_t2", use_container_width=True, column_config=config, hide_index=True)
 
-            if st.button("🚀 INICIAR ATUALIZAÇÃO", use_container_width=True):
+            if st.button("🚀 INICIAR ATUALIZAÇÃO", use_container_width=True, key="btn_iniciar_atualizacao"):
                 df_final_edit = pd.concat([edit_esq, edit_dir], ignore_index=True)
                 df_marcadas = df_final_edit[(df_final_edit["Desconto"]) | (df_final_edit["Meio Pagamento"]) | (df_final_edit["Faturamento"])].copy()
                 if df_marcadas.empty:
@@ -280,6 +277,18 @@ with tab_atual:
 
 with tab_verif:
     st.markdown("Verifique a presença da aba de configuração e os códigos B2/B3.")
+    try:
+        pastas_fech = list_child_folders(drive_service, PASTA_PRINCIPAL_ID, "fechamento")
+        map_p = {p["name"]: p["id"] for p in pastas_fech}
+        p_sel = st.selectbox("Pasta principal:", options=list(map_p.keys()), key="verif_pasta_principal")
+        subpastas = list_child_folders(drive_service, map_p[p_sel])
+        map_s = {s["name"]: s["id"] for s in subpastas}
+        s_sel = st.multiselect("Subpastas:", options=list(map_s.keys()), default=[], key="verif_subpastas")
+        s_ids = [map_s[n] for n in s_sel]
+    except Exception:
+        st.error("Erro ao listar pastas.")
+        st.stop()
+
     if not s_ids:
         st.info("Selecione as subpastas primeiro.")
     else:
@@ -300,7 +309,7 @@ with tab_verif:
                 })
             st.dataframe(pd.DataFrame(data_display), use_container_width=True)
 
-            if st.button("🔎 Verificar configurações"):
+            if st.button("🔎 Verificar configurações", key="btn_verificar_config"):
                 prog = st.progress(0)
                 total = len(df_list_ver)
                 for i, r in df_list_ver.iterrows():
@@ -311,6 +320,7 @@ with tab_verif:
                     except: pass
                     prog.progress(min((i + 1) / total, 1.0))
                 st.experimental_rerun()
+
 with tab_audit:
     st.header("Auditoria (independente)")
     st.markdown("Escolha pasta principal, subpastas, ano e mês — a auditoria será executada só no período selecionado.")
@@ -326,7 +336,7 @@ with tab_audit:
         st.stop()
 
     map_p = {p["name"]: p["id"] for p in pastas_fech}
-    p_sel = st.selectbox("Pasta principal:", options=list(map_p.keys()))
+    p_sel = st.selectbox("Pasta principal:", options=list(map_p.keys()), key="audit_pasta_principal")
 
     try:
         subpastas = list_child_folders(drive_service, map_p[p_sel])
@@ -339,18 +349,18 @@ with tab_audit:
         s_ids_audit = []
     else:
         map_s = {s["name"]: s["id"] for s in subpastas}
-        s_sel = st.multiselect("Subpastas:", options=list(map_s.keys()), default=[])
+        s_sel = st.multiselect("Subpastas:", options=list(map_s.keys()), default=[], key="audit_subpastas")
         s_ids_audit = [map_s[n] for n in s_sel]
 
     anos_disponiveis = list(range(2018, datetime.now().year + 1))
-    ano_sel = st.selectbox("Ano:", anos_disponiveis, index=len(anos_disponiveis) - 1)
+    ano_sel = st.selectbox("Ano:", anos_disponiveis, index=len(anos_disponiveis) - 1, key="audit_ano")
     meses_disponiveis = list(range(1, 13))
-    mes_sel = st.selectbox("Mês:", meses_disponiveis, index=datetime.now().month - 1)
+    mes_sel = st.selectbox("Mês:", meses_disponiveis, index=datetime.now().month - 1, key="audit_mes")
 
     if not s_ids_audit:
         st.info("Selecione ao menos uma subpasta para listar planilhas e executar auditoria.")
     else:
-        if st.button("🔎 Listar planilhas nas subpastas selecionadas"):
+        if st.button("🔎 Listar planilhas nas subpastas selecionadas", key="audit_listar_planilhas"):
             try:
                 planilhas = list_spreadsheets_in_folders(drive_service, s_ids_audit)
                 if not planilhas:
@@ -362,7 +372,7 @@ with tab_audit:
             except Exception as e:
                 st.error(f"Erro ao listar planilhas: {e}")
 
-        if st.button("📊 Executar Auditoria para o período selecionado"):
+        if st.button("📊 Executar Auditoria para o período selecionado", key="audit_executar_auditoria"):
             try:
                 data_inicio = date(ano_sel, mes_sel, 1)
                 if mes_sel == 12:
@@ -514,7 +524,7 @@ with tab_audit:
 
                             meses_opcoes = [d["Mês"] for d in detalhes_mes] if detalhes_mes else []
                             if meses_opcoes:
-                                mes_sel_local = st.selectbox(f"Selecionar mês para detalhar por dia - {res['Planilha']}", options=meses_opcoes, key=f"mes_dia_{i}")
+                                mes_sel_local = st.selectbox(f"Selecionar mês para detalhar por dia - {res['Planilha']}", options=meses_opcoes, key=f"audit_mes_dia_{i}")
                                 d_o = res["df_o_raw"]
                                 d_d = res["df_d_raw"]
                                 if not d_o.empty:

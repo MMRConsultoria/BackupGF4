@@ -323,15 +323,21 @@ with tab_audit:
         map_s = {s["name"]: s["id"] for s in subpastas}
         s_sel = st.multiselect("Subpastas:", options=list(map_s.keys()), default=[], key="au_s")
         s_ids_audit = [map_s[n] for n in s_sel]
-    except: st.error("Erro pastas."); st.stop()
+    except:
+        st.error("Erro ao listar pastas.")
+        st.stop()
 
     c_ano, c_mes = st.columns(2)
-    with c_ano: ano_sel = st.selectbox("Ano:", list(range(2020, date.today().year+1)), index=date.today().year-2020, key="au_ano")
-    with c_mes: mes_sel = st.selectbox("Mês (Opcional):", ["Todos"] + list(range(1,13)), key="au_mes")
+    with c_ano:
+        ano_sel = st.selectbox("Ano:", list(range(2020, date.today().year + 1)), index=date.today().year - 2020, key="au_ano")
+    with c_mes:
+        mes_sel = st.selectbox("Mês (Opcional):", ["Todos"] + list(range(1, 13)), key="au_mes")
 
     if st.button("📊 EXECUTAR AUDITORIA", use_container_width=True):
-        if not s_ids_audit: st.warning("Selecione subpastas."); st.stop()
-        
+        if not s_ids_audit:
+            st.warning("Selecione subpastas.")
+            st.stop()
+
         if mes_sel == "Todos":
             d_ini, d_fim = date(ano_sel, 1, 1), date(ano_sel, 12, 31)
         else:
@@ -339,43 +345,99 @@ with tab_audit:
             d_fim = (date(ano_sel, int(mes_sel), 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
 
         try:
-            sh_o = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT); ws_o = sh_o.worksheet(ABA_ORIGEM_FAT)
-            h_o, df_o = get_headers_and_df_raw(ws_o)
-            df_o = tratar_numericos(df_o, h_o)
-            c_dt_o = detect_date_col(h_o)
-            df_o['_dt'] = pd.to_datetime(df_o[c_dt_o], dayfirst=True, errors='coerce').dt.date
-            df_o_p = df_o[(df_o['_dt'] >= d_ini) & (df_o['_dt'] <= d_fim)].copy()
-            
+            # Origem FATURAMENTO
+            sh_o_fat = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT)
+            ws_o_fat = sh_o_fat.worksheet(ABA_ORIGEM_FAT)
+            h_o_fat, df_o_fat = get_headers_and_df_raw(ws_o_fat)
+            df_o_fat = tratar_numericos(df_o_fat, h_o_fat)
+            c_dt_o_fat = detect_date_col(h_o_fat)
+            df_o_fat['_dt'] = pd.to_datetime(df_o_fat[c_dt_o_fat], dayfirst=True, errors='coerce').dt.date
+            df_o_fat_p = df_o_fat[(df_o_fat['_dt'] >= d_ini) & (df_o_fat['_dt'] <= d_fim)].copy()
+
+            # Origem MEIO DE PAGAMENTO
+            sh_o_mp = gc.open_by_key(ID_PLANILHA_ORIGEM_MP)
+            ws_o_mp = sh_o_mp.worksheet(ABA_ORIGEM_MP)
+            h_o_mp, df_o_mp = get_headers_and_df_raw(ws_o_mp)
+            df_o_mp = tratar_numericos(df_o_mp, h_o_mp)
+            c_dt_o_mp = detect_date_col(h_o_mp)
+            df_o_mp['_dt'] = pd.to_datetime(df_o_mp[c_dt_o_mp], dayfirst=True, errors='coerce').dt.date
+            df_o_mp_p = df_o_mp[(df_o_mp['_dt'] >= d_ini) & (df_o_mp['_dt'] <= d_fim)].copy()
+
             planilhas = list_spreadsheets_in_folders(drive_service, s_ids_audit)
-            results = []; prog = st.progress(0); total = len(planilhas)
-            
+            results = []
+            prog = st.progress(0)
+            total = len(planilhas)
+
             for idx, p in enumerate(planilhas):
                 sid, p_name = p["id"], p["name"]
                 sh_d = gc.open_by_key(sid)
                 b2, b3 = read_codes_from_config_sheet(sh_d)
-                
+
                 if not b2:
-                    results.append({"Planilha": p_name, "Origem": 0, "DRE": 0, "Dif": 0, "Status": "Sem Config"})
+                    results.append({
+                        "Planilha": p_name,
+                        "Origem": 0,
+                        "DRE": 0,
+                        "MP Origem": 0,
+                        "MP DRE": 0,
+                        "Dif": 0,
+                        "Dif MP": 0,
+                        "Status": "Sem Config"
+                    })
                 else:
-                    df_o_f = df_o_p[df_o_p[h_o[5]].astype(str).str.strip() == b2]
-                    if b3: df_o_f = df_o_f[df_o_f[h_o[3]].astype(str).str.strip() == b3]
-                    v_o = df_o_f[h_o[6]].sum()
-                    
+                    # FATURAMENTO
+                    df_o_f = df_o_fat_p[df_o_fat_p[h_o_fat[5]].astype(str).str.strip() == b2]
+                    if b3:
+                        df_o_f = df_o_f[df_o_fat_p[h_o_fat[3]].astype(str).str.strip() == b3]
+                    v_o = df_o_f[h_o_fat[6]].sum()
+
                     v_d = 0.0
+                    v_mp_o = 0.0
+                    v_mp_d = 0.0
+
                     try:
                         ws_d = sh_d.worksheet("Importado_Fat")
                         h_d, df_d = get_headers_and_df_raw(ws_d)
                         df_d = tratar_numericos(df_d, h_d)
                         c_dt_d = detect_date_col(h_d)
                         df_d['_dt'] = pd.to_datetime(df_d[c_dt_d], dayfirst=True, errors='coerce').dt.date
+
                         v_d = df_d[(df_d['_dt'] >= d_ini) & (df_d['_dt'] <= d_fim)][h_d[6]].sum()
-                    except: pass
-                    
+
+                        # MEIO DE PAGAMENTO na aba Importado_Fat
+                        idx_mp_col = 7 if len(h_d) > 7 else None
+                        if idx_mp_col is not None:
+                            col_mp = h_d[idx_mp_col]
+                            v_mp_d = df_d[(df_d['_dt'] >= d_ini) & (df_d['_dt'] <= d_fim)][col_mp].sum()
+                    except:
+                        pass
+
+                    # MEIO DE PAGAMENTO ORIGEM
+                    df_o_mp_f = df_o_mp_p[df_o_mp_p[h_o_mp[8]].astype(str).str.strip() == b2]
+                    if b3:
+                        df_o_mp_f = df_o_mp_f[df_o_mp_p[h_o_mp[6]].astype(str).str.strip() == b3]
+                    v_mp_o = df_o_mp_f[h_o_mp[9]].sum() if len(h_o_mp) > 9 else 0
+
                     diff = v_o - v_d
-                    results.append({"Planilha": p_name, "Origem": v_o, "DRE": v_d, "Dif": diff, "Status": "✅ OK" if abs(diff)<0.01 else "❌ Erro"})
-                prog.progress((idx+1)/total)
-            
+                    diff_mp = v_mp_o - v_mp_d
+
+                    results.append({
+                        "Planilha": p_name,
+                        "Origem": v_o,
+                        "DRE": v_d,
+                        "MP Origem": v_mp_o,
+                        "MP DRE": v_mp_d,
+                        "Dif": diff,
+                        "Dif MP": diff_mp,
+                        "Status": "✅ OK" if abs(diff) < 0.01 and abs(diff_mp) < 0.01 else "❌ Erro"
+                    })
+
+                prog.progress((idx + 1) / total)
+
             df_res = pd.DataFrame(results)
-            for c in ["Origem", "DRE", "Dif"]: df_res[c] = df_res[c].apply(format_brl)
+            for c in ["Origem", "DRE", "MP Origem", "MP DRE", "Dif", "Dif MP"]:
+                df_res[c] = df_res[c].apply(format_brl)
             st.table(df_res)
-        except Exception as e: st.error(f"Erro: {e}")
+
+        except Exception as e:
+            st.error(f"Erro: {e}")

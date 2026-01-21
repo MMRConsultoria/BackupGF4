@@ -314,35 +314,27 @@ with tab_atual:
                 st.success("Concluido!")
 
 # ---------------- ABA: AUDITORIA ----------------
-# ---------------- ABA: AUDITORIA (sem st_aggrid) ----------------
+# ---------- ABA: AUDITORIA (com seleção por multiselect e batch processing) ----------
 import pandas as pd
 from datetime import date, timedelta
 
 with tab_audit:
     st.header("Auditoria")
 
-    # Seleção de pastas
-    try:
-        pastas_fech = list_child_folders(drive_service, PASTA_PRINCIPAL_ID, "fechamento")
-        map_p = {p["name"]: p["id"] for p in pastas_fech}
-        p_sel = st.selectbox("Pasta principal:", options=list(map_p.keys()), key="au_p")
-        subpastas = list_child_folders(drive_service, map_p[p_sel])
-        map_s = {s["name"]: s["id"] for s in subpastas}
-        s_sel = st.multiselect("Subpastas:", options=list(map_s.keys()), default=[], key="au_s")
-        s_ids_audit = [map_s[n] for n in s_sel]
-    except Exception as e:
-        st.error(f"Erro ao listar pastas: {e}")
-        st.stop()
+    # ---------- Verificações básicas (helpers locais) ----------
+    # formatação R$ (fallback se não existir format_brl no escopo)
+    def format_brl(v):
+        try:
+            v = float(v)
+        except Exception:
+            return ""
+        s = f"{v:,.2f}"  # 1,234,567.89
+        # trocar para formato BR: 1.234.567,89
+        s = s.replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"R$ {s}"
 
-    # Período
-    c1, c2 = st.columns(2)
-    with c1:
-        ano_sel = st.selectbox("Ano:", list(range(2020, date.today().year + 1)),
-                               index=date.today().year - 2020, key="au_ano")
-    with c2:
-        mes_sel = st.selectbox("Mês (Opcional):", ["Todos"] + list(range(1, 13)), key="au_mes")
-
-    # Helpers locais
+    # Helpers simples (usar seus helpers se já existirem)
+    # detect_column_by_keywords é útil para tentar localizar colunas por palavras-chave
     def detect_column_by_keywords(headers, keywords_list):
         for kw in keywords_list:
             for h in headers:
@@ -358,18 +350,48 @@ with tab_audit:
         except Exception:
             return str(val).strip()
 
-    # Carrega lista de planilhas para as subpastas (recarrega se mudarem subpastas)
-    if "au_last_subpastas" not in st.session_state or st.session_state.au_last_subpastas != s_ids_audit:
+    # ---------- Seleção de Pasta / Subpastas ----------
+    try:
+        pastas_fech = list_child_folders(drive_service, PASTA_PRINCIPAL_ID, "fechamento")
+        if not pastas_fech:
+            st.error("Nenhuma pasta de fechamento encontrada na pasta principal.")
+            st.stop()
+        map_p = {p["name"]: p["id"] for p in pastas_fech}
+        p_sel = st.selectbox("Pasta principal:", options=list(map_p.keys()), key="au_p")
+        subpastas = list_child_folders(drive_service, map_p[p_sel])
+        map_s = {s["name"]: s["id"] for s in subpastas}
+        s_sel = st.multiselect("Subpastas (se nenhuma, trará todas):", options=list(map_s.keys()), default=[], key="au_s")
+        s_ids_audit = [map_s[n] for n in s_sel] if s_sel else list(map_s.values())
+    except Exception as e:
+        st.error(f"Erro ao listar pastas/subpastas: {e}")
+        st.stop()
+
+    # ---------- Filtros de período (independentes para auditoria) ----------
+    c1, c2 = st.columns(2)
+    with c1:
+        ano_sel = st.selectbox("Ano:", list(range(2020, date.today().year + 1)),
+                               index=date.today().year - 2020, key="au_ano")
+    with c2:
+        mes_sel = st.selectbox("Mês (Opcional):", ["Todos"] + list(range(1, 13)), key="au_mes")
+
+    # Batch size (para evitar timeouts) e opção de reprocessar
+    st.markdown("Configurações do lote (útil para evitar timeout da API):")
+    batch_size = st.slider("Número de planilhas por lote", 1, 30, 8, step=1, key="au_batch_size")
+    reprocessar = st.checkbox("Permitir reprocessar planilhas já auditadas (se marcado, irá atualizar resultado)", value=False)
+
+    # ---------- Carregar lista de planilhas das subpastas (recarrega se mudar subpastas) ----------
+    need_reload = ("au_last_subpastas" not in st.session_state) or (st.session_state.get("au_last_subpastas") != s_ids_audit)
+    if need_reload:
         try:
             planilhas = list_spreadsheets_in_folders(drive_service, s_ids_audit)
         except Exception as e:
             st.error(f"Erro ao listar planilhas nas subpastas: {e}")
             st.stop()
 
+        # Monta DF inicial
         df_init = pd.DataFrame([{
             "Planilha": p["name"],
             "Planilha_id": p["id"],
-            "Auditar": False,
             "Origem": "",
             "DRE": "",
             "MP DRE": "",
@@ -380,155 +402,154 @@ with tab_audit:
 
         st.session_state.au_last_subpastas = s_ids_audit
         st.session_state.au_planilhas_df = df_init
-        st.session_state.au_resultados = {}  # id -> result
+        st.session_state.au_resultados = {}  # id -> result (acumulado)
 
-    # DataFrame atual
+    # Garantir DF no session_state
     df_table = st.session_state.au_planilhas_df.copy()
+    if df_table.empty:
+        st.info("Nenhuma planilha encontrada nas subpastas selecionadas.")
+        st.stop()
 
-    st.markdown("**1) Selecione as planilhas que deseja auditar**")
+    # ---------- Mostrar tabela de resultados acumulados ----------
+    st.markdown("### Resultados acumulados")
+    # Mostra apenas as colunas visíveis para o usuário
+    display_df = df_table[["Planilha", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]].copy()
+    st.dataframe(display_df, height=300)
 
-    # Se poucas planilhas, mostrar checkbox por linha (interface parecida com sua imagem).
-    MAX_CHECKBOX_ROWS = 80
-    if len(df_table) <= MAX_CHECKBOX_ROWS:
-        sel_cols = st.columns([0.08, 0.92])  # coluna para checkboxes + nomes
-        sel_container = st.container()
-        selected_ids = []
-        for i, row in df_table.iterrows():
-            chk_key = f"au_chk_{row['Planilha_id']}"
-            # preserva estado anterior
-            prev = st.session_state.get(chk_key, False)
-            cols = sel_container.columns([0.08, 0.92])
-            checked = cols[0].checkbox("", value=prev, key=chk_key)
-            cols[1].markdown(f"**{row['Planilha']}** - {row['Status'] or ''}")
-            if checked:
-                selected_ids.append(row["Planilha_id"])
-    else:
-        # Se muitas planilhas, usar multiselect por nome (mais performático)
-        st.info("Muitas planilhas — use a seleção múltipla abaixo.")
-        names = df_table["Planilha"].tolist()
-        selected_names = st.multiselect("Planilhas para auditar:", options=names, key="au_multisel")
-        selected_ids = [r["Planilha_id"] for r in df_table.to_dict("records") if r["Planilha"] in selected_names]
+    # ---------- Selecionar planilhas para auditar (multiselect) ----------
+    planilha_names = df_table["Planilha"].tolist()
+    selecionadas = st.multiselect("Selecione as planilhas para auditar (várias):", options=planilha_names, key="au_selected")
 
     # Botões de ação
-    c_run, c_clear = st.columns([1, 1])
-    run = c_run.button("📊 EXECUTAR AUDITORIA (somente marcadas)")
-    clear = c_clear.button("🔁 Desmarcar todas")
+    c_run, c_run_batch, c_clear = st.columns([1.2, 1.2, 0.8])
+    run_all = c_run.button("📊 EXECUTAR AUDITORIA (todas selecionadas)")
+    run_batch = c_run_batch.button(f"▶️ Executar próximo lote ({batch_size})")
+    clear_btn = c_clear.button("🔁 Desmarcar seleção")
 
-    if clear:
-        # reset flags
-        if len(df_table) <= MAX_CHECKBOX_ROWS:
-            for _, r in df_table.iterrows():
-                st.session_state[f"au_chk_{r['Planilha_id']}"] = False
-        else:
-            st.session_state["au_multisel"] = []
-        # Also update session_state table
-        st.session_state.au_planilhas_df["Auditar"] = False
+    if clear_btn:
+        st.session_state.au_selected = []
         st.experimental_rerun()
 
-    # Mostra tabela acumulada de resultados ao lado/abaixo
-    def show_accumulated_table():
-        # Build display DF from session_state.au_planilhas_df
-        display_df = st.session_state.au_planilhas_df.copy()
-        # garantir colunas na ordem desejada
-        cols_order = ["Planilha", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]
-        display_df = display_df[cols_order]
-        st.markdown("**Resultados acumulados**")
-        st.dataframe(display_df, height=300)
+    # ---------- Função para carregar origem de faturamento (uma vez por execução) ----------
+    def carregar_origem_faturamento(d_ini, d_fim):
+        try:
+            sh_o_fat = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT)
+            ws_o_fat = sh_o_fat.worksheet(ABA_ORIGEM_FAT)
+            h_o_fat, df_o_fat = get_headers_and_df_raw(ws_o_fat)
+            if not df_o_fat.empty:
+                df_o_fat = tratar_numericos(df_o_fat, h_o_fat)
 
-    show_accumulated_table()
-
-    # Roda auditoria nas selecionadas
-    if run:
-        # Recalcula selected_ids in case of multiselect
-        if len(df_table) > MAX_CHECKBOX_ROWS:
-            # already built selected_ids from multiselect
-            pass
-        else:
-            # rebuild from session_state checkboxes
-            selected_ids = [r["Planilha_id"] for _, r in df_table.iterrows() if st.session_state.get(f"au_chk_{r['Planilha_id']}", False)]
-
-        if not selected_ids:
-            st.warning("Nenhuma planilha selecionada para auditar.")
-        else:
-            # intervalo
-            if mes_sel == "Todos":
-                d_ini, d_fim = date(ano_sel, 1, 1), date(ano_sel, 12, 31)
+            c_dt_o_fat = detect_date_col(h_o_fat) or (h_o_fat[0] if h_o_fat else None)
+            if c_dt_o_fat and not df_o_fat.empty:
+                df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o_fat], dayfirst=True, errors="coerce")
+                parsed_pct = df_o_fat["_dt"].notna().mean()
+                if parsed_pct == 0:
+                    df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o_fat], dayfirst=False, errors="coerce")
+                df_o_fat["_dt"] = df_o_fat["_dt"].dt.date
+                df_o_fat_p = df_o_fat[(df_o_fat["_dt"] >= d_ini) & (df_o_fat["_dt"] <= d_fim)].copy()
             else:
-                d_ini = date(ano_sel, int(mes_sel), 1)
-                d_fim = (date(ano_sel, int(mes_sel), 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+                df_o_fat_p = df_o_fat.copy()
 
-            # Carregar origem de faturamento (uma vez)
-            try:
-                sh_o_fat = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT)
-                ws_o_fat = sh_o_fat.worksheet(ABA_ORIGEM_FAT)
-                h_o_fat, df_o_fat = get_headers_and_df_raw(ws_o_fat)
-                if not df_o_fat.empty:
-                    df_o_fat = tratar_numericos(df_o_fat, h_o_fat)
+            return h_o_fat, df_o_fat_p
+        except Exception as e:
+            st.error(f"Erro ao carregar origem de faturamento: {e}")
+            return None, None
 
-                c_dt_o_fat = detect_date_col(h_o_fat) or (h_o_fat[0] if h_o_fat else None)
-                if c_dt_o_fat and not df_o_fat.empty:
-                    df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o_fat], dayfirst=True, errors="coerce")
-                    parsed_pct = df_o_fat["_dt"].notna().mean()
-                    if parsed_pct == 0:
-                        df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o_fat], dayfirst=False, errors="coerce")
-                    df_o_fat["_dt"] = df_o_fat["_dt"].dt.date
-                    df_o_fat_p = df_o_fat[(df_o_fat["_dt"] >= d_ini) & (df_o_fat["_dt"] <= d_fim)].copy()
-                else:
-                    df_o_fat_p = df_o_fat.copy()
-            except Exception as e:
-                st.error(f"Erro ao carregar origem de faturamento: {e}")
-                st.stop()
+    # ---------- Preparar intervalo de datas ----------
+    if mes_sel == "Todos":
+        d_ini, d_fim = date(ano_sel, 1, 1), date(ano_sel, 12, 31)
+    else:
+        d_ini = date(ano_sel, int(mes_sel), 1)
+        d_fim = (date(ano_sel, int(mes_sel), 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
 
-            planilhas_map = {r["Planilha_id"]: r["Planilha"] for _, r in df_table.iterrows()}
-            total = len(selected_ids)
+    # Se não há seleção, não roda nada
+    if not selecionadas:
+        st.info("Selecione uma ou mais planilhas acima para começar a auditoria.")
+    else:
+        # Função principal que processa uma lista de planilha names (ou ids)
+        def processar_planilhas(lista_names, max_process=None):
+            # carrega origem apenas uma vez
+            h_o_fat, df_o_fat_p = carregar_origem_faturamento(d_ini, d_fim)
+            if h_o_fat is None:
+                return
+
+            # mapa name -> id
+            name_to_id = {r["Planilha"]: r["Planilha_id"] for _, r in st.session_state.au_planilhas_df.iterrows()}
+
+            # escolher quais processar (respeitar max_process se informado)
+            to_process = lista_names[:max_process] if max_process else lista_names
+
+            total = len(to_process)
             prog = st.progress(0)
-            log_lines = []
+            logs = []
 
-            for idx, sid in enumerate(selected_ids):
-                pname = planilhas_map.get(sid, "Desconhecido")
+            for i, pname in enumerate(to_process):
+                sid = name_to_id.get(pname)
+                if not sid:
+                    logs.append(f"{pname}: ID não encontrado, pulando.")
+                    prog.progress((i + 1) / total)
+                    continue
+
+                # se já auditado e reprocessar==False, pular
+                if not reprocessar and sid in st.session_state.au_resultados:
+                    logs.append(f"{pname}: já auditado (mantendo resultado).")
+                    prog.progress((i + 1) / total)
+                    continue
+
+                # inicializa valores
                 v_o = v_d = v_mp_d = 0.0
                 status = "Erro desconhecido"
 
-                # abrir planilha
+                # abrir planilha destino
                 try:
                     sh_d = gc.open_by_key(sid)
                 except Exception as e:
                     status = f"Erro ao abrir planilha ({e})"
-                    log_lines.append(f"{pname}: {status}")
-                    # salvar resultado parcial
+                    logs.append(f"{pname}: {status}")
                     st.session_state.au_resultados[sid] = {
                         "Planilha": pname, "Origem": 0.0, "DRE": 0.0, "MP DRE": 0.0,
                         "Dif": 0.0, "Dif MP": 0.0, "Status": status
                     }
-                    prog.progress((idx + 1) / total)
+                    # atualiza tabela
+                    mask = st.session_state.au_planilhas_df["Planilha_id"] == sid
+                    if mask.any():
+                        st.session_state.au_planilhas_df.loc[mask, ["Origem","DRE","MP DRE","Dif","Dif MP","Status"]] = ["0","0","0","0","0", status]
+                    prog.progress((i + 1) / total)
                     continue
 
-                # ler códigos
-                b2, b3 = read_codes_from_config_sheet(sh_d)
+                # ler códigos B2/B3 da aba de config
+                try:
+                    b2, b3 = read_codes_from_config_sheet(sh_d)
+                except Exception:
+                    b2, b3 = None, None
+
                 if not b2:
                     status = "Sem B2 (Config)"
-                    log_lines.append(f"{pname}: {status}")
+                    logs.append(f"{pname}: {status}")
                     st.session_state.au_resultados[sid] = {
                         "Planilha": pname, "Origem": 0.0, "DRE": 0.0, "MP DRE": 0.0,
                         "Dif": 0.0, "Dif MP": 0.0, "Status": status
                     }
-                    prog.progress((idx + 1) / total)
+                    mask = st.session_state.au_planilhas_df["Planilha_id"] == sid
+                    if mask.any():
+                        st.session_state.au_planilhas_df.loc[mask, ["Origem","DRE","MP DRE","Dif","Dif MP","Status"]] = ["0","0","0","0","0", status]
+                    prog.progress((i + 1) / total)
                     continue
 
-                # FATURAMENTO ORIGEM
+                # ----- FATURAMENTO ORIGEM -----
                 try:
-                    if len(h_o_fat) > 5 and not df_o_fat_p.empty:
+                    if len(h_o_fat) > 5 and (df_o_fat_p is not None) and (not df_o_fat_p.empty):
                         col_b2_fat = h_o_fat[5]
                         df_filter = df_o_fat_p[df_o_fat_p[col_b2_fat].astype(str).str.strip() == str(b2).strip()]
                         if b3 and len(h_o_fat) > 3:
                             col_b3_fat = h_o_fat[3]
                             df_filter = df_filter[df_filter[col_b3_fat].astype(str).str.strip() == str(b3).strip()]
                         if len(h_o_fat) > 6:
-                            v_o = df_filter[h_o_fat[6]].sum() if not df_filter.empty else 0.0
+                            v_o = float(df_filter[h_o_fat[6]].sum()) if not df_filter.empty else 0.0
                 except Exception:
                     v_o = 0.0
 
-                # FATURAMENTO DESTINO
+                # ----- FATURAMENTO DESTINO (Importado_Fat) -----
                 try:
                     ws_d = sh_d.worksheet("Importado_Fat")
                     h_d, df_d = get_headers_and_df_raw(ws_d)
@@ -546,13 +567,13 @@ with tab_audit:
                         df_d_periodo = df_d.copy()
 
                     if len(h_d) > 6 and not df_d_periodo.empty:
-                        v_d = df_d_periodo[h_d[6]].sum()
+                        v_d = float(df_d_periodo[h_d[6]].sum())
                     else:
                         v_d = 0.0
                 except Exception:
                     v_d = 0.0
 
-                # MEIO DE PAGAMENTO
+                # ----- MEIO DE PAGAMENTO DESTINO -----
                 try:
                     ws_mp_d = sh_d.worksheet("Meio de Pagamento")
                     h_mp_d, df_mp_d = get_headers_and_df_raw(ws_mp_d)
@@ -586,7 +607,7 @@ with tab_audit:
                         df_mp_dest_f = df_mp_periodo[mask]
 
                         if not df_mp_dest_f.empty:
-                            v_mp_d = df_mp_dest_f[col_val_mp].sum()
+                            v_mp_d = float(df_mp_dest_f[col_val_mp].sum())
                         else:
                             col_val_guess = detect_column_by_keywords(h_mp_d, ["valor", "soma", "total", "amount"])
                             if col_val_guess and col_val_guess in df_mp_periodo.columns:
@@ -598,23 +619,29 @@ with tab_audit:
                                 if b3 and col_b3_guess:
                                     df_guess = df_guess[df_guess[col_b3_guess].astype(str).str.strip() == str(b3).strip()]
                                 if not df_guess.empty:
-                                    v_mp_d = df_guess[col_val_guess].sum()
+                                    v_mp_d = float(df_guess[col_val_guess].sum())
                     else:
                         v_mp_d = 0.0
                 except Exception:
                     v_mp_d = 0.0
 
+                # Diferenças e status
                 diff = v_o - v_d
                 diff_mp = v_d - v_mp_d
                 status = "✅ OK" if (abs(diff) < 0.01 and abs(diff_mp) < 0.01) else "❌ Erro"
 
                 # salvar resultado acumulado
                 st.session_state.au_resultados[sid] = {
-                    "Planilha": pname, "Origem": v_o, "DRE": v_d, "MP DRE": v_mp_d,
-                    "Dif": diff, "Dif MP": diff_mp, "Status": status
+                    "Planilha": pname,
+                    "Origem": v_o,
+                    "DRE": v_d,
+                    "MP DRE": v_mp_d,
+                    "Dif": diff,
+                    "Dif MP": diff_mp,
+                    "Status": status
                 }
 
-                # atualizar tabela em session_state (formatar com format_brl)
+                # atualizar tabela em session_state (formatando)
                 mask = st.session_state.au_planilhas_df["Planilha_id"] == sid
                 if mask.any():
                     st.session_state.au_planilhas_df.loc[mask, "Origem"] = format_brl(v_o)
@@ -623,24 +650,50 @@ with tab_audit:
                     st.session_state.au_planilhas_df.loc[mask, "Dif"] = format_brl(diff)
                     st.session_state.au_planilhas_df.loc[mask, "Dif MP"] = format_brl(diff_mp)
                     st.session_state.au_planilhas_df.loc[mask, "Status"] = status
-                    st.session_state.au_planilhas_df.loc[mask, "Auditar"] = False  # desmarcar
 
-                log_lines.append(f"{pname}: {status if status != '✅ OK' else 'OK'}")
-                prog.progress((idx + 1) / total)
+                logs.append(f"{pname}: {status if status != '✅ OK' else 'OK'}")
+                prog.progress((i + 1) / total)
 
-            # mostrar resultados e logs ao final do lote
-            resultados_list = list(st.session_state.au_resultados.values())
-            if resultados_list:
-                df_res = pd.DataFrame(resultados_list)
-                for c in ["Origem", "DRE", "MP DRE", "Dif", "Dif MP"]:
-                    if c in df_res.columns:
-                        df_res[c] = df_res[c].apply(format_brl)
-                st.markdown("### Resultados acumulados")
-                st.table(df_res)
+            # fim loop
+            return logs
 
-            st.markdown("---")
-            st.subheader("Relatório de Processamento")
-            st.text("\n".join(log_lines) if log_lines else "Sem mensagens de processamento.")
-            st.success("Auditoria concluída.")
+        # ---------- Ações dos botões ----------
+        if run_all:
+            logs = processar_planilhas(selecionadas, max_process=None)
+            if logs:
+                st.markdown("**Log de processamento**")
+                st.text("\n".join(logs))
+            st.success("Auditoria (seleção) concluída.")
+            # forçar atualização da tabela exibida
+            st.experimental_rerun()
 
-    # fim da aba
+        if run_batch:
+            # determinar quais da seleção ainda não foram processadas (ou reprocessar se escolhido)
+            remaining = []
+            name_to_id = {r["Planilha"]: r["Planilha_id"] for _, r in st.session_state.au_planilhas_df.iterrows()}
+            for nm in selecionadas:
+                sid = name_to_id.get(nm)
+                if not sid:
+                    continue
+                if reprocessar:
+                    remaining.append(nm)
+                else:
+                    if sid not in st.session_state.au_resultados:
+                        remaining.append(nm)
+            if not remaining:
+                st.info("Nenhuma planilha pendente na seleção (ou todas já auditadas). Use 'Permitir reprocessar' para forçar re-auditoria.")
+            else:
+                batch = remaining[:batch_size]
+                logs = processar_planilhas(batch, max_process=None)
+                if logs:
+                    st.markdown("**Log de processamento (lote)**")
+                    st.text("\n".join(logs))
+                st.success(f"Lote de {len(batch)} planilhas processado.")
+                # não reiniciar a página automaticamente para preservar seleção; o usuário pode clicar novamente para próximo lote
+
+    # ---------- Ao final, mostrar tabela atualizada ----------
+    st.markdown("---")
+    st.markdown("### Tabela atualizada")
+    st.dataframe(st.session_state.au_planilhas_df[["Planilha", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]], height=300)
+    st.caption("Dica: use o slider de batch para processar poucos arquivos por vez e evitar timeout da API.")
+# ---------- fim da aba ----------

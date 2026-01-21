@@ -319,12 +319,14 @@ from st_aggrid.shared import JsCode
 import pandas as pd
 from datetime import date, timedelta
 
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+from st_aggrid.shared import JsCode
+import pandas as pd
+from datetime import date, timedelta
+
 with tab_audit:
     st.header("Auditoria")
 
-    # -----------------------
-    # Aux: formatador R$
-    # -----------------------
     def format_brl(v):
         try:
             v = float(v)
@@ -334,9 +336,6 @@ with tab_audit:
         s = s.replace(",", "X").replace(".", ",").replace("X", ".")
         return f"R$ {s}"
 
-    # -----------------------
-    # Pequenos helpers
-    # -----------------------
     def detect_column_by_keywords(headers, keywords_list):
         for kw in keywords_list:
             for h in headers:
@@ -358,9 +357,6 @@ with tab_audit:
         s = str(x).strip().lower()
         return s in ("true", "t", "1", "yes", "y", "sim", "s")
 
-    # -----------------------
-    # Seleção pastas / subpastas
-    # -----------------------
     try:
         pastas_fech = list_child_folders(drive_service, PASTA_PRINCIPAL_ID, "fechamento")
         if not pastas_fech:
@@ -376,9 +372,6 @@ with tab_audit:
         st.error(f"Erro ao listar pastas/subpastas: {e}")
         st.stop()
 
-    # -----------------------
-    # Filtros de período
-    # -----------------------
     c1, c2 = st.columns(2)
     with c1:
         ano_sel = st.selectbox("Ano:", list(range(2020, date.today().year + 1)),
@@ -386,9 +379,6 @@ with tab_audit:
     with c2:
         mes_sel = st.selectbox("Mês (Opcional):", ["Todos"] + list(range(1, 13)), key="au_mes")
 
-    # -----------------------
-    # Carregar planilhas (recarrega se subpastas mudarem)
-    # -----------------------
     need_reload = ("au_last_subpastas" not in st.session_state) or (st.session_state.get("au_last_subpastas") != s_ids_audit)
     if need_reload:
         try:
@@ -418,20 +408,12 @@ with tab_audit:
         st.info("Nenhuma planilha encontrada nas subpastas selecionadas.")
         st.stop()
 
-    # -----------------------
-    # Preparar display_df (evitar KeyError; garantir Planilha e Flag)
-    # -----------------------
     expected_cols = ["Planilha", "Flag", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]
-    # Garantir existência das colunas no df_table
     for c in expected_cols:
         if c not in df_table.columns:
             df_table[c] = False if c == "Flag" else ""
     display_df = df_table[expected_cols].copy()
 
-    # -----------------------
-    # Configurar AgGrid: Flag logo após Planilha e estilo de linha verde quando marcada
-    # -----------------------
-    # JS para pintar toda linha verde quando Flag == true
     row_style_js = JsCode("""
     function(params) {
         if (params.data && (params.data.Flag === true || params.data.Flag === 'true')) {
@@ -441,7 +423,6 @@ with tab_audit:
     """)
 
     gb = GridOptionsBuilder.from_dataframe(display_df)
-    # Definir ordem: Planilha, Flag, ...
     gb.configure_column("Planilha", headerName="Planilha", editable=False, width=380)
     gb.configure_column("Flag",
                         headerName="",
@@ -449,12 +430,9 @@ with tab_audit:
                         cellEditor='agCheckboxCellEditor',
                         cellRenderer='agCheckboxCellRenderer',
                         width=80)
-    # restante colunas não-editáveis
     for col in ["Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]:
         if col in display_df.columns:
             gb.configure_column(col, editable=False)
-
-    # aplicar row style
     grid_options = gb.build()
     grid_options['getRowStyle'] = row_style_js
 
@@ -469,26 +447,19 @@ with tab_audit:
         fit_columns_on_grid_load=True,
     )
 
-    # -----------------------
-    # Reanexar Planilha_id e normalizar Flag (evitar KeyError)
-    # -----------------------
     df_updated = pd.DataFrame(grid_response['data'])
-
     if "Planilha" not in df_updated.columns:
         st.error("Erro inesperado: coluna 'Planilha' ausente do AgGrid response.")
         st.stop()
 
-    # Reanexar Planilha_id via map (nome -> id) partindo do session_state anterior
     id_map = {r["Planilha"]: r["Planilha_id"] for _, r in st.session_state.au_planilhas_df.iterrows()}
     df_updated["Planilha_id"] = df_updated["Planilha"].map(id_map)
 
-    # Normalizar Flag
     if "Flag" in df_updated.columns:
         df_updated["Flag"] = df_updated["Flag"].apply(to_bool_like)
     else:
         df_updated["Flag"] = False
 
-    # Garantir colunas esperadas + ordem
     for c in expected_cols + ["Planilha_id"]:
         if c not in df_updated.columns:
             df_updated[c] = False if c == "Flag" else ""
@@ -496,12 +467,8 @@ with tab_audit:
     final_cols = ["Planilha", "Flag", "Planilha_id", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]
     df_updated = df_updated[final_cols]
 
-    # Salvar de volta ao session_state
     st.session_state.au_planilhas_df = df_updated.copy()
 
-    # -----------------------
-    # Ações: executar e limpar flags
-    # -----------------------
     c_run, c_clear = st.columns([1, 1])
     run = c_run.button("📊 EXECUTAR AUDITORIA (somente marcadas)")
     clear = c_clear.button("🔁 Desmarcar todas")
@@ -510,9 +477,6 @@ with tab_audit:
         st.session_state.au_planilhas_df["Flag"] = False
         st.experimental_rerun()
 
-    # -----------------------
-    # Função: carregar origem de faturamento (uma vez para o período)
-    # -----------------------
     def carregar_origem_faturamento(d_ini, d_fim):
         try:
             sh_o_fat = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT)
@@ -537,18 +501,12 @@ with tab_audit:
             st.error(f"Erro ao carregar origem de faturamento: {e}")
             return None, None
 
-    # -----------------------
-    # Preparar intervalo de datas
-    # -----------------------
     if mes_sel == "Todos":
         d_ini, d_fim = date(ano_sel, 1, 1), date(ano_sel, 12, 31)
     else:
         d_ini = date(ano_sel, int(mes_sel), 1)
         d_fim = (date(ano_sel, int(mes_sel), 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
 
-    # -----------------------
-    # Execução da auditoria (apenas marcar)
-    # -----------------------
     if run:
         selecionadas = st.session_state.au_planilhas_df[st.session_state.au_planilhas_df["Flag"] == True]
         if selecionadas.empty:
@@ -568,7 +526,6 @@ with tab_audit:
                 v_o = v_d = v_mp_d = 0.0
                 status = "Erro desconhecido"
 
-                # abrir planilha destino
                 try:
                     sh_d = gc.open_by_key(sid)
                 except Exception as e:
@@ -581,7 +538,6 @@ with tab_audit:
                     prog.progress((i + 1) / total)
                     continue
 
-                # ler códigos B2/B3
                 try:
                     b2, b3 = read_codes_from_config_sheet(sh_d)
                 except Exception:
@@ -597,7 +553,6 @@ with tab_audit:
                     prog.progress((i + 1) / total)
                     continue
 
-                # ----- FATURAMENTO ORIGEM -----
                 try:
                     if h_o_fat and len(h_o_fat) > 5 and (df_o_fat_p is not None) and (not df_o_fat_p.empty):
                         col_b2_fat = h_o_fat[5]
@@ -610,7 +565,6 @@ with tab_audit:
                 except Exception:
                     v_o = 0.0
 
-                # ----- FATURAMENTO DESTINO (Importado_Fat) -----
                 try:
                     ws_d = sh_d.worksheet("Importado_Fat")
                     h_d, df_d = get_headers_and_df_raw(ws_d)
@@ -634,7 +588,6 @@ with tab_audit:
                 except Exception:
                     v_d = 0.0
 
-                # ----- MEIO DE PAGAMENTO -----
                 try:
                     ws_mp_d = sh_d.worksheet("Meio de Pagamento")
                     h_mp_d, df_mp_d = get_headers_and_df_raw(ws_mp_d)
@@ -686,14 +639,10 @@ with tab_audit:
                 except Exception:
                     v_mp_d = 0.0
 
-                # -----------------------
-                # Diferenças e status
-                # -----------------------
                 diff = v_o - v_d
                 diff_mp = v_d - v_mp_d
                 status = "✅ OK" if (abs(diff) < 0.01 and abs(diff_mp) < 0.01) else "❌ Erro"
 
-                # Salvar resultado acumulado
                 st.session_state.au_resultados[sid] = {
                     "Planilha": pname,
                     "Origem": v_o,
@@ -704,7 +653,6 @@ with tab_audit:
                     "Status": status
                 }
 
-                # Atualizar tabela em session_state (formatando e opcionalmente desmarcando)
                 mask = st.session_state.au_planilhas_df["Planilha_id"] == sid
                 if mask.any():
                     st.session_state.au_planilhas_df.loc[mask, "Origem"] = format_brl(v_o)
@@ -713,22 +661,12 @@ with tab_audit:
                     st.session_state.au_planilhas_df.loc[mask, "Dif"] = format_brl(diff)
                     st.session_state.au_planilhas_df.loc[mask, "Dif MP"] = format_brl(diff_mp)
                     st.session_state.au_planilhas_df.loc[mask, "Status"] = status
-                    # opcional: desmarcar flag após processar
                     st.session_state.au_planilhas_df.loc[mask, "Flag"] = False
 
                 logs.append(f"{pname}: {status if status != '✅ OK' else 'OK'}")
                 prog.progress((i + 1) / total)
 
-            # Mostrar logs e atualizar UI
             st.markdown("### Log de processamento")
             st.text("\n".join(logs))
             st.success("Auditoria concluída.")
             st.experimental_rerun()
-
-    # -----------------------
-    # Mostrar tabela final atualizada
-    # -----------------------
-    st.markdown("---")
-    st.markdown("### Tabela atualizada (acumulada)")
-    st.dataframe(st.session_state.au_planilhas_df[["Planilha", "Flag", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]], height=300)
-    st.caption("Use a coluna 'Flag' (à direita do nome) para marcar o que deseja auditar e clique em 'EXECUTAR AUDITORIA'.")

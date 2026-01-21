@@ -312,7 +312,6 @@ with tab_atual:
                     prog.progress((i+1)/total)
                 
                 st.success("Concluido!")
-
 with tab_audit:
     st.header("Auditoria")
 

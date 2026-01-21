@@ -154,10 +154,10 @@ if "sheet_codes" not in st.session_state:
     st.session_state["sheet_codes"] = {}
 
 # ---------------- TABS ----------------
-tab_atual,tab_audit = st.tabs(["Atualização","Auditoria"])
+tab_atual, tab_audit = st.tabs(["Atualização", "Auditoria"])
 
 with tab_atual:
-    with tab_atual:
+   
     # Filtros dentro da aba Atualização
     col_d1, col_d2 = st.columns(2)
     with col_d1:

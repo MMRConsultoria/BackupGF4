@@ -185,7 +185,28 @@ with tab_atual:
             if st.button("🚀 INICIAR ATUALIZAÇÃO", use_container_width=True):
                 df_final_edit = pd.concat([edit_esq, edit_dir], ignore_index=True)
                 df_marcadas = df_final_edit[(df_final_edit["Desconto"]) | (df_final_edit["Meio Pagamento"]) | (df_final_edit["Faturamento"])].copy()
-                if df_marcadas.empty: st.warning("Nada marcado."); st.stop()
+                if df_marcadas.empty:
+                    st.warning("Nada marcado.")
+                    st.stop()
+            
+                status_placeholder = st.empty()  # placeholder para status
+                status_placeholder.info("Executando atualização, por favor aguarde...")
+            
+                logs = []
+                prog = st.progress(0)
+                log_placeholder = st.empty()
+            
+                total = len(df_marcadas)
+                for i, (_, row) in enumerate(df_marcadas.iterrows()):
+                    try:
+                        # ... seu código de atualização ...
+                        logs.append(f"{row['Planilha']}: Sucesso.")
+                    except Exception as e:
+                        logs.append(f"{row['Planilha']}: Erro {e}")
+                    prog.progress((i+1)/total)
+                    log_placeholder.text("\n".join(logs))
+            
+                status_placeholder.success("Atualização concluída!")
                 
                 # Carregar Origem Faturamento
                 try:

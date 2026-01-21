@@ -1,6 +1,4 @@
-# Código atualizado com as seguintes modificações:
-# 1. Ajustado o tratamento das colunas G, H, I e J para valores monetários em R$
-# 2. Alterado a seleção de subpastas para iniciar em branco, permitindo que o usuário escolha
+Tenho esse código, preciso de algumas alterações. 1 - as colunas valores G, H, I e J estão vindo como texto, o correto é valores em R$ , o melhor seria não alterar nenhuma configuração da planilha original. Onde vem subpastas, quero deixar sempre em branco, o usuário que escolhe qual pasta quer colocar
 
 import streamlit as st
 import pandas as pd
@@ -38,7 +36,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("Atualizar DRE")
+st.title("Atualizador DRE")
 
 # ---------------- AUTENTICAÇÃO ----------------
 @st.cache_resource
@@ -145,9 +143,13 @@ try:
     p_sel = st.selectbox("Pasta principal:", options=list(map_p.keys()))
     subpastas = list_child_folders(drive_service, map_p[p_sel])
     map_s = {s["name"]: s["id"] for s in subpastas}
-    s_sel = st.multiselect("Subpastas:", options=list(map_s.keys()), default=list(map_s.keys())[:1])
+    s_sel = st.multiselect("Subpastas:", options=list(map_s.keys()), default=[])
     s_ids = [map_s[n] for n in s_sel]
 except: st.stop()
+
+if not s_ids:
+    st.info("Selecione uma ou mais subpastas para listar as planilhas.")
+    st.stop()
 
 if s_ids:
     with st.spinner("Buscando planilhas..."):
@@ -197,8 +199,12 @@ if s_ids:
                     
                     col_data_orig = detect_date_col(headers_orig)
                     df_orig_temp = df_orig.copy()
-                    df_orig_temp['_dt'] = pd.to_datetime(df_orig_temp[col_data_orig], errors='coerce', dayfirst=True)
-                    df_orig_filtrado = df_orig.loc[(df_orig_temp['_dt'] >= pd.to_datetime(data_de)) & (df_orig_temp['_dt'] <= pd.to_datetime(data_ate))]
+                    # Garante que a coluna de data seja convertida corretamente para comparação
+                    df_orig_temp['_dt'] = pd.to_datetime(df_orig_temp[col_data_orig], dayfirst=True, errors='coerce').dt.date
+                    
+                    # Filtro de data usando .date() para comparar com st.date_input
+                    mask_orig = (df_orig_temp['_dt'] >= data_de) & (df_orig_temp['_dt'] <= data_ate)
+                    df_orig_filtrado = df_orig.loc[mask_orig].copy()
                 except Exception as e:
                     st.error(f"Erro na origem: {e}"); st.stop()
 

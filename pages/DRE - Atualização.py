@@ -38,7 +38,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("Atualizador DRE")
+st.title("Atualizar DRE")
 
 # ---------------- AUTENTICAÇÃO ----------------
 @st.cache_resource

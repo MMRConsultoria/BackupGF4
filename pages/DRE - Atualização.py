@@ -207,31 +207,44 @@ with tab_atual:
                     df_orig_mp_f = df_orig_mp[(df_orig_mp['_dt'] >= data_de) & (df_orig_mp['_dt'] <= data_ate)].copy()
                 except Exception as e: st.error(f"Erro origem MP: {e}"); st.stop()
 
-                prog = st.progress(0); logs = []; total = len(df_marcadas)
+                prog = st.progress(0)
+                logs = []
+                log_placeholder = st.empty()  # placeholder para logs
+                
+                total = len(df_marcadas)
                 for i, (_, row) in enumerate(df_marcadas.iterrows()):
                     try:
                         sid = row["ID_Planilha"]
                         sh_dest = gc.open_by_key(sid)
                         b2, b3 = read_codes_from_config_sheet(sh_dest)
-                        if not b2: logs.append(f"{row['Planilha']}: Sem B2."); continue
+                        if not b2:
+                            logs.append(f"{row['Planilha']}: Sem B2.")
+                            log_placeholder.text("\n".join(logs))
+                            prog.progress((i+1)/total)
+                            continue
                         
                         # --- ATUALIZAR FATURAMENTO ---
                         if row["Faturamento"]:
                             c_f, c_d = h_orig_fat[5], h_orig_fat[3]
                             df_ins = df_orig_fat_f[df_orig_fat_f[c_f].astype(str).str.strip() == b2].copy()
-                            if b3: df_ins = df_ins[df_ins[c_d].astype(str).str.strip() == b3]
+                            if b3:
+                                df_ins = df_ins[df_ins[c_d].astype(str).str.strip() == b3]
                             
                             if not df_ins.empty:
-                                try: ws_dest = sh_dest.worksheet("Importado_Fat")
-                                except: ws_dest = sh_dest.add_worksheet("Importado_Fat", 1000, 30)
+                                try:
+                                    ws_dest = sh_dest.worksheet("Importado_Fat")
+                                except:
+                                    ws_dest = sh_dest.add_worksheet("Importado_Fat", 1000, 30)
                                 
                                 h_dest, df_dest = get_headers_and_df_raw(ws_dest)
-                                if df_dest.empty: df_f_ws, h_f = df_ins, h_orig_fat
+                                if df_dest.empty:
+                                    df_f_ws, h_f = df_ins, h_orig_fat
                                 else:
                                     c_dt_d = detect_date_col(h_dest) or c_dt_fat
                                     df_dest['_dt'] = pd.to_datetime(df_dest[c_dt_d], dayfirst=True, errors='coerce').dt.date
                                     rem = (df_dest['_dt'] >= data_de) & (df_dest['_dt'] <= data_ate)
-                                    if c_f in df_dest.columns: rem &= (df_dest[c_f].astype(str).str.strip() == b2)
+                                    if c_f in df_dest.columns:
+                                        rem &= (df_dest[c_f].astype(str).str.strip() == b2)
                                     df_f_ws = pd.concat([df_dest.loc[~rem], df_ins], ignore_index=True)
                                     h_f = h_dest if h_dest else h_orig_fat
                                 
@@ -239,25 +252,30 @@ with tab_atual:
                                 ws_dest.clear()
                                 ws_dest.update("A1", [h_f] + send.values.tolist(), value_input_option='USER_ENTERED')
                                 logs.append(f"{row['Planilha']}: Fat OK.")
-
+                                log_placeholder.text("\n".join(logs))
+                
                         # --- ATUALIZAR MEIO DE PAGAMENTO ---
                         if row["Meio Pagamento"]:
-                            # B2 na coluna I (index 8), B3 na coluna G (index 6)
                             c_f_mp, c_d_mp = h_orig_mp[8], h_orig_mp[6]
                             df_ins_mp = df_orig_mp_f[df_orig_mp_f[c_f_mp].astype(str).str.strip() == b2].copy()
-                            if b3: df_ins_mp = df_ins_mp[df_ins_mp[c_d_mp].astype(str).str.strip() == b3]
+                            if b3:
+                                df_ins_mp = df_ins_mp[df_ins_mp[c_d_mp].astype(str).str.strip() == b3]
                             
                             if not df_ins_mp.empty:
-                                try: ws_dest_mp = sh_dest.worksheet("Meio de Pagamento")
-                                except: ws_dest_mp = sh_dest.add_worksheet("Meio de Pagamento", 1000, 30)
+                                try:
+                                    ws_dest_mp = sh_dest.worksheet("Meio de Pagamento")
+                                except:
+                                    ws_dest_mp = sh_dest.add_worksheet("Meio de Pagamento", 1000, 30)
                                 
                                 h_dest_mp, df_dest_mp = get_headers_and_df_raw(ws_dest_mp)
-                                if df_dest_mp.empty: df_f_mp, h_f_mp = df_ins_mp, h_orig_mp
+                                if df_dest_mp.empty:
+                                    df_f_mp, h_f_mp = df_ins_mp, h_orig_mp
                                 else:
                                     c_dt_d_mp = detect_date_col(h_dest_mp) or c_dt_mp
                                     df_dest_mp['_dt'] = pd.to_datetime(df_dest_mp[c_dt_d_mp], dayfirst=True, errors='coerce').dt.date
                                     rem_mp = (df_dest_mp['_dt'] >= data_de) & (df_dest_mp['_dt'] <= data_ate)
-                                    if c_f_mp in df_dest_mp.columns: rem_mp &= (df_dest_mp[c_f_mp].astype(str).str.strip() == b2)
+                                    if c_f_mp in df_dest_mp.columns:
+                                        rem_mp &= (df_dest_mp[c_f_mp].astype(str).str.strip() == b2)
                                     df_f_mp = pd.concat([df_dest_mp.loc[~rem_mp], df_ins_mp], ignore_index=True)
                                     h_f_mp = h_dest_mp if h_dest_mp else h_orig_mp
                                 
@@ -265,10 +283,14 @@ with tab_atual:
                                 ws_dest_mp.clear()
                                 ws_dest_mp.update("A1", [h_f_mp] + send_mp.values.tolist(), value_input_option='USER_ENTERED')
                                 logs.append(f"{row['Planilha']}: MP OK.")
-
-                    except Exception as e: logs.append(f"{row['Planilha']}: Erro {e}")
+                                log_placeholder.text("\n".join(logs))
+                
+                    except Exception as e:
+                        logs.append(f"{row['Planilha']}: Erro {e}")
+                        log_placeholder.text("\n".join(logs))
                     prog.progress((i+1)/total)
-                st.success("Fim!"); st.write("\n".join(logs))
+                
+                st.success("Concluido!")
 
 with tab_audit:
     st.header("Auditoria")

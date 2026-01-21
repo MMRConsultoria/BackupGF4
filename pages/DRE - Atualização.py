@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import json
-import time
 import re
 from datetime import datetime, timedelta, date
 from oauth2client.service_account import ServiceAccountCredentials
@@ -21,7 +20,7 @@ ABA_ORIGEM = "Fat Sistema Externo"
 
 st.set_page_config(page_title="Atualizador DRE", layout="wide")
 
-# --- CSS AJUSTADO PARA NÃO CORTAR LETRAS ---
+# --- CSS ---
 st.markdown(
     """
     <style>
@@ -117,7 +116,7 @@ def _parse_currency_like(s):
         neg = True
         s = s[1:-1].strip()
     s = s.replace("R$", "").replace("r$", "").replace(" ", "")
-    s = re.sub(r"[^0-9,.\-]", "", s)
+    s = re.sub(r"[^0-9,.-]", "", s)
     if s == "" or s == "-" or s == ".": return None
     if s.count(".") > 0 and s.count(",") > 0:
         s = s.replace(".", "").replace(",", ".")
@@ -144,7 +143,7 @@ def tratar_numericos(df, headers):
                 if p is not None: new_col.append(p)
                 else:
                     o_str = "" if pd.isna(o) else str(o).strip()
-                    new_col.append("" if o_str in ["", "-", "–"] else o_str)
+                    new_col.append("")
             df[col_name] = new_col
     return df
 
@@ -185,7 +184,7 @@ with tab_atual:
         else:
             df_list = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
             df_list = df_list.rename(columns={"name": "Planilha", "id": "ID_Planilha"})
-            
+
             st.markdown('<div class="global-selection-container">', unsafe_allow_html=True)
             c1, c2, c3, _ = st.columns([1.2, 1.2, 1.2, 5])
             with c1: s_desc = st.checkbox("Desconto", value=True, key="chk_desc")
@@ -287,7 +286,7 @@ with tab_verif:
         if planilhas:
             df_list_ver = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
             df_list_ver = df_list_ver.rename(columns={"name": "Planilha", "id": "ID_Planilha"})
-            
+
             data_display = []
             for _, row in df_list_ver.iterrows():
                 sid = row["ID_Planilha"]
@@ -313,3 +312,6 @@ with tab_verif:
 
 with tab_audit:
     st.markdown("Aqui você pode implementar a aba de Auditoria conforme sua necessidade.")
+```
+
+Se quiser, posso ajudar a implementar a lógica da auditoria para comparar faturamento entre origem e destino. Quer que eu faça?

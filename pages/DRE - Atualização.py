@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, date
 from oauth2client.service_account import ServiceAccountCredentials
 import gspread
 
-# Drive API
 try:
     from googleapiclient.discovery import build
 except Exception:
@@ -35,7 +34,6 @@ st.markdown(
 
 st.title("Atualizador DRE")
 
-# ---------------- AUTENTICAÇÃO ----------------
 @st.cache_resource
 def autenticar():
     scope = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
@@ -51,7 +49,6 @@ except Exception as e:
     st.error(f"Erro de autenticação: {e}")
     st.stop()
 
-# ---------------- HELPERS ----------------
 @st.cache_data(ttl=300)
 def list_child_folders(_drive, parent_id, filtro_texto=None):
     folders = []
@@ -141,20 +138,22 @@ def tratar_numericos(df, headers):
 def format_brl(val):
     return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# ---------------- UI GLOBAL ----------------
-if "sheet_codes" not in st.session_state:
-    st.session_state["sheet_codes"] = {}
-
-# ---------------- TABS ----------------
 tab_atual, tab_verif, tab_audit = st.tabs(["Atualização", "Verificar Configurações", "Auditoria"])
 
 with tab_atual:
-    col_d1, col_d2 = st.columns(2)
-    with col_d1:
-        data_de = st.date_input("De", value=date.today() - timedelta(days=30))
-    with col_d2:
-        data_ate = st.date_input("Até", value=date.today())
+    # (Aqui seu código atual da aba Atualização, com filtros e atualizações)
 
+    st.write("Aqui vai o conteúdo da aba Atualização...")
+
+with tab_verif:
+    # (Aqui seu código atual da aba Verificar Configurações)
+
+    st.write("Aqui vai o conteúdo da aba Verificar Configurações...")
+
+with tab_audit:
+    st.markdown("### Auditoria de Faturamento - Independente")
+
+    # Seleção pasta principal e subpastas
     try:
         pastas_fech = list_child_folders(drive_service, PASTA_PRINCIPAL_ID, "fechamento")
         map_p = {p["name"]: p["id"] for p in pastas_fech}
@@ -162,84 +161,27 @@ with tab_atual:
         subpastas = list_child_folders(drive_service, map_p[p_sel])
         map_s = {s["name"]: s["id"] for s in subpastas}
         s_sel = st.multiselect("Subpastas:", options=list(map_s.keys()), default=[])
-        s_ids = [map_s[n] for n in s_sel]
+        s_ids_audit = [map_s[n] for n in s_sel]
     except Exception:
         st.error("Erro ao listar pastas.")
         st.stop()
 
-    if s_ids:
-        with st.spinner("Buscando planilhas..."):
-            planilhas = list_spreadsheets_in_folders(drive_service, s_ids)
-        if planilhas:
-            df_list = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
-            df_list = df_list.rename(columns={"name": "Planilha", "id": "ID_Planilha"})
-            
-            c1, c2, c3, _ = st.columns([1.2, 1.2, 1.2, 5])
-            with c1: s_desc = st.checkbox("Desconto", value=True)
-            with c2: s_mp = st.checkbox("Meio Pagto", value=True)
-            with c3: s_fat = st.checkbox("Faturamento", value=True)
+    # Seleção ano e mês (opcional)
+    anos_disponiveis = list(range(2020, datetime.now().year + 1))
+    ano_sel = st.selectbox("Ano:", anos_disponiveis, index=anos_disponiveis.index(datetime.now().year))
+    meses_disponiveis = list(range(1, 13))
+    mes_sel = st.selectbox("Mês:", meses_disponiveis, index=datetime.now().month - 1)
 
-            df_list["Desconto"], df_list["Meio Pagamento"], df_list["Faturamento"] = s_desc, s_mp, s_fat
-            config = {
-                "Planilha": st.column_config.TextColumn("Planilha", disabled=True),
-                "ID_Planilha": None, "parent_folder_id": None,
-                "Desconto": st.column_config.CheckboxColumn("Desc."),
-                "Meio Pagamento": st.column_config.CheckboxColumn("M.Pag"),
-                "Faturamento": st.column_config.CheckboxColumn("Fat."),
-            }
-            meio = len(df_list) // 2 + (len(df_list) % 2)
-            col_t1, col_t2 = st.columns(2)
-            with col_t1: edit_esq = st.data_editor(df_list.iloc[:meio], key="t1", use_container_width=True, column_config=config, hide_index=True)
-            with col_t2: edit_dir = st.data_editor(df_list.iloc[meio:], key="t2", use_container_width=True, column_config=config, hide_index=True)
-
-            if st.button("🚀 INICIAR ATUALIZAÇÃO", use_container_width=True):
-                st.info("Implementar lógica de atualização aqui.")
-
-with tab_verif:
-    st.markdown("Verifique a presença da aba de configuração e os códigos B2/B3.")
-    if not s_ids:
-        st.info("Selecione as subpastas primeiro.")
-    else:
-        with st.spinner("Listando..."):
-            planilhas = list_spreadsheets_in_folders(drive_service, s_ids)
-        if planilhas:
-            df_list_ver = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
-            df_list_ver = df_list_ver.rename(columns={"name": "Planilha", "id": "ID_Planilha"})
-            
-            data_display = []
-            for _, row in df_list_ver.iterrows():
-                sid = row["ID_Planilha"]
-                b2b3 = st.session_state["sheet_codes"].get(sid, (None, None))
-                data_display.append({
-                    "Planilha": row["Planilha"],
-                    "Config": "Sim" if b2b3[0] else "Não",
-                    "B2": b2b3[0] or "", "B3": b2b3[1] or ""
-                })
-            st.dataframe(pd.DataFrame(data_display), use_container_width=True)
-
-            if st.button("🔎 Verificar configurações"):
-                prog = st.progress(0)
-                total = len(df_list_ver)
-                for i, r in df_list_ver.iterrows():
-                    try:
-                        sh = gc.open_by_key(r["ID_Planilha"])
-                        b2, b3 = read_codes_from_config_sheet(sh)
-                        st.session_state["sheet_codes"][r["ID_Planilha"]] = (b2, b3)
-                    except: pass
-                    prog.progress(min((i + 1) / total, 1.0))
-                st.experimental_rerun()
-
-
-with tab_audit:
-    st.markdown("### Auditoria de Faturamento (Acumulado desde 01/2025)")
-
-    if not st.session_state.get("s_ids"):
-        st.info("Selecione as subpastas na aba Atualização primeiro.")
+    if not s_ids_audit:
+        st.info("Selecione as subpastas para listar as planilhas.")
     else:
         if st.button("📊 Executar Auditoria"):
             try:
-                data_inicio = datetime(2025, 1, 1).date()
-                data_fim = date.today()
+                data_inicio = date(ano_sel, mes_sel, 1)
+                if mes_sel == 12:
+                    data_fim = date(ano_sel + 1, 1, 1) - timedelta(days=1)
+                else:
+                    data_fim = date(ano_sel, mes_sel + 1, 1) - timedelta(days=1)
 
                 # Ler Origem
                 sh_origem = gc.open_by_key(ID_PLANILHA_ORIGEM)
@@ -252,10 +194,10 @@ with tab_audit:
                 col_loja_orig = headers_orig[3]
 
                 df_orig['_dt'] = pd.to_datetime(df_orig[col_data_orig], dayfirst=True, errors='coerce').dt.date
-                df_orig_2025 = df_orig[(df_orig['_dt'] >= data_inicio) & (df_orig['_dt'] <= data_fim)].copy()
+                df_orig_periodo = df_orig[(df_orig['_dt'] >= data_inicio) & (df_orig['_dt'] <= data_fim)].copy()
 
                 # Listar planilhas destino
-                planilhas = list_spreadsheets_in_folders(drive_service, st.session_state["s_ids"])
+                planilhas = list_spreadsheets_in_folders(drive_service, s_ids_audit)
                 audit_results = []
                 prog = st.progress(0)
 
@@ -263,12 +205,12 @@ with tab_audit:
                     sid = p["id"]
                     p_name = p["name"]
 
-                    cached = st.session_state["sheet_codes"].get(sid)
+                    cached = st.session_state.get("sheet_codes", {}).get(sid)
                     if not cached:
                         try:
                             sh_dest = gc.open_by_key(sid)
                             b2, b3 = read_codes_from_config_sheet(sh_dest)
-                            st.session_state["sheet_codes"][sid] = (b2, b3)
+                            st.session_state.setdefault("sheet_codes", {})[sid] = (b2, b3)
                         except:
                             b2, b3 = None, None
                     else:
@@ -279,7 +221,7 @@ with tab_audit:
                         prog.progress((idx + 1) / len(planilhas))
                         continue
 
-                    df_o_f = df_orig_2025[df_orig_2025[col_grupo_orig].astype(str).str.strip() == b2]
+                    df_o_f = df_orig_periodo[df_orig_periodo[col_grupo_orig].astype(str).str.strip() == b2]
                     if b3:
                         df_o_f = df_o_f[df_o_f[col_loja_orig].astype(str).str.strip() == b3]
                     total_orig = df_o_f[col_fat_orig].sum()
@@ -293,10 +235,10 @@ with tab_audit:
                         c_dt_d = detect_date_col(h_dest)
                         c_ft_d = h_dest[6]
                         df_d['_dt'] = pd.to_datetime(df_d[c_dt_d], dayfirst=True, errors='coerce').dt.date
-                        df_d_2025 = df_d[(df_d['_dt'] >= data_inicio) & (df_d['_dt'] <= data_fim)].copy()
-                        total_dest = df_d_2025[c_ft_d].sum()
+                        df_d_periodo = df_d[(df_d['_dt'] >= data_inicio) & (df_d['_dt'] <= data_fim)].copy()
+                        total_dest = df_d_periodo[c_ft_d].sum()
                     except:
-                        df_d_2025 = pd.DataFrame()
+                        df_d_periodo = pd.DataFrame()
 
                     diff = total_orig - total_dest
                     status = "✅ OK" if abs(diff) < 0.01 else "❌ Divergente"
@@ -308,19 +250,17 @@ with tab_audit:
                         "Diferença": diff,
                         "Status": status,
                         "df_o_raw": df_o_f,
-                        "df_d_raw": df_d_2025 if 'df_d_2025' in locals() else pd.DataFrame()
+                        "df_d_raw": df_d_periodo
                     })
                     prog.progress((idx + 1) / len(planilhas))
 
                 df_main = pd.DataFrame(audit_results).drop(columns=["df_o_raw", "df_d_raw"])
 
-                # Formatar valores em R$
                 for col in ["Faturamento Origem", "Faturamento DRE", "Diferença"]:
                     df_main[col] = df_main[col].apply(format_brl)
 
                 st.dataframe(df_main, use_container_width=True, hide_index=True)
 
-                # Expanders para divergências
                 st.markdown("---")
                 st.subheader("Detalhamento de Divergências")
                 for res in audit_results:
@@ -335,7 +275,6 @@ with tab_audit:
                             df_o['Mes_Ano'] = pd.to_datetime(df_o['_dt']).dt.strftime('%Y-%m')
                             df_d['Mes_Ano'] = pd.to_datetime(df_d['_dt']).dt.strftime('%Y-%m')
 
-                            # Agrupar por mês
                             fat_orig_mes = df_o.groupby('Mes_Ano')[col_fat_orig].sum()
                             fat_dest_mes = df_d.groupby('Mes_Ano')[h_dest[6]].sum()
                             meses = sorted(set(fat_orig_mes.index) | set(fat_dest_mes.index))
@@ -355,7 +294,6 @@ with tab_audit:
                             st.write("**Resumo Mensal:**")
                             st.table(pd.DataFrame(detalhes_mes))
 
-                            # Detalhe por dia
                             mes_sel = st.selectbox(f"Selecionar mês para detalhar por dia - {res['Planilha']}", options=[d["Mês"] for d in detalhes_mes], key=f"mes_dia_{res['Planilha']}")
 
                             fat_orig_dia = df_o[df_o['Mes_Ano'] == mes_sel].groupby('_dt')[col_fat_orig].sum()

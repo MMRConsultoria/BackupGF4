@@ -313,28 +313,22 @@ with tab_atual:
                 
                 st.success("Concluido!")
 
-# ---------------- ABA: AUDITORIA ----------------
-# ---------- ABA: AUDITORIA (com seleção por multiselect e batch processing) ----------
 import pandas as pd
 from datetime import date, timedelta
 
 with tab_audit:
     st.header("Auditoria")
 
-    # ---------- Verificações básicas (helpers locais) ----------
-    # formatação R$ (fallback se não existir format_brl no escopo)
+    # --- Helpers locais ---
     def format_brl(v):
         try:
             v = float(v)
         except Exception:
             return ""
-        s = f"{v:,.2f}"  # 1,234,567.89
-        # trocar para formato BR: 1.234.567,89
+        s = f"{v:,.2f}"
         s = s.replace(",", "X").replace(".", ",").replace("X", ".")
         return f"R$ {s}"
 
-    # Helpers simples (usar seus helpers se já existirem)
-    # detect_column_by_keywords é útil para tentar localizar colunas por palavras-chave
     def detect_column_by_keywords(headers, keywords_list):
         for kw in keywords_list:
             for h in headers:
@@ -350,7 +344,7 @@ with tab_audit:
         except Exception:
             return str(val).strip()
 
-    # ---------- Seleção de Pasta / Subpastas ----------
+    # --- Seleção de pastas ---
     try:
         pastas_fech = list_child_folders(drive_service, PASTA_PRINCIPAL_ID, "fechamento")
         if not pastas_fech:
@@ -366,7 +360,7 @@ with tab_audit:
         st.error(f"Erro ao listar pastas/subpastas: {e}")
         st.stop()
 
-    # ---------- Filtros de período (independentes para auditoria) ----------
+    # --- Filtros de período ---
     c1, c2 = st.columns(2)
     with c1:
         ano_sel = st.selectbox("Ano:", list(range(2020, date.today().year + 1)),
@@ -374,12 +368,7 @@ with tab_audit:
     with c2:
         mes_sel = st.selectbox("Mês (Opcional):", ["Todos"] + list(range(1, 13)), key="au_mes")
 
-    # Batch size (para evitar timeouts) e opção de reprocessar
-    st.markdown("Configurações do lote (útil para evitar timeout da API):")
-    batch_size = st.slider("Número de planilhas por lote", 1, 30, 8, step=1, key="au_batch_size")
-    reprocessar = st.checkbox("Permitir reprocessar planilhas já auditadas (se marcado, irá atualizar resultado)", value=False)
-
-    # ---------- Carregar lista de planilhas das subpastas (recarrega se mudar subpastas) ----------
+    # --- Carregar lista de planilhas ---
     need_reload = ("au_last_subpastas" not in st.session_state) or (st.session_state.get("au_last_subpastas") != s_ids_audit)
     if need_reload:
         try:
@@ -388,7 +377,6 @@ with tab_audit:
             st.error(f"Erro ao listar planilhas nas subpastas: {e}")
             st.stop()
 
-        # Monta DF inicial
         df_init = pd.DataFrame([{
             "Planilha": p["name"],
             "Planilha_id": p["id"],
@@ -402,105 +390,73 @@ with tab_audit:
 
         st.session_state.au_last_subpastas = s_ids_audit
         st.session_state.au_planilhas_df = df_init
-        st.session_state.au_resultados = {}  # id -> result (acumulado)
+        st.session_state.au_resultados = {}
 
-    # Garantir DF no session_state
     df_table = st.session_state.au_planilhas_df.copy()
     if df_table.empty:
         st.info("Nenhuma planilha encontrada nas subpastas selecionadas.")
         st.stop()
 
-    # ---------- Mostrar tabela de resultados acumulados ----------
+    # --- Mostrar tabela de resultados ---
     st.markdown("### Resultados acumulados")
-    # Mostra apenas as colunas visíveis para o usuário
-    display_df = df_table[["Planilha", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]].copy()
-    st.dataframe(display_df, height=300)
+    st.dataframe(df_table[["Planilha", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]], height=300)
 
-    # ---------- Selecionar planilhas para auditar (multiselect) ----------
-    planilha_names = df_table["Planilha"].tolist()
-    selecionadas = st.multiselect("Selecione as planilhas para auditar (várias):", options=planilha_names, key="au_selected")
+    # --- Mostrar checkboxes para seleção ---
+    st.markdown("### Selecione as planilhas para auditar")
+    selected_ids = []
+    for idx, row in df_table.iterrows():
+        key = f"flag_audit_{row['Planilha_id']}"
+        checked = st.checkbox(row["Planilha"], key=key)
+        if checked:
+            selected_ids.append(row["Planilha_id"])
 
-    # Botões de ação
-    c_run, c_run_batch, c_clear = st.columns([1.2, 1.2, 0.8])
-    run_all = c_run.button("📊 EXECUTAR AUDITORIA (todas selecionadas)")
-    run_batch = c_run_batch.button(f"▶️ Executar próximo lote ({batch_size})")
-    clear_btn = c_clear.button("🔁 Desmarcar seleção")
-
-    if clear_btn:
-        st.session_state.au_selected = []
-        st.experimental_rerun()
-
-    # ---------- Função para carregar origem de faturamento (uma vez por execução) ----------
-    def carregar_origem_faturamento(d_ini, d_fim):
-        try:
-            sh_o_fat = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT)
-            ws_o_fat = sh_o_fat.worksheet(ABA_ORIGEM_FAT)
-            h_o_fat, df_o_fat = get_headers_and_df_raw(ws_o_fat)
-            if not df_o_fat.empty:
-                df_o_fat = tratar_numericos(df_o_fat, h_o_fat)
-
-            c_dt_o_fat = detect_date_col(h_o_fat) or (h_o_fat[0] if h_o_fat else None)
-            if c_dt_o_fat and not df_o_fat.empty:
-                df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o_fat], dayfirst=True, errors="coerce")
-                parsed_pct = df_o_fat["_dt"].notna().mean()
-                if parsed_pct == 0:
-                    df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o_fat], dayfirst=False, errors="coerce")
-                df_o_fat["_dt"] = df_o_fat["_dt"].dt.date
-                df_o_fat_p = df_o_fat[(df_o_fat["_dt"] >= d_ini) & (df_o_fat["_dt"] <= d_fim)].copy()
+    # --- Botão para executar auditoria ---
+    if st.button("Executar Auditoria nas selecionadas"):
+        if not selected_ids:
+            st.warning("Selecione pelo menos uma planilha para auditar.")
+        else:
+            # Preparar intervalo de datas
+            if mes_sel == "Todos":
+                d_ini, d_fim = date(ano_sel, 1, 1), date(ano_sel, 12, 31)
             else:
-                df_o_fat_p = df_o_fat.copy()
+                d_ini = date(ano_sel, int(mes_sel), 1)
+                d_fim = (date(ano_sel, int(mes_sel), 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
 
-            return h_o_fat, df_o_fat_p
-        except Exception as e:
-            st.error(f"Erro ao carregar origem de faturamento: {e}")
-            return None, None
+            # Carregar origem faturamento (uma vez)
+            try:
+                sh_o_fat = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT)
+                ws_o_fat = sh_o_fat.worksheet(ABA_ORIGEM_FAT)
+                h_o_fat, df_o_fat = get_headers_and_df_raw(ws_o_fat)
+                if not df_o_fat.empty:
+                    df_o_fat = tratar_numericos(df_o_fat, h_o_fat)
 
-    # ---------- Preparar intervalo de datas ----------
-    if mes_sel == "Todos":
-        d_ini, d_fim = date(ano_sel, 1, 1), date(ano_sel, 12, 31)
-    else:
-        d_ini = date(ano_sel, int(mes_sel), 1)
-        d_fim = (date(ano_sel, int(mes_sel), 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+                c_dt_o_fat = detect_date_col(h_o_fat) or (h_o_fat[0] if h_o_fat else None)
+                if c_dt_o_fat and not df_o_fat.empty:
+                    df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o_fat], dayfirst=True, errors="coerce")
+                    parsed_pct = df_o_fat["_dt"].notna().mean()
+                    if parsed_pct == 0:
+                        df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o_fat], dayfirst=False, errors="coerce")
+                    df_o_fat["_dt"] = df_o_fat["_dt"].dt.date
+                    df_o_fat_p = df_o_fat[(df_o_fat["_dt"] >= d_ini) & (df_o_fat["_dt"] <= d_fim)].copy()
+                else:
+                    df_o_fat_p = df_o_fat.copy()
+            except Exception as e:
+                st.error(f"Erro ao carregar origem de faturamento: {e}")
+                st.stop()
 
-    # Se não há seleção, não roda nada
-    if not selecionadas:
-        st.info("Selecione uma ou mais planilhas acima para começar a auditoria.")
-    else:
-        # Função principal que processa uma lista de planilha names (ou ids)
-        def processar_planilhas(lista_names, max_process=None):
-            # carrega origem apenas uma vez
-            h_o_fat, df_o_fat_p = carregar_origem_faturamento(d_ini, d_fim)
-            if h_o_fat is None:
-                return
+            name_to_id = {r["Planilha"]: r["Planilha_id"] for _, r in df_table.iterrows()}
+            id_to_name = {v: k for k, v in name_to_id.items()}
 
-            # mapa name -> id
-            name_to_id = {r["Planilha"]: r["Planilha_id"] for _, r in st.session_state.au_planilhas_df.iterrows()}
-
-            # escolher quais processar (respeitar max_process se informado)
-            to_process = lista_names[:max_process] if max_process else lista_names
-
-            total = len(to_process)
+            total = len(selected_ids)
             prog = st.progress(0)
             logs = []
 
-            for i, pname in enumerate(to_process):
-                sid = name_to_id.get(pname)
-                if not sid:
-                    logs.append(f"{pname}: ID não encontrado, pulando.")
-                    prog.progress((i + 1) / total)
-                    continue
-
-                # se já auditado e reprocessar==False, pular
-                if not reprocessar and sid in st.session_state.au_resultados:
-                    logs.append(f"{pname}: já auditado (mantendo resultado).")
-                    prog.progress((i + 1) / total)
-                    continue
-
-                # inicializa valores
+            for i, sid in enumerate(selected_ids):
+                pname = id_to_name.get(sid, "Desconhecido")
                 v_o = v_d = v_mp_d = 0.0
                 status = "Erro desconhecido"
 
-                # abrir planilha destino
+                # Abrir planilha destino
                 try:
                     sh_d = gc.open_by_key(sid)
                 except Exception as e:
@@ -510,14 +466,10 @@ with tab_audit:
                         "Planilha": pname, "Origem": 0.0, "DRE": 0.0, "MP DRE": 0.0,
                         "Dif": 0.0, "Dif MP": 0.0, "Status": status
                     }
-                    # atualiza tabela
-                    mask = st.session_state.au_planilhas_df["Planilha_id"] == sid
-                    if mask.any():
-                        st.session_state.au_planilhas_df.loc[mask, ["Origem","DRE","MP DRE","Dif","Dif MP","Status"]] = ["0","0","0","0","0", status]
                     prog.progress((i + 1) / total)
                     continue
 
-                # ler códigos B2/B3 da aba de config
+                # Ler códigos B2/B3 da config
                 try:
                     b2, b3 = read_codes_from_config_sheet(sh_d)
                 except Exception:
@@ -530,13 +482,10 @@ with tab_audit:
                         "Planilha": pname, "Origem": 0.0, "DRE": 0.0, "MP DRE": 0.0,
                         "Dif": 0.0, "Dif MP": 0.0, "Status": status
                     }
-                    mask = st.session_state.au_planilhas_df["Planilha_id"] == sid
-                    if mask.any():
-                        st.session_state.au_planilhas_df.loc[mask, ["Origem","DRE","MP DRE","Dif","Dif MP","Status"]] = ["0","0","0","0","0", status]
                     prog.progress((i + 1) / total)
                     continue
 
-                # ----- FATURAMENTO ORIGEM -----
+                # FATURAMENTO ORIGEM
                 try:
                     if len(h_o_fat) > 5 and (df_o_fat_p is not None) and (not df_o_fat_p.empty):
                         col_b2_fat = h_o_fat[5]
@@ -549,7 +498,7 @@ with tab_audit:
                 except Exception:
                     v_o = 0.0
 
-                # ----- FATURAMENTO DESTINO (Importado_Fat) -----
+                # FATURAMENTO DESTINO
                 try:
                     ws_d = sh_d.worksheet("Importado_Fat")
                     h_d, df_d = get_headers_and_df_raw(ws_d)
@@ -573,7 +522,7 @@ with tab_audit:
                 except Exception:
                     v_d = 0.0
 
-                # ----- MEIO DE PAGAMENTO DESTINO -----
+                # MEIO DE PAGAMENTO DESTINO
                 try:
                     ws_mp_d = sh_d.worksheet("Meio de Pagamento")
                     h_mp_d, df_mp_d = get_headers_and_df_raw(ws_mp_d)
@@ -625,12 +574,11 @@ with tab_audit:
                 except Exception:
                     v_mp_d = 0.0
 
-                # Diferenças e status
                 diff = v_o - v_d
                 diff_mp = v_d - v_mp_d
                 status = "✅ OK" if (abs(diff) < 0.01 and abs(diff_mp) < 0.01) else "❌ Erro"
 
-                # salvar resultado acumulado
+                # Salvar resultado acumulado
                 st.session_state.au_resultados[sid] = {
                     "Planilha": pname,
                     "Origem": v_o,
@@ -641,7 +589,7 @@ with tab_audit:
                     "Status": status
                 }
 
-                # atualizar tabela em session_state (formatando)
+                # Atualizar tabela em session_state (formatando)
                 mask = st.session_state.au_planilhas_df["Planilha_id"] == sid
                 if mask.any():
                     st.session_state.au_planilhas_df.loc[mask, "Origem"] = format_brl(v_o)
@@ -654,46 +602,10 @@ with tab_audit:
                 logs.append(f"{pname}: {status if status != '✅ OK' else 'OK'}")
                 prog.progress((i + 1) / total)
 
-            # fim loop
-            return logs
+            # Mostrar logs
+            st.markdown("### Log de processamento")
+            st.text("\n".join(logs))
+            st.success("Auditoria concluída.")
 
-        # ---------- Ações dos botões ----------
-        if run_all:
-            logs = processar_planilhas(selecionadas, max_process=None)
-            if logs:
-                st.markdown("**Log de processamento**")
-                st.text("\n".join(logs))
-            st.success("Auditoria (seleção) concluída.")
-            # forçar atualização da tabela exibida
+            # Atualizar tabela exibida
             st.experimental_rerun()
-
-        if run_batch:
-            # determinar quais da seleção ainda não foram processadas (ou reprocessar se escolhido)
-            remaining = []
-            name_to_id = {r["Planilha"]: r["Planilha_id"] for _, r in st.session_state.au_planilhas_df.iterrows()}
-            for nm in selecionadas:
-                sid = name_to_id.get(nm)
-                if not sid:
-                    continue
-                if reprocessar:
-                    remaining.append(nm)
-                else:
-                    if sid not in st.session_state.au_resultados:
-                        remaining.append(nm)
-            if not remaining:
-                st.info("Nenhuma planilha pendente na seleção (ou todas já auditadas). Use 'Permitir reprocessar' para forçar re-auditoria.")
-            else:
-                batch = remaining[:batch_size]
-                logs = processar_planilhas(batch, max_process=None)
-                if logs:
-                    st.markdown("**Log de processamento (lote)**")
-                    st.text("\n".join(logs))
-                st.success(f"Lote de {len(batch)} planilhas processado.")
-                # não reiniciar a página automaticamente para preservar seleção; o usuário pode clicar novamente para próximo lote
-
-    # ---------- Ao final, mostrar tabela atualizada ----------
-    st.markdown("---")
-    st.markdown("### Tabela atualizada")
-    st.dataframe(st.session_state.au_planilhas_df[["Planilha", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]], height=300)
-    st.caption("Dica: use o slider de batch para processar poucos arquivos por vez e evitar timeout da API.")
-# ---------- fim da aba ----------

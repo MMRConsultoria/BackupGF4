@@ -21,7 +21,7 @@ ABA_ORIGEM_FAT = "Fat Sistema Externo"
 
 # Origem MEIO DE PAGAMENTO
 ID_PLANILHA_ORIGEM_MP = "1GSI291SEeeU9MtOWkGwsKGCGMi_xXMSiQnL_9GhXxfU"
-ABA_ORIGEM_MP = "Faturamento Meio de Pagamento"
+ABA_ORIGEM_MP = "Faturamento Meio Pagamento"
 
 st.set_page_config(page_title="Atualizador DRE", layout="wide")
 

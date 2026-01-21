@@ -1,3 +1,7 @@
+# Código atualizado com as seguintes modificações:
+# 1. Ajustado o tratamento das colunas G, H, I e J para valores monetários em R$
+# 2. Alterado a seleção de subpastas para iniciar em branco, permitindo que o usuário escolha
+
 import streamlit as st
 import pandas as pd
 import json

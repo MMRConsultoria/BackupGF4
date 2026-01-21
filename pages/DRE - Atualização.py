@@ -475,15 +475,12 @@ with tab_audit:
                     df_mp_periodo = df_mp_d[(df_mp_d["_dt"] >= d_ini) & (df_mp_d["_dt"] <= d_fim)]
                 else:
                     df_mp_periodo = df_mp_d.copy()
-
-                # Usar explicitamente os índices que você confirmou:
-                # G (idx6) = B3, I (idx8) = B2, J (idx9) = valor
+            
                 v_mp_d = 0.0
                 if len(h_mp_d) > 9 and not df_mp_periodo.empty:
                     col_b3_mp = h_mp_d[6]
                     col_b2_mp = h_mp_d[8]
                     col_val_mp = h_mp_d[9]
-                    # filtrar por B2 (col I) e B3 (col G) conforme solicitado
                     df_mp_dest_f = df_mp_periodo[
                         (df_mp_periodo[col_b2_mp].astype(str).str.strip() == b2)
                     ]
@@ -494,7 +491,7 @@ with tab_audit:
                     if not df_mp_dest_f.empty:
                         v_mp_d = df_mp_dest_f[col_val_mp].sum()
                 else:
-                    # fallback: tentar detectar coluna de valor por keywords e usar coluna I como B2
+                    # fallback
                     if debug_mp:
                         st.write(f"Planilha: {p_name} - fallback MP headers:", h_mp_d)
                         st.write(f"Planilha: {p_name} - amostra MP periodo (sem index padrão):", df_mp_periodo.head())

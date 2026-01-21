@@ -89,54 +89,6 @@ def read_codes_from_config_sheet(gsheet):
         b3 = ws.acell("B3").value
         return (str(b2).strip() if b2 else None, str(b3).strip() if b3 else None)
     except:
-        return None, None
-
-def get_headers_and_df_raw(ws):
-    vals = ws.get_all_values()
-    if not vals: return [], pd.DataFrame()
-    headers = [str(h).strip() for h in vals[0]]
-    df = pd.DataFrame(vals[1:], columns=headers)
-    return headers, df
-
-def detect_date_col(headers):
-    for h in headers:
-        if "data" in h.lower(): return h
-    return None
-
-def _parse_currency_like(s):
-    if s is None: return None
-    s = str(s).strip()
-    if s == "" or s in ["-", "–"]: return None
-    neg = False
-    if s.startswith("(") and s.endswith(")"):
-        neg = True
-        s = s[1:-1].strip()
-    s = s.replace("R$", "").replace("r$", "").replace(" ", "")
-    s = re.sub(r"[^0-9,.\-]", "", s)
-    if s == "" or s == "-" or s == ".": return None
-    if s.count(".") > 0 and s.count(",") > 0:
-        s = s.replace(".", "").replace(",", ".")
-    else:
-        if s.count(",") > 0 and s.count(".") == 0:
-            s = s.replace(",", ".")
-        if s.count(".") > 1 and s.count(",") == 0:
-            s = s.replace(".", "")
-    try:
-        val = float(s)
-        if neg: val = -val
-        return val
-    except: return None
-
-def tratar_numericos(df, headers):
-    indices_valor = [6, 7, 8, 9]
-    for idx in indices_valor:
-        if idx < len(headers):
-            col_name = headers[idx]
-            df[col_name] = df[col_name].apply(_parse_currency_like).fillna(0.0)
-    return df
-
-def format_brl(val):
-    return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 tab_atual, tab_verif, tab_audit = st.tabs(["Atualização", "Verificar Configurações", "Auditoria"])
 

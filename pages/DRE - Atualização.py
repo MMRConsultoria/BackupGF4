@@ -21,22 +21,22 @@ ABA_ORIGEM = "Fat Sistema Externo"
 
 st.set_page_config(page_title="Atualizador DRE", layout="wide")
 
-# --- CSS ---
+# --- CSS AJUSTADO PARA NÃO CORTAR LETRAS ---
 st.markdown(
     """
     <style>
-    .block-container { padding-top: 1rem; padding-bottom: 5rem; }
-    [data-testid="stVerticalBlock"] > div { margin-bottom: -0.5rem !important; padding-top: 0rem !important; }
-    h1 { margin-top: -1rem; margin-bottom: 0.5rem; font-size: 1.8rem; }
-    .global-selection-container { margin-top: 5px !important; margin-bottom: 5px !important; }
-    [data-testid="stTable"] td, [data-testid="stTable"] th { padding: 2px 6px !important; }
+    .block-container { padding-top: 2rem; padding-bottom: 2rem; }
+    h1 { margin-bottom: 1.5rem; font-size: 2.2rem; line-height: 1.2; }
+    .stSelectbox, .stMultiSelect, .stDateInput { margin-bottom: 1rem; }
+    /* Ajuste para as tabelas e editores de dados */
+    [data-testid="stTable"] td, [data-testid="stTable"] th { padding: 8px 12px !important; }
+    .global-selection-container { margin-top: 15px !important; margin-bottom: 15px !important; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 st.title("Atualizador DRE")
-
 # ---------------- AUTENTICAÇÃO ----------------
 @st.cache_resource
 def autenticar():

@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import json
+import time
 import re
 from datetime import datetime, timedelta, date
 from oauth2client.service_account import ServiceAccountCredentials
@@ -20,7 +21,7 @@ ABA_ORIGEM = "Fat Sistema Externo"
 
 st.set_page_config(page_title="Atualizador DRE", layout="wide")
 
-# --- CSS ---
+# --- CSS AJUSTADO PARA NÃO CORTAR LETRAS ---
 st.markdown(
     """
     <style>
@@ -116,7 +117,7 @@ def _parse_currency_like(s):
         neg = True
         s = s[1:-1].strip()
     s = s.replace("R$", "").replace("r$", "").replace(" ", "")
-    s = re.sub(r"[^0-9,.-]", "", s)
+    s = re.sub(r"[^0-9,.\-]", "", s)
     if s == "" or s == "-" or s == ".": return None
     if s.count(".") > 0 and s.count(",") > 0:
         s = s.replace(".", "").replace(",", ".")
@@ -143,7 +144,7 @@ def tratar_numericos(df, headers):
                 if p is not None: new_col.append(p)
                 else:
                     o_str = "" if pd.isna(o) else str(o).strip()
-                    new_col.append("")
+                    new_col.append("" if o_str in ["", "-", "–"] else o_str)
             df[col_name] = new_col
     return df
 
@@ -155,7 +156,6 @@ if "sheet_codes" not in st.session_state:
 tab_atual, tab_verif, tab_audit = st.tabs(["Atualização", "Verificar Configurações", "Auditoria"])
 
 with tab_atual:
-    # Filtros dentro da aba Atualização
     col_d1, col_d2 = st.columns(2)
     with col_d1:
         data_de = st.date_input("De", value=date.today() - timedelta(days=30))
@@ -184,7 +184,7 @@ with tab_atual:
         else:
             df_list = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
             df_list = df_list.rename(columns={"name": "Planilha", "id": "ID_Planilha"})
-
+            
             st.markdown('<div class="global-selection-container">', unsafe_allow_html=True)
             c1, c2, c3, _ = st.columns([1.2, 1.2, 1.2, 5])
             with c1: s_desc = st.checkbox("Desconto", value=True, key="chk_desc")
@@ -286,7 +286,7 @@ with tab_verif:
         if planilhas:
             df_list_ver = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
             df_list_ver = df_list_ver.rename(columns={"name": "Planilha", "id": "ID_Planilha"})
-
+            
             data_display = []
             for _, row in df_list_ver.iterrows():
                 sid = row["ID_Planilha"]
@@ -308,10 +308,95 @@ with tab_verif:
                         st.session_state["sheet_codes"][r["ID_Planilha"]] = (b2, b3)
                     except: pass
                     prog.progress(min((i + 1) / total, 1.0))
-                st.experimental_rerun()
+                st.rerun()
 
 with tab_audit:
-    st.markdown("Aqui você pode implementar a aba de Auditoria conforme sua necessidade.")
+    st.markdown("### Auditoria de Faturamento")
+    st.markdown("Esta aba compara o faturamento total da planilha **Origem** com o que está gravado nas planilhas **Destino**.")
+    
+    if not s_ids:
+        st.info("Selecione as subpastas na aba Atualização para realizar a auditoria.")
+    else:
+        if st.button("📊 Executar Auditoria"):
+            try:
+                # 1. Ler Origem
+                sh_origem = gc.open_by_key(ID_PLANILHA_ORIGEM)
+                ws_origem = sh_origem.worksheet(ABA_ORIGEM)
+                headers_orig, df_orig = get_headers_and_df_raw(ws_origem)
+                df_orig = tratar_numericos(df_orig, headers_orig)
+                col_data_orig = detect_date_col(headers_orig)
+                col_fat_orig = headers_orig[6] # Coluna G (Faturamento)
+                col_grupo_orig = headers_orig[5] # Coluna F (Grupo)
+                col_loja_orig = headers_orig[3] # Coluna D (Loja)
+                
+                df_orig['_dt'] = pd.to_datetime(df_orig[col_data_orig], dayfirst=True, errors='coerce')
+                df_orig['Mes_Ano'] = df_orig['_dt'].dt.strftime('%Y-%m')
+                
+                # 2. Listar planilhas
+                planilhas = list_spreadsheets_in_folders(drive_service, s_ids)
+                audit_data = []
+                prog_audit = st.progress(0)
+                
+                for idx, p in enumerate(planilhas):
+                    sid = p["id"]
+                    p_name = p["name"]
+                    
+                    # Pegar códigos B2/B3
+                    cached = st.session_state["sheet_codes"].get(sid)
+                    if cached: b2, b3 = cached
+                    else:
+                        try:
+                            sh_dest = gc.open_by_key(sid)
+                            b2, b3 = read_codes_from_config_sheet(sh_dest)
+                            st.session_state["sheet_codes"][sid] = (b2, b3)
+                        except: b2, b3 = None, None
+                    
+                    if not b2:
+                        audit_data.append({"Planilha": p_name, "Mês": "N/A", "Origem": 0, "DRE": 0, "Status": "Sem Config"})
+                        continue
+                    
+                    # Calcular Faturamento na Origem para este B2/B3
+                    df_o_filtro = df_orig[df_orig[col_grupo_orig].astype(str).str.strip() == b2]
+                    if b3:
+                        df_o_filtro = df_o_filtro[df_o_filtro[col_loja_orig].astype(str).str.strip() == b3]
+                    
+                    fat_orig_agrupado = df_o_filtro.groupby('Mes_Ano')[col_fat_orig].sum().to_dict()
+                    
+                    # Ler Destino
+                    try:
+                        sh_dest = gc.open_by_key(sid)
+                        ws_dest = sh_dest.worksheet("Importado_Fat")
+                        h_dest, df_d = get_headers_and_df_raw(ws_dest)
+                        df_d = tratar_numericos(df_d, h_dest)
+                        col_dt_dest = detect_date_col(h_dest)
+                        col_fat_dest = h_dest[6]
+                        
+                        df_d['_dt'] = pd.to_datetime(df_d[col_dt_dest], dayfirst=True, errors='coerce')
+                        df_d['Mes_Ano'] = df_d['_dt'].dt.strftime('%Y-%m')
+                        fat_dest_agrupado = df_d.groupby('Mes_Ano')[col_fat_dest].sum().to_dict()
+                    except:
+                        fat_dest_agrupado = {}
 
-
-
+                    # Unir meses e comparar
+                    todos_meses = sorted(list(set(fat_orig_agrupado.keys()) | set(fat_dest_agrupado.keys())))
+                    for m in todos_meses:
+                        v_orig = fat_orig_agrupado.get(m, 0)
+                        v_dest = fat_dest_agrupado.get(m, 0)
+                        diff = abs(v_orig - v_dest)
+                        status = "✅ OK" if diff < 0.01 else "❌ Divergente"
+                        
+                        audit_data.append({
+                            "Planilha": p_name,
+                            "Mês": m,
+                            "Faturamento Origem": v_orig,
+                            "Faturamento DRE": v_dest,
+                            "Diferença": v_orig - v_dest,
+                            "Status": status
+                        })
+                    prog_audit.progress((idx + 1) / len(planilhas))
+                
+                df_audit = pd.DataFrame(audit_data)
+                st.dataframe(df_audit.style.applymap(lambda x: 'color: red' if x == "❌ Divergente" else ('color: green' if x == "✅ OK" else ''), subset=['Status']), use_container_width=True)
+                
+            except Exception as e:
+                st.error(f"Erro na auditoria: {e}")

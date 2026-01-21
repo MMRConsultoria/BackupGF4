@@ -4,6 +4,7 @@ import streamlit as st
 import pandas as pd
 import json
 import time
+import re
 from datetime import datetime, timedelta, date
 from oauth2client.service_account import ServiceAccountCredentials
 import gspread
@@ -121,15 +122,69 @@ def detect_date_col(headers):
         if "data" in h.lower(): return h
     return None
 
+def _parse_currency_like(s):
+    """Tenta converter uma string de formato monetário para float.
+    Retorna float se conseguir, None se string vazia/nula, ou None se falhar (o chamador decide manter original)."""
+    if s is None: 
+        return None
+    s = str(s).strip()
+    if s == "" or s in ["-", "–"]:
+        return None
+    # Detecta parênteses (negativo)
+    neg = False
+    if s.startswith("(") and s.endswith(")"):
+        neg = True
+        s = s[1:-1].strip()
+    # Remove prefixos tipo R$, espaços e outros símbolos
+    s = s.replace("R$", "").replace("r$", "").replace(" ", "")
+    # Remove tudo que não seja dígito, vírgula, ponto ou sinal de menos
+    s = re.sub(r"[^0-9,.\-]", "", s)
+    if s == "" or s == "-" or s == ".": 
+        return None
+    # Se tem '.' e ',', assumir '.' milhares e ',' decimal -> remover '.' e trocar ',' por '.'
+    if s.count(".") > 0 and s.count(",") > 0:
+        s = s.replace(".", "").replace(",", ".")
+    else:
+        # Se só tem vírgula, trocar por ponto (ex: '1234,56' -> '1234.56')
+        if s.count(",") > 0 and s.count(".") == 0:
+            s = s.replace(",", ".")
+        # Se só tem pontos, mas muitos pontos (ex: '1.234.567'), pode ser milhares.
+        # Se houver mais de 1 ponto e nenhum vírgula, remover pontos (assumir milhares)
+        if s.count(".") > 1 and s.count(",") == 0:
+            s = s.replace(".", "")
+    # Tenta converter
+    try:
+        val = float(s)
+        if neg:
+            val = -val
+        return val
+    except:
+        return None
+
 def tratar_numericos(df, headers):
-    """Converte colunas G, H, I, J (índices 6, 7, 8, 9) para numérico se existirem"""
-    indices_valor = [6, 7, 8, 9] # G, H, I, J
+    """Converte colunas G, H, I, J (índices 6, 7, 8, 9) para numérico quando possível.
+    Se não for possível converter uma célula, mantemos o valor original (ou string vazia)."""
+    indices_valor = [6, 7, 8, 9]  # G, H, I, J
     for idx in indices_valor:
         if idx < len(headers):
             col_name = headers[idx]
-            # Substitui vírgula por ponto para conversão e trata strings vazias/hifens
-            df[col_name] = df[col_name].astype(str).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-            df[col_name] = pd.to_numeric(df[col_name], errors='coerce').fillna(0)
+            # Aplicar parse robusto, sem sobrescrever com 0 quando falhar
+            orig_series = df[col_name].astype(object).copy()
+            parsed = orig_series.apply(_parse_currency_like)
+            # Montar nova coluna: se parsed não for None -> número (float). Se None:
+            # - se orig vazio ou '-', colocar '' (string vazia) para não inserir 0
+            # - senão manter string original (ex: texto que não é número)
+            new_col = []
+            for p, o in zip(parsed, orig_series):
+                if p is not None:
+                    new_col.append(p)  # float
+                else:
+                    o_str = "" if pd.isna(o) else str(o).strip()
+                    if o_str == "" or o_str in ["-", "–"]:
+                        new_col.append("")  # vazio
+                    else:
+                        new_col.append(o_str)  # mantém texto original
+            df[col_name] = new_col
     return df
 
 # ---------------- INTERFACE ----------------
@@ -148,7 +203,7 @@ try:
 except: st.stop()
 
 if not s_ids:
-    st.info("Selecione uma ou mais subpastas para listar as planilhas.")
+    st.info("Selecione as subpastas para listar as planilhas.")
     st.stop()
 
 if s_ids:
@@ -194,15 +249,13 @@ if s_ids:
                     ws_origem = sh_origem.worksheet(ABA_ORIGEM)
                     headers_orig, df_orig = get_headers_and_df_raw(ws_origem)
                     
-                    # Trata colunas G,H,I,J como números na origem para garantir cálculos
+                    # Trata colunas G,H,I,J como números quando possível
                     df_orig = tratar_numericos(df_orig, headers_orig)
                     
                     col_data_orig = detect_date_col(headers_orig)
                     df_orig_temp = df_orig.copy()
-                    # Garante que a coluna de data seja convertida corretamente para comparação
+                    # Converter coluna de data para date para comparar com st.date_input
                     df_orig_temp['_dt'] = pd.to_datetime(df_orig_temp[col_data_orig], dayfirst=True, errors='coerce').dt.date
-                    
-                    # Filtro de data usando .date() para comparar com st.date_input
                     mask_orig = (df_orig_temp['_dt'] >= data_de) & (df_orig_temp['_dt'] <= data_ate)
                     df_orig_filtrado = df_orig.loc[mask_orig].copy()
                 except Exception as e:
@@ -227,7 +280,7 @@ if s_ids:
                             df_para_inserir = df_para_inserir[df_para_inserir[col_d_name].astype(str).str.strip() == b3]
 
                         if df_para_inserir.empty:
-                            logs.append(f"{row['Planilha']}: Sem dados para o filtro."); continue
+                            logs.append(f"{row['Planilha']}: Sem dados para o período."); continue
 
                         try:
                             ws_dest = sh_dest.worksheet("Importado_Fat")
@@ -243,9 +296,9 @@ if s_ids:
                         else:
                             col_dt_dest = detect_date_col(headers_dest) or col_data_orig
                             df_dest_temp = df_dest.copy()
-                            df_dest_temp['_dt'] = pd.to_datetime(df_dest_temp[col_dt_dest], errors='coerce', dayfirst=True)
+                            df_dest_temp['_dt'] = pd.to_datetime(df_dest_temp[col_dt_dest], dayfirst=True, errors='coerce').dt.date
                             
-                            to_remove = (df_dest_temp['_dt'] >= pd.to_datetime(data_de)) & (df_dest_temp['_dt'] <= pd.to_datetime(data_ate))
+                            to_remove = (df_dest_temp['_dt'] >= data_de) & (df_dest_temp['_dt'] <= data_ate)
                             if col_f_name in df_dest.columns:
                                 to_remove &= (df_dest[col_f_name].astype(str).str.strip() == b2)
                             if b3 and col_d_name in df_dest.columns:
@@ -255,12 +308,13 @@ if s_ids:
                             df_final_ws = pd.concat([df_restante, df_para_inserir], ignore_index=True)
                             h_final = headers_dest if headers_dest else headers_orig
 
-                        # Prepara lista de listas para o gspread
-                        # O gspread enviará os números como números graças ao value_input_option='USER_ENTERED'
-                        final_vals = [h_final] + df_final_ws[h_final].values.tolist()
+                        # Antes de enviar para o Sheets, substituímos valores pandas.NA/NaN por string vazia,
+                        # e mantemos floats como floats para que o Sheets receba números (com USER_ENTERED).
+                        send_df = df_final_ws[h_final].copy()
+                        send_df = send_df.where(pd.notna(send_df), "")
+                        final_vals = [h_final] + send_df.values.tolist()
 
                         ws_dest.clear()
-                        # USER_ENTERED faz com que o Sheets interprete strings de números como números reais
                         ws_dest.update("A1", final_vals, value_input_option='USER_ENTERED')
                         logs.append(f"{row['Planilha']}: Sucesso ({len(df_para_inserir)} linhas)")
                     except Exception as e:

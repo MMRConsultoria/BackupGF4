@@ -311,92 +311,136 @@ with tab_verif:
                 st.rerun()
 
 with tab_audit:
-    st.markdown("### Auditoria de Faturamento")
-    st.markdown("Esta aba compara o faturamento total da planilha **Origem** com o que está gravado nas planilhas **Destino**.")
+    st.markdown("### Auditoria de Faturamento (Acumulado 2025)")
     
     if not s_ids:
-        st.info("Selecione as subpastas na aba Atualização para realizar a auditoria.")
+        st.info("Selecione as subpastas na aba Atualização primeiro.")
     else:
         if st.button("📊 Executar Auditoria"):
             try:
+                data_inicio = datetime(2025, 1, 1).date()
+                data_fim = date.today()
+
                 # 1. Ler Origem
                 sh_origem = gc.open_by_key(ID_PLANILHA_ORIGEM)
                 ws_origem = sh_origem.worksheet(ABA_ORIGEM)
                 headers_orig, df_orig = get_headers_and_df_raw(ws_origem)
                 df_orig = tratar_numericos(df_orig, headers_orig)
                 col_data_orig = detect_date_col(headers_orig)
-                col_fat_orig = headers_orig[6] # Coluna G (Faturamento)
-                col_grupo_orig = headers_orig[5] # Coluna F (Grupo)
-                col_loja_orig = headers_orig[3] # Coluna D (Loja)
-                
-                df_orig['_dt'] = pd.to_datetime(df_orig[col_data_orig], dayfirst=True, errors='coerce')
-                df_orig['Mes_Ano'] = df_orig['_dt'].dt.strftime('%Y-%m')
-                
-                # 2. Listar planilhas
+                col_fat_orig = headers_orig[6]
+                col_grupo_orig = headers_orig[5]
+                col_loja_orig = headers_orig[3]
+
+                df_orig['_dt'] = pd.to_datetime(df_orig[col_data_orig], dayfirst=True, errors='coerce').dt.date
+                df_orig_2025 = df_orig[(df_orig['_dt'] >= data_inicio) & (df_orig['_dt'] <= data_fim)].copy()
+                df_orig_2025['Mes_Ano'] = pd.to_datetime(df_orig_2025['_dt']).dt.strftime('%Y-%m')
+
+                # 2. Processar Planilhas
                 planilhas = list_spreadsheets_in_folders(drive_service, s_ids)
-                audit_data = []
-                prog_audit = st.progress(0)
-                
+                audit_results = []
+                prog = st.progress(0)
+
                 for idx, p in enumerate(planilhas):
                     sid = p["id"]
                     p_name = p["name"]
                     
-                    # Pegar códigos B2/B3
+                    # Pegar B2/B3
                     cached = st.session_state["sheet_codes"].get(sid)
-                    if cached: b2, b3 = cached
-                    else:
+                    if not cached:
                         try:
                             sh_dest = gc.open_by_key(sid)
                             b2, b3 = read_codes_from_config_sheet(sh_dest)
                             st.session_state["sheet_codes"][sid] = (b2, b3)
                         except: b2, b3 = None, None
-                    
+                    else: b2, b3 = cached
+
                     if not b2:
-                        audit_data.append({"Planilha": p_name, "Mês": "N/A", "Origem": 0, "DRE": 0, "Status": "Sem Config"})
+                        audit_results.append({"Planilha": p_name, "Origem": 0, "DRE": 0, "Diff": 0, "Status": "Sem Config", "df_mes": None, "df_orig_raw": None, "df_dest_raw": None})
                         continue
-                    
-                    # Calcular Faturamento na Origem para este B2/B3
-                    df_o_filtro = df_orig[df_orig[col_grupo_orig].astype(str).str.strip() == b2]
-                    if b3:
-                        df_o_filtro = df_o_filtro[df_o_filtro[col_loja_orig].astype(str).str.strip() == b3]
-                    
-                    fat_orig_agrupado = df_o_filtro.groupby('Mes_Ano')[col_fat_orig].sum().to_dict()
-                    
-                    # Ler Destino
+
+                    # Soma Origem
+                    df_o_f = df_orig_2025[df_orig_2025[col_grupo_orig].astype(str).str.strip() == b2]
+                    if b3: df_o_f = df_o_f[df_o_f[col_loja_orig].astype(str).str.strip() == b3]
+                    total_orig = df_o_f[col_fat_orig].sum()
+
+                    # Soma Destino
+                    total_dest = 0
+                    df_d_2025 = pd.DataFrame()
                     try:
                         sh_dest = gc.open_by_key(sid)
                         ws_dest = sh_dest.worksheet("Importado_Fat")
                         h_dest, df_d = get_headers_and_df_raw(ws_dest)
                         df_d = tratar_numericos(df_d, h_dest)
-                        col_dt_dest = detect_date_col(h_dest)
-                        col_fat_dest = h_dest[6]
-                        
-                        df_d['_dt'] = pd.to_datetime(df_d[col_dt_dest], dayfirst=True, errors='coerce')
-                        df_d['Mes_Ano'] = df_d['_dt'].dt.strftime('%Y-%m')
-                        fat_dest_agrupado = df_d.groupby('Mes_Ano')[col_fat_dest].sum().to_dict()
-                    except:
-                        fat_dest_agrupado = {}
+                        c_dt_d = detect_date_col(h_dest)
+                        c_ft_d = h_dest[6]
+                        df_d['_dt'] = pd.to_datetime(df_d[c_dt_d], dayfirst=True, errors='coerce').dt.date
+                        df_d_2025 = df_d[(df_d['_dt'] >= data_inicio) & (df_d['_dt'] <= data_fim)].copy()
+                        df_d_2025['Mes_Ano'] = pd.to_datetime(df_d_2025['_dt']).dt.strftime('%Y-%m')
+                        total_dest = df_d_2025[c_ft_d].sum()
+                    except: pass
 
-                    # Unir meses e comparar
-                    todos_meses = sorted(list(set(fat_orig_agrupado.keys()) | set(fat_dest_agrupado.keys())))
-                    for m in todos_meses:
-                        v_orig = fat_orig_agrupado.get(m, 0)
-                        v_dest = fat_dest_agrupado.get(m, 0)
-                        diff = abs(v_orig - v_dest)
-                        status = "✅ OK" if diff < 0.01 else "❌ Divergente"
-                        
-                        audit_data.append({
-                            "Planilha": p_name,
-                            "Mês": m,
-                            "Faturamento Origem": v_orig,
-                            "Faturamento DRE": v_dest,
-                            "Diferença": v_orig - v_dest,
-                            "Status": status
-                        })
-                    prog_audit.progress((idx + 1) / len(planilhas))
+                    diff = total_orig - total_dest
+                    status = "✅ OK" if abs(diff) < 0.01 else "❌ Divergente"
+                    
+                    # Agrupar por mês para o expander
+                    df_m_o = df_o_f.groupby('Mes_Ano')[col_fat_orig].sum()
+                    df_m_d = df_d_2025.groupby('Mes_Ano')[h_dest[6]].sum() if not df_d_2025.empty else pd.Series()
+                    
+                    meses = sorted(list(set(df_m_o.index) | set(df_m_d.index)))
+                    res_mes = []
+                    for m in meses:
+                        vo, vd = df_m_o.get(m, 0), df_m_d.get(m, 0)
+                        res_mes.append({"Mês": m, "Origem": vo, "DRE": vd, "Diff": vo-vd, "Status": "✅" if abs(vo-vd)<0.01 else "❌"})
+                    
+                    audit_results.append({
+                        "Planilha": p_name,
+                        "Faturamento Origem": total_orig,
+                        "Faturamento DRE": total_dest,
+                        "Diferença": diff,
+                        "Status": status,
+                        "df_mes": pd.DataFrame(res_mes),
+                        "df_o_raw": df_o_f,
+                        "df_d_raw": df_d_2025
+                    })
+                    prog.progress((idx + 1) / len(planilhas))
+
+                # Exibição da Tabela Principal
+                df_main = pd.DataFrame(audit_results).drop(columns=["df_mes", "df_o_raw", "df_d_raw"])
                 
-                df_audit = pd.DataFrame(audit_data)
-                st.dataframe(df_audit.style.applymap(lambda x: 'color: red' if x == "❌ Divergente" else ('color: green' if x == "✅ OK" else ''), subset=['Status']), use_container_width=True)
-                
+                # Formatação R$
+                df_show = df_main.copy()
+                for col in ["Faturamento Origem", "Faturamento DRE", "Diferença"]:
+                    df_show[col] = df_show[col].apply(format_brl)
+
+                st.dataframe(df_show, use_container_width=True, hide_index=True)
+
+                # Expanders para Divergências
+                st.markdown("---")
+                st.subheader("Detalhamento de Divergências")
+                for res in audit_results:
+                    if res["Status"] == "❌ Divergente":
+                        with st.expander(f"🔍 Ver detalhes: {res['Planilha']}"):
+                            # Tabela Mensal
+                            df_m_fmt = res["df_mes"].copy()
+                            for c in ["Origem", "DRE", "Diff"]:
+                                df_m_fmt[c] = df_m_fmt[c].apply(format_brl)
+                            st.write("**Resumo Mensal:**")
+                            st.table(df_m_fmt)
+                            
+                            # Detalhe Diário
+                            mes_sel = st.selectbox("Selecione o mês para ver por dia:", options=res["df_mes"]["Mês"].tolist(), key=f"sel_{res['Planilha']}")
+                            
+                            # Agrupar por dia
+                            d_o = res["df_o_raw"][res["df_o_raw"]["Mes_Ano"] == mes_sel].groupby('_dt')[col_fat_orig].sum()
+                            d_d = res["df_d_raw"][res["df_d_raw"]["Mes_Ano"] == mes_sel].groupby('_dt')[res["df_d_raw"].columns[6]].sum()
+                            
+                            dias = sorted(list(set(d_o.index) | set(d_d.index)))
+                            res_dia = []
+                            for d in dias:
+                                vo, vd = d_o.get(d, 0), d_d.get(d, 0)
+                                res_dia.append({"Dia": d.strftime('%d/%m/%Y'), "Origem": format_brl(vo), "DRE": format_brl(vd), "Diff": format_brl(vo-vd), "Status": "✅" if abs(vo-vd)<0.01 else "❌"})
+                            st.write(f"**Detalhamento Diário ({mes_sel}):**")
+                            st.table(pd.DataFrame(res_dia))
+
             except Exception as e:
                 st.error(f"Erro na auditoria: {e}")

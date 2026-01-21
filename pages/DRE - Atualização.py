@@ -314,4 +314,4 @@ with tab_audit:
     st.markdown("Aqui você pode implementar a aba de Auditoria conforme sua necessidade.")
 ```
 
-Se quiser, posso ajudar a implementar a lógica da auditoria para comparar faturamento entre origem e destino. Quer que eu faça?
+

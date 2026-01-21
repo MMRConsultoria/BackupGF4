@@ -314,6 +314,7 @@ with tab_atual:
                 st.success("Concluido!")
 
 # ---------------- ABA: AUDITORIA ----------------
+# ---------------- ABA: AUDITORIA ----------------
 with tab_audit:
     st.header("Auditoria")
 
@@ -342,12 +343,22 @@ with tab_audit:
     with c_mes:
         mes_sel = st.selectbox("Mês (Opcional):", ["Todos"] + list(range(1, 13)), key="au_mes")
 
+    # Helpers locais
     def detect_column_by_keywords(headers, keywords_list):
         for kw in keywords_list:
             for h in headers:
                 if kw in str(h).lower():
                     return h
         return None
+
+    def normalize_code(val):
+        """Normaliza códigos numéricos que podem vir como '125.0' para '125'."""
+        try:
+            f = float(val)
+            i = int(f)
+            return str(i) if f == i else str(f)
+        except Exception:
+            return str(val).strip()
 
     if st.button("📊 EXECUTAR AUDITORIA", use_container_width=True):
         if not s_ids_audit:
@@ -361,15 +372,14 @@ with tab_audit:
             d_ini = date(ano_sel, int(mes_sel), 1)
             d_fim = (date(ano_sel, int(mes_sel), 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
 
+        # carregar origem de FATURAMENTO (uma vez)
         try:
-            # --- Carregar e preparar a origem de FATURAMENTO (uma vez) ---
             sh_o_fat = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT)
             ws_o_fat = sh_o_fat.worksheet(ABA_ORIGEM_FAT)
             h_o_fat, df_o_fat = get_headers_and_df_raw(ws_o_fat)
             if not df_o_fat.empty:
                 df_o_fat = tratar_numericos(df_o_fat, h_o_fat)
 
-            # detectar coluna de data e tentar parse com fallback
             c_dt_o_fat = detect_date_col(h_o_fat) or (h_o_fat[0] if h_o_fat else None)
             if c_dt_o_fat and not df_o_fat.empty:
                 df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o_fat], dayfirst=True, errors="coerce")
@@ -385,6 +395,7 @@ with tab_audit:
             st.error(f"Erro ao carregar origem de faturamento: {e}")
             st.stop()
 
+        # buscar planilhas nas subpastas selecionadas
         planilhas = list_spreadsheets_in_folders(drive_service, s_ids_audit)
         if not planilhas:
             st.warning("Nenhuma planilha encontrada nas subpastas selecionadas.")
@@ -394,18 +405,16 @@ with tab_audit:
         prog = st.progress(0)
         total = len(planilhas)
         log_lines = []
-        log_placeholder = st.empty()
 
         for idx, p in enumerate(planilhas):
             sid, p_name = p["id"], p["name"]
             v_o = v_d = v_mp_d = 0.0
 
+            # abrir planilha destino
             try:
                 sh_d = gc.open_by_key(sid)
             except Exception as e:
                 log_lines.append(f"{p_name}: Erro ao abrir planilha ({e})")
-                prog.progress((idx + 1) / total)
-                log_placeholder.text("\n".join(log_lines))
                 results.append({
                     "Planilha": p_name,
                     "Origem": v_o,
@@ -415,13 +424,13 @@ with tab_audit:
                     "Dif MP": v_d - v_mp_d,
                     "Status": "Erro: abrir planilha",
                 })
+                prog.progress((idx + 1) / total)
                 continue
 
+            # ler códigos B2/B3 da config (caso falte, pula)
             b2, b3 = read_codes_from_config_sheet(sh_d)
             if not b2:
                 log_lines.append(f"{p_name}: Sem B2 (Config).")
-                prog.progress((idx + 1) / total)
-                log_placeholder.text("\n".join(log_lines))
                 results.append({
                     "Planilha": p_name,
                     "Origem": 0,
@@ -431,8 +440,10 @@ with tab_audit:
                     "Dif MP": 0,
                     "Status": "Sem Config",
                 })
+                prog.progress((idx + 1) / total)
                 continue
 
+            # --- FATURAMENTO ORIGEM (já filtrado por período) ---
             try:
                 if len(h_o_fat) > 5 and not df_o_fat_p.empty:
                     col_b2_fat = h_o_fat[5]
@@ -445,6 +456,7 @@ with tab_audit:
             except Exception:
                 v_o = 0.0
 
+            # --- FATURAMENTO DESTINO (Importado_Fat) ---
             try:
                 ws_d = sh_d.worksheet("Importado_Fat")
                 h_d, df_d = get_headers_and_df_raw(ws_d)
@@ -468,6 +480,7 @@ with tab_audit:
             except Exception:
                 v_d = 0.0
 
+            # --- MEIO DE PAGAMENTO DESTINO ---
             try:
                 ws_mp_d = sh_d.worksheet("Meio de Pagamento")
                 h_mp_d, df_mp_d = get_headers_and_df_raw(ws_mp_d)
@@ -492,20 +505,9 @@ with tab_audit:
                     col_b3_mp = h_mp_d[6]
                     col_val_mp = h_mp_d[9]
 
-                    def normalize_code(val):
-                        try:
-                            f = float(val)
-                            i = int(f)
-                            if f == i:
-                                return str(i)
-                            else:
-                                return str(f)
-                        except:
-                            return str(val).strip()
-                    
                     b2_norm = normalize_code(b2)
                     b3_norm = normalize_code(b3) if b3 else None
-                    
+
                     mask = df_mp_periodo[col_b2_mp].apply(normalize_code) == b2_norm
                     if b3_norm:
                         mask &= df_mp_periodo[col_b3_mp].apply(normalize_code) == b3_norm
@@ -515,6 +517,7 @@ with tab_audit:
                     if not df_mp_dest_f.empty:
                         v_mp_d = df_mp_dest_f[col_val_mp].sum()
                     else:
+                        # fallback por coluna de valor por keywords
                         col_val_guess = detect_column_by_keywords(h_mp_d, ["valor", "soma", "total", "amount"])
                         if col_val_guess and col_val_guess in df_mp_periodo.columns:
                             df_guess = df_mp_periodo
@@ -532,6 +535,7 @@ with tab_audit:
             except Exception:
                 v_mp_d = 0.0
 
+            # Diferenças e status
             diff = v_o - v_d
             diff_mp = v_d - v_mp_d
             status = "✅ OK" if (abs(diff) < 0.01 and abs(diff_mp) < 0.01) else "❌ Erro"
@@ -546,14 +550,22 @@ with tab_audit:
                 "Status": status
             })
 
-            log_lines.append(f"{p_name}: OK")
-            log_placeholder.text("\n".join(log_lines))
+            log_lines.append(f"{p_name}: {status if status != '✅ OK' else 'OK'}")
             prog.progress((idx + 1) / total)
 
+        # montar tabela final e formatar em R$
         df_res = pd.DataFrame(results)
         for c in ["Origem", "DRE", "MP DRE", "Dif", "Dif MP"]:
             if c in df_res.columns:
                 df_res[c] = df_res[c].apply(format_brl)
+
+        # Exibir tabela primeiro
         st.table(df_res)
 
+        # Depois exibir os logs (mensagens de processamento)
+        st.markdown("---")
+        st.subheader("Relatório de Processamento")
+        st.text("\n".join(log_lines) if log_lines else "Sem mensagens de processamento.")
+
+        prog.progress(1.0)
         st.success("Auditoria concluída.")

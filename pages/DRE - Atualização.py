@@ -25,7 +25,7 @@ st.set_page_config(page_title="Atualizador DRE", layout="wide")
 st.markdown(
     """
     <style>
-    .block-container { padding-top: 1rem; padding-bottom: 2rem; }
+    .block-container { padding-top: 1rem; padding-bottom: 5rem; }
     [data-testid="stVerticalBlock"] > div { margin-bottom: -0.5rem !important; padding-top: 0rem !important; }
     h1 { margin-top: -1rem; margin-bottom: 0.5rem; font-size: 1.8rem; }
     .global-selection-container { margin-top: 5px !important; margin-bottom: 5px !important; }

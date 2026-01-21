@@ -313,7 +313,7 @@ with tab_atual:
                 
                 st.success("Concluido!")
 
-# Aba Auditoria (AgGrid, atualização apenas ao clicar em EXECUTAR)
+# Aba Auditoria (sem "piscar" ao marcar/desmarcar; aplica somente ao clicar em EXECUTAR)
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from st_aggrid.shared import JsCode
 import pandas as pd
@@ -410,10 +410,9 @@ with tab_audit:
         st.session_state.au_last_subpastas = s_ids_audit
         st.session_state.au_planilhas_df = df_init
         st.session_state.au_resultados = {}
-        # temporário para flags (não aplicar na master até clicar em EXECUTAR)
-        st.session_state.au_flags_temp = {}
+        st.session_state.au_flags_temp = {}  # temporário para marcas no grid
 
-    # garantir estruturas de session_state
+    # garantir keys
     if "au_planilhas_df" not in st.session_state:
         st.session_state.au_planilhas_df = pd.DataFrame(columns=["Planilha", "Flag", "Planilha_id", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"])
     if "au_flags_temp" not in st.session_state:
@@ -427,7 +426,7 @@ with tab_audit:
         st.stop()
 
     # -----------------------
-    # Preparar display_df (garantir colunas e sobrepor flags temporárias)
+    # Preparar display_df (garantir colunas e sobrepor flags temporárias para visual only)
     # -----------------------
     expected_cols = ["Planilha", "Flag", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]
     for c in expected_cols:
@@ -435,14 +434,14 @@ with tab_audit:
             df_table[c] = False if c == "Flag" else ""
     display_df = df_table[expected_cols].copy()
 
-    # sobrepor flags com temporário (para visualização sem aplicar na master)
+    # sobrepor flags temporárias (para visualização no grid sem alterar master)
     for i, r in display_df.iterrows():
         p = r["Planilha"]
         if p in st.session_state.au_flags_temp:
             display_df.at[i, "Flag"] = bool(st.session_state.au_flags_temp[p])
 
     # -----------------------
-    # Configurar AgGrid: Flag ao lado do nome; pintar linha verde quando temp flag = true
+    # AgGrid config
     # -----------------------
     row_style_js = JsCode("""
     function(params) {
@@ -466,42 +465,48 @@ with tab_audit:
     grid_options = gb.build()
     grid_options['getRowStyle'] = row_style_js
 
-    st.markdown("Marque a coluna (checkbox) para selecionar planilhas. As alterações só serão aplicadas quando clicar em 'EXECUTAR AUDITORIA'.")
+    st.markdown("Marque as planilhas (checkbox). As alterações só serão aplicadas quando clicar em 'EXECUTAR AUDITORIA'.")
 
-    # Usar NO_UPDATE para evitar atualizações interrompendo a interação
+    # NOTE: NO_UPDATE evita que o grid tente re-renderizar continuamente ao usuário editar
     grid_response = AgGrid(
         display_df,
         gridOptions=grid_options,
         update_mode=GridUpdateMode.NO_UPDATE,
         allow_unsafe_jscode=True,
         theme='alpine',
-        height=420,
+        height=480,
         fit_columns_on_grid_load=True,
     )
 
     # -----------------------
-    # Ler flags do grid_response para armazenar temporariamente
-    # (não aplicamos na master ainda)
+    # Capturar flags do grid (apenas armazenar em temp; NÃO aplicar na master)
     # -----------------------
-    df_from_grid = pd.DataFrame(grid_response.get('data', []))
+    df_from_grid = pd.DataFrame(grid_response.get("data", []))
     if not df_from_grid.empty and "Planilha" in df_from_grid.columns:
+        # Só atualizar o dicionário temporário com os valores capturados do grid.
+        # Essa escrita em session_state NÃO deve provocar rerun por si só.
         for _, row in df_from_grid.iterrows():
             pname = row.get("Planilha")
             if pname is None:
                 continue
-            # capture flag edits as temporary
             st.session_state.au_flags_temp[pname] = to_bool_like(row.get("Flag", False))
 
     # -----------------------
-    # Ações: aplicar / limpar temporário
+    # Ações: executar / limpar temporário
     # -----------------------
     c_run, c_clear = st.columns([1, 1])
-    run = c_run.button("📊 EXECUTAR AUDITORIA (aplica flags temporárias)")
-    clear_temp = c_clear.button("🔁 Limpar seleção (temporária)")
+    run = c_run.button("📊 EXECUTAR AUDITORIA (aplicar flags temporárias)")
+    clear_temp = c_clear.button("🔁 Limpar seleção temporária")
 
     if clear_temp:
         st.session_state.au_flags_temp = {}
-        st.experimental_rerun()
+        # não aplicar nada na master; apenas atualizar visão
+        # forçar rerender apenas neste momento para limpar o grid visualmente
+        try:
+            st.experimental_rerun()
+        except Exception:
+            # se rerun não for permitido no contexto atual, apenas continuar
+            pass
 
     # -----------------------
     # Helper: carregar origem faturamento (uma vez)
@@ -531,7 +536,7 @@ with tab_audit:
             return None, None
 
     # -----------------------
-    # Preparar intervalo de datas
+    # Intervalo de datas
     # -----------------------
     if mes_sel == "Todos":
         d_ini, d_fim = date(ano_sel, 1, 1), date(ano_sel, 12, 31)
@@ -540,10 +545,10 @@ with tab_audit:
         d_fim = (date(ano_sel, int(mes_sel), 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
 
     # -----------------------
-    # Ao clicar em RUN: aplicar as flags temporárias na master e processar apenas as marcadas
+    # Executar auditoria: aplicar flags temporárias à master e processar apenas as marcadas
     # -----------------------
     if run:
-        # aplicar temporárias na tabela principal (somente flags, manter demais valores)
+        # aplicar temporárias na tabela principal (somente Flag)
         for i, row in st.session_state.au_planilhas_df.iterrows():
             pname = row["Planilha"]
             st.session_state.au_planilhas_df.at[i, "Flag"] = bool(st.session_state.au_flags_temp.get(pname, False))
@@ -552,7 +557,6 @@ with tab_audit:
         if selecionadas.empty:
             st.warning("Nenhuma planilha marcada. Marque ao menos uma antes de executar.")
         else:
-            # carregar origem uma vez
             h_o_fat, df_o_fat_p = carregar_origem_faturamento(d_ini, d_fim)
             if h_o_fat is None and df_o_fat_p is None:
                 st.stop()
@@ -561,6 +565,7 @@ with tab_audit:
             prog = st.progress(0)
             logs = []
 
+            # processar cada planilha marcada — atualizar apenas suas linhas na master
             for idx, row in selecionadas.reset_index(drop=True).iterrows():
                 sid = row["Planilha_id"]
                 pname = row["Planilha"]
@@ -590,7 +595,7 @@ with tab_audit:
                     prog.progress((idx + 1) / total)
                     continue
 
-                # FATURAMENTO ORIGEM (filtrar por b2/b3)
+                # FATURAMENTO ORIGEM
                 try:
                     if h_o_fat and len(h_o_fat) > 5 and (df_o_fat_p is not None) and (not df_o_fat_p.empty):
                         col_b2_fat = h_o_fat[5]
@@ -684,7 +689,7 @@ with tab_audit:
                 diff_mp = v_d - v_mp_d
                 status = "✅ OK" if (abs(diff) < 0.01 and abs(diff_mp) < 0.01) else "❌ Erro"
 
-                # Salvar resultado acumulado e atualizar apenas a linha processada
+                # Salvar resultado e atualizar apenas a linha correspondente na master
                 st.session_state.au_resultados[sid] = {"Planilha": pname, "Origem": v_o, "DRE": v_d, "MP DRE": v_mp_d, "Dif": diff, "Dif MP": diff_mp, "Status": status}
 
                 mask = st.session_state.au_planilhas_df["Planilha_id"] == sid
@@ -695,15 +700,22 @@ with tab_audit:
                     st.session_state.au_planilhas_df.loc[mask, "Dif"] = format_brl(diff)
                     st.session_state.au_planilhas_df.loc[mask, "Dif MP"] = format_brl(diff_mp)
                     st.session_state.au_planilhas_df.loc[mask, "Status"] = status
-                    # opcional: desmarcar flag após processar para indicar concluído
+                    # desmarcar a Flag para indicar concluído (se preferir manter marcada, remova esta linha)
                     st.session_state.au_planilhas_df.loc[mask, "Flag"] = False
 
                 logs.append(f"{pname}: {status if status != '✅ OK' else 'OK'}")
                 prog.progress((idx + 1) / total)
 
-            # limpar temporário e reiniciar para renderizar a tabela com resultados atualizados
+            # limpar temporário e finalizar
             st.session_state.au_flags_temp = {}
+
             st.markdown("### Log de processamento")
             st.text("\n".join(logs))
             st.success("Auditoria concluída.")
-            st.experimental_rerun()
+
+            # tentar forçar rerender uma única vez; capturar erro se não for permitido
+            try:
+                st.experimental_rerun()
+            except Exception:
+                # se não for permitido, apenas continuar — a interface já mostrou os resultados
+                pass

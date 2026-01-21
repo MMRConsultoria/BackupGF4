@@ -527,9 +527,23 @@ with tab_audit:
                     col_b3_mp = h_mp_d[6]
                     col_val_mp = h_mp_d[9]
 
-                    mask = df_mp_periodo[col_b2_mp].astype(str).str.strip() == str(b2).strip()
-                    if b3:
-                        mask &= df_mp_periodo[col_b3_mp].astype(str).str.strip() == str(b3).strip()
+                    def normalize_code(val):
+                        try:
+                            f = float(val)
+                            i = int(f)
+                            if f == i:
+                                return str(i)
+                            else:
+                                return str(f)
+                        except:
+                            return str(val).strip()
+                    
+                    b2_norm = normalize_code(b2)
+                    b3_norm = normalize_code(b3) if b3 else None
+                    
+                    mask = df_mp_periodo[col_b2_mp].apply(normalize_code) == b2_norm
+                    if b3_norm:
+                        mask &= df_mp_periodo[col_b3_mp].apply(normalize_code) == b3_norm
 
                     df_mp_dest_f = df_mp_periodo[mask]
 

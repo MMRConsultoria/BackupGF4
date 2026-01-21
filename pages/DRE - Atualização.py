@@ -312,6 +312,6 @@ with tab_verif:
 
 with tab_audit:
     st.markdown("Aqui você pode implementar a aba de Auditoria conforme sua necessidade.")
-```
+
 
 

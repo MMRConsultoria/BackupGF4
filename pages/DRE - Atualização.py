@@ -510,7 +510,7 @@ with tab_audit:
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                 pd.DataFrame(results_excel).to_excel(writer, index=False, sheet_name="Auditoria")
-                writer.save()
+            # após o context manager, o arquivo em memória já está pronto
             processed_data = output.getvalue()
 
             st.success("Auditoria finalizada.")
@@ -523,12 +523,12 @@ with tab_audit:
 
             # limpar flags nas planilhas processadas
             ids_proc = selecionadas["Planilha_id"].tolist()
-            st.session_state.au_planilhas_df.loc[st.session_state.au_planilhas_df["Planilha_id"].isin(ids_proc), "Flag"] = False
+            st.session_state.au_planilhas_df.loc[
+                st.session_state.au_planilhas_df["Planilha_id"].isin(ids_proc), "Flag"
+            ] = False
 
-            # atualiza exibição principal (sem criar segunda tabela)
-            # se quiser forçar refresh da página para atualizar o grid principal:
+            # opcional: forçar re-render para atualizar a tabela na UI
             try:
                 st.experimental_rerun()
             except Exception:
-                # se não for possível re-render (ex.: ambiente que não permite), apenas mostra mensagem
                 st.info("As flags foram limpas. Atualize a página se necessário para ver a alteração.")

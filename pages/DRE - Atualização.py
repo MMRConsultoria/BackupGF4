@@ -486,36 +486,50 @@ with tab_audit:
         st.session_state.au_flags_temp = {}
         st.session_state.au_planilhas_df["Flag"] = False
         st.success("Todas as flags foram desmarcadas.")
-        st.experimental_rerun()
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
 
-    # 2) Limpar dados das marcadas (lê o grid atual)
+    # 2) Limpar dados das marcadas (lê o grid atual; se grid vazio, usa master como fallback)
     if clear_marked:
         df_from_grid = pd.DataFrame(grid_response.get("data", []))
+        planilhas_marcadas = []
         if not df_from_grid.empty and "Planilha" in df_from_grid.columns:
             planilhas_marcadas = df_from_grid[df_from_grid["Flag"].apply(to_bool_like) == True]["Planilha"].tolist()
-            if planilhas_marcadas:
-                mask = st.session_state.au_planilhas_df["Planilha"].isin(planilhas_marcadas)
-                cols_limpar = ["Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]
-                for col in cols_limpar:
-                    st.session_state.au_planilhas_df.loc[mask, col] = ""
-                # desmarcar após limpar
-                st.session_state.au_planilhas_df.loc[mask, "Flag"] = False
-                st.session_state.au_flags_temp = {}
-                st.success(f"Dados de {len(planilhas_marcadas)} planilhas limpos.")
+
+        # fallback: usar master flags caso grid não retorne dados válidos
+        if not planilhas_marcadas:
+            mask_master = st.session_state.au_planilhas_df["Flag"] == True
+            if mask_master.any():
+                planilhas_marcadas = st.session_state.au_planilhas_df.loc[mask_master, "Planilha"].tolist()
+
+        if planilhas_marcadas:
+            mask = st.session_state.au_planilhas_df["Planilha"].isin(planilhas_marcadas)
+            cols_limpar = ["Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]
+            for col in cols_limpar:
+                st.session_state.au_planilhas_df.loc[mask, col] = ""
+            # desmarcar após limpar
+            st.session_state.au_planilhas_df.loc[mask, "Flag"] = False
+            st.session_state.au_flags_temp = {}
+            st.success(f"Dados de {len(planilhas_marcadas)} planilhas limpos.")
+            try:
                 st.experimental_rerun()
-            else:
-                st.warning("Marque as planilhas no checkbox primeiro!")
+            except Exception:
+                pass
         else:
-            st.warning("Não foi possível ler o estado do grid. Tente novamente.")
+            st.warning("Marque as planilhas no checkbox primeiro!")
 
     # 3) Limpar toda a tabela (esvaziar completamente)
     if clear_all:
-        # Esvazia a tabela e zera caches relacionados
         st.session_state.au_planilhas_df = pd.DataFrame(columns=["Planilha", "Flag", "Planilha_id", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"])
         st.session_state.au_flags_temp = {}
         st.session_state.au_resultados = {}
         st.success("Tabela esvaziada.")
-        st.experimental_rerun()
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
 
     # -----------------------
     # Função: carregar origem faturamento

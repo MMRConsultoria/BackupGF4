@@ -7,6 +7,9 @@ from datetime import datetime, timedelta, date
 from oauth2client.service_account import ServiceAccountCredentials
 import gspread
 
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+from st_aggrid.shared import JsCode
+
 try:
     from googleapiclient.discovery import build
 except Exception:
@@ -446,7 +449,14 @@ with tab_audit:
 
     display_df = df_table[expected_cols].copy()
 
-    # AgGrid config
+    # AgGrid config (com Planilha_id incluída e oculta para evitar KeyError)
+    expected_cols = ["Planilha", "Planilha_id", "Flag", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]
+    for c in expected_cols:
+        if c not in df_table.columns:
+            df_table[c] = False if c == "Flag" else ("" if c != "Planilha_id" else "")
+
+    display_df = df_table[expected_cols].copy()
+
     row_style_js = JsCode("""
     function(params) {
         if (params.data && (params.data.Flag === true || params.data.Flag === 'true')) {
@@ -456,6 +466,8 @@ with tab_audit:
     """)
     gb = GridOptionsBuilder.from_dataframe(display_df)
     gb.configure_column("Planilha", headerName="Planilha", editable=False, width=420)
+    # manter Planilha_id na resposta, mas escondida no grid
+    gb.configure_column("Planilha_id", headerName="Planilha_id", editable=False, hide=True)
     gb.configure_column("Flag", editable=True, cellEditor="agCheckboxCellEditor", cellRenderer="agCheckboxCellRenderer", width=80)
     for col in ["Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]:
         if col in display_df.columns:
@@ -534,197 +546,217 @@ with tab_audit:
     # --- Lógica: Executar Auditoria (quando botão clicado) ---
     if executar_clicado:
         df_grid = pd.DataFrame(grid_response.get("data", []))
-        selecionadas = df_grid[df_grid["Flag"].apply(to_bool_like) == True]
-
-        if selecionadas.empty:
-            st.warning("Nenhuma planilha marcada. Marque ao menos uma antes de executar.")
+        if df_grid.empty:
+            st.warning("Nenhuma linha no grid para processar.")
         else:
-            # intervalo de datas
-            if mes_sel == "Todos":
-                d_ini, d_fim = date(ano_sel, 1, 1), date(ano_sel, 12, 31)
+            # selecionar apenas as marcadas (Flag True)
+            selecionadas = df_grid[df_grid["Flag"].apply(to_bool_like) == True].copy()
+
+            # Se Planilha_id não estiver presente no retorno do grid, buscar via master table
+            if "Planilha_id" not in selecionadas.columns:
+                selecionadas = selecionadas.merge(
+                    st.session_state.au_planilhas_df[["Planilha", "Planilha_id"]],
+                    on="Planilha",
+                    how="left"
+                )
+
+            if selecionadas.empty:
+                st.warning("Nenhuma planilha marcada. Marque ao menos uma antes de executar.")
             else:
-                d_ini = date(ano_sel, int(mes_sel), 1)
-                d_fim = (date(ano_sel, int(mes_sel), 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
-
-            # carregar origem faturamento
-            h_o_fat, df_o_fat_p = None, pd.DataFrame()
-            try:
-                sh_o_fat = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT)
-                ws_o_fat = sh_o_fat.worksheet(ABA_ORIGEM_FAT)
-                h_o_fat, df_o_fat = get_headers_and_df_raw(ws_o_fat)
-                if not df_o_fat.empty:
-                    df_o_fat = tratar_numericos(df_o_fat, h_o_fat)
-                c_dt_o = detect_date_col(h_o_fat)
-                if c_dt_o and not df_o_fat.empty:
-                    df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o], dayfirst=True, errors="coerce")
-                    if df_o_fat["_dt"].isna().all():
-                        df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o], dayfirst=False, errors="coerce")
-                    df_o_fat["_dt"] = df_o_fat["_dt"].dt.date
-                    df_o_fat_p = df_o_fat[(df_o_fat["_dt"] >= d_ini) & (df_o_fat["_dt"] <= d_fim)].copy()
+                # intervalo de datas
+                if mes_sel == "Todos":
+                    d_ini, d_fim = date(ano_sel, 1, 1), date(ano_sel, 12, 31)
                 else:
-                    df_o_fat_p = df_o_fat.copy()
-            except Exception as e:
-                st.error(f"Erro ao carregar origem faturamento: {e}")
-                st.stop()
+                    d_ini = date(ano_sel, int(mes_sel), 1)
+                    d_fim = (date(ano_sel, int(mes_sel), 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
 
-            # iniciar processamento
-            total = len(selecionadas)
-            prog = st.progress(0)
-            logs = []
-            results_excel = []
-
-            for idx, row in selecionadas.reset_index(drop=True).iterrows():
-                sid = row["Planilha_id"]
-                pname = row["Planilha"]
-                v_o = v_d = v_mp = 0.0
-                status = "Erro desconhecido"
-
+                # carregar origem faturamento (igual ao seu código)
+                h_o_fat, df_o_fat_p = None, pd.DataFrame()
                 try:
-                    sh_d = gc.open_by_key(sid)
+                    sh_o_fat = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT)
+                    ws_o_fat = sh_o_fat.worksheet(ABA_ORIGEM_FAT)
+                    h_o_fat, df_o_fat = get_headers_and_df_raw(ws_o_fat)
+                    if not df_o_fat.empty:
+                        df_o_fat = tratar_numericos(df_o_fat, h_o_fat)
+                    c_dt_o = detect_date_col(h_o_fat)
+                    if c_dt_o and not df_o_fat.empty:
+                        df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o], dayfirst=True, errors="coerce")
+                        if df_o_fat["_dt"].isna().all():
+                            df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o], dayfirst=False, errors="coerce")
+                        df_o_fat["_dt"] = df_o_fat["_dt"].dt.date
+                        df_o_fat_p = df_o_fat[(df_o_fat["_dt"] >= d_ini) & (df_o_fat["_dt"] <= d_fim)].copy()
+                    else:
+                        df_o_fat_p = df_o_fat.copy()
                 except Exception as e:
-                    status = f"Erro ao abrir planilha ({e})"
-                    logs.append(f"{pname}: {status}")
-                    st.session_state.au_resultados[sid] = {"Planilha": pname, "Origem": 0.0, "DRE": 0.0, "MP DRE": 0.0, "Dif": 0.0, "Dif MP": 0.0, "Status": status}
-                    prog.progress((idx + 1) / total)
-                    continue
+                    st.error(f"Erro ao carregar origem faturamento: {e}")
+                    st.stop()
 
-                try:
-                    b2, b3, b4, b5 = read_codes_from_config_sheet(sh_d)
-                except Exception:
-                    b2, b3, b4, b5 = None, None, None, None
+                # iniciar processamento
+                total = len(selecionadas)
+                prog = st.progress(0)
+                logs = []
+                results_excel = []
 
-                if not b2:
-                    status = "Sem B2 (Config)"
-                    logs.append(f"{pname}: {status}")
-                    st.session_state.au_resultados[sid] = {"Planilha": pname, "Origem": 0.0, "DRE": 0.0, "MP DRE": 0.0, "Dif": 0.0, "Dif MP": 0.0, "Status": status}
-                    prog.progress((idx + 1) / total)
-                    continue
-
-                lojas_audit = []
-                if b3: lojas_audit.append(normalize_code(b3))
-                if b4: lojas_audit.append(normalize_code(b4))
-                if b5: lojas_audit.append(normalize_code(b5))
-
-                # FATURAMENTO ORIGEM
-                try:
-                    if h_o_fat and len(h_o_fat) > 5 and (df_o_fat_p is not None) and (not df_o_fat_p.empty):
-                        col_b2_fat = h_o_fat[5]
-                        df_filter = df_o_fat_p[df_o_fat_p[col_b2_fat].astype(str).str.strip() == str(b2).strip()]
-                        if lojas_audit and len(h_o_fat) > 3:
-                            col_b3_fat = h_o_fat[3]
-                            df_filter = df_filter[df_filter[col_b3_fat].apply(normalize_code).isin(lojas_audit)]
-                        if len(h_o_fat) > 6:
-                            v_o = float(df_filter[h_o_fat[6]].sum()) if not df_filter.empty else 0.0
-                except Exception:
-                    v_o = 0.0
-
-                # FATURAMENTO DESTINO (Importado_Fat)
-                try:
-                    ws_d = sh_d.worksheet("Importado_Fat")
-                    h_d, df_d = get_headers_and_df_raw(ws_d)
-                    if not df_d.empty:
-                        df_d = tratar_numericos(df_d, h_d)
-
-                    c_dt_d = detect_date_col(h_d) or (h_d[0] if h_d else None)
-                    if c_dt_d and not df_d.empty:
-                        df_d["_dt"] = pd.to_datetime(df_d[c_dt_d], dayfirst=True, errors="coerce")
-                        if df_d["_dt"].isna().all():
-                            df_d["_dt"] = pd.to_datetime(df_d[c_dt_d], dayfirst=False, errors="coerce")
-                        df_d["_dt"] = df_d["_dt"].dt.date
-                        df_d_periodo = df_d[(df_d["_dt"] >= d_ini) & (df_d["_dt"] <= d_fim)]
+                for idx, row in selecionadas.reset_index(drop=True).iterrows():
+                    # obter sid de forma segura
+                    sid = None
+                    if "Planilha_id" in row and pd.notna(row["Planilha_id"]) and row["Planilha_id"] != "":
+                        sid = row["Planilha_id"]
                     else:
-                        df_d_periodo = df_d.copy()
+                        # fallback: procurar na master por nome da planilha
+                        pname = row.get("Planilha", None)
+                        if pname:
+                            match = st.session_state.au_planilhas_df.loc[st.session_state.au_planilhas_df["Planilha"] == pname, "Planilha_id"]
+                            if not match.empty:
+                                sid = match.iloc[0]
+                    if not sid:
+                        logs.append(f"{row.get('Planilha','(sem nome)')}: Planilha_id não encontrado — pulando.")
+                        prog.progress((idx + 1) / total)
+                        continue
 
-                    if len(h_d) > 6 and not df_d_periodo.empty:
-                        v_d = float(df_d_periodo[h_d[6]].sum())
-                    else:
+                    pname = row.get("Planilha", "(sem nome)")
+                    v_o = v_d = v_mp = 0.0
+
+                    try:
+                        sh_d = gc.open_by_key(sid)
+                    except Exception as e:
+                        logs.append(f"{pname}: Erro ao abrir planilha ({e})")
+                        prog.progress((idx + 1) / total)
+                        continue
+
+                    # ler códigos de configuração
+                    try:
+                        b2, b3, b4, b5 = read_codes_from_config_sheet(sh_d)
+                    except Exception:
+                        b2, b3, b4, b5 = None, None, None, None
+
+                    if not b2:
+                        logs.append(f"{pname}: Sem B2 (Config) — pulando.")
+                        prog.progress((idx + 1) / total)
+                        continue
+
+                    lojas_audit = []
+                    if b3: lojas_audit.append(normalize_code(b3))
+                    if b4: lojas_audit.append(normalize_code(b4))
+                    if b5: lojas_audit.append(normalize_code(b5))
+
+                    # FATURAMENTO ORIGEM
+                    try:
+                        if h_o_fat and len(h_o_fat) > 5 and (df_o_fat_p is not None) and (not df_o_fat_p.empty):
+                            col_b2_fat = h_o_fat[5]
+                            df_filter = df_o_fat_p[df_o_fat_p[col_b2_fat].astype(str).str.strip() == str(b2).strip()]
+                            if lojas_audit and len(h_o_fat) > 3:
+                                col_b3_fat = h_o_fat[3]
+                                df_filter = df_filter[df_filter[col_b3_fat].apply(normalize_code).isin(lojas_audit)]
+                            if len(h_o_fat) > 6:
+                                v_o = float(df_filter[h_o_fat[6]].sum()) if not df_filter.empty else 0.0
+                    except Exception:
+                        v_o = 0.0
+
+                    # FATURAMENTO DESTINO (Importado_Fat)
+                    try:
+                        ws_d = sh_d.worksheet("Importado_Fat")
+                        h_d, df_d = get_headers_and_df_raw(ws_d)
+                        if not df_d.empty:
+                            df_d = tratar_numericos(df_d, h_d)
+
+                        c_dt_d = detect_date_col(h_d) or (h_d[0] if h_d else None)
+                        if c_dt_d and not df_d.empty:
+                            df_d["_dt"] = pd.to_datetime(df_d[c_dt_d], dayfirst=True, errors="coerce")
+                            if df_d["_dt"].isna().all():
+                                df_d["_dt"] = pd.to_datetime(df_d[c_dt_d], dayfirst=False, errors="coerce")
+                            df_d["_dt"] = df_d["_dt"].dt.date
+                            df_d_periodo = df_d[(df_d["_dt"] >= d_ini) & (df_d["_dt"] <= d_fim)]
+                        else:
+                            df_d_periodo = df_d.copy()
+
+                        if len(h_d) > 6 and not df_d_periodo.empty:
+                            v_d = float(df_d_periodo[h_d[6]].sum())
+                        else:
+                            v_d = 0.0
+                    except Exception:
                         v_d = 0.0
-                except Exception:
-                    v_d = 0.0
 
-                # MEIO DE PAGAMENTO
-                try:
-                    ws_mp = sh_d.worksheet("Meio de Pagamento")
-                    h_mp, df_mp = get_headers_and_df_raw(ws_mp)
-                    if not df_mp.empty:
-                        df_mp = tratar_numericos(df_mp, h_mp)
+                    # MEIO DE PAGAMENTO
+                    try:
+                        ws_mp = sh_d.worksheet("Meio de Pagamento")
+                        h_mp, df_mp = get_headers_and_df_raw(ws_mp)
+                        if not df_mp.empty:
+                            df_mp = tratar_numericos(df_mp, h_mp)
 
-                    c_dt_mp = (h_mp[0] if h_mp and len(h_mp) > 0 else None)
-                    if not c_dt_mp:
-                        c_dt_mp = detect_date_col(h_mp)
+                        c_dt_mp = (h_mp[0] if h_mp and len(h_mp) > 0 else None)
+                        if not c_dt_mp:
+                            c_dt_mp = detect_date_col(h_mp)
 
-                    if c_dt_mp and not df_mp.empty:
-                        df_mp["_dt"] = pd.to_datetime(df_mp[c_dt_mp], dayfirst=True, errors="coerce")
-                        if df_mp["_dt"].isna().all():
-                            df_mp["_dt"] = pd.to_datetime(df_mp[c_dt_mp], dayfirst=False, errors="coerce")
-                        df_mp["_dt"] = df_mp["_dt"].dt.date
-                        df_mp_periodo = df_mp[(df_mp["_dt"] >= d_ini) & (df_mp["_dt"] <= d_fim)]
-                    else:
-                        df_mp_periodo = df_mp.copy()
+                        if c_dt_mp and not df_mp.empty:
+                            df_mp["_dt"] = pd.to_datetime(df_mp[c_dt_mp], dayfirst=True, errors="coerce")
+                            if df_mp["_dt"].isna().all():
+                                df_mp["_dt"] = pd.to_datetime(df_mp[c_dt_mp], dayfirst=False, errors="coerce")
+                            df_mp["_dt"] = df_mp["_dt"].dt.date
+                            df_mp_periodo = df_mp[(df_mp["_dt"] >= d_ini) & (df_mp["_dt"] <= d_fim)]
+                        else:
+                            df_mp_periodo = df_mp.copy()
 
-                    v_mp_calc = 0.0
-                    if not df_mp_periodo.empty:
-                        col_b2_mp = h_mp[8] if len(h_mp) > 8 else None
-                        col_loja_mp = h_mp[6] if len(h_mp) > 6 else None
-                        col_val_mp = h_mp[9] if len(h_mp) > 9 else None
+                        v_mp_calc = 0.0
+                        if not df_mp_periodo.empty:
+                            col_b2_mp = h_mp[8] if len(h_mp) > 8 else None
+                            col_loja_mp = h_mp[6] if len(h_mp) > 6 else None
+                            col_val_mp = h_mp[9] if len(h_mp) > 9 else None
 
-                        ok_b2 = (col_b2_mp in df_mp_periodo.columns) if col_b2_mp else False
-                        ok_loja = (col_loja_mp in df_mp_periodo.columns) if col_loja_mp else False
-                        ok_val = (col_val_mp in df_mp_periodo.columns) if col_val_mp else False
+                            ok_b2 = (col_b2_mp in df_mp_periodo.columns) if col_b2_mp else False
+                            ok_loja = (col_loja_mp in df_mp_periodo.columns) if col_loja_mp else False
+                            ok_val = (col_val_mp in df_mp_periodo.columns) if col_val_mp else False
 
-                        if ok_b2:
-                            b2_norm = normalize_code(b2)
-                            mask = df_mp_periodo[col_b2_mp].apply(normalize_code) == b2_norm
-                            if lojas_audit and ok_loja:
-                                mask &= df_mp_periodo[col_loja_mp].apply(normalize_code).isin(lojas_audit)
+                            if ok_b2:
+                                b2_norm = normalize_code(b2)
+                                mask = df_mp_periodo[col_b2_mp].apply(normalize_code) == b2_norm
+                                if lojas_audit and ok_loja:
+                                    mask &= df_mp_periodo[col_loja_mp].apply(normalize_code).isin(lojas_audit)
 
-                            df_mp_dest_f = df_mp_periodo[mask]
-                            if not df_mp_dest_f.empty and ok_val:
-                                v_mp_calc = float(df_mp_dest_f[col_val_mp].sum())
-                            else:
-                                col_val_guess = detect_column_by_keywords(h_mp, ["valor", "soma", "total", "amount", "receita", "vl"])
-                                if col_val_guess and col_val_guess in df_mp_periodo.columns:
-                                    df_guess = df_mp_periodo.copy()
-                                    df_guess = df_guess[df_guess[col_b2_mp].astype(str).str.strip() == str(b2).strip()]
-                                    if lojas_audit and ok_loja:
-                                        df_guess = df_guess[df_guess[col_loja_mp].apply(normalize_code).isin(lojas_audit)]
-                                    if not df_guess.empty:
-                                        v_mp_calc = float(df_guess[col_val_guess].sum())
-                        v_mp = v_mp_calc
-                    else:
+                                df_mp_dest_f = df_mp_periodo[mask]
+                                if not df_mp_dest_f.empty and ok_val:
+                                    v_mp_calc = float(df_mp_dest_f[col_val_mp].sum())
+                                else:
+                                    col_val_guess = detect_column_by_keywords(h_mp, ["valor", "soma", "total", "amount", "receita", "vl"])
+                                    if col_val_guess and col_val_guess in df_mp_periodo.columns:
+                                        df_guess = df_mp_periodo.copy()
+                                        if col_b2_mp in df_guess.columns:
+                                            df_guess = df_guess[df_guess[col_b2_mp].astype(str).str.strip() == str(b2).strip()]
+                                        if lojas_audit and ok_loja:
+                                            df_guess = df_guess[df_guess[col_loja_mp].apply(normalize_code).isin(lojas_audit)]
+                                        if not df_guess.empty:
+                                            v_mp_calc = float(df_guess[col_val_guess].sum())
+                            v_mp = v_mp_calc
+                        else:
+                            v_mp = 0.0
+                    except Exception:
                         v_mp = 0.0
+
+                    # Diferenças e status
+                    diff = v_o - v_d
+                    diff_mp = v_d - v_mp
+                    status = "✅ OK" if (abs(diff) < 0.01 and abs(diff_mp) < 0.01) else "❌ Erro"
+
+                    # Atualizar master
+                    mask_master = st.session_state.au_planilhas_df["Planilha_id"] == sid
+                    if mask_master.any():
+                        st.session_state.au_planilhas_df.loc[mask_master, "Origem"] = format_brl(v_o)
+                        st.session_state.au_planilhas_df.loc[mask_master, "DRE"] = format_brl(v_d)
+                        st.session_state.au_planilhas_df.loc[mask_master, "MP DRE"] = format_brl(v_mp)
+                        st.session_state.au_planilhas_df.loc[mask_master, "Dif"] = format_brl(diff)
+                        st.session_state.au_planilhas_df.loc[mask_master, "Dif MP"] = format_brl(diff_mp)
+                        st.session_state.au_planilhas_df.loc[mask_master, "Status"] = status
+                        st.session_state.au_planilhas_df.loc[mask_master, "Flag"] = False
+
+                    logs.append(f"{pname}: {status if status != '✅ OK' else 'OK'}")
+                    prog.progress((idx + 1) / total)
+
+                # fim do loop
+                st.session_state.au_flags_temp = {}
+                st.markdown("### Log de processamento")
+                st.text("\n".join(logs))
+                st.success("Auditoria concluída.")
+                try:
+                    st.experimental_rerun()
                 except Exception:
-                    v_mp = 0.0
-
-                # Diferenças e status
-                diff = v_o - v_d
-                diff_mp = v_d - v_mp
-                status = "✅ OK" if (abs(diff) < 0.01 and abs(diff_mp) < 0.01) else "❌ Erro"
-
-                # Salvar resultado e atualizar apenas a linha correspondente na master
-                st.session_state.au_resultados[sid] = {"Planilha": pname, "Origem": v_o, "DRE": v_d, "MP DRE": v_mp, "Dif": diff, "Dif MP": diff_mp, "Status": status}
-
-                mask = st.session_state.au_planilhas_df["Planilha_id"] == sid
-                if mask.any():
-                    st.session_state.au_planilhas_df.loc[mask, "Origem"] = format_brl(v_o)
-                    st.session_state.au_planilhas_df.loc[mask, "DRE"] = format_brl(v_d)
-                    st.session_state.au_planilhas_df.loc[mask, "MP DRE"] = format_brl(v_mp)
-                    st.session_state.au_planilhas_df.loc[mask, "Dif"] = format_brl(diff)
-                    st.session_state.au_planilhas_df.loc[mask, "Dif MP"] = format_brl(diff_mp)
-                    st.session_state.au_planilhas_df.loc[mask, "Status"] = status
-                    # desmarcar a Flag para indicar concluído
-                    st.session_state.au_planilhas_df.loc[mask, "Flag"] = False
-
-                logs.append(f"{pname}: {status if status != '✅ OK' else 'OK'}")
-                prog.progress((idx + 1) / total)
-
-            # fim do loop
-            st.session_state.au_flags_temp = {}
-            st.markdown("### Log de processamento")
-            st.text("\n".join(logs))
-            st.success("Auditoria concluída.")
-            # tentar forçar re-render para mostrar flags limpas
-            try:
-                st.experimental_rerun()
-            except Exception:
-                st.info("As flags foram limpas. Atualize a página se necessário.")
+                    st.info("As flags foram limpas. Atualize a página se necessário.")

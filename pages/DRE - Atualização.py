@@ -67,30 +67,36 @@ st.set_page_config(page_title="Atualizador DRE", layout="wide")
 st.markdown(
     """
     <style>
-    /* Ajuste de padding geral */
-    .block-container { padding-top: 1.2rem; padding-bottom: 1.2rem; }
-    
-    /* Estilização das Tabs */
+    /* Container geral */
+    .block-container { padding-top: 1.5rem; padding-bottom: 1.5rem; }
+
+    /* Estilo das abas */
     button[data-baseweb="tab"] {
-        font-size: 18px;
-        font-weight: bold;
-        background-color: #f0f2f6; /* Cor da aba inativa */
-        border-radius: 8px 8px 0px 0px;
-        margin-right: 5px;
-        padding: 10px 20px;
-        color: #31333F;
+        font-size: 22px !important;
+        font-weight: 900 !important;
+        background-color: #e0e4f7 !important;
+        border-radius: 12px 12px 0 0 !important;
+        margin-right: 8px !important;
+        padding: 14px 28px !important;
+        color: #2a2e45 !important;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        transition: background-color 0.3s ease, color 0.3s ease;
+        text-transform: uppercase;
+        letter-spacing: 1.2px;
     }
 
-    /* Aba Selecionada (Azul conforme a foto) */
+    /* Aba selecionada */
     button[data-baseweb="tab"][aria-selected="true"] {
-        background-color: #0066cc !important;
-        color: white !important;
-        border-bottom: 4px solid #ff4b4b !important; /* Linha vermelha embaixo conforme a foto */
+        background-color: #0033cc !important;
+        color: #ffffff !important;
+        border-bottom: 5px solid #ff3b3b !important;
+        box-shadow: 0 6px 12px rgba(0,0,0,0.3);
     }
 
     /* Hover nas abas */
     button[data-baseweb="tab"]:hover {
-        background-color: #e0e2e6;
+        background-color: #b3b9f9 !important;
+        color: #000000 !important;
     }
     </style>
     """,

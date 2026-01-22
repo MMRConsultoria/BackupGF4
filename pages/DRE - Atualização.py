@@ -99,7 +99,7 @@ st.markdown(
 
 # --- DEFINIÇÃO DAS TABS COM ÍCONES ---
 # Inverti a ordem para Auditoria vir primeiro se desejar, ou mantenha como preferir
-tab_atual, tab_audit = st.tabs(["🔄 Atualização", "🔍 Auditoria"])
+#tab_atual, tab_audit = st.tabs(["🔄 Atualização", "🔍 Auditoria"])
 
 st.title("Atualizar DRE")
 
@@ -247,7 +247,7 @@ def to_bool_like(x):
     return s in ("true", "t", "1", "yes", "y", "sim", "s")
 
 # ---- TABS ----
-#tab_audit, tab_atual = st.tabs(["Auditoria", "Atualização"])
+ tab_atual,tab_audit = st.tabs(["Auditoria", "Atualização"])
 
 # -----------------------------
 # ABA: ATUALIZAÇÃO (mantive seu código praticamente intacto)

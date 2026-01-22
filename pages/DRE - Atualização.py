@@ -479,7 +479,7 @@ with tab_audit:
     run = c_run.button("📊 EXECUTAR AUDITORIA (aplicar flags do grid)")
     uncheck_all = c_uncheck_all.button("🔁 Desmarcar Tudo")
     clear_marked = c_clear_marked.button("🧹 Limpar dados das marcadas")
-    #clear_all = c_clear_all.button("🧻 Limpar toda a tabela")
+    clear_all = c_clear_all.button("🧻 Limpar toda a tabela")
 
     # 1) Desmarcar tudo (reseta flags na master)
     if uncheck_all:

@@ -87,7 +87,7 @@ st.markdown(
 )
 
 # O Título agora com uma margem melhor
-st.markdown('<div class="main-title">📈 Atualizar DRE - Multi-Lojas</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">📈 Atualizar DRE</div>', unsafe_allow_html=True)
 # =========================================================================
 
 # ---- AUTENTICAÇÃO ----

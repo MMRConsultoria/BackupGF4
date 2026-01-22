@@ -63,17 +63,45 @@ ABA_ORIGEM_MP = "Faturamento Meio Pagamento"
 
 st.set_page_config(page_title="Atualizador DRE", layout="wide")
 
+# --- ESTILO DAS ABAS (IGUAL À FOTO) ---
 st.markdown(
     """
     <style>
+    /* Ajuste de padding geral */
     .block-container { padding-top: 1.2rem; padding-bottom: 1.2rem; }
-    [data-testid="stTable"] td, [data-testid="stTable"] th { padding: 8px 12px !important; }
+    
+    /* Estilização das Tabs */
+    button[data-baseweb="tab"] {
+        font-size: 18px;
+        font-weight: bold;
+        background-color: #f0f2f6; /* Cor da aba inativa */
+        border-radius: 8px 8px 0px 0px;
+        margin-right: 5px;
+        padding: 10px 20px;
+        color: #31333F;
+    }
+
+    /* Aba Selecionada (Azul conforme a foto) */
+    button[data-baseweb="tab"][aria-selected="true"] {
+        background-color: #0066cc !important;
+        color: white !important;
+        border-bottom: 4px solid #ff4b4b !important; /* Linha vermelha embaixo conforme a foto */
+    }
+
+    /* Hover nas abas */
+    button[data-baseweb="tab"]:hover {
+        background-color: #e0e2e6;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.title("Atualizador DRE - Multi-Lojas")
+# --- DEFINIÇÃO DAS TABS COM ÍCONES ---
+# Inverti a ordem para Auditoria vir primeiro se desejar, ou mantenha como preferir
+tab_atual, tab_audit = st.tabs(["🔄 Atualização", "🔍 Auditoria"])
+
+st.title("Atualizar DRE")
 
 # ---- AUTENTICAÇÃO ----
 @st.cache_resource

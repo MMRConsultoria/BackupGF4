@@ -495,6 +495,47 @@ with tab_audit:
     grid_options = gb.build()
     grid_options['getRowStyle'] = row_style_js
 
+    # Cole isto logo antes da chamada AgGrid(...) que renderiza a tabela de auditoria
+    st.markdown("""
+    <style>
+    /* Borda geral ao redor da grade */
+    .ag-theme-alpine .ag-root-wrapper {
+        border: 1px solid #d0d7de;
+        border-radius: 6px;
+    }
+    
+    /* Bordas entre células e linhas */
+    .ag-theme-alpine .ag-header-cell, 
+    .ag-theme-alpine .ag-cell {
+        border-right: 1px solid #e6edf3;
+        border-bottom: 1px solid #e6edf3;
+    }
+    
+    /* Ajuste da linha do cabeçalho */
+    .ag-theme-alpine .ag-header {
+        border-bottom: 2px solid #cfd8e3;
+    }
+    
+    /* Remove outline feio ao editar/selecionar célula */
+    .ag-theme-alpine .ag-cell-focus {
+        outline: none;
+    }
+    
+    /* Pequeno padding para melhorar leitura */
+    .ag-theme-alpine .ag-cell, .ag-theme-alpine .ag-header-cell {
+        padding: 6px 8px;
+    }
+    
+    /* Opcional: cor de fundo do cabeçalho */
+    .ag-theme-alpine .ag-header-cell-label {
+        color: #1f2d3d;
+        font-weight: 600;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+    
     grid_response = AgGrid(
         display_df,
         gridOptions=grid_options,

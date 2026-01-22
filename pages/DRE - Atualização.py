@@ -572,6 +572,7 @@ with tab_audit:
 
   
     with col_btn3:
+   
         # prepara o arquivo Excel padrão da auditoria (igual antes)
         if not is_empty_btn:
             df_to_write = df_para_excel_btn.copy()
@@ -703,7 +704,6 @@ with tab_audit:
     
             except Exception as e:
                 st.error(f"Erro na verificação: {e}")
-                    st.error(f"Erro na verificação: {e}")
 
     if limpar_clicadas:
         df_grid_now = pd.DataFrame(grid_response.get("data", []))

@@ -570,20 +570,31 @@ with tab_audit:
 
   
 
+  
     with col_btn3:
-        # 1. Botão de Excel da Auditoria (Original)
+        # prepara o arquivo Excel padrão da auditoria (igual antes)
         if not is_empty_btn:
             df_to_write = df_para_excel_btn.copy()
             for col in currency_cols:
                 if col in df_to_write.columns:
                     df_to_write[col] = df_to_write[col].apply(_to_numeric_or_nan)
+    
             output_btn = io.BytesIO()
             with pd.ExcelWriter(output_btn, engine="xlsxwriter") as writer:
                 df_to_write.to_excel(writer, index=False, sheet_name="Auditoria")
+                workbook = writer.book
+                worksheet = writer.sheets["Auditoria"]
+                currency_fmt = workbook.add_format({'num_format': u'R$ #,##0.00'})
+                for i, col in enumerate(df_to_write.columns):
+                    if col in currency_cols:
+                        worksheet.set_column(i, i, 18, currency_fmt)
+                    else:
+                        worksheet.set_column(i, i, 40)
             processed_btn = output_btn.getvalue()
         else:
             processed_btn = b""
-
+    
+        # botões lado a lado (mesmo padrão do botão Atualizar)
         c_dl, c_ver = st.columns([1, 1])
         with c_dl:
             st.download_button(
@@ -595,84 +606,104 @@ with tab_audit:
                 disabled=is_empty_btn,
                 key="au_download"
             )
-
+    
         with c_ver:
-            verificar_btn = st.button("🔎 Verificar Lojas Faltantes", use_container_width=True)
-
+            verificar_btn = st.button("🔎 Verificar Lojas Faltantes", use_container_width=True, key="au_verif_simple")
+    
+        # função auxiliar para localizar planilha de vendas (mantida caso precise futuramente)
+        def _find_vendas_sheet(spreadsheet):
+            for w in spreadsheet.worksheets():
+                t = w.title.strip().lower()
+                if "venda" in t or "vendas" in t or "vendas_diarias" in t or "vendas diarias" in t:
+                    return w
+            return None
+    
         if verificar_btn:
-            st.info("Iniciando verificação cruzada...")
+            st.info("Executando verificação — gerando arquivo para download quando concluir...")
             try:
-                # --- PASSO 1: Obter códigos da Tabela Empresa (Origem) ---
+                # --- PASSO 1: Ler Tabela Empresa (Origem) col A (nome) e col C (código) ---
                 sh_origem = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT)
                 ws_empresa = sh_origem.worksheet("Tabela Empresa")
                 dados_empresa = ws_empresa.get_all_values()
-                
-                # Pega coluna C (índice 2), pulando cabeçalho
-                codigos_origem = set()
-                for r in dados_empresa[1:]:
-                    if len(r) > 2 and str(r[2]).strip() != "":
-                        codigos_origem.add(normalize_code(r[2]))
-                
-                if not codigos_origem:
+    
+                nomes_codigos = []  # lista de tuples (nome, codigo_normalizado)
+                for r in dados_empresa[1:]:  # pula cabeçalho
+                    nome = r[0].strip() if len(r) > 0 and r[0] is not None else ""
+                    codigo_raw = r[2] if len(r) > 2 else ""
+                    if str(codigo_raw).strip() != "":
+                        cod_norm = normalize_code(codigo_raw)
+                        nomes_codigos.append((nome, cod_norm))
+    
+                if not nomes_codigos:
                     st.error("Nenhum código encontrado na coluna C da aba 'Tabela Empresa'.")
                     st.stop()
-
-                # --- PASSO 2: Mapear códigos configurados nas planilhas da pasta ---
-                planilhas_pasta = st.session_state.au_planilhas_df.copy()
-                mapa_codigos_nas_planilhas = {} # {codigo_normalizado: [nomes_das_planilhas]}
-                
+    
+                codigos_origem = set(c for _, c in nomes_codigos)
+    
+                # --- PASSO 2: Varre as planilhas da pasta e coleta todos os códigos em B3/B4/B5 ---
+                planilhas_pasta = st.session_state.get("au_planilhas_df", pd.DataFrame()).copy()
+                mapa_codigos_nas_planilhas = {}  # {codigo_normalizado: [nomes_das_planilhas]}
+    
                 prog = st.progress(0)
-                total = len(planilhas_pasta)
-                
+                total = len(planilhas_pasta) if not planilhas_pasta.empty else 0
+    
                 for i, prow in planilhas_pasta.reset_index(drop=True).iterrows():
                     pname = prow.get("Planilha", "Sem Nome")
                     sid = prow.get("Planilha_id")
                     try:
-                        if sid:
+                        if sid and str(sid).strip() != "":
                             sh_dest = gc.open_by_key(sid)
                             _, b3, b4, b5 = read_codes_from_config_sheet(sh_dest)
-                            for val in [b3, b4, b5]:
+                            for val in (b3, b4, b5):
                                 if val and str(val).strip() != "":
                                     cod_norm = normalize_code(val)
-                                    if cod_norm not in mapa_codigos_nas_planilhas:
-                                        mapa_codigos_nas_planilhas[cod_norm] = []
-                                    mapa_codigos_nas_planilhas[cod_norm].append(pname)
-                    except:
-                        pass # Ignora erros de acesso a planilhas individuais
-                    prog.progress((i+1)/total)
-
-                # --- PASSO 3: Cruzamento de dados ---
+                                    mapa_codigos_nas_planilhas.setdefault(cod_norm, []).append(pname)
+                    except Exception:
+                        # ignora falhas em planilhas individuais (não interrompe todo processo)
+                        pass
+                    if total:
+                        prog.progress((i + 1) / total)
+    
+                # --- PASSO 3: Monta relatório com nome, código e onde foi encontrado ---
                 relatorio = []
-                for cod in sorted(list(codigos_origem)):
+                for nome, cod in nomes_codigos:
                     planilhas_onde_esta = mapa_codigos_nas_planilhas.get(cod, [])
                     relatorio.append({
+                        "Nome Empresa (Origem)": nome,
                         "Código Loja (Origem)": cod,
                         "Status": "✅ OK" if planilhas_onde_esta else "❌ FALTANDO PLANILHA",
                         "Planilhas Vinculadas": ", ".join(planilhas_onde_esta) if planilhas_onde_esta else "NENHUMA"
                     })
-
+    
                 df_relatorio = pd.DataFrame(relatorio)
-                
-                # Gerar Excel do Relatório
+    
+                # --- PASSO 4: Gera Excel e disponibiliza para download SEM mostrar tabela abaixo ---
                 buf = io.BytesIO()
                 with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-                    df_relatorio.to_excel(writer, index=False, sheet_name="Verificacao_Lojas")
-                
-                st.success(f"Verificação concluída! {len(df_relatorio[df_relatorio['Status'] == '❌ FALTANDO PLANILHA'])} lojas sem planilha.")
-                
+                    df_relatorio.to_excel(writer, index=False, sheet_name="Lojas_Faltantes")
+                    # formatação básica de colunas
+                    workbook = writer.book
+                    worksheet = writer.sheets["Lojas_Faltantes"]
+                    worksheet.set_column(0, 0, 40)  # Nome Empresa
+                    worksheet.set_column(1, 1, 20)  # Código
+                    worksheet.set_column(2, 2, 18)  # Status
+                    worksheet.set_column(3, 3, 60)  # Planilhas Vinculadas
+    
+                excel_bytes = buf.getvalue()
+                faltam = int((df_relatorio["Status"] == "❌ FALTANDO PLANILHA").sum())
+                st.success(f"Verificação concluída — {faltam} lojas sem planilha. Faça o download do relatório abaixo.")
                 st.download_button(
                     label="⬇️ Baixar Relatório de Lojas Faltantes",
-                    data=buf.getvalue(),
+                    data=excel_bytes,
                     file_name=f"lojas_sem_planilha_{date.today()}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
+                    use_container_width=True,
+                    key="au_verif_download_simple"
                 )
-                
-                # Mostra prévia das que faltam
-                st.dataframe(df_relatorio[df_relatorio['Status'] == '❌ FALTANDO PLANILHA'], use_container_width=True)
-
+    
             except Exception as e:
                 st.error(f"Erro na verificação: {e}")
+                    st.error(f"Erro na verificação: {e}")
 
     if limpar_clicadas:
         df_grid_now = pd.DataFrame(grid_response.get("data", []))

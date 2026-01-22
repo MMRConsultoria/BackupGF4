@@ -404,7 +404,6 @@ with tab_atual:
                 st.success("Concluído!")
 
 # -----------------------------
-# -----------------------------
 # ABA: AUDITORIA
 # -----------------------------
 with tab_audit:

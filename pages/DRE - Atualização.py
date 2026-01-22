@@ -427,39 +427,74 @@ with tab_audit:
                 try:
                     ws_mp = sh_d.worksheet("Meio de Pagamento")
                     h_mp, df_mp = get_headers_and_df_raw(ws_mp)
-                    df_mp = tratar_numericos(df_mp, h_mp)
+                    if not df_mp.empty:
+                        df_mp = tratar_numericos(df_mp, h_mp)
 
-                    # filtrar por período (se houver coluna de data)
-                    c_dt_mp = detect_date_col(h_mp)
-                    if c_dt_mp:
-                        df_mp["_dt"] = pd.to_datetime(df_mp[c_dt_mp], dayfirst=True, errors="coerce").dt.date
-                        df_mp_p = df_mp[(df_mp["_dt"] >= d_ini) & (df_mp["_dt"] <= d_fim)].copy()
+                    # Data sempre na coluna A conforme informado => priorizar h_mp[0]
+                    c_dt_mp = (h_mp[0] if h_mp and len(h_mp) > 0 else None)
+                    if not c_dt_mp:
+                        c_dt_mp = detect_date_col(h_mp)
+
+                    if c_dt_mp and not df_mp.empty:
+                        df_mp["_dt"] = pd.to_datetime(df_mp[c_dt_mp], dayfirst=True, errors="coerce")
+                        # se não parseou com dayfirst, tenta sem
+                        if df_mp["_dt"].isna().all():
+                            df_mp["_dt"] = pd.to_datetime(df_mp[c_dt_mp], dayfirst=False, errors="coerce")
+                        df_mp["_dt"] = df_mp["_dt"].dt.date
+                        df_mp_periodo = df_mp[(df_mp["_dt"] >= d_ini) & (df_mp["_dt"] <= d_fim)]
                     else:
-                        df_mp_p = df_mp.copy()
+                        df_mp_periodo = df_mp.copy()
 
-                    # identificar colunas (seguindo a mesma convenção do update)
-                    col_b2_mp = h_mp[8] if len(h_mp) > 8 else None   # coluna com B2
-                    col_loja_mp = h_mp[6] if len(h_mp) > 6 else None # coluna com código da loja
-                    col_valor_mp = h_mp[9] if len(h_mp) > 9 else None # coluna com o valor a somar
+                    # Inicializa
+                    v_mp = 0.0
 
-                    # máscara inicial
-                    mask_mp = pd.Series(True, index=df_mp_p.index)
+                    # Só tenta somar se houver dados no período
+                    if not df_mp_periodo.empty:
+                        # valida índices esperados (seguindo o padrão do update)
+                        col_b2_mp = h_mp[8] if len(h_mp) > 8 else None   # coluna com B2
+                        col_loja_mp = h_mp[6] if len(h_mp) > 6 else None # coluna com código da loja
+                        col_val_mp = h_mp[9] if len(h_mp) > 9 else None  # coluna com valor a somar
 
-                    # aplicar filtro B2 (se existir)
-                    if col_b2_mp and col_b2_mp in df_mp_p.columns:
-                        mask_mp &= df_mp_p[col_b2_mp].astype(str).str.strip() == b2
-                    elif col_b2_mp:
-                        mask_mp &= pd.Series([False] * len(df_mp_p), index=df_mp_p.index)
+                        # checar existência das colunas em df
+                        ok_b2 = (col_b2_mp in df_mp_periodo.columns) if col_b2_mp else False
+                        ok_loja = (col_loja_mp in df_mp_periodo.columns) if col_loja_mp else False
+                        ok_val = (col_val_mp in df_mp_periodo.columns) if col_val_mp else False
 
-                    # aplicar filtro lojas (OR via isin) se houver lojas_audit
-                    if lojas_audit and col_loja_mp and col_loja_mp in df_mp_p.columns:
-                        mask_mp &= df_mp_p[col_loja_mp].apply(normalize_code).isin(lojas_audit)
+                        # se não houver a coluna de B2, não há match (mantém v_mp = 0)
+                        if ok_b2:
+                            b2_norm = normalize_code(b2)
+                            mask = df_mp_periodo[col_b2_mp].apply(normalize_code) == b2_norm
 
-                    # soma do valor (se coluna existir)
-                    if col_valor_mp and col_valor_mp in df_mp_p.columns:
-                        v_mp = float(df_mp_p.loc[mask_mp, col_valor_mp].sum())
+                            # lojas_audit contém b3/b4/b5 normalizados (quando preenchidos)
+                            if lojas_audit and ok_loja:
+                                mask &= df_mp_periodo[col_loja_mp].apply(normalize_code).isin(lojas_audit)
+
+                            df_mp_dest_f = df_mp_periodo[mask]
+
+                            if not df_mp_dest_f.empty and ok_val:
+                                v_mp = float(df_mp_dest_f[col_val_mp].sum())
+                            else:
+                                # fallback: tentar detectar coluna de valor por palavras-chave
+                                col_val_guess = None
+                                try:
+                                    col_val_guess = detect_column_by_keywords(h_mp, ["valor", "soma", "total", "amount", "receita", "vl"])
+                                except Exception:
+                                    col_val_guess = None
+                                if col_val_guess and col_val_guess in df_mp_periodo.columns:
+                                    df_guess = df_mp_periodo.copy()
+                                    # aplicar filtros de B2 e lojas no guess também
+                                    df_guess = df_guess[df_guess[col_b2_mp].astype(str).str.strip() == str(b2).strip()]
+                                    if lojas_audit and ok_loja:
+                                        df_guess = df_guess[df_guess[col_loja_mp].apply(normalize_code).isin(lojas_audit)]
+                                    if not df_guess.empty:
+                                        v_mp = float(df_guess[col_val_guess].sum())
+                                else:
+                                    v_mp = 0.0
+                        else:
+                            v_mp = 0.0
                     else:
                         v_mp = 0.0
+
                 except Exception:
                     v_mp = 0.0
 

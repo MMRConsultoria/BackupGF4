@@ -568,13 +568,15 @@ with tab_audit:
             except: return pd.NA
         return float(n)
 
+  
     with col_btn3:
+        # prepara o arquivo Excel padrão da auditoria (igual antes)
         if not is_empty_btn:
             df_to_write = df_para_excel_btn.copy()
             for col in currency_cols:
                 if col in df_to_write.columns:
                     df_to_write[col] = df_to_write[col].apply(_to_numeric_or_nan)
-
+    
             output_btn = io.BytesIO()
             with pd.ExcelWriter(output_btn, engine="xlsxwriter") as writer:
                 df_to_write.to_excel(writer, index=False, sheet_name="Auditoria")
@@ -589,16 +591,116 @@ with tab_audit:
             processed_btn = output_btn.getvalue()
         else:
             processed_btn = b""
-
-        st.download_button(
-            label="⬇️ Excel",
-            data=processed_btn,
-            file_name=f"auditoria_dre_{date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            disabled=is_empty_btn,
-            key="au_download"
-        )
+    
+        # dois botões lado a lado: download Excel e verificar códigos (gera Excel)
+        c_dl, c_ver = st.columns([1, 1])
+        with c_dl:
+            st.download_button(
+                label="⬇️ Excel",
+                data=processed_btn,
+                file_name=f"auditoria_dre_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                disabled=is_empty_btn,
+                key="au_download"
+            )
+    
+        with c_ver:
+            verificar_btn = st.button("🔎 Verificar Códigos", use_container_width=True, key="au_verif_simple")
+    
+        # função simples para localizar planilha de vendas (coluna C)
+        def _find_vendas_sheet(spreadsheet):
+            for w in spreadsheet.worksheets():
+                t = w.title.strip().lower()
+                if "venda" in t or "vendas" in t or "vendas_diarias" in t or "vendas diarias" in t:
+                    return w
+            return None
+    
+        if verificar_btn:
+            planilhas_master = st.session_state.get("au_planilhas_df", pd.DataFrame()).copy()
+            if planilhas_master.empty:
+                st.warning("Nenhuma planilha na lista de auditoria.")
+            else:
+                st.info("Executando verificação de códigos — aguarde...")
+                rows = []
+                prog = st.progress(0)
+                total = len(planilhas_master)
+                for i, prow in planilhas_master.reset_index(drop=True).iterrows():
+                    pname = prow.get("Planilha", "(sem nome)")
+                    sid = prow.get("Planilha_id")
+                    try:
+                        if not sid or str(sid).strip() == "":
+                            rows.append({"Planilha": pname, "Status": "Sem ID", "MissingCount": "", "MissingCodes": ""})
+                            prog.progress((i+1)/total); continue
+    
+                        sh = gc.open_by_key(sid)
+                        # read config b3,b4,b5
+                        _, b3, b4, b5 = read_codes_from_config_sheet(sh)
+                        config_codes = set(normalize_code(x) for x in (b3, b4, b5) if x and str(x).strip() != "")
+    
+                        if not config_codes:
+                            rows.append({"Planilha": pname, "Status": "Sem códigos em B3/B4/B5", "MissingCount": "", "MissingCodes": ""})
+                            prog.progress((i+1)/total); continue
+    
+                        ws_v = _find_vendas_sheet(sh)
+                        if ws_v is None:
+                            rows.append({"Planilha": pname, "Status": "Sem aba de vendas", "MissingCount": "", "MissingCodes": ""})
+                            prog.progress((i+1)/total); continue
+    
+                        vals = ws_v.get_all_values()
+                        if not vals or len(vals) < 2:
+                            rows.append({"Planilha": pname, "Status": "Vendas sem dados", "MissingCount": 0, "MissingCodes": ""})
+                            prog.progress((i+1)/total); continue
+    
+                        # pega coluna C (índice 2) a partir da segunda linha
+                        colC = []
+                        for r in vals[1:]:
+                            if len(r) > 2:
+                                v = str(r[2]).strip()
+                                if v != "":
+                                    colC.append(v)
+                        if not colC:
+                            rows.append({"Planilha": pname, "Status": "Coluna C vazia", "MissingCount": 0, "MissingCodes": ""})
+                            prog.progress((i+1)/total); continue
+    
+                        colC_norm = set(normalize_code(x) for x in colC if str(x).strip() != "")
+                        missing = sorted([c for c in colC_norm if c not in config_codes])
+    
+                        status = "✅ OK" if not missing else "❌ Faltam códigos"
+                        rows.append({
+                            "Planilha": pname,
+                            "Status": status,
+                            "MissingCount": len(missing),
+                            "MissingCodes": ", ".join(missing) if missing else ""
+                        })
+                    except Exception as e:
+                        rows.append({"Planilha": pname, "Status": f"Erro: {e}", "MissingCount": "", "MissingCodes": ""})
+                    prog.progress((i+1)/total)
+    
+                df_check = pd.DataFrame(rows)
+    
+                # gera e disponibiliza Excel para download (único arquivo)
+                buf = io.BytesIO()
+                with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+                    df_check.to_excel(writer, index=False, sheet_name="Verificação")
+                    # formata colunas (opcional)
+                    workbook = writer.book
+                    worksheet = writer.sheets["Verificação"]
+                    worksheet.set_column(0, 0, 40)  # Planilha
+                    worksheet.set_column(1, 1, 20)  # Status
+                    worksheet.set_column(2, 2, 12)  # MissingCount
+                    worksheet.set_column(3, 3, 80)  # MissingCodes
+                excel_bytes = buf.getvalue()
+    
+                st.success("Verificação concluída — baixe o relatório abaixo.")
+                st.download_button(
+                    label="⬇️ Baixar relatório de verificação",
+                    data=excel_bytes,
+                    file_name=f"verificacao_codigos_{date.today()}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="au_verif_download_simple"
+                )
 
     if limpar_clicadas:
         df_grid_now = pd.DataFrame(grid_response.get("data", []))

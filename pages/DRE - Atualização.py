@@ -451,8 +451,6 @@ with tab_atual:
                 st.success("Concluído!")
 
 # -----------------------------
-# ABA: AUDITORIA (Lógica Intacta)
-# -----------------------------
 # -----------------------------
 # ABA: AUDITORIA (Lógica Intacta)
 # -----------------------------
@@ -534,7 +532,7 @@ with tab_audit:
             gb.configure_column(col, editable=False)
     grid_options = gb.build()
     grid_options['getRowStyle'] = row_style_js
- 
+
     st.markdown('<div id="auditoria">', unsafe_allow_html=True)    
     
     grid_response = AgGrid(
@@ -570,134 +568,49 @@ with tab_audit:
                 return pd.NA
         return float(n)
 
-    # --- BOTÕES PADRONIZADOS (substitui col_btn1..col_btn3) ---
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
-    
-    with c1:
+    # --- BOTÕES (mantém layout clássico) ---
+    col_btn1, col_btn2, col_btn3, _ = st.columns([2, 2, 1, 6])
+
+    with col_btn1:
         executar_clicado = st.button("📊 Atualizar", key="au_exec", use_container_width=True)
-    
-    with c2:
+
+    with col_btn2:
         limpar_clicadas = st.button("🧹 Limpar marcadas", key="au_limpar", use_container_width=True)
-    
-    if not is_empty_btn:
-        df_to_write = df_para_excel_btn.copy()
-        for col in currency_cols:
-            if col in df_to_write.columns:
-                df_to_write[col] = df_to_write[col].apply(_to_numeric_or_nan)
-        output_btn = io.BytesIO()
-        with pd.ExcelWriter(output_btn, engine="xlsxwriter") as writer:
-            df_to_write.to_excel(writer, index=False, sheet_name="Auditoria")
-            # (opcional) formatação
-            try:
+
+    with col_btn3:
+        if not is_empty_btn:
+            df_to_write = df_para_excel_btn.copy()
+            for col in currency_cols:
+                if col in df_to_write.columns:
+                    df_to_write[col] = df_to_write[col].apply(_to_numeric_or_nan)
+
+            output_btn = io.BytesIO()
+            with pd.ExcelWriter(output_btn, engine="xlsxwriter") as writer:
+                df_to_write.to_excel(writer, index=False, sheet_name="Auditoria")
                 workbook = writer.book
                 worksheet = writer.sheets["Auditoria"]
-                currency_fmt = workbook.add_format({'num_format': u'R$ #,##0.00'})
-                for i, col in enumerate(df_to_write.columns):
-                    if col in currency_cols:
-                        worksheet.set_column(i, i, 18, currency_fmt)
-                    else:
-                        worksheet.set_column(i, i, 40)
-            except Exception:
-                pass
-        processed_btn = output_btn.getvalue()
-    else:
-        processed_btn = b""
-    
-    with c3:
+                try:
+                    currency_fmt = workbook.add_format({'num_format': u'R$ #,##0.00'})
+                    for i, col in enumerate(df_to_write.columns):
+                        if col in currency_cols:
+                            worksheet.set_column(i, i, 18, currency_fmt)
+                        else:
+                            worksheet.set_column(i, i, 40)
+                except Exception:
+                    pass
+            processed_btn = output_btn.getvalue()
+        else:
+            processed_btn = b""
+
         st.download_button(
-            label="⬇️ Excel Auditoria",
+            label="⬇️ Excel",
             data=processed_btn,
-            file_name=f"auditoria_{date.today()}.xlsx",
+            file_name=f"auditoria_dre_{date.today()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
             disabled=is_empty_btn,
             key="au_download"
         )
-    
-    with c4:
-        verificar_btn = st.button("🔎 Verificar Lojas", use_container_width=True, key="au_verif_simple")
-    
-    # lógica de verificação (mantida, só ajustada para layout)
-    if verificar_btn:
-        placeholder_msg = st.empty()
-        placeholder_msg.info("Executando verificação — gerando arquivo para download quando concluir...")
-        try:
-            sh_origem = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT)
-            ws_empresa = sh_origem.worksheet("Tabela Empresa")
-            dados_empresa = ws_empresa.get_all_values()
-    
-            nomes_codigos = []
-            for r in dados_empresa[1:]:
-                nome = r[0].strip() if len(r) > 0 and r[0] is not None else ""
-                codigo_raw = r[2] if len(r) > 2 else ""
-                if str(codigo_raw).strip() != "":
-                    nomes_codigos.append((nome, normalize_code(codigo_raw)))
-    
-            if not nomes_codigos:
-                placeholder_msg.error("Nenhum código encontrado na coluna C da aba 'Tabela Empresa'.")
-                st.stop()
-    
-            planilhas_pasta = st.session_state.get("au_planilhas_df", pd.DataFrame()).copy()
-            mapa_codigos_nas_planilhas = {}
-    
-            prog = st.progress(0)
-            total = len(planilhas_pasta) if not planilhas_pasta.empty else 0
-    
-            for i, prow in planilhas_pasta.reset_index(drop=True).iterrows():
-                pname = prow.get("Planilha", "Sem Nome")
-                sid = prow.get("Planilha_id")
-                try:
-                    if sid and str(sid).strip() != "":
-                        sh_dest = gc.open_by_key(sid)
-                        _, b3, b4, b5 = read_codes_from_config_sheet(sh_dest)
-                        for val in (b3, b4, b5):
-                            if val and str(val).strip() != "":
-                                cod_norm = normalize_code(val)
-                                mapa_codigos_nas_planilhas.setdefault(cod_norm, []).append(pname)
-                except Exception:
-                    pass
-                if total:
-                    prog.progress((i + 1) / total)
-    
-            relatorio = []
-            for nome, cod in nomes_codigos:
-                planilhas_onde_esta = mapa_codigos_nas_planilhas.get(cod, [])
-                relatorio.append({
-                    "Nome Empresa (Origem)": nome,
-                    "Código Loja (Origem)": cod,
-                    "Status": "✅ OK" if planilhas_onde_esta else "❌ FALTANDO PLANILHA",
-                    "Planilhas Vinculadas": ", ".join(planilhas_onde_esta) if planilhas_onde_esta else "NENHUMA"
-                })
-    
-            df_relatorio = pd.DataFrame(relatorio)
-    
-            buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-                df_relatorio.to_excel(writer, index=False, sheet_name="Lojas_Faltantes")
-                try:
-                    workbook = writer.book
-                    worksheet = writer.sheets["Lojas_Faltantes"]
-                    worksheet.set_column(0, 0, 40)
-                    worksheet.set_column(1, 1, 20)
-                    worksheet.set_column(2, 2, 18)
-                    worksheet.set_column(3, 3, 60)
-                except Exception:
-                    pass
-    
-            excel_bytes = buf.getvalue()
-            faltam = int((df_relatorio["Status"] == "❌ FALTANDO PLANILHA").sum())
-            placeholder_msg.success(f"Verificação concluída — {faltam} lojas sem planilha.")
-            st.download_button(
-                label="⬇️ Baixar Relatório de Lojas Faltantes",
-                data=excel_bytes,
-                file_name=f"lojas_sem_planilha_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                key="au_verif_download_simple"
-            )
-    
-        except Exception as e:
-            placeholder_msg.error(f"Erro na verificação: {e}")
 
     if limpar_clicadas:
         df_grid_now = pd.DataFrame(grid_response.get("data", []))
@@ -782,6 +695,7 @@ with tab_audit:
                         if b4: lojas_audit.append(normalize_code(b4))
                         if b5: lojas_audit.append(normalize_code(b5))
 
+                        # OR logic already aplicada via lojas_audit list + isin() abaixo
                         if h_o_fat and len(h_o_fat) > 5 and not df_o_fat_p.empty:
                             col_b2_fat = h_o_fat[5]
                             df_filter = df_o_fat_p[df_o_fat_p[col_b2_fat].astype(str).str.strip() == str(b2).strip()]
@@ -790,6 +704,7 @@ with tab_audit:
                                 df_filter = df_filter[df_filter[col_b3_fat].apply(normalize_code).isin(lojas_audit)]
                             v_o = float(df_filter[h_o_fat[6]].sum()) if not df_filter.empty else 0.0
 
+                        # Importado_Fat
                         ws_d = sh_d.worksheet("Importado_Fat")
                         h_d, df_d = get_headers_and_df_raw(ws_d)
                         if not df_d.empty:
@@ -800,23 +715,32 @@ with tab_audit:
                                 df_d_periodo = df_d[(df_d["_dt"] >= d_ini) & (df_d["_dt"] <= d_fim)]
                                 v_d = float(df_d_periodo[h_d[6]].sum()) if len(h_d) > 6 and not df_d_periodo.empty else 0.0
 
+                        # Meio de Pagamento (lógica restaurada da versão que funcionava)
                         ws_mp = sh_d.worksheet("Meio de Pagamento")
                         h_mp, df_mp = get_headers_and_df_raw(ws_mp)
                         if not df_mp.empty:
                             df_mp = tratar_numericos(df_mp, h_mp)
+                            # data costuma ser coluna A — usamos h_mp[0] como antes
                             c_dt_mp = h_mp[0] if h_mp else None
                             if c_dt_mp:
                                 df_mp["_dt"] = pd.to_datetime(df_mp[c_dt_mp], dayfirst=True, errors="coerce").dt.date
                                 df_mp_periodo = df_mp[(df_mp["_dt"] >= d_ini) & (df_mp["_dt"] <= d_fim)]
                                 if not df_mp_periodo.empty:
+                                    # mesmos índices que você tinha funcionando
                                     col_b2_mp = h_mp[8] if len(h_mp) > 8 else None
                                     col_loja_mp = h_mp[6] if len(h_mp) > 6 else None
                                     col_val_mp = h_mp[9] if len(h_mp) > 9 else None
-                                    if col_b2_mp in df_mp_periodo.columns:
+
+                                    # só procede se a coluna B2 existir (índice 8) e a coluna de valor também
+                                    if col_b2_mp in df_mp_periodo.columns and col_val_mp in df_mp_periodo.columns:
                                         mask = df_mp_periodo[col_b2_mp].apply(normalize_code) == normalize_code(b2)
                                         if lojas_audit and col_loja_mp in df_mp_periodo.columns:
                                             mask &= df_mp_periodo[col_loja_mp].apply(normalize_code).isin(lojas_audit)
-                                        v_mp = float(df_mp_periodo[mask][col_val_mp].sum()) if col_val_mp else 0.0
+                                        try:
+                                            v_mp = float(df_mp_periodo.loc[mask, col_val_mp].sum()) if not df_mp_periodo.loc[mask].empty else 0.0
+                                        except Exception:
+                                            # fallback se conversão falhar
+                                            v_mp = 0.0
 
                         diff = v_o - v_d
                         diff_mp = v_d - v_mp

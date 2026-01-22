@@ -496,42 +496,54 @@ with tab_audit:
 
     # preparar dados para o botão de download (pequeno, ao lado dos botões)
     # preparar dados para o botão de download (pequeno, ao lado dos botões)
-    # NÃO incluir "Status" no Excel e formatar colunas de valor como R$ xx,xx
+    # NÃO incluir "Status" no Excel e gravar valores como números com formatação de moeda
     currency_cols = ["Origem", "DRE", "MP DRE", "Dif", "Dif MP"]
     cols_for_excel = ["Planilha"] + [c for c in currency_cols if c in st.session_state.au_planilhas_df.columns]
 
     df_para_excel_btn = st.session_state.au_planilhas_df[cols_for_excel].copy()
     is_empty_btn = df_para_excel_btn.empty
 
-    def _format_df_currency_for_excel(df):
-        df2 = df.copy()
-        for col in currency_cols:
-            if col in df2.columns:
-                def _fmt_cell(x):
-                    # manter vazio se estiver vazio/NA
-                    if pd.isna(x) or str(x).strip() == "":
-                        return ""
-                    # se já for número
-                    if isinstance(x, (int, float)):
-                        return format_brl(float(x))
-                    # tentar parsear string numérica/monetária
-                    num = _parse_currency_like(x)
-                    if num is None:
-                        # último recurso: tentar conversão direta
-                        try:
-                            num = float(str(x).replace(",", "."))
-                        except Exception:
-                            return str(x)  # se não conseguir, deixar como está
-                    return format_brl(num)
-                df2[col] = df2[col].apply(_fmt_cell)
-        return df2
+    def _to_numeric_or_nan(x):
+        if pd.isna(x) or str(x).strip() == "":
+            return pd.NA
+        if isinstance(x, (int, float)):
+            return float(x)
+        # tentar tirar formatação tipo "R$ 1.234,56" e converter
+        n = _parse_currency_like(x)
+        if n is None:
+            # tentar conversão direta com ponto decimal
+            try:
+                return float(str(x).replace(".", "").replace(",", "."))
+            except Exception:
+                return pd.NA
+        return float(n)
 
     with col_btn3:
         if not is_empty_btn:
-            df_to_write = _format_df_currency_for_excel(df_para_excel_btn)
+            # converter colunas de moeda para números (mantendo Planilha como texto)
+            df_to_write = df_para_excel_btn.copy()
+            for col in currency_cols:
+                if col in df_to_write.columns:
+                    df_to_write[col] = df_to_write[col].apply(_to_numeric_or_nan)
+
             output_btn = io.BytesIO()
             with pd.ExcelWriter(output_btn, engine="xlsxwriter") as writer:
                 df_to_write.to_excel(writer, index=False, sheet_name="Auditoria")
+                workbook = writer.book
+                worksheet = writer.sheets["Auditoria"]
+
+                # criar formato moeda BRL (duas casas)
+                currency_fmt = workbook.add_format({'num_format': u'R$ #,##0.00'})
+
+                # aplicar formato às colunas de moeda (localizar pelo índice)
+                for i, col in enumerate(df_to_write.columns):
+                    if col in currency_cols:
+                        # largura razoável e aplicar formato
+                        worksheet.set_column(i, i, 18, currency_fmt)
+                    else:
+                        # largura padrão para texto
+                        worksheet.set_column(i, i, 40)
+
             processed_btn = output_btn.getvalue()
         else:
             processed_btn = b""

@@ -475,21 +475,13 @@ with tab_audit:
     # -----------------------
     # Botões: EXECUTAR, DESMARCAR TUDO, LIMPAR MARCADAS, LIMPAR TUDO
     # -----------------------
-    c_run, c_uncheck_all, c_clear_marked, c_clear_all = st.columns([2, 1, 1, 1])
+    c_run, c_clear_marked, c_clear_all = st.columns([2, 1])
     run = c_run.button("📊 EXECUTAR AUDITORIA (aplicar flags do grid)")
-    uncheck_all = c_uncheck_all.button("🔁 Desmarcar Tudo")
+    
     clear_marked = c_clear_marked.button("🧹 Limpar dados das marcadas")
-    clear_all = c_clear_all.button("🧻 Limpar toda a tabela")
+    
 
-    # 1) Desmarcar tudo (reseta flags na master)
-    if uncheck_all:
-        st.session_state.au_flags_temp = {}
-        st.session_state.au_planilhas_df["Flag"] = False
-        st.success("Todas as flags foram desmarcadas.")
-        try:
-            st.experimental_rerun()
-        except Exception:
-            pass
+    
 
     # 2) Limpar dados das marcadas (lê o grid atual; se grid vazio, usa master como fallback)
     if clear_marked:
@@ -520,16 +512,7 @@ with tab_audit:
         else:
             st.warning("Marque as planilhas no checkbox primeiro!")
 
-    # 3) Limpar toda a tabela (esvaziar completamente)
-    if clear_all:
-        st.session_state.au_planilhas_df = pd.DataFrame(columns=["Planilha", "Flag", "Planilha_id", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"])
-        st.session_state.au_flags_temp = {}
-        st.session_state.au_resultados = {}
-        st.success("Tabela esvaziada.")
-        try:
-            st.experimental_rerun()
-        except Exception:
-            pass
+   
 
     # -----------------------
     # Função: carregar origem faturamento

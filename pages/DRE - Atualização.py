@@ -506,19 +506,29 @@ with tab_audit:
                 prog.progress((idx+1)/n)
 
             # Excel e Limpeza
+            # Excel e Limpeza (somente primeira tabela -> results_excel)
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                 pd.DataFrame(results_excel).to_excel(writer, index=False, sheet_name="Auditoria")
+                writer.save()
             processed_data = output.getvalue()
 
             st.success("Auditoria finalizada.")
-            st.download_button(label="⬇️ Baixar resultado da Auditoria (Excel)", data=processed_data, file_name=f"auditoria_{date.today()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button(
+                label="⬇️ Baixar resultado da Auditoria (Excel)",
+                data=processed_data,
+                file_name=f"auditoria_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
+            # limpar flags nas planilhas processadas
             ids_proc = selecionadas["Planilha_id"].tolist()
             st.session_state.au_planilhas_df.loc[st.session_state.au_planilhas_df["Planilha_id"].isin(ids_proc), "Flag"] = False
 
-            # Re-render do grid para mostrar as flags limpas
-            display_df = st.session_state.au_planilhas_df.copy()
-            gb2 = GridOptionsBuilder.from_dataframe(display_df[["Planilha", "Flag", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]])
-            gb2.configure_column("Flag", editable=True, cellEditor="agCheckboxCellEditor", cellRenderer="agCheckboxCellRenderer", width=80)
-            AgGrid(display_df, gridOptions=gb2.build(), update_mode=GridUpdateMode.NO_UPDATE, theme="alpine", height=400)
+            # atualiza exibição principal (sem criar segunda tabela)
+            # se quiser forçar refresh da página para atualizar o grid principal:
+            try:
+                st.experimental_rerun()
+            except Exception:
+                # se não for possível re-render (ex.: ambiente que não permite), apenas mostra mensagem
+                st.info("As flags foram limpas. Atualize a página se necessário para ver a alteração.")

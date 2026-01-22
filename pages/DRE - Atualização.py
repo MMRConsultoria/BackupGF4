@@ -42,13 +42,29 @@ ABA_ORIGEM_MP = "Faturamento Meio Pagamento"
 st.set_page_config(page_title="Atualizador DRE", layout="wide")
 
 # ================= PERFUMARIA: CSS CUSTOMIZADO =================
+# ================= SUBSTITUA O SEU BLOCO DE CSS POR ESTE =================
 st.markdown(
     """
     <style>
-    /* Ajuste de espaçamento do container */
-    .block-container { padding-top: 1.5rem; padding-bottom: 1rem; }
+    /* 1. REMOVE O ESPAÇO VAZIO NO TOPO DA PÁGINA (HEADER DO STREAMLIT) */
+    header {visibility: hidden;}
+    .main .block-container {
+        padding-top: 3rem !important; /* Dá um espaço de segurança no topo */
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+    }
     
-    /* Estilização das Abas (Tabs) para o padrão da imagem */
+    /* 2. ESTILO DO TÍTULO (PARA NÃO CORTAR) */
+    .main-title {
+        font-size: 32px;
+        font-weight: bold;
+        color: #1e3d59;
+        margin-bottom: 30px;
+        display: block; /* Garante que ocupe a linha toda */
+        width: 100%;
+    }
+    
+    /* 3. ESTILO DAS ABAS (CORRIGINDO A COR DO TEXTO) */
     button[data-baseweb="tab"] {
         font-size: 18px !important;
         font-weight: bold !important;
@@ -56,35 +72,23 @@ st.markdown(
         background-color: #f0f2f6 !important;
         border-radius: 8px 8px 0px 0px !important;
         padding: 10px 25px !important;
-        margin-right: 5px !important;
-        border: none !important;
     }
     
-    /* Aba Selecionada */
     button[data-baseweb="tab"][aria-selected="true"] {
         background-color: #0066cc !important;
-        color: white !important;
     }
 
-    /* Estilo dos Títulos com Ícone */
-    .main-title {
-        font-size: 28px;
-        font-weight: bold;
-        color: #1e3d59;
-        margin-bottom: 20px;
-        display: flex;
-        align-items: center;
+    button[data-baseweb="tab"][aria-selected="true"] p {
+        color: white !important; /* Texto branco na aba azul */
     }
-    
-    /* Ajuste de tabelas */
-    [data-testid="stTable"] td, [data-testid="stTable"] th { padding: 8px 12px !important; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# Título estilizado
+# O Título agora com uma margem melhor
 st.markdown('<div class="main-title">📈 Atualizador DRE - Multi-Lojas</div>', unsafe_allow_html=True)
+# =========================================================================
 
 # ---- AUTENTICAÇÃO ----
 @st.cache_resource

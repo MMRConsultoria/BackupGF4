@@ -468,18 +468,21 @@ with tab_audit:
         except Exception:
             pass
 
+
     if clear_marked:
-        # Limpar dados somente das linhas marcadas
+        # Criar máscara para linhas marcadas
         mask = st.session_state.au_planilhas_df["Flag"] == True
-        cols_limpar = ["Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]
-        for col in cols_limpar:
-            st.session_state.au_planilhas_df.loc[mask, col] = ""
-        # Também desmarcar as flags dessas linhas
-        st.session_state.au_planilhas_df.loc[mask, "Flag"] = False
-        try:
+        if mask.any():
+            cols_limpar = ["Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]
+            # Limpar os dados das colunas especificadas nas linhas marcadas
+            for col in cols_limpar:
+                st.session_state.au_planilhas_df.loc[mask, col] = ""
+            # Desmarcar as flags dessas linhas
+            st.session_state.au_planilhas_df.loc[mask, "Flag"] = False
+            # Forçar atualização da interface
             st.experimental_rerun()
-        except Exception:
-            pass
+        else:
+            st.warning("Nenhuma planilha marcada para limpar.")
 
     def carregar_origem_faturamento(d_ini, d_fim):
         try:

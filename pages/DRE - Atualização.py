@@ -734,18 +734,22 @@ with tab_audit:
     import io
 
     def to_excel_bytes(df):
+        # Copiar e preparar df para exportação
+        df_export = df.copy()
+    
+        # Remover colunas que não quer no Excel
+        cols_to_drop = ["Flag", "Planilha_id", "Status"]
+        df_export = df_export.drop(columns=[c for c in cols_to_drop if c in df_export.columns], errors='ignore')
+    
+        # Converter colunas de valores para numérico
+        valor_cols = ["Origem", "DRE", "MP DRE", "Dif", "Dif MP"]
+        for col in valor_cols:
+            if col in df_export.columns:
+                # Remover "R$ ", pontos e vírgulas para converter corretamente
+                df_export[col] = df_export[col].astype(str).str.replace(r"[R$\s\.]", "", regex=True).str.replace(",", ".", regex=False)
+                df_export[col] = pd.to_numeric(df_export[col], errors='coerce')
+    
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False, sheet_name='Auditoria')
+            df_export.to_excel(writer, index=False, sheet_name='Auditoria')
         return output.getvalue()
-    
-    # Gerar o arquivo Excel a partir do DataFrame atual da auditoria
-    excel_data = to_excel_bytes(st.session_state.au_planilhas_df)
-    
-    # Botão para download do Excel
-    st.download_button(
-        label="📥 Exportar tabela para Excel",
-        data=excel_data,
-        file_name="auditoria_dre.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )       

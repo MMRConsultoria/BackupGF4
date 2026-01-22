@@ -19,36 +19,6 @@ except Exception:
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from st_aggrid.shared import JsCode
 
-# ================= BLOQUEIO DE ACESSO – RH (simples, EM-CÓDIGO) =================
-USUARIOS_AUTORIZADOS_CONTROLADORIA = {
-    
-    "maricelisrossi@gmail.com",
-    "alex.komatsu@grupofit.com.br",
-    
-}
-
-# usuário vindo do login/SSO (espera-se que seja preenchido externamente)
-usuario_logado = st.session_state.get("usuario_logado")
-
-# Se preferir habilitar um login manual rápido para teste local, descomente:
-# if not usuario_logado:
-#     stub = st.text_input("Email (teste)", value="", placeholder="email@dominio.com")
-#     if st.button("Entrar (teste)"):
-#         st.session_state["usuario_logado"] = stub.strip().lower()
-#         st.experimental_rerun()
-#     st.stop()
-
-# Bloqueio se não estiver logado
-if not usuario_logado:
-    st.stop()
-
-# Bloqueio se não for autorizado
-if str(usuario_logado).strip().lower() not in {e.lower() for e in USUARIOS_AUTORIZADOS_CONTROLADORIA}:
-    st.warning("⛔ Acesso restrito ao CONTROLADORIA")
-    st.stop()
-# ============================================================================
-
-
 # ---- CONFIG ----
 PASTA_PRINCIPAL_ID = "0B1owaTi3RZnFfm4tTnhfZ2l0VHo4bWNMdHhKS3ZlZzR1ZjRSWWJSSUFxQTJtUExBVlVTUW8"
 TARGET_SHEET_NAME = "Configurações Não Apagar"

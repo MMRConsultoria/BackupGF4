@@ -475,7 +475,7 @@ with tab_audit:
     # -----------------------
     # Botões: EXECUTAR, DESMARCAR TUDO, LIMPAR MARCADAS, LIMPAR TUDO
     # -----------------------
-    c_run, c_clear_marked, c_clear_all = st.columns([2, 1])
+    c_run, c_clear_marked = st.columns([2, 1])
     run = c_run.button("📊 EXECUTAR AUDITORIA (aplicar flags do grid)")
     
     clear_marked = c_clear_marked.button("🧹 Limpar dados das marcadas")

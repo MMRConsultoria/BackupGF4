@@ -664,7 +664,7 @@ with tab_audit:
                 st.session_state.au_planilhas_df.loc[mask, col] = ""
             st.session_state.au_planilhas_df.loc[mask, "Flag"] = False
             st.success(f"Dados de {len(planilhas_marcadas)} planilhas limpos.")
-            st.experimental_rerun()
+            st.rerun()
 
     if executar_clicado:
         df_grid = pd.DataFrame(grid_response.get("data", []))

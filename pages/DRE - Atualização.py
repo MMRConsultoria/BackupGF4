@@ -313,6 +313,7 @@ with tab_atual:
                 
                 st.success("Concluido!")
 
+# Aba Auditoria (versão: sem piscar ao marcar/desmarcar; aplica somente ao clicar em EXECUTAR)
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from st_aggrid.shared import JsCode
 import pandas as pd
@@ -322,6 +323,9 @@ import streamlit as st
 with tab_audit:
     st.header("Auditoria")
 
+    # -----------------------
+    # Helpers
+    # -----------------------
     def format_brl(v):
         try:
             v = float(v)
@@ -331,38 +335,111 @@ with tab_audit:
         s = s.replace(",", "X").replace(".", ",").replace("X", ".")
         return f"R$ {s}"
 
+    def detect_column_by_keywords(headers, keywords_list):
+        for kw in keywords_list:
+            for h in headers:
+                if kw in str(h).lower():
+                    return h
+        return None
+
+    def normalize_code(val):
+        try:
+            f = float(val)
+            i = int(f)
+            return str(i) if f == i else str(f)
+        except Exception:
+            return str(val).strip()
+
     def to_bool_like(x):
         if isinstance(x, bool):
             return x
         s = str(x).strip().lower()
         return s in ("true", "t", "1", "yes", "y", "sim", "s")
 
-    # Pastas / Subpastas (igual antes)
-    # ... (seu código para carregar pastas e subpastas)
+    # -----------------------
+    # Pastas / Subpastas
+    # -----------------------
+    try:
+        pastas_fech = list_child_folders(drive_service, PASTA_PRINCIPAL_ID, "fechamento")
+        if not pastas_fech:
+            st.error("Nenhuma pasta de fechamento encontrada na pasta principal.")
+            st.stop()
+        map_p = {p["name"]: p["id"] for p in pastas_fech}
+        p_sel = st.selectbox("Pasta principal:", options=list(map_p.keys()), key="au_p")
+        subpastas = list_child_folders(drive_service, map_p[p_sel])
+        map_s = {s["name"]: s["id"] for s in subpastas}
+        s_sel = st.multiselect("Subpastas (se nenhuma, trará todas):", options=list(map_s.keys()), default=[], key="au_s")
+        s_ids_audit = [map_s[n] for n in s_sel] if s_sel else list(map_s.values())
+    except Exception as e:
+        st.error(f"Erro ao listar pastas/subpastas: {e}")
+        st.stop()
 
-    # Filtros de período (igual antes)
-    # ... (seu código para ano e mês)
+    # -----------------------
+    # Filtros de período
+    # -----------------------
+    c1, c2 = st.columns(2)
+    with c1:
+        ano_sel = st.selectbox("Ano:", list(range(2020, date.today().year + 1)),
+                               index=max(0, date.today().year - 2020), key="au_ano")
+    with c2:
+        mes_sel = st.selectbox("Mês (Opcional):", ["Todos"] + list(range(1, 13)), key="au_mes")
 
-    # Carregar planilhas (igual antes)
-    # ... (seu código para carregar planilhas e inicializar session_state)
+    # -----------------------
+    # Carregar planilhas (recarrega se subpastas mudarem)
+    # -----------------------
+    need_reload = ("au_last_subpastas" not in st.session_state) or (st.session_state.get("au_last_subpastas") != s_ids_audit)
+    if need_reload:
+        try:
+            planilhas = list_spreadsheets_in_folders(drive_service, s_ids_audit)
+        except Exception as e:
+            st.error(f"Erro ao listar planilhas nas subpastas: {e}")
+            st.stop()
+
+        df_init = pd.DataFrame([{
+            "Planilha": p["name"],
+            "Flag": False,
+            "Planilha_id": p["id"],
+            "Origem": "",
+            "DRE": "",
+            "MP DRE": "",
+            "Dif": "",
+            "Dif MP": "",
+            "Status": ""
+        } for p in planilhas])
+
+        st.session_state.au_last_subpastas = s_ids_audit
+        st.session_state.au_planilhas_df = df_init
+        st.session_state.au_resultados = {}
+        # temp flags dictionary (applied only quando clicar)
+        st.session_state.au_flags_temp = {}
+
+    # garantir chaves no session_state
+    if "au_planilhas_df" not in st.session_state:
+        st.session_state.au_planilhas_df = pd.DataFrame(columns=["Planilha", "Flag", "Planilha_id", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"])
+    if "au_flags_temp" not in st.session_state:
+        st.session_state.au_flags_temp = {}
+    if "au_resultados" not in st.session_state:
+        st.session_state.au_resultados = {}
 
     df_table = st.session_state.au_planilhas_df.copy()
     if df_table.empty:
         st.info("Nenhuma planilha encontrada nas subpastas selecionadas.")
         st.stop()
 
+    # -----------------------
+    # Preparar display_df (garantir colunas)
+    # NOTA: NÃO atualizamos st.session_state durante a edição do grid.
+    # Apenas exibimos a tabela; a leitura das flags é feita somente no clique do botão.
+    # -----------------------
     expected_cols = ["Planilha", "Flag", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]
     for c in expected_cols:
         if c not in df_table.columns:
             df_table[c] = False if c == "Flag" else ""
     display_df = df_table[expected_cols].copy()
 
-    # Sobrepor flags temporárias para visualização
-    for i, r in display_df.iterrows():
-        p = r["Planilha"]
-        if "au_flags_temp" in st.session_state and p in st.session_state.au_flags_temp:
-            display_df.at[i, "Flag"] = bool(st.session_state.au_flags_temp[p])
-
+    # -----------------------
+    # AgGrid config (NO_UPDATE evita re-renders automáticos)
+    # -----------------------
     row_style_js = JsCode("""
     function(params) {
         if (params.data && (params.data.Flag === true || params.data.Flag === 'true')) {
@@ -387,7 +464,7 @@ with tab_audit:
 
     st.markdown("Marque as planilhas (checkbox). As alterações só serão aplicadas quando clicar em 'EXECUTAR AUDITORIA'.")
 
-    # Exibir grid com NO_UPDATE para evitar rerun automático
+    # Exibir grid (NO_UPDATE)
     grid_response = AgGrid(
         display_df,
         gridOptions=grid_options,
@@ -398,39 +475,242 @@ with tab_audit:
         fit_columns_on_grid_load=True,
     )
 
+    # -----------------------
     # Botões
+    # -----------------------
     c_run, c_clear = st.columns([1, 1])
-    run = c_run.button("📊 EXECUTAR AUDITORIA (aplicar flags temporárias)")
-    clear_temp = c_clear.button("🔁 Limpar seleção temporária")
+    run = c_run.button("📊 EXECUTAR AUDITORIA (aplicar flags do grid)")
+    clear_temp = c_clear.button("🔁 Limpar seleção/aplicar vazio")
 
     if clear_temp:
+        # limpar as flags aplicadas (master) e temporárias
         st.session_state.au_flags_temp = {}
+        # opcional: também limpar as flags na master (se desejar preservar valores mas desmarcar)
+        st.session_state.au_planilhas_df["Flag"] = False
         try:
             st.experimental_rerun()
         except Exception:
             pass
 
+    # -----------------------
+    # Helper: carregar origem faturamento (uma vez)
+    # -----------------------
+    def carregar_origem_faturamento(d_ini, d_fim):
+        try:
+            sh_o_fat = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT)
+            ws_o_fat = sh_o_fat.worksheet(ABA_ORIGEM_FAT)
+            h_o_fat, df_o_fat = get_headers_and_df_raw(ws_o_fat)
+            if not df_o_fat.empty:
+                df_o_fat = tratar_numericos(df_o_fat, h_o_fat)
+
+            c_dt_o_fat = detect_date_col(h_o_fat) or (h_o_fat[0] if h_o_fat else None)
+            if c_dt_o_fat and not df_o_fat.empty:
+                df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o_fat], dayfirst=True, errors="coerce")
+                parsed_pct = df_o_fat["_dt"].notna().mean()
+                if parsed_pct == 0:
+                    df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o_fat], dayfirst=False, errors="coerce")
+                df_o_fat["_dt"] = df_o_fat["_dt"].dt.date
+                df_o_fat_p = df_o_fat[(df_o_fat["_dt"] >= d_ini) & (df_o_fat["_dt"] <= d_fim)].copy()
+            else:
+                df_o_fat_p = df_o_fat.copy()
+
+            return h_o_fat, df_o_fat_p
+        except Exception as e:
+            st.error(f"Erro ao carregar origem de faturamento: {e}")
+            return None, None
+
+    # -----------------------
+    # Intervalo de datas
+    # -----------------------
+    if mes_sel == "Todos":
+        d_ini, d_fim = date(ano_sel, 1, 1), date(ano_sel, 12, 31)
+    else:
+        d_ini = date(ano_sel, int(mes_sel), 1)
+        d_fim = (date(ano_sel, int(mes_sel), 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+
+    # -----------------------
+    # Ao clicar em RUN: ler os dados atuais do grid (no momento do clique),
+    # aplicar flags na master e executar auditoria apenas sobre as marcadas.
+    # -----------------------
     if run:
-        # Ao clicar em EXECUTAR, ler flags atuais do grid e aplicar
+        # Lê o estado do grid no momento do clique
         df_from_grid = pd.DataFrame(grid_response.get("data", []))
+        # Atualiza temporário a partir do grid (AGORA, dentro do clique)
+        st.session_state.au_flags_temp = {}
         if not df_from_grid.empty and "Planilha" in df_from_grid.columns:
-            st.session_state.au_flags_temp = {}
             for _, row in df_from_grid.iterrows():
                 pname = row.get("Planilha")
                 if pname is None:
                     continue
                 st.session_state.au_flags_temp[pname] = to_bool_like(row.get("Flag", False))
 
-        # Aplicar flags temporárias na tabela principal
+        # Aplicar flags temporárias na tabela principal (somente Flag)
         for i, row in st.session_state.au_planilhas_df.iterrows():
             pname = row["Planilha"]
             st.session_state.au_planilhas_df.at[i, "Flag"] = bool(st.session_state.au_flags_temp.get(pname, False))
 
-        # Aqui você pode continuar com o processamento da auditoria só para as marcadas
-        # (seu código de auditoria, atualização dos valores, etc.)
+        # Selecionadas para processar
+        selecionadas = st.session_state.au_planilhas_df[st.session_state.au_planilhas_df["Flag"] == True]
+        if selecionadas.empty:
+            st.warning("Nenhuma planilha marcada. Marque ao menos uma antes de executar.")
+        else:
+            # Carregar origem (uma vez)
+            h_o_fat, df_o_fat_p = carregar_origem_faturamento(d_ini, d_fim)
+            if h_o_fat is None and df_o_fat_p is None:
+                st.stop()
 
-        st.success("Flags aplicadas e auditoria executada (implemente a lógica de auditoria).")
-        try:
-            st.experimental_rerun()
-        except Exception:
-            pass
+            total = len(selecionadas)
+            prog = st.progress(0)
+            logs = []
+
+            for idx, row in selecionadas.reset_index(drop=True).iterrows():
+                sid = row["Planilha_id"]
+                pname = row["Planilha"]
+                v_o = v_d = v_mp_d = 0.0
+                status = "Erro desconhecido"
+
+                # abrir planilha destino
+                try:
+                    sh_d = gc.open_by_key(sid)
+                except Exception as e:
+                    status = f"Erro ao abrir planilha ({e})"
+                    logs.append(f"{pname}: {status}")
+                    st.session_state.au_resultados[sid] = {"Planilha": pname, "Origem": 0.0, "DRE": 0.0, "MP DRE": 0.0, "Dif": 0.0, "Dif MP": 0.0, "Status": status}
+                    prog.progress((idx + 1) / total)
+                    continue
+
+                # ler codes B2/B3
+                try:
+                    b2, b3 = read_codes_from_config_sheet(sh_d)
+                except Exception:
+                    b2, b3 = None, None
+
+                if not b2:
+                    status = "Sem B2 (Config)"
+                    logs.append(f"{pname}: {status}")
+                    st.session_state.au_resultados[sid] = {"Planilha": pname, "Origem": 0.0, "DRE": 0.0, "MP DRE": 0.0, "Dif": 0.0, "Dif MP": 0.0, "Status": status}
+                    prog.progress((idx + 1) / total)
+                    continue
+
+                # FATURAMENTO ORIGEM
+                try:
+                    if h_o_fat and len(h_o_fat) > 5 and (df_o_fat_p is not None) and (not df_o_fat_p.empty):
+                        col_b2_fat = h_o_fat[5]
+                        df_filter = df_o_fat_p[df_o_fat_p[col_b2_fat].astype(str).str.strip() == str(b2).strip()]
+                        if b3 and len(h_o_fat) > 3:
+                            col_b3_fat = h_o_fat[3]
+                            df_filter = df_filter[df_filter[col_b3_fat].astype(str).str.strip() == str(b3).strip()]
+                        if len(h_o_fat) > 6:
+                            v_o = float(df_filter[h_o_fat[6]].sum()) if not df_filter.empty else 0.0
+                except Exception:
+                    v_o = 0.0
+
+                # FATURAMENTO DESTINO (Importado_Fat)
+                try:
+                    ws_d = sh_d.worksheet("Importado_Fat")
+                    h_d, df_d = get_headers_and_df_raw(ws_d)
+                    if not df_d.empty:
+                        df_d = tratar_numericos(df_d, h_d)
+
+                    c_dt_d = detect_date_col(h_d) or (h_d[0] if h_d else None)
+                    if c_dt_d and not df_d.empty:
+                        df_d["_dt"] = pd.to_datetime(df_d[c_dt_d], dayfirst=True, errors="coerce")
+                        if df_d["_dt"].isna().all():
+                            df_d["_dt"] = pd.to_datetime(df_d[c_dt_d], dayfirst=False, errors="coerce")
+                        df_d["_dt"] = df_d["_dt"].dt.date
+                        df_d_periodo = df_d[(df_d["_dt"] >= d_ini) & (df_d["_dt"] <= d_fim)]
+                    else:
+                        df_d_periodo = df_d.copy()
+
+                    if len(h_d) > 6 and not df_d_periodo.empty:
+                        v_d = float(df_d_periodo[h_d[6]].sum())
+                    else:
+                        v_d = 0.0
+                except Exception:
+                    v_d = 0.0
+
+                # MEIO DE PAGAMENTO
+                try:
+                    ws_mp_d = sh_d.worksheet("Meio de Pagamento")
+                    h_mp_d, df_mp_d = get_headers_and_df_raw(ws_mp_d)
+                    if not df_mp_d.empty:
+                        df_mp_d = tratar_numericos(df_mp_d, h_mp_d)
+
+                    c_dt_mp_d = detect_date_col(h_mp_d) or (h_mp_d[0] if h_mp_d else None)
+                    if c_dt_mp_d and not df_mp_d.empty:
+                        df_mp_d["_dt"] = pd.to_datetime(df_mp_d[c_dt_mp_d], dayfirst=True, errors="coerce")
+                        if df_mp_d["_dt"].isna().all():
+                            df_mp_d["_dt"] = pd.to_datetime(df_mp_d[c_dt_mp_d], dayfirst=False, errors="coerce")
+                        if "_dt" in df_mp_d.columns:
+                            df_mp_d["_dt"] = df_mp_d["_dt"].dt.date
+                        df_mp_periodo = df_mp_d[(df_mp_d.get("_dt") >= d_ini) & (df_mp_d.get("_dt") <= d_fim)] if "_dt" in df_mp_d.columns else df_mp_d.copy()
+                    else:
+                        df_mp_periodo = df_mp_d.copy()
+
+                    v_mp_d = 0.0
+                    if len(h_mp_d) > 9 and not df_mp_periodo.empty:
+                        col_b2_mp = h_mp_d[8]
+                        col_b3_mp = h_mp_d[6]
+                        col_val_mp = h_mp_d[9]
+
+                        b2_norm = normalize_code(b2)
+                        b3_norm = normalize_code(b3) if b3 else None
+
+                        mask = df_mp_periodo[col_b2_mp].apply(normalize_code) == b2_norm
+                        if b3_norm:
+                            mask &= df_mp_periodo[col_b3_mp].apply(normalize_code) == b3_norm
+
+                        df_mp_dest_f = df_mp_periodo[mask]
+
+                        if not df_mp_dest_f.empty:
+                            v_mp_d = float(df_mp_dest_f[col_val_mp].sum())
+                        else:
+                            col_val_guess = detect_column_by_keywords(h_mp_d, ["valor", "soma", "total", "amount"])
+                            if col_val_guess and col_val_guess in df_mp_periodo.columns:
+                                df_guess = df_mp_periodo
+                                col_b2_guess = h_mp_d[8] if len(h_mp_d) > 8 else None
+                                col_b3_guess = h_mp_d[6] if len(h_mp_d) > 6 else None
+                                if col_b2_guess:
+                                    df_guess = df_guess[df_guess[col_b2_guess].astype(str).str.strip() == str(b2).strip()]
+                                if b3 and col_b3_guess:
+                                    df_guess = df_guess[df_guess[col_b3_guess].astype(str).str.strip() == str(b3).strip()]
+                                if not df_guess.empty:
+                                    v_mp_d = float(df_guess[col_val_guess].sum())
+                    else:
+                        v_mp_d = 0.0
+                except Exception:
+                    v_mp_d = 0.0
+
+                # Diferenças e status
+                diff = v_o - v_d
+                diff_mp = v_d - v_mp_d
+                status = "✅ OK" if (abs(diff) < 0.01 and abs(diff_mp) < 0.01) else "❌ Erro"
+
+                # Salvar resultado e atualizar apenas a linha correspondente na master
+                st.session_state.au_resultados[sid] = {"Planilha": pname, "Origem": v_o, "DRE": v_d, "MP DRE": v_mp_d, "Dif": diff, "Dif MP": diff_mp, "Status": status}
+
+                mask = st.session_state.au_planilhas_df["Planilha_id"] == sid
+                if mask.any():
+                    st.session_state.au_planilhas_df.loc[mask, "Origem"] = format_brl(v_o)
+                    st.session_state.au_planilhas_df.loc[mask, "DRE"] = format_brl(v_d)
+                    st.session_state.au_planilhas_df.loc[mask, "MP DRE"] = format_brl(v_mp_d)
+                    st.session_state.au_planilhas_df.loc[mask, "Dif"] = format_brl(diff)
+                    st.session_state.au_planilhas_df.loc[mask, "Dif MP"] = format_brl(diff_mp)
+                    st.session_state.au_planilhas_df.loc[mask, "Status"] = status
+                    # desmarcar a Flag para indicar concluído (se preferir, remova esta linha)
+                    st.session_state.au_planilhas_df.loc[mask, "Flag"] = False
+
+                logs.append(f"{pname}: {status if status != '✅ OK' else 'OK'}")
+                prog.progress((idx + 1) / total)
+
+            # limpar temporário (já aplicado) e mostrar logs
+            st.session_state.au_flags_temp = {}
+            st.markdown("### Log de processamento")
+            st.text("\n".join(logs))
+            st.success("Auditoria concluída.")
+
+            # tentar rerun apenas uma vez
+            try:
+                st.experimental_rerun()
+            except Exception:
+                pass

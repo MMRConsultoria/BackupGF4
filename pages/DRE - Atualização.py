@@ -514,4 +514,24 @@ with tab_audit:
             try:
                 st.experimental_rerun()
             except Exception:
-                pass
+                pass    
+    # Botão para exportar Excel
+    import io
+    
+    def to_excel(df):
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df.to_excel(writer, index=False, sheet_name='Auditoria')
+            writer.save()
+        processed_data = output.getvalue()
+        return processed_data
+    
+    excel_data = to_excel(st.session_state.au_planilhas_df)
+    
+    st.download_button(
+        label="📥 Exportar tabela para Excel",
+        data=excel_data,
+        file_name='auditoria_dre.xlsx',
+        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )              
+                    

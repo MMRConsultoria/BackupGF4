@@ -232,7 +232,7 @@ def to_bool_like(x):
     return s in ("true", "t", "1", "yes", "y", "sim", "s")
 
 # ---- TABS ESTILIZADAS ----
-tab_audit, tab_atual = st.tabs(["🔄 Atualização","🔍 Auditoria" ])
+tab_atual, tab_audit  = st.tabs(["🔄 Atualização","🔍 Auditoria" ])
 
 # -----------------------------
 # ABA: ATUALIZAÇÃO (Lógica Intacta)

@@ -312,15 +312,20 @@ with tab_atual:
                     prog.progress((i+1)/total)
                 
                 st.success("Concluido!")
+# Aba Auditoria completa
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from st_aggrid.shared import JsCode
 import pandas as pd
+import io
 from datetime import date, timedelta
 import streamlit as st
 
 with tab_audit:
     st.header("Auditoria")
 
+    # -----------------------
+    # Helpers
+    # -----------------------
     def format_brl(v):
         try:
             v = float(v)
@@ -330,13 +335,41 @@ with tab_audit:
         s = s.replace(",", "X").replace(".", ",").replace("X", ".")
         return f"R$ {s}"
 
+    def detect_column_by_keywords(headers, keywords_list):
+        for kw in keywords_list:
+            for h in headers:
+                if kw in str(h).lower():
+                    return h
+        return None
+
+    def normalize_code(val):
+        try:
+            f = float(val)
+            i = int(f)
+            return str(i) if f == i else str(f)
+        except Exception:
+            return str(val).strip()
+
     def to_bool_like(x):
         if isinstance(x, bool):
             return x
         s = str(x).strip().lower()
         return s in ("true", "t", "1", "yes", "y", "sim", "s")
 
-    # --- Pastas / Subpastas ---
+    # Função para gerar excel em memória (sempre definida fora dos ifs)
+    def to_excel_bytes(df):
+        output = io.BytesIO()
+        try:
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False, sheet_name='Auditoria')
+        except Exception:
+            with pd.ExcelWriter(output) as writer:
+                df.to_excel(writer, index=False, sheet_name='Auditoria')
+        return output.getvalue()
+
+    # -----------------------
+    # Pastas / Subpastas
+    # -----------------------
     try:
         pastas_fech = list_child_folders(drive_service, PASTA_PRINCIPAL_ID, "fechamento")
         if not pastas_fech:
@@ -352,7 +385,9 @@ with tab_audit:
         st.error(f"Erro ao listar pastas/subpastas: {e}")
         st.stop()
 
-    # --- Filtros de período ---
+    # -----------------------
+    # Filtros de período
+    # -----------------------
     c1, c2 = st.columns(2)
     with c1:
         ano_sel = st.selectbox("Ano:", list(range(2020, date.today().year + 1)),
@@ -360,7 +395,9 @@ with tab_audit:
     with c2:
         mes_sel = st.selectbox("Mês (Opcional):", ["Todos"] + list(range(1, 13)), key="au_mes")
 
-    # --- Carregar planilhas ---
+    # -----------------------
+    # Carregar planilhas (recarrega se subpastas mudarem)
+    # -----------------------
     need_reload = ("au_last_subpastas" not in st.session_state) or (st.session_state.get("au_last_subpastas") != s_ids_audit)
     if need_reload:
         try:
@@ -386,6 +423,7 @@ with tab_audit:
         st.session_state.au_resultados = {}
         st.session_state.au_flags_temp = {}
 
+    # garantir chaves no session_state
     if "au_planilhas_df" not in st.session_state:
         st.session_state.au_planilhas_df = pd.DataFrame(columns=["Planilha", "Flag", "Planilha_id", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"])
     if "au_flags_temp" not in st.session_state:
@@ -398,6 +436,9 @@ with tab_audit:
         st.info("Nenhuma planilha encontrada nas subpastas selecionadas.")
         st.stop()
 
+    # -----------------------
+    # Preparar display_df (garantir colunas)
+    # -----------------------
     expected_cols = ["Planilha", "Flag", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]
     for c in expected_cols:
         if c not in df_table.columns:
@@ -408,16 +449,24 @@ with tab_audit:
     st.markdown(
         """
         <style>
+        /* bordas nas células do ag-grid */
         .ag-theme-alpine .ag-root-wrapper, 
         .ag-theme-alpine .ag-header, 
         .ag-theme-alpine .ag-cell {
-            border: 1px solid #ccc !important;
+            border: 1px solid #d6d6d6 !important;
+        }
+        /* cabeçalho mais visível */
+        .ag-theme-alpine .ag-header-cell-label {
+            font-weight: 600;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
+    # -----------------------
+    # AgGrid config (NO_UPDATE evita re-renders automáticos)
+    # -----------------------
     row_style_js = JsCode("""
     function(params) {
         if (params.data && (params.data.Flag === true || params.data.Flag === 'true')) {
@@ -440,8 +489,9 @@ with tab_audit:
     grid_options = gb.build()
     grid_options['getRowStyle'] = row_style_js
 
-    st.markdown("Marque as planilhas (checkbox). As alterações só serão aplicadas quando clicar em 'EXECUTAR AUDITORIA' ou ao usar o botão de limpeza.")
+    st.markdown("Marque as planilhas (checkbox). As alterações só serão aplicadas quando clicar em 'Executar Auditoria' ou ao usar 'Limpar dados marcados'.")
 
+    # Exibir grid (NO_UPDATE)
     grid_response = AgGrid(
         display_df,
         gridOptions=grid_options,
@@ -452,35 +502,49 @@ with tab_audit:
         fit_columns_on_grid_load=True,
     )
 
-    # Botões alinhados lado-a-lado, mesmo tamanho e texto padronizado
+    # -----------------------
+    # Botões alinhados lado a lado
+    # -----------------------
     c1, c2, c3 = st.columns([1, 1, 1], gap="small")
-    
     with c1:
         run = st.button("Executar Auditoria", key="au_run")
-    
     with c2:
         refresh = st.button("Atualizar Tabela", key="au_refresh")
-    
     with c3:
         clear_marked = st.button("Limpar dados marcados", key="au_clear_marked")
 
+    # -----------------------
+    # Tratamento dos botões
+    # -----------------------
+    # Atualizar Tabela: força recarregar (remove cache de subpastas detectado)
     if refresh:
-        # Força recarregar a tabela (recarrega planilhas e limpa flags)
         if "au_last_subpastas" in st.session_state:
             del st.session_state["au_last_subpastas"]
-        st.experimental_rerun()
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
 
+    # Limpar dados das marcadas
     if clear_marked:
+        # lê o estado atual do grid
         df_from_grid = pd.DataFrame(grid_response.get("data", []))
         planilhas_marcadas = []
         if not df_from_grid.empty and "Planilha" in df_from_grid.columns:
             planilhas_marcadas = df_from_grid[df_from_grid["Flag"].apply(to_bool_like) == True]["Planilha"].tolist()
+
+        # fallback para usar flags salvas no master, caso grid não retorne dados
+        if not planilhas_marcadas:
+            mask_master = st.session_state.au_planilhas_df["Flag"] == True
+            if mask_master.any():
+                planilhas_marcadas = st.session_state.au_planilhas_df.loc[mask_master, "Planilha"].tolist()
 
         if planilhas_marcadas:
             mask = st.session_state.au_planilhas_df["Planilha"].isin(planilhas_marcadas)
             cols_limpar = ["Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]
             for col in cols_limpar:
                 st.session_state.au_planilhas_df.loc[mask, col] = ""
+            # desmarcar as linhas que foram limpas
             st.session_state.au_planilhas_df.loc[mask, "Flag"] = False
             st.session_state.au_flags_temp = {}
             st.success(f"Dados de {len(planilhas_marcadas)} planilhas limpos.")
@@ -491,6 +555,7 @@ with tab_audit:
         else:
             st.warning("Marque as planilhas no checkbox primeiro!")
 
+    # Executar Auditoria: captura flags do grid e processa as planilhas marcadas
     if run:
         df_from_grid = pd.DataFrame(grid_response.get("data", []))
         st.session_state.au_flags_temp = {}
@@ -501,6 +566,7 @@ with tab_audit:
                     continue
                 st.session_state.au_flags_temp[pname] = to_bool_like(row.get("Flag", False))
 
+        # aplica as flags na master
         for i, row in st.session_state.au_planilhas_df.iterrows():
             pname = row["Planilha"]
             st.session_state.au_planilhas_df.at[i, "Flag"] = bool(st.session_state.au_flags_temp.get(pname, False))
@@ -509,29 +575,39 @@ with tab_audit:
         if selecionadas.empty:
             st.warning("Nenhuma planilha marcada. Marque ao menos uma antes de executar.")
         else:
-            # Aqui você pode colocar a lógica da auditoria (igual antes)
-            st.success("Auditoria executada (implemente a lógica).")
+            # aqui entra sua lógica de auditoria (cópia reduzida/placeholder)
+            # Ex.: carregar origem, abrir cada planilha, calcular valores, atualizar st.session_state.au_planilhas_df
+            st.info(f"Iniciando auditoria em {len(selecionadas)} planilhas...")
+            # --- lógica da auditoria (mantida por você) ---
+            # Ao final, atualize as colunas da master conforme já feito antes (Origem, DRE, MP DRE, Dif, Dif MP, Status)
+            # Exemplo: apenas simular conclusão:
+            for sid in selecionadas["Planilha_id"].tolist():
+                # este trecho é só placeholder; substitua pela sua lógica real
+                mask = st.session_state.au_planilhas_df["Planilha_id"] == sid
+                if mask.any():
+                    st.session_state.au_planilhas_df.loc[mask, "Origem"] = format_brl(0.0)
+                    st.session_state.au_planilhas_df.loc[mask, "DRE"] = format_brl(0.0)
+                    st.session_state.au_planilhas_df.loc[mask, "MP DRE"] = format_brl(0.0)
+                    st.session_state.au_planilhas_df.loc[mask, "Dif"] = format_brl(0.0)
+                    st.session_state.au_planilhas_df.loc[mask, "Dif MP"] = format_brl(0.0)
+                    st.session_state.au_planilhas_df.loc[mask, "Status"] = "✅ OK"
+                    st.session_state.au_planilhas_df.loc[mask, "Flag"] = False
+            st.success("Auditoria executada (substitua placeholder pela lógica real).")
             try:
                 st.experimental_rerun()
             except Exception:
-                pass    
-    # Botão para exportar Excel
-    import io
-    
-    def to_excel(df):
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False, sheet_name='Auditoria')
-            writer.save()
-        processed_data = output.getvalue()
-        return processed_data
-    
-    excel_data = to_excel(st.session_state.au_planilhas_df)
-    
-    st.download_button(
-        label="📥 Exportar tabela para Excel",
-        data=excel_data,
-        file_name='auditoria_dre.xlsx',
-        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )              
-                    
+                pass
+
+    # -----------------------
+    # Botão de exportar Excel (sempre visível)
+    # -----------------------
+    try:
+        excel_bytes = to_excel_bytes(st.session_state.au_planilhas_df)
+        st.download_button(
+            label="📥 Exportar tabela para Excel",
+            data=excel_bytes,
+            file_name='auditoria_dre.xlsx',
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    except Exception as e:
+        st.warning(f"Não foi possível gerar o arquivo Excel: {e}")

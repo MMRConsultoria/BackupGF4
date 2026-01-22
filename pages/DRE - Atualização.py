@@ -89,7 +89,59 @@ st.markdown(
 # O Título agora com uma margem melhor
 st.markdown('<div class="main-title">📈 Atualizar DRE</div>', unsafe_allow_html=True)
 # =========================================================================
+# --- INICIO: CSS ESPECÍFICO PARA A TABELA DE AUDITORIA ---
+st.markdown("""
+<style>
+/* Aplica somente dentro do wrapper #auditoria */
+#auditoria .ag-theme-alpine .ag-root-wrapper {
+    border: 1px solid #c9d2da !important;
+    border-radius: 6px !important;
+    overflow: hidden !important;
+}
 
+/* Bordas entre células e entre linhas */
+#auditoria .ag-theme-alpine .ag-header-cell,
+#auditoria .ag-theme-alpine .ag-cell {
+    border-right: 1px solid #e6edf3 !important;
+    border-bottom: 1px solid #e6edf3 !important;
+}
+
+/* Linha de cabeçalho */
+#auditoria .ag-theme-alpine .ag-header {
+    border-bottom: 2px solid #cfd8e3 !important;
+    background: #f7fafc !important;
+}
+
+/* Ajuste padding */
+#auditoria .ag-theme-alpine .ag-cell,
+#auditoria .ag-theme-alpine .ag-header-cell {
+    padding: 6px 8px !important;
+}
+
+/* Força cor e peso do texto do cabeçalho */
+#auditoria .ag-theme-alpine .ag-header-cell-label {
+    color: #203040 !important;
+    font-weight: 600 !important;
+}
+
+/* Remove outline ao editar (visual mais limpo) */
+#auditoria .ag-theme-alpine .ag-cell-focus {
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* Garante que cada célula mostre borda na direita também na última coluna */
+#auditoria .ag-theme-alpine .ag-center-cols-container .ag-row .ag-cell:last-child {
+    border-right: 1px solid #e6edf3 !important;
+}
+
+/* Ajuste final para o corpo da grade */
+#auditoria .ag-theme-alpine .ag-body-viewport {
+    background: #ffffff !important;
+}
+</style>
+""", unsafe_allow_html=True)
+# --- FIM: CSS ESPECÍFICO PARA A TABELA DE AUDITORIA ---
 # ---- AUTENTICAÇÃO ----
 @st.cache_resource
 def autenticar():
@@ -495,46 +547,8 @@ with tab_audit:
     grid_options = gb.build()
     grid_options['getRowStyle'] = row_style_js
 
-    # Cole isto logo antes da chamada AgGrid(...) que renderiza a tabela de auditoria
-    st.markdown("""
-    <style>
-    /* Borda geral ao redor da grade */
-    .ag-theme-alpine .ag-root-wrapper {
-        border: 1px solid #d0d7de;
-        border-radius: 6px;
-    }
-    
-    /* Bordas entre células e linhas */
-    .ag-theme-alpine .ag-header-cell, 
-    .ag-theme-alpine .ag-cell {
-        border-right: 1px solid #e6edf3;
-        border-bottom: 1px solid #e6edf3;
-    }
-    
-    /* Ajuste da linha do cabeçalho */
-    .ag-theme-alpine .ag-header {
-        border-bottom: 2px solid #cfd8e3;
-    }
-    
-    /* Remove outline feio ao editar/selecionar célula */
-    .ag-theme-alpine .ag-cell-focus {
-        outline: none;
-    }
-    
-    /* Pequeno padding para melhorar leitura */
-    .ag-theme-alpine .ag-cell, .ag-theme-alpine .ag-header-cell {
-        padding: 6px 8px;
-    }
-    
-    /* Opcional: cor de fundo do cabeçalho */
-    .ag-theme-alpine .ag-header-cell-label {
-        color: #1f2d3d;
-        font-weight: 600;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-
+ 
+    st.markdown('<div id="auditoria">', unsafe_allow_html=True)    
     
     grid_response = AgGrid(
         display_df,
@@ -545,7 +559,8 @@ with tab_audit:
         height=420,
         fit_columns_on_grid_load=True,
     )
-
+    st.markdown('</div>', unsafe_allow_html=True)
+    
     col_btn1, col_btn2, col_btn3, _ = st.columns([2, 2, 1, 6])
 
     with col_btn1:

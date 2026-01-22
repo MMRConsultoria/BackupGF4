@@ -529,8 +529,9 @@ with tab_audit:
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                 df_result.to_excel(writer, index=False, sheet_name="Auditoria")
-                writer.save()
-            processed_data = output.getvalue()
+            # o context manager já salva/fecha o writer ao sair do bloco
+            output.seek(0)
+            processed_data = output.read()
 
             st.success("Auditoria finalizada.")
             st.download_button(

@@ -92,50 +92,35 @@ st.markdown('<div class="main-title">📈 Atualizar DRE</div>', unsafe_allow_htm
 # --- INICIO: CSS ESPECÍFICO PARA A TABELA DE AUDITORIA ---
 st.markdown("""
 <style>
-/* Aplica somente dentro do wrapper #auditoria */
 #auditoria .ag-theme-alpine .ag-root-wrapper {
     border: 1px solid #c9d2da !important;
     border-radius: 6px !important;
     overflow: hidden !important;
 }
-
-/* Bordas entre células e entre linhas */
 #auditoria .ag-theme-alpine .ag-header-cell,
 #auditoria .ag-theme-alpine .ag-cell {
     border-right: 1px solid #e6edf3 !important;
     border-bottom: 1px solid #e6edf3 !important;
 }
-
-/* Linha de cabeçalho */
 #auditoria .ag-theme-alpine .ag-header {
     border-bottom: 2px solid #cfd8e3 !important;
     background: #f7fafc !important;
 }
-
-/* Ajuste padding */
 #auditoria .ag-theme-alpine .ag-cell,
 #auditoria .ag-theme-alpine .ag-header-cell {
     padding: 6px 8px !important;
 }
-
-/* Força cor e peso do texto do cabeçalho */
 #auditoria .ag-theme-alpine .ag-header-cell-label {
     color: #203040 !important;
     font-weight: 600 !important;
 }
-
-/* Remove outline ao editar (visual mais limpo) */
 #auditoria .ag-theme-alpine .ag-cell-focus {
     outline: none !important;
     box-shadow: none !important;
 }
-
-/* Garante que cada célula mostre borda na direita também na última coluna */
 #auditoria .ag-theme-alpine .ag-center-cols-container .ag-row .ag-cell:last-child {
     border-right: 1px solid #e6edf3 !important;
 }
-
-/* Ajuste final para o corpo da grade */
 #auditoria .ag-theme-alpine .ag-body-viewport {
     background: #ffffff !important;
 }

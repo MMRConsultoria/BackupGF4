@@ -753,3 +753,13 @@ with tab_audit:
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df_export.to_excel(writer, index=False, sheet_name='Auditoria')
         return output.getvalue()
+        # Gerar o arquivo Excel a partir do DataFrame atual da auditoria
+    excel_data = to_excel_bytes(st.session_state.au_planilhas_df)
+    
+    # Botão para download do Excel
+    st.download_button(
+        label="📥 Exportar tabela para Excel",
+        data=excel_data,
+        file_name="auditoria_dre.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )

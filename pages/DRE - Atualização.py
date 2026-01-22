@@ -452,14 +452,17 @@ with tab_audit:
         fit_columns_on_grid_load=True,
     )
 
-    # Botão EXECUTAR AUDITORIA
-    run = st.button("📊 EXECUTAR AUDITORIA (aplicar flags do grid)")
-
-    # Botão Atualizar Tabela (abaixo do executar)
-    refresh = st.button("🔄 Atualizar Tabela")
-
-    # Botão Limpar dados das marcadas
-    clear_marked = st.button("🧹 Limpar dados das marcadas")
+    # Botões alinhados lado-a-lado, mesmo tamanho e texto padronizado
+    c1, c2, c3 = st.columns([1, 1, 1], gap="small")
+    
+    with c1:
+        run = st.button("Executar Auditoria", key="au_run")
+    
+    with c2:
+        refresh = st.button("Atualizar Tabela", key="au_refresh")
+    
+    with c3:
+        clear_marked = st.button("Limpar dados marcados", key="au_clear_marked")
 
     if refresh:
         # Força recarregar a tabela (recarrega planilhas e limpa flags)

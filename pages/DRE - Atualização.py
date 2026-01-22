@@ -495,16 +495,47 @@ with tab_audit:
         limpar_clicadas = st.button("🧹 Limpar marcadas", key="au_limpar", use_container_width=True)
 
     # preparar dados para o botão de download (pequeno, ao lado dos botões)
-    df_para_excel_btn = st.session_state.au_planilhas_df[["Planilha", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]].copy()
+    # preparar dados para o botão de download (pequeno, ao lado dos botões)
+    # NÃO incluir "Status" no Excel e formatar colunas de valor como R$ xx,xx
+    currency_cols = ["Origem", "DRE", "MP DRE", "Dif", "Dif MP"]
+    cols_for_excel = ["Planilha"] + [c for c in currency_cols if c in st.session_state.au_planilhas_df.columns]
+
+    df_para_excel_btn = st.session_state.au_planilhas_df[cols_for_excel].copy()
     is_empty_btn = df_para_excel_btn.empty
+
+    def _format_df_currency_for_excel(df):
+        df2 = df.copy()
+        for col in currency_cols:
+            if col in df2.columns:
+                def _fmt_cell(x):
+                    # manter vazio se estiver vazio/NA
+                    if pd.isna(x) or str(x).strip() == "":
+                        return ""
+                    # se já for número
+                    if isinstance(x, (int, float)):
+                        return format_brl(float(x))
+                    # tentar parsear string numérica/monetária
+                    num = _parse_currency_like(x)
+                    if num is None:
+                        # último recurso: tentar conversão direta
+                        try:
+                            num = float(str(x).replace(",", "."))
+                        except Exception:
+                            return str(x)  # se não conseguir, deixar como está
+                    return format_brl(num)
+                df2[col] = df2[col].apply(_fmt_cell)
+        return df2
+
     with col_btn3:
         if not is_empty_btn:
+            df_to_write = _format_df_currency_for_excel(df_para_excel_btn)
             output_btn = io.BytesIO()
             with pd.ExcelWriter(output_btn, engine="xlsxwriter") as writer:
-                df_para_excel_btn.to_excel(writer, index=False, sheet_name="Auditoria")
+                df_to_write.to_excel(writer, index=False, sheet_name="Auditoria")
             processed_btn = output_btn.getvalue()
         else:
             processed_btn = b""
+
         st.download_button(
             label="⬇️ Excel",
             data=processed_btn,
@@ -514,7 +545,6 @@ with tab_audit:
             disabled=is_empty_btn,
             key="au_download"
         )
-
     # --- Lógica: Limpar Marcadas (quando botão clicado) ---
     if limpar_clicadas:
         df_grid_now = pd.DataFrame(grid_response.get("data", []))

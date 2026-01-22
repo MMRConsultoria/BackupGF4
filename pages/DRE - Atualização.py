@@ -247,7 +247,7 @@ def to_bool_like(x):
     return s in ("true", "t", "1", "yes", "y", "sim", "s")
 
 # ---- TABS ----
-tab_audit, tab_atual = st.tabs(["Auditoria", "Atualização"])
+#tab_audit, tab_atual = st.tabs(["Auditoria", "Atualização"])
 
 # -----------------------------
 # ABA: ATUALIZAÇÃO (mantive seu código praticamente intacto)

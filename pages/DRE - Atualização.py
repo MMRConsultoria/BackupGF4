@@ -473,23 +473,11 @@ with tab_audit:
     )
 
     # -----------------------
-    # Botões: EXECUTAR, DESMARCAR TUDO, LIMPAR MARCADAS, LIMPAR TUDO
+    # Botões: EXECUTAR, LIMPAR MARCADAS
     # -----------------------
-    c_run, c_uncheck_all, c_clear_marked, c_clear_all = st.columns([2, 1, 1, 1])
+    c_run, c_clear_marked = st.columns([2, 1])
     run = c_run.button("📊 EXECUTAR AUDITORIA (aplicar flags do grid)")
-    uncheck_all = c_uncheck_all.button("🔁 Desmarcar Tudo")
     clear_marked = c_clear_marked.button("🧹 Limpar dados das marcadas")
-    clear_all = c_clear_all.button("🧻 Limpar toda a tabela")
-
-    # 1) Desmarcar tudo (reseta flags na master)
-    if uncheck_all:
-        st.session_state.au_flags_temp = {}
-        st.session_state.au_planilhas_df["Flag"] = False
-        st.success("Todas as flags foram desmarcadas.")
-        try:
-            st.experimental_rerun()
-        except Exception:
-            pass
 
     # 2) Limpar dados das marcadas (lê o grid atual; se grid vazio, usa master como fallback)
     if clear_marked:
@@ -519,53 +507,6 @@ with tab_audit:
                 pass
         else:
             st.warning("Marque as planilhas no checkbox primeiro!")
-
-    # 3) Limpar toda a tabela (esvaziar completamente)
-    if clear_all:
-        st.session_state.au_planilhas_df = pd.DataFrame(columns=["Planilha", "Flag", "Planilha_id", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"])
-        st.session_state.au_flags_temp = {}
-        st.session_state.au_resultados = {}
-        st.success("Tabela esvaziada.")
-        try:
-            st.experimental_rerun()
-        except Exception:
-            pass
-
-    # -----------------------
-    # Função: carregar origem faturamento
-    # -----------------------
-    def carregar_origem_faturamento(d_ini, d_fim):
-        try:
-            sh_o_fat = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT)
-            ws_o_fat = sh_o_fat.worksheet(ABA_ORIGEM_FAT)
-            h_o_fat, df_o_fat = get_headers_and_df_raw(ws_o_fat)
-            if not df_o_fat.empty:
-                df_o_fat = tratar_numericos(df_o_fat, h_o_fat)
-
-            c_dt_o_fat = detect_date_col(h_o_fat) or (h_o_fat[0] if h_o_fat else None)
-            if c_dt_o_fat and not df_o_fat.empty:
-                df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o_fat], dayfirst=True, errors="coerce")
-                parsed_pct = df_o_fat["_dt"].notna().mean()
-                if parsed_pct == 0:
-                    df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o_fat], dayfirst=False, errors="coerce")
-                df_o_fat["_dt"] = df_o_fat["_dt"].dt.date
-                df_o_fat_p = df_o_fat[(df_o_fat["_dt"] >= d_ini) & (df_o_fat["_dt"] <= d_fim)].copy()
-            else:
-                df_o_fat_p = df_o_fat.copy()
-
-            return h_o_fat, df_o_fat_p
-        except Exception as e:
-            st.error(f"Erro ao carregar origem de faturamento: {e}")
-            return None, None
-
-    # -----------------------
-    # Intervalo de datas
-    # -----------------------
-    if mes_sel == "Todos":
-        d_ini, d_fim = date(ano_sel, 1, 1), date(ano_sel, 12, 31)
-    else:
-        d_ini = date(ano_sel, int(mes_sel), 1)
-        d_fim = (date(ano_sel, int(mes_sel), 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
 
     # -----------------------
     # Ao clicar em EXECUTAR: ler o grid, aplicar flags e executar auditoria

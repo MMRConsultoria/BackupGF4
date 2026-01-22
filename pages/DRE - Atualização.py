@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import json
@@ -91,12 +92,19 @@ def read_codes_from_config_sheet(gsheet):
             if TARGET_SHEET_NAME.strip().lower() in w.title.strip().lower():
                 ws = w
                 break
-        if ws is None: return None, None
+        if ws is None: return None, None, None, None
         b2 = ws.acell("B2").value
         b3 = ws.acell("B3").value
-        return (str(b2).strip() if b2 else None, str(b3).strip() if b3 else None)
+        b4 = ws.acell("B4").value
+        b5 = ws.acell("B5").value
+        return (
+            str(b2).strip() if b2 else None,
+            str(b3).strip() if b3 else None,
+            str(b4).strip() if b4 else None,
+            str(b5).strip() if b5 else None
+        )
     except Exception:
-        return None, None
+        return None, None, None, None
 
 def get_headers_and_df_raw(ws):
     vals = ws.get_all_values()
@@ -188,14 +196,14 @@ with tab_atual:
                 if df_marcadas.empty:
                     st.warning("Nada marcado.")
                     st.stop()
-            
+
                 status_placeholder = st.empty()  # placeholder para status
                 status_placeholder.info("Executando atualização, por favor aguarde...")
-            
+
                 logs = []
                 prog = st.progress(0)
                 log_placeholder = st.empty()
-            
+
                 total = len(df_marcadas)
                 for i, (_, row) in enumerate(df_marcadas.iterrows()):
                     try:
@@ -205,17 +213,17 @@ with tab_atual:
                         logs.append(f"{row['Planilha']}: Erro {e}")
                     prog.progress((i+1)/total)
                     log_placeholder.text("\n".join(logs))
-            
+
                 status_placeholder.success("Em Execução!")
-                
+
                 # Carregar Origem Faturamento
                 try:
                     sh_orig_fat = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT)
                     ws_orig_fat = sh_orig_fat.worksheet(ABA_ORIGEM_FAT)
                     h_orig_fat, df_orig_fat = get_headers_and_df_raw(ws_orig_fat)
                     c_dt_fat = detect_date_col(h_orig_fat)
-                    df_orig_fat['_dt'] = pd.to_datetime(df_orig_fat[c_dt_fat], dayfirst=True, errors='coerce').dt.date
-                    df_orig_fat_f = df_orig_fat[(df_orig_fat['_dt'] >= data_de) & (df_orig_fat['_dt'] <= data_ate)].copy()
+                    df_orig_fat["_dt"] = pd.to_datetime(df_orig_fat[c_dt_fat], dayfirst=True, errors="coerce").dt.date
+                    df_orig_fat_f = df_orig_fat[(df_orig_fat["_dt"] >= data_de) & (df_orig_fat["_dt"] <= data_ate)].copy()
                 except Exception as e: st.error(f"Erro origem Fat: {e}"); st.stop()
 
                 # Carregar Origem Meio Pagamento
@@ -224,94 +232,103 @@ with tab_atual:
                     ws_orig_mp = sh_orig_mp.worksheet(ABA_ORIGEM_MP)
                     h_orig_mp, df_orig_mp = get_headers_and_df_raw(ws_orig_mp)
                     c_dt_mp = detect_date_col(h_orig_mp)
-                    df_orig_mp['_dt'] = pd.to_datetime(df_orig_mp[c_dt_mp], dayfirst=True, errors='coerce').dt.date
-                    df_orig_mp_f = df_orig_mp[(df_orig_mp['_dt'] >= data_de) & (df_orig_mp['_dt'] <= data_ate)].copy()
+                    df_orig_mp["_dt"] = pd.to_datetime(df_orig_mp[c_dt_mp], dayfirst=True, errors="coerce").dt.date
+                    df_orig_mp_f = df_orig_mp[(df_orig_mp["_dt"] >= data_de) & (df_orig_mp["_dt"] <= data_ate)].copy()
                 except Exception as e: st.error(f"Erro origem MP: {e}"); st.stop()
 
                 prog = st.progress(0)
                 logs = []
                 log_placeholder = st.empty()  # placeholder para logs
-                
+
                 total = len(df_marcadas)
                 for i, (_, row) in enumerate(df_marcadas.iterrows()):
                     try:
                         sid = row["ID_Planilha"]
                         sh_dest = gc.open_by_key(sid)
-                        b2, b3 = read_codes_from_config_sheet(sh_dest)
+                        b2, b3, b4, b5 = read_codes_from_config_sheet(sh_dest)
                         if not b2:
                             logs.append(f"{row['Planilha']}: Sem B2.")
                             log_placeholder.text("\n".join(logs))
                             prog.progress((i+1)/total)
                             continue
-                        
+
                         # --- ATUALIZAR FATURAMENTO ---
                         if row["Faturamento"]:
                             c_f, c_d = h_orig_fat[5], h_orig_fat[3]
                             df_ins = df_orig_fat_f[df_orig_fat_f[c_f].astype(str).str.strip() == b2].copy()
                             if b3:
                                 df_ins = df_ins[df_ins[c_d].astype(str).str.strip() == b3]
-                            
+                            if b4 and len(h_orig_fat) > 4:
+                                df_ins = df_ins[df_ins[h_orig_fat[4]].astype(str).str.strip() == b4]
+                            if b5 and len(h_orig_fat) > 2:
+                                df_ins = df_ins[df_ins[h_orig_fat[2]].astype(str).str.strip() == b5]
+
                             if not df_ins.empty:
                                 try:
                                     ws_dest = sh_dest.worksheet("Importado_Fat")
                                 except:
                                     ws_dest = sh_dest.add_worksheet("Importado_Fat", 1000, 30)
-                                
+
                                 h_dest, df_dest = get_headers_and_df_raw(ws_dest)
                                 if df_dest.empty:
                                     df_f_ws, h_f = df_ins, h_orig_fat
                                 else:
                                     c_dt_d = detect_date_col(h_dest) or c_dt_fat
-                                    df_dest['_dt'] = pd.to_datetime(df_dest[c_dt_d], dayfirst=True, errors='coerce').dt.date
-                                    rem = (df_dest['_dt'] >= data_de) & (df_dest['_dt'] <= data_ate)
+                                    df_dest["_dt"] = pd.to_datetime(df_dest[c_dt_d], dayfirst=True, errors="coerce").dt.date
+                                    rem = (df_dest["_dt"] >= data_de) & (df_dest["_dt"] <= data_ate)
                                     if c_f in df_dest.columns:
                                         rem &= (df_dest[c_f].astype(str).str.strip() == b2)
                                     df_f_ws = pd.concat([df_dest.loc[~rem], df_ins], ignore_index=True)
                                     h_f = h_dest if h_dest else h_orig_fat
-                                
+
                                 send = df_f_ws[h_f].fillna("")
                                 ws_dest.clear()
-                                ws_dest.update("A1", [h_f] + send.values.tolist(), value_input_option='USER_ENTERED')
+                                ws_dest.update("A1", [h_f] + send.values.tolist(), value_input_option="USER_ENTERED")
                                 logs.append(f"{row['Planilha']}: Fat OK.")
                                 log_placeholder.text("\n".join(logs))
-                
+
                         # --- ATUALIZAR MEIO DE PAGAMENTO ---
                         if row["Meio Pagamento"]:
                             c_f_mp, c_d_mp = h_orig_mp[8], h_orig_mp[6]
                             df_ins_mp = df_orig_mp_f[df_orig_mp_f[c_f_mp].astype(str).str.strip() == b2].copy()
                             if b3:
                                 df_ins_mp = df_ins_mp[df_ins_mp[c_d_mp].astype(str).str.strip() == b3]
-                            
+                            if b4 and len(h_orig_mp) > 7:
+                                df_ins_mp = df_ins_mp[df_ins_mp[h_orig_mp[7]].astype(str).str.strip() == b4]
+                            if b5 and len(h_orig_mp) > 5:
+                                df_ins_mp = df_ins_mp[df_ins_mp[h_orig_mp[5]].astype(str).str.strip() == b5]
+
                             if not df_ins_mp.empty:
                                 try:
                                     ws_dest_mp = sh_dest.worksheet("Meio de Pagamento")
                                 except:
                                     ws_dest_mp = sh_dest.add_worksheet("Meio de Pagamento", 1000, 30)
-                                
+
                                 h_dest_mp, df_dest_mp = get_headers_and_df_raw(ws_dest_mp)
                                 if df_dest_mp.empty:
                                     df_f_mp, h_f_mp = df_ins_mp, h_orig_mp
                                 else:
                                     c_dt_d_mp = detect_date_col(h_dest_mp) or c_dt_mp
-                                    df_dest_mp['_dt'] = pd.to_datetime(df_dest_mp[c_dt_d_mp], dayfirst=True, errors='coerce').dt.date
-                                    rem_mp = (df_dest_mp['_dt'] >= data_de) & (df_dest_mp['_dt'] <= data_ate)
+                                    df_dest_mp["_dt"] = pd.to_datetime(df_dest_mp[c_dt_d_mp], dayfirst=True, errors="coerce").dt.date
+                                    rem_mp = (df_dest_mp["_dt"] >= data_de) & (df_dest_mp["_dt"] <= data_ate)
                                     if c_f_mp in df_dest_mp.columns:
                                         rem_mp &= (df_dest_mp[c_f_mp].astype(str).str.strip() == b2)
                                     df_f_mp = pd.concat([df_dest_mp.loc[~rem_mp], df_ins_mp], ignore_index=True)
                                     h_f_mp = h_dest_mp if h_dest_mp else h_orig_mp
-                                
+
                                 send_mp = df_f_mp[h_f_mp].fillna("")
                                 ws_dest_mp.clear()
-                                ws_dest_mp.update("A1", [h_f_mp] + send_mp.values.tolist(), value_input_option='USER_ENTERED')
+                                ws_dest_mp.update("A1", [h_f_mp] + send_mp.values.tolist(), value_input_option="USER_ENTERED")
                                 logs.append(f"{row['Planilha']}: MP OK.")
                                 log_placeholder.text("\n".join(logs))
-                
+
                     except Exception as e:
                         logs.append(f"{row['Planilha']}: Erro {e}")
                         log_placeholder.text("\n".join(logs))
                     prog.progress((i+1)/total)
-                
+
                 st.success("Concluido!")
+
 # Aba Auditoria completa (cole onde tab_audit está definido)
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from st_aggrid.shared import JsCode
@@ -450,14 +467,14 @@ with tab_audit:
     gb.configure_column("Flag",
                         headerName="",
                         editable=True,
-                        cellEditor='agCheckboxCellEditor',
-                        cellRenderer='agCheckboxCellRenderer',
+                        cellEditor="agCheckboxCellEditor",
+                        cellRenderer="agCheckboxCellRenderer",
                         width=80)
     for col in ["Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]:
         if col in display_df.columns:
             gb.configure_column(col, editable=False)
     grid_options = gb.build()
-    grid_options['getRowStyle'] = row_style_js
+    grid_options["getRowStyle"] = row_style_js
 
     st.markdown("Marque as planilhas (checkbox). As alterações só serão aplicadas quando clicar em 'EXECUTAR AUDITORIA' ou ao usar os botões de limpeza.")
 
@@ -467,7 +484,7 @@ with tab_audit:
         gridOptions=grid_options,
         update_mode=GridUpdateMode.NO_UPDATE,
         allow_unsafe_jscode=True,
-        theme='alpine',
+        theme="alpine",
         height=480,
         fit_columns_on_grid_load=True,
     )
@@ -477,11 +494,11 @@ with tab_audit:
     # -----------------------
     c_run, c_clear_marked = st.columns([2, 1])
     run = c_run.button("📊 EXECUTAR AUDITORIA (aplicar flags do grid)")
-    
-    clear_marked = c_clear_marked.button("🧹 Limpar dados das marcadas")
-    
 
-    
+    clear_marked = c_clear_marked.button("🧹 Limpar dados das marcadas")
+
+
+
 
     # 2) Limpar dados das marcadas (lê o grid atual; se grid vazio, usa master como fallback)
     if clear_marked:
@@ -512,7 +529,7 @@ with tab_audit:
         else:
             st.warning("Marque as planilhas no checkbox primeiro!")
 
-   
+
 
     # -----------------------
     # Função: carregar origem faturamento
@@ -596,11 +613,11 @@ with tab_audit:
                     prog.progress((idx + 1) / total)
                     continue
 
-                # ler codes B2/B3
+                # ler codes B2/B3/B4/B5
                 try:
-                    b2, b3 = read_codes_from_config_sheet(sh_d)
+                    b2, b3, b4, b5 = read_codes_from_config_sheet(sh_d)
                 except Exception:
-                    b2, b3 = None, None
+                    b2, b3, b4, b5 = None, None, None, None
 
                 if not b2:
                     status = "Sem B2 (Config)"
@@ -617,6 +634,12 @@ with tab_audit:
                         if b3 and len(h_o_fat) > 3:
                             col_b3_fat = h_o_fat[3]
                             df_filter = df_filter[df_filter[col_b3_fat].astype(str).str.strip() == str(b3).strip()]
+                        if b4 and len(h_o_fat) > 4:
+                            col_b4_fat = h_o_fat[4]
+                            df_filter = df_filter[df_filter[col_b4_fat].astype(str).str.strip() == str(b4).strip()]
+                        if b5 and len(h_o_fat) > 2:
+                            col_b5_fat = h_o_fat[2]
+                            df_filter = df_filter[df_filter[col_b5_fat].astype(str).str.strip() == str(b5).strip()]
                         if len(h_o_fat) > 6:
                             v_o = float(df_filter[h_o_fat[6]].sum()) if not df_filter.empty else 0.0
                 except Exception:
@@ -668,14 +691,22 @@ with tab_audit:
                     if len(h_mp_d) > 9 and not df_mp_periodo.empty:
                         col_b2_mp = h_mp_d[8]
                         col_b3_mp = h_mp_d[6]
+                        col_b4_mp = h_mp_d[7] if len(h_mp_d) > 7 else None
+                        col_b5_mp = h_mp_d[5] if len(h_mp_d) > 5 else None
                         col_val_mp = h_mp_d[9]
 
                         b2_norm = normalize_code(b2)
                         b3_norm = normalize_code(b3) if b3 else None
+                        b4_norm = normalize_code(b4) if b4 else None
+                        b5_norm = normalize_code(b5) if b5 else None
 
                         mask = df_mp_periodo[col_b2_mp].apply(normalize_code) == b2_norm
                         if b3_norm:
                             mask &= df_mp_periodo[col_b3_mp].apply(normalize_code) == b3_norm
+                        if b4_norm and col_b4_mp:
+                            mask &= df_mp_periodo[col_b4_mp].apply(normalize_code) == b4_norm
+                        if b5_norm and col_b5_mp:
+                            mask &= df_mp_periodo[col_b5_mp].apply(normalize_code) == b5_norm
 
                         df_mp_dest_f = df_mp_periodo[mask]
 
@@ -717,7 +748,7 @@ with tab_audit:
                     # desmarcar a Flag para indicar concluído (se preferir, remova esta linha)
                     st.session_state.au_planilhas_df.loc[mask, "Flag"] = False
 
-                logs.append(f"{pname}: {status if status != '✅ OK' else 'OK'}")
+                logs.append(f"{pname}: {status if status != "✅ OK" else "OK"}")
                 prog.progress((idx + 1) / total)
 
             # limpar temporário (já aplicado) e mostrar logs
@@ -736,26 +767,26 @@ with tab_audit:
     def to_excel_bytes(df):
         # Copiar e preparar df para exportação
         df_export = df.copy()
-    
+
         # Remover colunas que não quer no Excel
         cols_to_drop = ["Flag", "Planilha_id", "Status"]
-        df_export = df_export.drop(columns=[c for c in cols_to_drop if c in df_export.columns], errors='ignore')
-    
+        df_export = df_export.drop(columns=[c for c in cols_to_drop if c in df_export.columns], errors="ignore")
+
         # Converter colunas de valores para numérico
         valor_cols = ["Origem", "DRE", "MP DRE", "Dif", "Dif MP"]
         for col in valor_cols:
             if col in df_export.columns:
                 # Remover "R$ ", pontos e vírgulas para converter corretamente
                 df_export[col] = df_export[col].astype(str).str.replace(r"[R$\s\.]", "", regex=True).str.replace(",", ".", regex=False)
-                df_export[col] = pd.to_numeric(df_export[col], errors='coerce')
-    
+                df_export[col] = pd.to_numeric(df_export[col], errors="coerce")
+
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_export.to_excel(writer, index=False, sheet_name='Auditoria')
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df_export.to_excel(writer, index=False, sheet_name="Auditoria")
         return output.getvalue()
         # Gerar o arquivo Excel a partir do DataFrame atual da auditoria
     excel_data = to_excel_bytes(st.session_state.au_planilhas_df)
-    
+
     # Botão para download do Excel
     st.download_button(
         label="📥 Exportar tabela para Excel",

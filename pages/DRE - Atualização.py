@@ -421,21 +421,47 @@ with tab_audit:
                 except: v_d = 0.0
 
                 # Valor MP (CORRIGIDO PARA MULTI-LOJAS)
+                # --- Valor MP (AUDITORIA: mesma lógica do FAT, só colunas diferentes) ---
                 try:
                     ws_mp = sh_d.worksheet("Meio de Pagamento")
                     h_mp, df_mp = get_headers_and_df_raw(ws_mp)
                     df_mp = tratar_numericos(df_mp, h_mp)
+
+                    # filtrar por período (se houver coluna de data)
                     c_dt_mp = detect_date_col(h_mp)
                     if c_dt_mp:
                         df_mp["_dt"] = pd.to_datetime(df_mp[c_dt_mp], dayfirst=True, errors="coerce").dt.date
-                        df_mp_p = df_mp[(df_mp["_dt"] >= d_ini) & (df_mp["_dt"] <= d_fim)]
-                    else: df_mp_p = df_mp
+                        df_mp_p = df_mp[(df_mp["_dt"] >= d_ini) & (df_mp["_dt"] <= d_fim)].copy()
+                    else:
+                        df_mp_p = df_mp.copy()
 
-                    mask_mp = df_mp_p[h_mp[8]].astype(str).str.strip() == b2
-                    if lojas_audit:
-                        mask_mp &= df_mp_p[h_mp[6]].apply(normalize_code).isin(lojas_audit)
-                    v_mp = float(df_mp_p[mask_mp][h_mp[9]].sum())
-                except: v_mp = 0.0
+                    # identificar colunas (seguindo a mesma convenção do update)
+                    col_b2_mp = h_mp[8] if len(h_mp) > 8 else None   # coluna com B2
+                    col_loja_mp = h_mp[6] if len(h_mp) > 6 else None # coluna com código da loja
+                    col_valor_mp = h_mp[9] if len(h_mp) > 9 else None # coluna com o valor a somar
+
+                    # máscara inicial
+                    mask_mp = pd.Series(True, index=df_mp_p.index)
+
+                    # aplicar filtro B2 (se existir)
+                    if col_b2_mp and col_b2_mp in df_mp_p.columns:
+                        mask_mp &= df_mp_p[col_b2_mp].astype(str).str.strip() == b2
+                    elif col_b2_mp:
+                        # coluna informada mas não existe -> sem resultados
+                        mask_mp &= pd.Series([False] * len(df_mp_p), index=df_mp_p.index)
+
+                    # aplicar filtro lojas (OR via isin) se houver lojas_audit
+                    if lojas_audit and col_loja_mp and col_loja_mp in df_mp_p.columns:
+                        mask_mp &= df_mp_p[col_loja_mp].apply(normalize_code).isin(lojas_audit)
+
+                    # soma do valor (se coluna existir)
+                    if col_valor_mp and col_valor_mp in df_mp_p.columns:
+                        v_mp = float(df_mp_p.loc[mask_mp, col_valor_mp].sum())
+                    else:
+                        v_mp = 0.0
+
+                except Exception:
+                    v_mp = 0.0
 
                 status_text = "✅ OK" if abs(v_o - v_d) < 0.1 else "❌ Erro"
                 results_excel.append({"Planilha": row["Planilha"], "Origem": v_o, "DRE": v_d, "MP DRE": v_mp, "Dif": v_o-v_d, "Dif MP": v_d-v_mp, "Status": status_text})

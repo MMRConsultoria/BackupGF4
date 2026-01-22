@@ -313,7 +313,6 @@ with tab_atual:
                 
                 st.success("Concluido!")
 
-# Aba Auditoria (versão: sem piscar ao marcar/desmarcar; aplica somente ao clicar em EXECUTAR)
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from st_aggrid.shared import JsCode
 import pandas as pd
@@ -323,9 +322,6 @@ import streamlit as st
 with tab_audit:
     st.header("Auditoria")
 
-    # -----------------------
-    # Helpers
-    # -----------------------
     def format_brl(v):
         try:
             v = float(v)
@@ -356,9 +352,7 @@ with tab_audit:
         s = str(x).strip().lower()
         return s in ("true", "t", "1", "yes", "y", "sim", "s")
 
-    # -----------------------
     # Pastas / Subpastas
-    # -----------------------
     try:
         pastas_fech = list_child_folders(drive_service, PASTA_PRINCIPAL_ID, "fechamento")
         if not pastas_fech:
@@ -374,9 +368,7 @@ with tab_audit:
         st.error(f"Erro ao listar pastas/subpastas: {e}")
         st.stop()
 
-    # -----------------------
     # Filtros de período
-    # -----------------------
     c1, c2 = st.columns(2)
     with c1:
         ano_sel = st.selectbox("Ano:", list(range(2020, date.today().year + 1)),
@@ -384,9 +376,7 @@ with tab_audit:
     with c2:
         mes_sel = st.selectbox("Mês (Opcional):", ["Todos"] + list(range(1, 13)), key="au_mes")
 
-    # -----------------------
     # Carregar planilhas (recarrega se subpastas mudarem)
-    # -----------------------
     need_reload = ("au_last_subpastas" not in st.session_state) or (st.session_state.get("au_last_subpastas") != s_ids_audit)
     if need_reload:
         try:
@@ -410,7 +400,6 @@ with tab_audit:
         st.session_state.au_last_subpastas = s_ids_audit
         st.session_state.au_planilhas_df = df_init
         st.session_state.au_resultados = {}
-        # temp flags dictionary (applied only quando clicar)
         st.session_state.au_flags_temp = {}
 
     # garantir chaves no session_state
@@ -426,20 +415,12 @@ with tab_audit:
         st.info("Nenhuma planilha encontrada nas subpastas selecionadas.")
         st.stop()
 
-    # -----------------------
-    # Preparar display_df (garantir colunas)
-    # NOTA: NÃO atualizamos st.session_state durante a edição do grid.
-    # Apenas exibimos a tabela; a leitura das flags é feita somente no clique do botão.
-    # -----------------------
     expected_cols = ["Planilha", "Flag", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]
     for c in expected_cols:
         if c not in df_table.columns:
             df_table[c] = False if c == "Flag" else ""
     display_df = df_table[expected_cols].copy()
 
-    # -----------------------
-    # AgGrid config (NO_UPDATE evita re-renders automáticos)
-    # -----------------------
     row_style_js = JsCode("""
     function(params) {
         if (params.data && (params.data.Flag === true || params.data.Flag === 'true')) {
@@ -464,7 +445,6 @@ with tab_audit:
 
     st.markdown("Marque as planilhas (checkbox). As alterações só serão aplicadas quando clicar em 'EXECUTAR AUDITORIA'.")
 
-    # Exibir grid (NO_UPDATE)
     grid_response = AgGrid(
         display_df,
         gridOptions=grid_options,
@@ -475,26 +455,32 @@ with tab_audit:
         fit_columns_on_grid_load=True,
     )
 
-    # -----------------------
-    # Botões
-    # -----------------------
-    c_run, c_clear = st.columns([1, 1])
+    c_run, c_clear, c_clear_marked = st.columns([1, 1, 1])
     run = c_run.button("📊 EXECUTAR AUDITORIA (aplicar flags do grid)")
     clear_temp = c_clear.button("🔁 Limpar seleção/aplicar vazio")
+    clear_marked = c_clear_marked.button("🧹 Limpar dados das marcadas")
 
     if clear_temp:
-        # limpar as flags aplicadas (master) e temporárias
         st.session_state.au_flags_temp = {}
-        # opcional: também limpar as flags na master (se desejar preservar valores mas desmarcar)
         st.session_state.au_planilhas_df["Flag"] = False
         try:
             st.experimental_rerun()
         except Exception:
             pass
 
-    # -----------------------
-    # Helper: carregar origem faturamento (uma vez)
-    # -----------------------
+    if clear_marked:
+        # Limpar dados somente das linhas marcadas
+        mask = st.session_state.au_planilhas_df["Flag"] == True
+        cols_limpar = ["Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]
+        for col in cols_limpar:
+            st.session_state.au_planilhas_df.loc[mask, col] = ""
+        # Também desmarcar as flags dessas linhas
+        st.session_state.au_planilhas_df.loc[mask, "Flag"] = False
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
+
     def carregar_origem_faturamento(d_ini, d_fim):
         try:
             sh_o_fat = gc.open_by_key(ID_PLANILHA_ORIGEM_FAT)
@@ -519,23 +505,14 @@ with tab_audit:
             st.error(f"Erro ao carregar origem de faturamento: {e}")
             return None, None
 
-    # -----------------------
-    # Intervalo de datas
-    # -----------------------
     if mes_sel == "Todos":
         d_ini, d_fim = date(ano_sel, 1, 1), date(ano_sel, 12, 31)
     else:
         d_ini = date(ano_sel, int(mes_sel), 1)
         d_fim = (date(ano_sel, int(mes_sel), 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
 
-    # -----------------------
-    # Ao clicar em RUN: ler os dados atuais do grid (no momento do clique),
-    # aplicar flags na master e executar auditoria apenas sobre as marcadas.
-    # -----------------------
     if run:
-        # Lê o estado do grid no momento do clique
         df_from_grid = pd.DataFrame(grid_response.get("data", []))
-        # Atualiza temporário a partir do grid (AGORA, dentro do clique)
         st.session_state.au_flags_temp = {}
         if not df_from_grid.empty and "Planilha" in df_from_grid.columns:
             for _, row in df_from_grid.iterrows():
@@ -544,17 +521,14 @@ with tab_audit:
                     continue
                 st.session_state.au_flags_temp[pname] = to_bool_like(row.get("Flag", False))
 
-        # Aplicar flags temporárias na tabela principal (somente Flag)
         for i, row in st.session_state.au_planilhas_df.iterrows():
             pname = row["Planilha"]
             st.session_state.au_planilhas_df.at[i, "Flag"] = bool(st.session_state.au_flags_temp.get(pname, False))
 
-        # Selecionadas para processar
         selecionadas = st.session_state.au_planilhas_df[st.session_state.au_planilhas_df["Flag"] == True]
         if selecionadas.empty:
             st.warning("Nenhuma planilha marcada. Marque ao menos uma antes de executar.")
         else:
-            # Carregar origem (uma vez)
             h_o_fat, df_o_fat_p = carregar_origem_faturamento(d_ini, d_fim)
             if h_o_fat is None and df_o_fat_p is None:
                 st.stop()
@@ -569,7 +543,6 @@ with tab_audit:
                 v_o = v_d = v_mp_d = 0.0
                 status = "Erro desconhecido"
 
-                # abrir planilha destino
                 try:
                     sh_d = gc.open_by_key(sid)
                 except Exception as e:
@@ -579,7 +552,6 @@ with tab_audit:
                     prog.progress((idx + 1) / total)
                     continue
 
-                # ler codes B2/B3
                 try:
                     b2, b3 = read_codes_from_config_sheet(sh_d)
                 except Exception:
@@ -592,7 +564,6 @@ with tab_audit:
                     prog.progress((idx + 1) / total)
                     continue
 
-                # FATURAMENTO ORIGEM
                 try:
                     if h_o_fat and len(h_o_fat) > 5 and (df_o_fat_p is not None) and (not df_o_fat_p.empty):
                         col_b2_fat = h_o_fat[5]
@@ -605,7 +576,6 @@ with tab_audit:
                 except Exception:
                     v_o = 0.0
 
-                # FATURAMENTO DESTINO (Importado_Fat)
                 try:
                     ws_d = sh_d.worksheet("Importado_Fat")
                     h_d, df_d = get_headers_and_df_raw(ws_d)
@@ -629,7 +599,6 @@ with tab_audit:
                 except Exception:
                     v_d = 0.0
 
-                # MEIO DE PAGAMENTO
                 try:
                     ws_mp_d = sh_d.worksheet("Meio de Pagamento")
                     h_mp_d, df_mp_d = get_headers_and_df_raw(ws_mp_d)
@@ -681,12 +650,10 @@ with tab_audit:
                 except Exception:
                     v_mp_d = 0.0
 
-                # Diferenças e status
                 diff = v_o - v_d
                 diff_mp = v_d - v_mp_d
                 status = "✅ OK" if (abs(diff) < 0.01 and abs(diff_mp) < 0.01) else "❌ Erro"
 
-                # Salvar resultado e atualizar apenas a linha correspondente na master
                 st.session_state.au_resultados[sid] = {"Planilha": pname, "Origem": v_o, "DRE": v_d, "MP DRE": v_mp_d, "Dif": diff, "Dif MP": diff_mp, "Status": status}
 
                 mask = st.session_state.au_planilhas_df["Planilha_id"] == sid
@@ -697,19 +664,16 @@ with tab_audit:
                     st.session_state.au_planilhas_df.loc[mask, "Dif"] = format_brl(diff)
                     st.session_state.au_planilhas_df.loc[mask, "Dif MP"] = format_brl(diff_mp)
                     st.session_state.au_planilhas_df.loc[mask, "Status"] = status
-                    # desmarcar a Flag para indicar concluído (se preferir, remova esta linha)
                     st.session_state.au_planilhas_df.loc[mask, "Flag"] = False
 
                 logs.append(f"{pname}: {status if status != '✅ OK' else 'OK'}")
                 prog.progress((idx + 1) / total)
 
-            # limpar temporário (já aplicado) e mostrar logs
             st.session_state.au_flags_temp = {}
             st.markdown("### Log de processamento")
             st.text("\n".join(logs))
             st.success("Auditoria concluída.")
 
-            # tentar rerun apenas uma vez
             try:
                 st.experimental_rerun()
             except Exception:

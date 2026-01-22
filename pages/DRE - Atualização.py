@@ -238,7 +238,7 @@ tab_atual, tab_audit  = st.tabs(["🔄 Atualização","🔍 Auditoria" ])
 # ABA: ATUALIZAÇÃO (Lógica Intacta)
 # -----------------------------
 with tab_atual:
-    st.subheader("Configurações de Atualização")
+    st.subheader("Atualizar DRE Google Sheets")
     col_d1, col_d2 = st.columns(2)
     with col_d1:
         data_de = st.date_input("De", value=date.today() - timedelta(days=30), key="at_de")

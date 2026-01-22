@@ -519,11 +519,7 @@ with tab_audit:
                 st.info("As flags foram limpas. Atualize a página se necessário para ver a alteração.")
 
     # ----- Exportar Resultados (sempre visível) -----
-    st.markdown("---")
-    st.subheader("Exportar Resultados (Tabela Atual)")
-    
-    # garante que import io exista no topo do arquivo
-    # cria o DataFrame que irá para o Excel (apenas a primeira tabela)
+    # Substitua aquele bloco por este:
     if not st.session_state.au_planilhas_df.empty:
         df_para_excel = st.session_state.au_planilhas_df[["Planilha", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]].copy()
     
@@ -539,5 +535,3 @@ with tab_audit:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
-    else:
-        st.info("A tabela está vazia. Execute a auditoria ou selecione subpastas para gerar dados.")    

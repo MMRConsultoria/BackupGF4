@@ -208,11 +208,14 @@ with tab_atual:
                 total = len(df_marcadas)
                 for i, (_, row) in enumerate(df_marcadas.iterrows()):
                     try:
-                        logs.append(f"{row['Planilha']}: Processando...")
-                        log_placeholder.text("\n".join(logs))
+                        # ... seu código de atualização ...
+                        logs.append(f"{row['Planilha']}:.")
                     except Exception as e:
                         logs.append(f"{row['Planilha']}: Erro {e}")
                     prog.progress((i+1)/total)
+                    log_placeholder.text("\n".join(logs))
+
+                status_placeholder.success("Em Execução!")
 
                 # Carregar Origem Faturamento
                 try:
@@ -222,9 +225,7 @@ with tab_atual:
                     c_dt_fat = detect_date_col(h_orig_fat)
                     df_orig_fat["_dt"] = pd.to_datetime(df_orig_fat[c_dt_fat], dayfirst=True, errors="coerce").dt.date
                     df_orig_fat_f = df_orig_fat[(df_orig_fat["_dt"] >= data_de) & (df_orig_fat["_dt"] <= data_ate)].copy()
-                except Exception as e: 
-                    st.error(f"Erro origem Fat: {e}")
-                    st.stop()
+                except Exception as e: st.error(f"Erro origem Fat: {e}"); st.stop()
 
                 # Carregar Origem Meio Pagamento
                 try:
@@ -234,9 +235,7 @@ with tab_atual:
                     c_dt_mp = detect_date_col(h_orig_mp)
                     df_orig_mp["_dt"] = pd.to_datetime(df_orig_mp[c_dt_mp], dayfirst=True, errors="coerce").dt.date
                     df_orig_mp_f = df_orig_mp[(df_orig_mp["_dt"] >= data_de) & (df_orig_mp["_dt"] <= data_ate)].copy()
-                except Exception as e: 
-                    st.error(f"Erro origem MP: {e}")
-                    st.stop()
+                except Exception as e: st.error(f"Erro origem MP: {e}"); st.stop()
 
                 prog = st.progress(0)
                 logs = []
@@ -248,7 +247,6 @@ with tab_atual:
                         sid = row["ID_Planilha"]
                         sh_dest = gc.open_by_key(sid)
                         b2, b3, b4, b5 = read_codes_from_config_sheet(sh_dest)
-
                         if not b2:
                             logs.append(f"{row['Planilha']}: Sem B2.")
                             log_placeholder.text("\n".join(logs))
@@ -257,22 +255,14 @@ with tab_atual:
 
                         # --- ATUALIZAR FATURAMENTO ---
                         if row["Faturamento"]:
-                            df_ins = df_orig_fat_f.copy()
-
-                            # Filtro B2 (Obrigatório)
-                            c_b2 = h_orig_fat[5]
-                            df_ins = df_ins[df_ins[c_b2].astype(str).str.strip() == b2]
-
-                            # Filtros Opcionais (B3, B4, B5)
-                            if b3 and len(h_orig_fat) > 3:
-                                c_b3 = h_orig_fat[3]
-                                df_ins = df_ins[df_ins[c_b3].astype(str).str.strip() == b3]
+                            c_f, c_d = h_orig_fat[5], h_orig_fat[3]
+                            df_ins = df_orig_fat_f[df_orig_fat_f[c_f].astype(str).str.strip() == b2].copy()
+                            if b3:
+                                df_ins = df_ins[df_ins[c_d].astype(str).str.strip() == b3]
                             if b4 and len(h_orig_fat) > 4:
-                                c_b4 = h_orig_fat[4]
-                                df_ins = df_ins[df_ins[c_b4].astype(str).str.strip() == b4]
+                                df_ins = df_ins[df_ins[h_orig_fat[4]].astype(str).str.strip() == b4]
                             if b5 and len(h_orig_fat) > 2:
-                                c_b5 = h_orig_fat[2]
-                                df_ins = df_ins[df_ins[c_b5].astype(str).str.strip() == b5]
+                                df_ins = df_ins[df_ins[h_orig_fat[2]].astype(str).str.strip() == b5]
 
                             if not df_ins.empty:
                                 try:
@@ -286,44 +276,28 @@ with tab_atual:
                                 else:
                                     c_dt_d = detect_date_col(h_dest) or c_dt_fat
                                     df_dest["_dt"] = pd.to_datetime(df_dest[c_dt_d], dayfirst=True, errors="coerce").dt.date
-
-                                    # Critério de remoção para sobrescrever o período
                                     rem = (df_dest["_dt"] >= data_de) & (df_dest["_dt"] <= data_ate)
-                                    if c_b2 in df_dest.columns:
-                                        rem &= (df_dest[c_b2].astype(str).str.strip() == b2)
-
+                                    if c_f in df_dest.columns:
+                                        rem &= (df_dest[c_f].astype(str).str.strip() == b2)
                                     df_f_ws = pd.concat([df_dest.loc[~rem], df_ins], ignore_index=True)
                                     h_f = h_dest if h_dest else h_orig_fat
-
-                                # Limpeza de colunas auxiliares antes de enviar
-                                if "_dt" in df_f_ws.columns: 
-                                    df_f_ws = df_f_ws.drop(columns=["_dt"])
 
                                 send = df_f_ws[h_f].fillna("")
                                 ws_dest.clear()
                                 ws_dest.update("A1", [h_f] + send.values.tolist(), value_input_option="USER_ENTERED")
                                 logs.append(f"{row['Planilha']}: Fat OK.")
-                            else:
-                                logs.append(f"{row['Planilha']}: Fat Sem dados para os filtros.")
+                                log_placeholder.text("\n".join(logs))
 
                         # --- ATUALIZAR MEIO DE PAGAMENTO ---
                         if row["Meio Pagamento"]:
-                            df_ins_mp = df_orig_mp_f.copy()
-
-                            # Filtro B2 (Obrigatório)
-                            c_b2_mp = h_orig_mp[8]
-                            df_ins_mp = df_ins_mp[df_ins_mp[c_b2_mp].astype(str).str.strip() == b2]
-
-                            # Filtros Opcionais (B3, B4, B5)
-                            if b3 and len(h_orig_mp) > 6:
-                                c_b3_mp = h_orig_mp[6]
-                                df_ins_mp = df_ins_mp[df_ins_mp[c_b3_mp].astype(str).str.strip() == b3]
+                            c_f_mp, c_d_mp = h_orig_mp[8], h_orig_mp[6]
+                            df_ins_mp = df_orig_mp_f[df_orig_mp_f[c_f_mp].astype(str).str.strip() == b2].copy()
+                            if b3:
+                                df_ins_mp = df_ins_mp[df_ins_mp[c_d_mp].astype(str).str.strip() == b3]
                             if b4 and len(h_orig_mp) > 7:
-                                c_b4_mp = h_orig_mp[7]
-                                df_ins_mp = df_ins_mp[df_ins_mp[c_b4_mp].astype(str).str.strip() == b4]
+                                df_ins_mp = df_ins_mp[df_ins_mp[h_orig_mp[7]].astype(str).str.strip() == b4]
                             if b5 and len(h_orig_mp) > 5:
-                                c_b5_mp = h_orig_mp[5]
-                                df_ins_mp = df_ins_mp[df_ins_mp[c_b5_mp].astype(str).str.strip() == b5]
+                                df_ins_mp = df_ins_mp[df_ins_mp[h_orig_mp[5]].astype(str).str.strip() == b5]
 
                             if not df_ins_mp.empty:
                                 try:
@@ -337,33 +311,24 @@ with tab_atual:
                                 else:
                                     c_dt_d_mp = detect_date_col(h_dest_mp) or c_dt_mp
                                     df_dest_mp["_dt"] = pd.to_datetime(df_dest_mp[c_dt_d_mp], dayfirst=True, errors="coerce").dt.date
-
-                                    # Critério de remoção para sobrescrever o período
                                     rem_mp = (df_dest_mp["_dt"] >= data_de) & (df_dest_mp["_dt"] <= data_ate)
-                                    if c_b2_mp in df_dest_mp.columns:
-                                        rem_mp &= (df_dest_mp[c_b2_mp].astype(str).str.strip() == b2)
-
+                                    if c_f_mp in df_dest_mp.columns:
+                                        rem_mp &= (df_dest_mp[c_f_mp].astype(str).str.strip() == b2)
                                     df_f_mp = pd.concat([df_dest_mp.loc[~rem_mp], df_ins_mp], ignore_index=True)
                                     h_f_mp = h_dest_mp if h_dest_mp else h_orig_mp
-
-                                # Limpeza de colunas auxiliares antes de enviar
-                                if "_dt" in df_f_mp.columns: 
-                                    df_f_mp = df_f_mp.drop(columns=["_dt"])
 
                                 send_mp = df_f_mp[h_f_mp].fillna("")
                                 ws_dest_mp.clear()
                                 ws_dest_mp.update("A1", [h_f_mp] + send_mp.values.tolist(), value_input_option="USER_ENTERED")
                                 logs.append(f"{row['Planilha']}: MP OK.")
-                            else:
-                                logs.append(f"{row['Planilha']}: MP Sem dados para os filtros.")
+                                log_placeholder.text("\n".join(logs))
 
                     except Exception as e:
                         logs.append(f"{row['Planilha']}: Erro {e}")
-
+                        log_placeholder.text("\n".join(logs))
                     prog.progress((i+1)/total)
-                    log_placeholder.text("\n".join(logs))
 
-                st.success("Concluído!")
+                st.success("Concluido!")
 
 # Aba Auditoria completa (cole onde tab_audit está definido)
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
@@ -798,7 +763,6 @@ with tab_audit:
                 st.experimental_rerun()
             except Exception:
                 pass
-
     import io
 
     def to_excel_bytes(df):
@@ -821,8 +785,7 @@ with tab_audit:
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             df_export.to_excel(writer, index=False, sheet_name="Auditoria")
         return output.getvalue()
-
-    # Gerar o arquivo Excel a partir do DataFrame atual da auditoria
+        # Gerar o arquivo Excel a partir do DataFrame atual da auditoria
     excel_data = to_excel_bytes(st.session_state.au_planilhas_df)
 
     # Botão para download do Excel

@@ -87,7 +87,7 @@ st.markdown(
 )
 
 # O Título agora com uma margem melhor
-st.markdown('<div class="main-title">📈 Atualizador DRE - Multi-Lojas</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">📈 Atualizar DRE - Multi-Lojas</div>', unsafe_allow_html=True)
 # =========================================================================
 
 # ---- AUTENTICAÇÃO ----
@@ -232,7 +232,7 @@ def to_bool_like(x):
     return s in ("true", "t", "1", "yes", "y", "sim", "s")
 
 # ---- TABS ESTILIZADAS ----
-tab_audit, tab_atual = st.tabs(["🔍 Auditoria", "🔄 Atualização"])
+tab_audit, tab_atual = st.tabs(["🔄 Atualização","🔍 Auditoria" ])
 
 # -----------------------------
 # ABA: ATUALIZAÇÃO (Lógica Intacta)
@@ -417,7 +417,7 @@ with tab_atual:
 # ABA: AUDITORIA (Lógica Intacta)
 # -----------------------------
 with tab_audit:
-    st.subheader("Painel de Auditoria")
+    st.subheader("Auditoria Faturamento X Meio de Pagamento")
     try:
         pastas_fech = list_child_folders(drive_service, PASTA_PRINCIPAL_ID, "fechamento")
         if not pastas_fech:
@@ -508,7 +508,7 @@ with tab_audit:
     col_btn1, col_btn2, col_btn3, _ = st.columns([2, 2, 1, 6])
 
     with col_btn1:
-        executar_clicado = st.button("📊 EXECUTAR AUDITORIA", key="au_exec", use_container_width=True)
+        executar_clicado = st.button("📊 Atualizar", key="au_exec", use_container_width=True)
 
     with col_btn2:
         limpar_clicadas = st.button("🧹 Limpar marcadas", key="au_limpar", use_container_width=True)

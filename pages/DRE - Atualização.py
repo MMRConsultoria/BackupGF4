@@ -697,37 +697,27 @@ with tab_audit:
                         v_d = float(df_dp[h_d[6]].sum()) if len(h_d) > 6 else 0.0
 
                     # Valor MP (Lógica Restaurada)
-                    # --- BLOCO CORRIGIDO: Valor MP (Meio de Pagamento) ---
-                    ws_mp = sh_d.worksheet("Meio de Pagamento")
-                    h_mp, df_mp = get_headers_and_df_raw(ws_mp)
-                    if not df_mp.empty:
-                        df_mp = tratar_numericos(df_mp, h_mp)
-                        # Força a data a ser lida da coluna A (índice 0)
-                        c_dt_mp = h_mp[0]
-                        df_mp["_dt"] = pd.to_datetime(df_mp[c_dt_mp], dayfirst=True, errors="coerce").dt.date
-                        
-                        # Filtra o período
-                        df_mpp = df_mp[(df_mp["_dt"] >= d_ini) & (df_mp["_dt"] <= d_fim)].copy()
-                        
-                        if not df_mpp.empty and len(h_mp) > 9:
-                            # Coluna 8: B2 (Código Empresa)
-                            # Coluna 6: Loja (B3, B4, B5)
-                            # Coluna 9: Valor
-                            
-                            # Criamos a máscara comparando sempre com normalize_code
-                            mask_b2 = df_mpp[h_mp[8]].apply(normalize_code) == normalize_code(b2)
-                            
-                            if lojas_audit:
-                                mask_loja = df_mpp[h_mp[6]].apply(normalize_code).isin(lojas_audit)
-                                mask_final = mask_b2 & mask_loja
-                            else:
-                                mask_final = mask_b2
-                                
-                            # Soma os valores que batem no filtro
-                            v_mp = float(df_mpp.loc[mask_final, h_mp[9]].sum())
+                     ws_mp = sh_d.worksheet("Meio de Pagamento")
+                        h_mp, df_mp = get_headers_and_df_raw(ws_mp)
+                        if not df_mp.empty:
+                            df_mp = tratar_numericos(df_mp, h_mp)
+                            c_dt_mp = h_mp[0] if h_mp else None
+                            if c_dt_mp:
+                                df_mp["_dt"] = pd.to_datetime(df_mp[c_dt_mp], dayfirst=True, errors="coerce").dt.date
+                                df_mp_periodo = df_mp[(df_mp["_dt"] >= d_ini) & (df_mp["_dt"] <= d_fim)]
+                                if not df_mp_periodo.empty:
+                                    col_b2_mp = h_mp[8] if len(h_mp) > 8 else None
+                                    col_loja_mp = h_mp[6] if len(h_mp) > 6 else None
+                                    col_val_mp = h_mp[9] if len(h_mp) > 9 else None
+                                    if col_b2_mp in df_mp_periodo.columns:
+                                        mask = df_mp_periodo[col_b2_mp].apply(normalize_code) == normalize_code(b2)
+                                        if lojas_audit and col_loja_mp in df_mp_periodo.columns:
+                                            mask &= df_mp_periodo[col_loja_mp].apply(normalize_code).isin(lojas_audit)
+                                        v_mp = float(df_mp_periodo[mask][col_val_mp].sum()) if col_val_mp else 0.0
 
-                    diff, diff_mp = v_o - v_d, v_d - v_mp
-                    status = "✅ OK" if (abs(diff) < 0.01 and abs(diff_mp) < 0.01) else "❌ Erro"
+                        diff = v_o - v_d
+                        diff_mp = v_d - v_mp
+                        status = "✅ OK" if (abs(diff) < 0.01 and abs(diff_mp) < 0.01) else "❌ Erro"
                     
                     mask_m = st.session_state.au_planilhas_df["Planilha_id"] == sid
                     st.session_state.au_planilhas_df.loc[mask_m, ["Origem","DRE","MP DRE","Dif","Dif MP","Status"]] = [

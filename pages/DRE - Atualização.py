@@ -1,4 +1,5 @@
 
+
 import streamlit as st
 import pandas as pd
 import json
@@ -37,7 +38,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("Atualizar DRE")
+st.title("Atualizador DRE - Multi-Lojas")
 
 # ---------------- AUTENTICAÇÃO ----------------
 @st.cache_resource
@@ -243,11 +244,11 @@ with tab_atual:
 
                         if not b2:
                             logs.append(f"{row['Planilha']}: Sem B2.")
-                            log_placeholder.text("\n".join(logs))
+                            log_placeholder.text("
+".join(logs))
                             prog.progress((i+1)/total)
                             continue
 
-                        # Lista de códigos de lojas para filtro (B3, B4, B5)
                         lojas_filtro = []
                         if b3: lojas_filtro.append(str(b3).strip())
                         if b4: lojas_filtro.append(str(b4).strip())
@@ -256,27 +257,16 @@ with tab_atual:
                         # --- ATUALIZAR FATURAMENTO ---
                         if row["Faturamento"]:
                             df_ins = df_orig_fat_f.copy()
-                            # Proteção contra headers faltando
                             if len(h_orig_fat) > 5:
                                 c_b2 = h_orig_fat[5]
                                 df_ins = df_ins[df_ins[c_b2].astype(str).str.strip() == b2]
-                            else:
-                                # se não houver a coluna esperada, registramos e pulamos
-                                logs.append(f"{row['Planilha']}: Fat - header B2 não encontrado na origem.")
-                                df_ins = pd.DataFrame()
-
                             if lojas_filtro and not df_ins.empty:
                                 if len(h_orig_fat) > 3:
                                     c_loja = h_orig_fat[3]
                                     df_ins = df_ins[df_ins[c_loja].astype(str).str.strip().isin(lojas_filtro)]
-                                else:
-                                    logs.append(f"{row['Planilha']}: Fat - coluna loja não encontrada na origem.")
-                                    df_ins = pd.DataFrame()
-
                             if not df_ins.empty:
                                 try: ws_dest = sh_dest.worksheet("Importado_Fat")
                                 except: ws_dest = sh_dest.add_worksheet("Importado_Fat", 1000, 30)
-
                                 h_dest, df_dest = get_headers_and_df_raw(ws_dest)
                                 if df_dest.empty:
                                     df_f_ws, h_f = df_ins, h_orig_fat
@@ -285,45 +275,31 @@ with tab_atual:
                                     if c_dt_d:
                                         df_dest["_dt"] = pd.to_datetime(df_dest[c_dt_d], dayfirst=True, errors="coerce").dt.date
                                         rem = (df_dest["_dt"] >= data_de) & (df_dest["_dt"] <= data_ate)
-                                    else:
-                                        rem = pd.Series([False] * len(df_dest))
-
+                                    else: rem = pd.Series([False] * len(df_dest))
                                     if len(h_orig_fat) > 5 and c_b2 in df_dest.columns:
                                         rem &= (df_dest[c_b2].astype(str).str.strip() == b2)
                                     df_f_ws = pd.concat([df_dest.loc[~rem], df_ins], ignore_index=True)
                                     h_f = h_dest if h_dest else h_orig_fat
-
                                 if "_dt" in df_f_ws.columns: df_f_ws = df_f_ws.drop(columns=["_dt"])
                                 send = df_f_ws[h_f].fillna("")
                                 ws_dest.clear()
                                 ws_dest.update("A1", [h_f] + send.values.tolist(), value_input_option="USER_ENTERED")
                                 logs.append(f"{row['Planilha']}: Fat OK.")
-                            else:
-                                logs.append(f"{row['Planilha']}: Fat Sem dados.")
+                            else: logs.append(f"{row['Planilha']}: Fat Sem dados.")
 
                         # --- ATUALIZAR MEIO DE PAGAMENTO ---
                         if row["Meio Pagamento"]:
                             df_ins_mp = df_orig_mp_f.copy()
-                            # Proteção contra headers faltando
                             if len(h_orig_mp) > 8:
                                 c_b2_mp = h_orig_mp[8]
                                 df_ins_mp = df_ins_mp[df_ins_mp[c_b2_mp].astype(str).str.strip() == b2]
-                            else:
-                                logs.append(f"{row['Planilha']}: MP - header B2 não encontrado na origem.")
-                                df_ins_mp = pd.DataFrame()
-
                             if lojas_filtro and not df_ins_mp.empty:
                                 if len(h_orig_mp) > 6:
                                     c_loja_mp = h_orig_mp[6]
                                     df_ins_mp = df_ins_mp[df_ins_mp[c_loja_mp].astype(str).str.strip().isin(lojas_filtro)]
-                                else:
-                                    logs.append(f"{row['Planilha']}: MP - coluna loja não encontrada na origem.")
-                                    df_ins_mp = pd.DataFrame()
-
                             if not df_ins_mp.empty:
                                 try: ws_dest_mp = sh_dest.worksheet("Meio de Pagamento")
                                 except: ws_dest_mp = sh_dest.add_worksheet("Meio de Pagamento", 1000, 30)
-
                                 h_dest_mp, df_dest_mp = get_headers_and_df_raw(ws_dest_mp)
                                 if df_dest_mp.empty:
                                     df_f_mp, h_f_mp = df_ins_mp, h_orig_mp
@@ -332,33 +308,25 @@ with tab_atual:
                                     if c_dt_d_mp:
                                         df_dest_mp["_dt"] = pd.to_datetime(df_dest_mp[c_dt_d_mp], dayfirst=True, errors="coerce").dt.date
                                         rem_mp = (df_dest_mp["_dt"] >= data_de) & (df_dest_mp["_dt"] <= data_ate)
-                                    else:
-                                        rem_mp = pd.Series([False] * len(df_dest_mp))
-
+                                    else: rem_mp = pd.Series([False] * len(df_dest_mp))
                                     if len(h_orig_mp) > 8 and c_b2_mp in df_dest_mp.columns:
                                         rem_mp &= (df_dest_mp[c_b2_mp].astype(str).str.strip() == b2)
                                     df_f_mp = pd.concat([df_dest_mp.loc[~rem_mp], df_ins_mp], ignore_index=True)
                                     h_f_mp = h_dest_mp if h_dest_mp else h_orig_mp
-
                                 if "_dt" in df_f_mp.columns: df_f_mp = df_f_mp.drop(columns=["_dt"])
                                 send_mp = df_f_mp[h_f_mp].fillna("")
                                 ws_dest_mp.clear()
                                 ws_dest_mp.update("A1", [h_f_mp] + send_mp.values.tolist(), value_input_option="USER_ENTERED")
                                 logs.append(f"{row['Planilha']}: MP OK.")
-                            else:
-                                logs.append(f"{row['Planilha']}: MP Sem dados.")
-
-                    except Exception as e:
-                        logs.append(f"{row['Planilha']}: Erro {e}")
-
+                            else: logs.append(f"{row['Planilha']}: MP Sem dados.")
+                    except Exception as e: logs.append(f"{row['Planilha']}: Erro {e}")
                     prog.progress((i+1)/total)
-                    log_placeholder.text("\n".join(logs))
-
+                    log_placeholder.text("
+".join(logs))
                 st.success("Concluído!")
 
-# --- ABA AUDITORIA (AJUSTADA PARA MULTI-LOJAS) ---
+# --- ABA AUDITORIA ---
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
-from st_aggrid.shared import JsCode
 
 with tab_audit:
     st.header("Auditoria")
@@ -368,8 +336,7 @@ with tab_audit:
             f = float(val)
             i = int(f)
             return str(i) if f == i else str(f)
-        except Exception:
-            return str(val).strip()
+        except Exception: return str(val).strip()
 
     def to_bool_like(x):
         if isinstance(x, bool): return x
@@ -398,19 +365,15 @@ with tab_audit:
     display_df = st.session_state.au_planilhas_df.copy()
     gb = GridOptionsBuilder.from_dataframe(display_df[["Planilha", "Flag", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]])
     gb.configure_column("Flag", editable=True, cellEditor="agCheckboxCellEditor", cellRenderer="agCheckboxCellRenderer", width=80)
-    # permitir que o grid retorne os dados editados ao pressionar o botão (MODEL_CHANGED)
     grid_response = AgGrid(display_df, gridOptions=gb.build(), update_mode=GridUpdateMode.MODEL_CHANGED, theme="alpine", height=400)
 
     if st.button("📊 EXECUTAR AUDITORIA"):
         df_grid = pd.DataFrame(grid_response.get("data", []))
         selecionadas = df_grid[df_grid["Flag"].apply(to_bool_like) == True]
 
-        if selecionadas.empty:
-            st.warning("Marque as planilhas.")
+        if selecionadas.empty: st.warning("Marque as planilhas.")
         else:
-            # Carregar Origem Faturamento para Auditoria
-            if mes_sel == "Todos":
-                d_ini, d_fim = date(ano_sel, 1, 1), date(ano_sel, 12, 31)
+            if mes_sel == "Todos": d_ini, d_fim = date(ano_sel, 1, 1), date(ano_sel, 12, 31)
             else:
                 d_ini = date(ano_sel, int(mes_sel), 1)
                 d_fim = (date(ano_sel, int(mes_sel), 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
@@ -423,25 +386,15 @@ with tab_audit:
             if c_dt_o:
                 df_o_fat["_dt"] = pd.to_datetime(df_o_fat[c_dt_o], dayfirst=True, errors="coerce").dt.date
                 df_o_fat_p = df_o_fat[(df_o_fat["_dt"] >= d_ini) & (df_o_fat["_dt"] <= d_fim)].copy()
-            else:
-                df_o_fat_p = df_o_fat.copy()
+            else: df_o_fat_p = df_o_fat.copy()
 
             prog = st.progress(0)
-            results = []  # coletar linhas para Excel
+            results_excel = []
             n = len(selecionadas)
             for idx, row in selecionadas.reset_index(drop=True).iterrows():
                 sid = row["Planilha_id"]
-                try:
-                    sh_d = gc.open_by_key(sid)
-                except Exception as e:
-                    # se não conseguir abrir a planilha, registramos e continuamos
-                    results.append({
-                        "Planilha": row.get("Planilha", sid),
-                        "Origem": 0.0, "DRE": 0.0, "MP DRE": 0.0,
-                        "Dif": 0.0, "Dif MP": 0.0, "Status": f"Erro abrir planilha: {e}"
-                    })
-                    prog.progress((idx+1)/n)
-                    continue
+                try: sh_d = gc.open_by_key(sid)
+                except: continue
 
                 b2, b3, b4, b5 = read_codes_from_config_sheet(sh_d)
                 lojas_audit = []
@@ -451,18 +404,10 @@ with tab_audit:
 
                 # Valor Origem
                 try:
-                    if len(h_o_fat) > 5 and b2:
-                        df_f = df_o_fat_p[df_o_fat_p[h_o_fat[5]].astype(str).str.strip() == b2]
-                    else:
-                        df_f = pd.DataFrame()
-                    if lojas_audit and not df_f.empty:
-                        if len(h_o_fat) > 3:
-                            df_f = df_f[df_f[h_o_fat[3]].apply(normalize_code).isin(lojas_audit)]
-                        else:
-                            df_f = pd.DataFrame()
-                    v_o = float(df_f[h_o_fat[6]].sum()) if (not df_f.empty and len(h_o_fat) > 6) else 0.0
-                except Exception:
-                    v_o = 0.0
+                    df_f = df_o_fat_p[df_o_fat_p[h_o_fat[5]].astype(str).str.strip() == b2]
+                    if lojas_audit: df_f = df_f[df_f[h_o_fat[3]].apply(normalize_code).isin(lojas_audit)]
+                    v_o = float(df_f[h_o_fat[6]].sum())
+                except: v_o = 0.0
 
                 # Valor Destino (DRE)
                 try:
@@ -473,13 +418,11 @@ with tab_audit:
                     if c_dt_d:
                         df_d["_dt"] = pd.to_datetime(df_d[c_dt_d], dayfirst=True, errors="coerce").dt.date
                         df_d_p = df_d[(df_d["_dt"] >= d_ini) & (df_d["_dt"] <= d_fim)]
-                    else:
-                        df_d_p = df_d
-                    v_d = float(df_d_p[h_d[6]].sum()) if (not df_d_p.empty and len(h_d) > 6) else 0.0
-                except Exception:
-                    v_d = 0.0
+                    else: df_d_p = df_d
+                    v_d = float(df_d_p[h_d[6]].sum())
+                except: v_d = 0.0
 
-                # Valor MP
+                # Valor MP (CORRIGIDO PARA MULTI-LOJAS)
                 try:
                     ws_mp = sh_d.worksheet("Meio de Pagamento")
                     h_mp, df_mp = get_headers_and_df_raw(ws_mp)
@@ -488,75 +431,30 @@ with tab_audit:
                     if c_dt_mp:
                         df_mp["_dt"] = pd.to_datetime(df_mp[c_dt_mp], dayfirst=True, errors="coerce").dt.date
                         df_mp_p = df_mp[(df_mp["_dt"] >= d_ini) & (df_mp["_dt"] <= d_fim)]
-                    else:
-                        df_mp_p = df_mp
+                    else: df_mp_p = df_mp
 
-                    if len(h_mp) > 8 and b2:
-                        mask_mp = df_mp_p[h_mp[8]].astype(str).str.strip() == b2
-                    else:
-                        mask_mp = pd.Series([False] * len(df_mp_p))
-
-                    if lojas_audit and not df_mp_p.empty and len(h_mp) > 6:
+                    mask_mp = df_mp_p[h_mp[8]].astype(str).str.strip() == b2
+                    if lojas_audit:
                         mask_mp &= df_mp_p[h_mp[6]].apply(normalize_code).isin(lojas_audit)
-
-                    v_mp = float(df_mp_p[mask_mp][h_mp[9]].sum()) if (not df_mp_p.empty and len(h_mp) > 9) else 0.0
-                except Exception:
-                    v_mp = 0.0
+                    v_mp = float(df_mp_p[mask_mp][h_mp[9]].sum())
+                except: v_mp = 0.0
 
                 status_text = "✅ OK" if abs(v_o - v_d) < 0.1 else "❌ Erro"
-                results.append({
-                    "Planilha": row.get("Planilha", sid),
-                    "Origem": v_o,
-                    "DRE": v_d,
-                    "MP DRE": v_mp,
-                    "Dif": v_o - v_d,
-                    "Dif MP": v_d - v_mp,
-                    "Status": status_text
-                })
+                results_excel.append({"Planilha": row["Planilha"], "Origem": v_o, "DRE": v_d, "MP DRE": v_mp, "Dif": v_o-v_d, "Dif MP": v_d-v_mp, "Status": status_text})
 
-                # atualizar session state (visível na tabela)
                 mask = st.session_state.au_planilhas_df["Planilha_id"] == sid
-                st.session_state.au_planilhas_df.loc[mask, ["Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]] = [
-                    format_brl(v_o), format_brl(v_d), format_brl(v_mp),
-                    format_brl(v_o - v_d), format_brl(v_d - v_mp), status_text
-                ]
-
+                st.session_state.au_planilhas_df.loc[mask, ["Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]] = [format_brl(v_o), format_brl(v_d), format_brl(v_mp), format_brl(v_o-v_d), format_brl(v_d-v_mp), status_text]
                 prog.progress((idx+1)/n)
 
-            # --- após processar todas as selecionadas: gerar Excel, limpar flags e mostrar resultado ---
-            df_result = pd.DataFrame(results)
-            # Gerar Excel em memória
+            # Excel e Limpeza
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                df_result.to_excel(writer, index=False, sheet_name="Auditoria")
-            # o context manager já salva/fecha o writer ao sair do bloco
-            output.seek(0)
-            processed_data = output.read()
+                pd.DataFrame(results_excel).to_excel(writer, index=False, sheet_name="Auditoria")
+            processed_data = output.getvalue()
 
             st.success("Auditoria finalizada.")
-            st.download_button(
-                label="⬇️ Baixar resultado da Auditoria (Excel)",
-                data=processed_data,
-                file_name=f"auditoria_{date.today().isoformat()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            st.download_button(label="⬇️ Baixar resultado da Auditoria (Excel)", data=processed_data, file_name=f"auditoria_{date.today()}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-            # Desmarcar as planilhas processadas
-            ids_processados = selecionadas["Planilha_id"].tolist()
-            st.session_state.au_planilhas_df.loc[st.session_state.au_planilhas_df["Planilha_id"].isin(ids_processados), "Flag"] = False
-
-            # Atualizar a visualização da tabela (re-exibir o grid com os novos valores)
-            display_df = st.session_state.au_planilhas_df.copy()
-            gb2 = GridOptionsBuilder.from_dataframe(display_df[["Planilha", "Flag", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]])
-            gb2.configure_column("Flag", editable=True, cellEditor="agCheckboxCellEditor", cellRenderer="agCheckboxCellRenderer", width=80)
-            AgGrid(display_df, gridOptions=gb2.build(), update_mode=GridUpdateMode.NO_UPDATE, theme="alpine", height=400)
-
-            # Mostrar tabela de detalhes da auditoria abaixo
-            st.subheader("Resumo da Auditoria")
-            st.dataframe(df_result.style.format({
-                "Origem": lambda x: format_brl(x),
-                "DRE": lambda x: format_brl(x),
-                "MP DRE": lambda x: format_brl(x),
-                "Dif": lambda x: format_brl(x),
-                "Dif MP": lambda x: format_brl(x),
-            }), use_container_width=True)
+            ids_proc = selecionadas["Planilha_id"].tolist()
+            st.session_state.au_planilhas_df.loc[st.session_state.au_planilhas_df["Planilha_id"].isin(ids_proc), "Flag"] = False
+            st.rerun()

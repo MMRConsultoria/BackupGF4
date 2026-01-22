@@ -243,8 +243,7 @@ with tab_atual:
 
                         if not b2:
                             logs.append(f"{row['Planilha']}: Sem B2.")
-                            log_placeholder.text("
-".join(logs))
+                            log_placeholder.text("\n".join(logs))
                             prog.progress((i+1)/total)
                             continue
 
@@ -318,10 +317,10 @@ with tab_atual:
                                 ws_dest_mp.update("A1", [h_f_mp] + send_mp.values.tolist(), value_input_option="USER_ENTERED")
                                 logs.append(f"{row['Planilha']}: MP OK.")
                             else: logs.append(f"{row['Planilha']}: MP Sem dados.")
-                    except Exception as e: logs.append(f"{row['Planilha']}: Erro {e}")
+                    except Exception as e:
+                        logs.append(f"{row['Planilha']}: Erro {e}")
                     prog.progress((i+1)/total)
-                    log_placeholder.text("
-".join(logs))
+                    log_placeholder.text("\n".join(logs))
                 st.success("Concluído!")
 
 # --- ABA AUDITORIA ---
@@ -456,4 +455,9 @@ with tab_audit:
 
             ids_proc = selecionadas["Planilha_id"].tolist()
             st.session_state.au_planilhas_df.loc[st.session_state.au_planilhas_df["Planilha_id"].isin(ids_proc), "Flag"] = False
-            st.rerun()
+
+            # Re-render do grid para mostrar as flags limpas
+            display_df = st.session_state.au_planilhas_df.copy()
+            gb2 = GridOptionsBuilder.from_dataframe(display_df[["Planilha", "Flag", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]])
+            gb2.configure_column("Flag", editable=True, cellEditor="agCheckboxCellEditor", cellRenderer="agCheckboxCellRenderer", width=80)
+            AgGrid(display_df, gridOptions=gb2.build(), update_mode=GridUpdateMode.NO_UPDATE, theme="alpine", height=400)

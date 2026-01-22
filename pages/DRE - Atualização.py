@@ -740,4 +740,4 @@ with tab_audit:
                 st.markdown("### Log de processamento")
                 st.text("\n".join(logs))
                 st.success("Auditoria concluída.")
-                st.experimental_rerun()
+                st.rerun()

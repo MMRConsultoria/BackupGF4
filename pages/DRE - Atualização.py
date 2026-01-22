@@ -506,29 +506,38 @@ with tab_audit:
                 prog.progress((idx+1)/n)
 
             # Excel e Limpeza
-            # Excel e Limpeza (somente primeira tabela -> results_excel)
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                pd.DataFrame(results_excel).to_excel(writer, index=False, sheet_name="Auditoria")
-            # após o context manager, o arquivo em memória já está pronto
-            processed_data = output.getvalue()
-
-            st.success("Auditoria finalizada.")
-            st.download_button(
-                label="⬇️ Baixar resultado da Auditoria (Excel)",
-                data=processed_data,
-                file_name=f"auditoria_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
-            # limpar flags nas planilhas processadas
+            # Limpeza de flags e finalização (sem gerar Excel aqui)
             ids_proc = selecionadas["Planilha_id"].tolist()
             st.session_state.au_planilhas_df.loc[
                 st.session_state.au_planilhas_df["Planilha_id"].isin(ids_proc), "Flag"
             ] = False
-
-            # opcional: forçar re-render para atualizar a tabela na UI
+            
+            st.success("Auditoria finalizada.")
             try:
                 st.experimental_rerun()
             except Exception:
                 st.info("As flags foram limpas. Atualize a página se necessário para ver a alteração.")
+
+    # ----- Exportar Resultados (sempre visível) -----
+    st.markdown("---")
+    st.subheader("Exportar Resultados (Tabela Atual)")
+    
+    # garante que import io exista no topo do arquivo
+    # cria o DataFrame que irá para o Excel (apenas a primeira tabela)
+    if not st.session_state.au_planilhas_df.empty:
+        df_para_excel = st.session_state.au_planilhas_df[["Planilha", "Origem", "DRE", "MP DRE", "Dif", "Dif MP", "Status"]].copy()
+    
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df_para_excel.to_excel(writer, index=False, sheet_name="Auditoria")
+        processed_data = output.getvalue()
+    
+        st.download_button(
+            label="⬇️ Baixar Tabela Atual (Excel)",
+            data=processed_data,
+            file_name=f"auditoria_dre_{date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+    else:
+        st.info("A tabela está vazia. Execute a auditoria ou selecione subpastas para gerar dados.")    

@@ -1,4 +1,5 @@
 
+
 import streamlit as st
 import pandas as pd
 import json
@@ -13,7 +14,7 @@ try:
 except Exception:
     build = None
 
-# ---------------- CONFIG ----------------
+# ---- CONFIG ----
 PASTA_PRINCIPAL_ID = "0B1owaTi3RZnFfm4tTnhfZ2l0VHo4bWNMdHhKS3ZlZzR1ZjRSWWJSSUFxQTJtUExBVlVTUW8"
 TARGET_SHEET_NAME = "Configurações Não Apagar"
 
@@ -39,7 +40,7 @@ st.markdown(
 
 st.title("Atualizador DRE - Multi-Lojas")
 
-# ---------------- AUTENTICAÇÃO ----------------
+# ---- AUTENTICAÇÃO ----
 @st.cache_resource
 def autenticar():
     scope = ["https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/spreadsheets"]
@@ -55,7 +56,7 @@ except Exception as e:
     st.error(f"Erro de autenticação: {e}")
     st.stop()
 
-# ---------------- HELPERS ----------------
+# ---- HELPERS ----
 @st.cache_data(ttl=300)
 def list_child_folders(_drive, parent_id, filtro_texto=None):
     if _drive is None: return []
@@ -116,6 +117,9 @@ def get_headers_and_df_raw(ws):
 
 def detect_date_col(headers):
     if not headers: return None
+    # Prioriza a coluna A (índice 0) se ela tiver "data" no nome
+    if len(headers) > 0 and "data" in headers[0].lower():
+        return headers[0]
     for h in headers:
         if "data" in h.lower(): return h
     return None
@@ -154,7 +158,7 @@ def format_brl(val):
     try: return f"R$ {float(val):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except: return val
 
-# ---------------- TABS ----------------
+# ---- TABS ----
 tab_audit, tab_atual = st.tabs(["Auditoria", "Atualização"])
 
 with tab_atual:
@@ -420,8 +424,7 @@ with tab_audit:
                     v_d = float(df_d_p[h_d[6]].sum())
                 except: v_d = 0.0
 
-                # Valor MP (CORRIGIDO PARA MULTI-LOJAS)
-                # --- Valor MP (AUDITORIA: mesma lógica do FAT, só colunas diferentes) ---
+                # Valor MP (AUDITORIA: mesma lógica do FAT, só colunas diferentes)
                 try:
                     ws_mp = sh_d.worksheet("Meio de Pagamento")
                     h_mp, df_mp = get_headers_and_df_raw(ws_mp)
@@ -447,7 +450,6 @@ with tab_audit:
                     if col_b2_mp and col_b2_mp in df_mp_p.columns:
                         mask_mp &= df_mp_p[col_b2_mp].astype(str).str.strip() == b2
                     elif col_b2_mp:
-                        # coluna informada mas não existe -> sem resultados
                         mask_mp &= pd.Series([False] * len(df_mp_p), index=df_mp_p.index)
 
                     # aplicar filtro lojas (OR via isin) se houver lojas_audit
@@ -459,7 +461,6 @@ with tab_audit:
                         v_mp = float(df_mp_p.loc[mask_mp, col_valor_mp].sum())
                     else:
                         v_mp = 0.0
-
                 except Exception:
                     v_mp = 0.0
 

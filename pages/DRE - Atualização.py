@@ -748,17 +748,18 @@ with tab_audit:
                                 v_d = float(df_d_periodo[h_d[6]].sum()) if len(h_d) > 6 and not df_d_periodo.empty else 0.0
 
                         # Valor MP (AUDITORIA: reaplica a lógica que funcionava, agora com B3/B4/B5 OR)
+                        # Valor MP (AUDITORIA: reaplica a lógica que funcionava, agora com B3/B4/B5 OR)
                         try:
                             ws_mp = sh_d.worksheet("Meio de Pagamento")
                             h_mp, df_mp = get_headers_and_df_raw(ws_mp)
                             if not df_mp.empty:
                                 df_mp = tratar_numericos(df_mp, h_mp)
-        
+      
                             # Data sempre na coluna A conforme informado => priorizar h_mp[0]
                             c_dt_mp = (h_mp[0] if h_mp and len(h_mp) > 0 else None)
                             if not c_dt_mp:
                                 c_dt_mp = detect_date_col(h_mp)
-        
+      
                             if c_dt_mp and not df_mp.empty:
                                 df_mp["_dt"] = pd.to_datetime(df_mp[c_dt_mp], dayfirst=True, errors="coerce")
                                 # se não parseou com dayfirst, tenta sem
@@ -768,33 +769,33 @@ with tab_audit:
                                 df_mp_periodo = df_mp[(df_mp["_dt"] >= d_ini) & (df_mp["_dt"] <= d_fim)]
                             else:
                                 df_mp_periodo = df_mp.copy()
-        
+      
                             # Inicializa
                             v_mp = 0.0
-        
+      
                             # Só tenta somar se houver dados no período
                             if not df_mp_periodo.empty:
                                 # valida índices esperados (seguindo o padrão do update)
                                 col_b2_mp = h_mp[8] if len(h_mp) > 8 else None   # coluna com B2
                                 col_loja_mp = h_mp[6] if len(h_mp) > 6 else None # coluna com código da loja
                                 col_val_mp = h_mp[9] if len(h_mp) > 9 else None  # coluna com valor a somar
-        
+      
                                 # checar existência das colunas em df
                                 ok_b2 = (col_b2_mp in df_mp_periodo.columns) if col_b2_mp else False
                                 ok_loja = (col_loja_mp in df_mp_periodo.columns) if col_loja_mp else False
                                 ok_val = (col_val_mp in df_mp_periodo.columns) if col_val_mp else False
-        
+      
                                 # se não houver a coluna de B2, não há match (mantém v_mp = 0)
                                 if ok_b2:
                                     b2_norm = normalize_code(b2)
                                     mask = df_mp_periodo[col_b2_mp].apply(normalize_code) == b2_norm
-        
+      
                                     # lojas_audit contém b3/b4/b5 normalizados (quando preenchidos)
                                     if lojas_audit and ok_loja:
                                         mask &= df_mp_periodo[col_loja_mp].apply(normalize_code).isin(lojas_audit)
-        
+      
                                     df_mp_dest_f = df_mp_periodo[mask]
-        
+      
                                     if not df_mp_dest_f.empty and ok_val:
                                         v_mp = float(df_mp_dest_f[col_val_mp].sum())
                                     else:
@@ -818,9 +819,8 @@ with tab_audit:
                                     v_mp = 0.0
                             else:
                                 v_mp = 0.0
-        
-                        except Exception as e:
-                            logs.append(f"{pname} - MP: Erro {e}")
+      
+                        except Exception:
                             v_mp = 0.0
 
                         diff = v_o - v_d

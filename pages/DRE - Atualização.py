@@ -453,6 +453,9 @@ with tab_atual:
 # -----------------------------
 # ABA: AUDITORIA (Lógica Intacta)
 # -----------------------------
+# -----------------------------
+# ABA: AUDITORIA (Lógica Intacta)
+# -----------------------------
 with tab_audit:
     st.subheader("Auditoria Faturamento X Meio de Pagamento")
     try:
@@ -531,7 +534,6 @@ with tab_audit:
             gb.configure_column(col, editable=False)
     grid_options = gb.build()
     grid_options['getRowStyle'] = row_style_js
-
  
     st.markdown('<div id="auditoria">', unsafe_allow_html=True)    
     
@@ -545,7 +547,29 @@ with tab_audit:
         fit_columns_on_grid_load=True,
     )
     st.markdown('</div>', unsafe_allow_html=True)
-    
+
+    # --- Preparação dos dados para os botões (deve vir ANTES dos botões) ---
+    currency_cols = ["Origem", "DRE", "MP DRE", "Dif", "Dif MP"]
+    cols_for_excel = ["Planilha"] + [c for c in currency_cols if c in st.session_state.au_planilhas_df.columns]
+    df_para_excel_btn = st.session_state.au_planilhas_df[cols_for_excel].copy()
+    is_empty_btn = df_para_excel_btn.empty
+
+    def _to_numeric_or_nan(x):
+        if pd.isna(x) or str(x).strip() == "":
+            return pd.NA
+        if isinstance(x, (int, float)):
+            return float(x)
+        try:
+            n = _parse_currency_like(x)
+        except Exception:
+            n = None
+        if n is None:
+            try:
+                return float(str(x).replace(".", "").replace(",", "."))
+            except Exception:
+                return pd.NA
+        return float(n)
+
     # --- BOTÕES PADRONIZADOS (substitui col_btn1..col_btn3) ---
     c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
     
@@ -555,7 +579,6 @@ with tab_audit:
     with c2:
         limpar_clicadas = st.button("🧹 Limpar marcadas", key="au_limpar", use_container_width=True)
     
-    # df_para_excel_btn e _to_numeric_or_nan já existem acima no seu código; usamos eles
     if not is_empty_btn:
         df_to_write = df_para_excel_btn.copy()
         for col in currency_cols:
@@ -565,9 +588,9 @@ with tab_audit:
         with pd.ExcelWriter(output_btn, engine="xlsxwriter") as writer:
             df_to_write.to_excel(writer, index=False, sheet_name="Auditoria")
             # (opcional) formatação
-            workbook = writer.book
-            worksheet = writer.sheets["Auditoria"]
             try:
+                workbook = writer.book
+                worksheet = writer.sheets["Auditoria"]
                 currency_fmt = workbook.add_format({'num_format': u'R$ #,##0.00'})
                 for i, col in enumerate(df_to_write.columns):
                     if col in currency_cols:
@@ -575,7 +598,6 @@ with tab_audit:
                     else:
                         worksheet.set_column(i, i, 40)
             except Exception:
-                # se a formatação falhar por algum motivo, não interrompe
                 pass
         processed_btn = output_btn.getvalue()
     else:
@@ -652,12 +674,15 @@ with tab_audit:
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                 df_relatorio.to_excel(writer, index=False, sheet_name="Lojas_Faltantes")
-                workbook = writer.book
-                worksheet = writer.sheets["Lojas_Faltantes"]
-                worksheet.set_column(0, 0, 40)
-                worksheet.set_column(1, 1, 20)
-                worksheet.set_column(2, 2, 18)
-                worksheet.set_column(3, 3, 60)
+                try:
+                    workbook = writer.book
+                    worksheet = writer.sheets["Lojas_Faltantes"]
+                    worksheet.set_column(0, 0, 40)
+                    worksheet.set_column(1, 1, 20)
+                    worksheet.set_column(2, 2, 18)
+                    worksheet.set_column(3, 3, 60)
+                except Exception:
+                    pass
     
             excel_bytes = buf.getvalue()
             faltam = int((df_relatorio["Status"] == "❌ FALTANDO PLANILHA").sum())
@@ -673,6 +698,7 @@ with tab_audit:
     
         except Exception as e:
             placeholder_msg.error(f"Erro na verificação: {e}")
+
     if limpar_clicadas:
         df_grid_now = pd.DataFrame(grid_response.get("data", []))
         planilhas_marcadas = []

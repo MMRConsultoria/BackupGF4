@@ -500,7 +500,7 @@ with tab_audit:
     st.markdown('</div>', unsafe_allow_html=True)
   
     # use the fourth column for the verification button so everything stays aligned
-    col_btn1, col_btn2, col_btn3, col_btn4 = st.columns([2, 2, 1, 6])
+    col_btn1, col_btn2, col_btn3, col_btn4 = st.columns([2, 2, 2, 2])
 
     with col_btn1:
         executar_clicado = st.button("📊 Atualizar", key="au_exec", use_container_width=True)

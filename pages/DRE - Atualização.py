@@ -20,11 +20,11 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from st_aggrid.shared import JsCode
 
 # ================= BLOQUEIO DE ACESSO – RH (simples, EM-CÓDIGO) =================
-USUARIOS_AUTORIZADOS_RH = {
-    "testerh@gmail.com",
+USUARIOS_AUTORIZADOS_CONTROLADORIA = {
+    
     "maricelisrossi@gmail.com",
     "alex.komatsu@grupofit.com.br",
-    "biateste@grupofit.com.br",
+    
 }
 
 # usuário vindo do login/SSO (espera-se que seja preenchido externamente)
@@ -43,8 +43,8 @@ if not usuario_logado:
     st.stop()
 
 # Bloqueio se não for autorizado
-if str(usuario_logado).strip().lower() not in {e.lower() for e in USUARIOS_AUTORIZADOS_RH}:
-    st.warning("⛔ Acesso restrito ao RH")
+if str(usuario_logado).strip().lower() not in {e.lower() for e in USUARIOS_AUTORIZADOS_CONTROLADORIA}:
+    st.warning("⛔ Acesso restrito ao CONTROLADORIA")
     st.stop()
 # ============================================================================
 

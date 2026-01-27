@@ -2113,10 +2113,32 @@ with st.spinner("⏳ Processando..."):
     import unicodedata, re
     import gspread
     from google.oauth2.service_account import Credentials
+    # ================================
+    # 1. Conexão com Google Sheets - OTIMIZADO
+    # ================================
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+    credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+    gc = gspread.authorize(credentials)
+    planilha_empresa = gc.open("Vendas diarias")
+    
+    # ✅ OTIMIZAÇÃO: Carrega valores brutos e normaliza ANTES de criar DataFrame
+    aba_empresa = planilha_empresa.worksheet("Tabela Empresa")
+    valores_empresa = aba_empresa.get_all_values()
+    
+    if len(valores_empresa) > 1:
+        # Cria DataFrame com cabeçalho
+        df_empresa = pd.DataFrame(valores_empresa[1:], columns=valores_empresa[0])
+        df_empresa.columns = df_empresa.columns.str.strip()
+        
+        # ✅ Força Loja em minúsculo IMEDIATAMENTE após carregar
+        if "Loja" in df_empresa.columns:
+            df_empresa["Loja"] = df_empresa["Loja"].astype(str).str.lower().str.strip()
+    else:
+        df_empresa = pd.DataFrame()
     
     # ---------------- Config ----------------
-    SERVICE_ACCOUNT_FILE = "JsonImportadorEverest.json"  # ajuste se necessário
-    
+   
     # Fonte 1: Vendas Dárias (Fat Sistema Externo)
     ID_FAT_EXT = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
     ABA_FAT_EXT = "Fat Sistema Externo"

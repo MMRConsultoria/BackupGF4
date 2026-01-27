@@ -2102,13 +2102,10 @@ with st.spinner("⏳ Processando..."):
         #            st.success("✅ Processo concluído.")
 
         
-    
-    
-    
     # =======================================
+    # Aba 4 - Auditoria Everest
     # =======================================
-    # Aba 4 - Integração Everest (independente do upload)
-    # =======================================
+    
     from datetime import date, timedelta
     import streamlit as st
     import pandas as pd
@@ -2135,45 +2132,40 @@ with st.spinner("⏳ Processando..."):
             out.append(h0 if cnt == 1 else f"{h0}_{cnt}")
         return out
     
-    def safe_df_from_sheet(vals, include_header_as_data=False):
-        """
-        Converte get_all_values() -> DataFrame.
-        Se include_header_as_data=True:
-          - gera cabeçalhos genéricos col1, col2, ... e inclui TODAS as linhas como dados.
-        Se False (padrão):
-          - usa a primeira linha como cabeçalho e as demais como dados (com proteção de nomes duplicados).
-        """
+    def safe_df_from_sheet(vals):
+        """Converte get_all_values() -> DataFrame usando primeira linha como cabeçalho."""
         if not vals or len(vals) < 1:
             return pd.DataFrame()
-        # número de colunas detectado na primeira linha
         ncols = max(len(r) for r in vals)
-        if include_header_as_data:
-            headers = [f"col{i+1}" for i in range(ncols)]
-            headers = make_unique_headers(headers)
-            rows = [r + [""]*(ncols - len(r)) for r in vals]  # normaliza comprimento
-            return pd.DataFrame(rows, columns=headers)
-        else:
-            headers_raw = [ (vals[0][i] if i < len(vals[0]) else "") for i in range(ncols) ]
-            headers = make_unique_headers([h.strip() for h in headers_raw])
-            rows = [ [(r[i] if i < len(r) else "") for i in range(ncols)] for r in vals[1:] ]
-            return pd.DataFrame(rows, columns=headers)
+        headers_raw = [ (vals[0][i] if i < len(vals[0]) else "") for i in range(ncols) ]
+        headers = make_unique_headers([h.strip() for h in headers_raw])
+        rows = [ [(r[i] if i < len(r) else "") for i in range(ncols)] for r in vals[1:] ]
+        return pd.DataFrame(rows, columns=headers)
     
     def tratar_valor(valor):
         try:
-            if pd.isna(valor) or str(valor).strip() == "": return 0.0
-            s = str(valor).strip().replace("R$", "").replace("\xa0", "").replace(" ", "")
-            if s.count(",") == 1 and s.count(".") >= 1: s = s.replace(".", "").replace(",", ".")
-            else: s = s.replace(",", ".")
+            if pd.isna(valor) or str(valor).strip() == "":
+                return 0.0
+            s = str(valor).strip().replace("R$", "").replace("\xa0", "").strip()
+            # normaliza milhar/ponto e decimal/virgula
+            if s.count(",") == 1 and s.count(".") >= 1:
+                s = s.replace(".", "").replace(",", ".")
+            else:
+                s = s.replace(",", ".")
             return float(s)
-        except: return 0.0
+        except:
+            return 0.0
     
     def normalize_codigo(x):
         try:
-            if pd.isna(x): return ""
+            if pd.isna(x):
+                return ""
             sx = str(x).strip().replace("\xa0", "")
-            if re.fullmatch(r"\d+(\.0+)?", sx): return str(int(float(sx)))
+            if re.fullmatch(r"\d+(\.0+)?", sx):
+                return str(int(float(sx)))
             return sx
-        except: return str(x)
+        except:
+            return str(x)
     
     def fmt_brl(v):
         try:
@@ -2182,7 +2174,31 @@ with st.spinner("⏳ Processando..."):
         except:
             return "R$ 0,00"
     
-    # ---------- Configurações ----------
+    def find_column_by_candidates(df, candidates, fallback_idx=None):
+        """Procura no df uma coluna cujo nome normalizado esteja entre candidates (lista).
+           Retorna nome da coluna encontrada; se não, retorna coluna por índice fallback_idx (se válido), ou None."""
+        if df is None or df.empty:
+            return None
+        cmap = {_norm_key(c): c for c in df.columns}
+        for cand in candidates:
+            k = _norm_key(cand)
+            if k in cmap:
+                return cmap[k]
+        # fallback por índice
+        if fallback_idx is not None and 0 <= fallback_idx < len(df.columns):
+            return df.columns[fallback_idx]
+        return None
+    
+    def try_numeric_sort_key(s):
+        try:
+            return int(s)
+        except:
+            try:
+                return float(s)
+            except:
+                return s
+    
+    # ---------- Configurações (IDs e abas) ----------
     ID_507 = "1tqmql1aL6M6A6yZ1QSOiifDjas5Bs_AziI7IkqwmAOM"
     ABA_507 = "Faturamento"
     
@@ -2190,41 +2206,47 @@ with st.spinner("⏳ Processando..."):
     ABA_MEIO = "Faturamento Meio Pagamento"
     
     try:
-        # 1) Carregar Dados 507 Venda — INCLUINDO A PRIMEIRA LINHA COMO DADO
+        # ---------- Ler 507 (usa header da primeira linha) ----------
         fat_sh = gc.open_by_key(ID_507)
         ws_507 = fat_sh.worksheet(ABA_507)
-        # aqui passamos include_header_as_data=True para não descartar a primeira linha
-        df_507_raw = safe_df_from_sheet(ws_507.get_all_values(), include_header_as_data=True)
+        df_507_raw = safe_df_from_sheet(ws_507.get_all_values())
     
-        # Normalizar colunas: supondo A=col1, B=col2, C=col3, D=col4 (já que geramos col1..)
-        # Ajuste se a suas colunas reais estiverem deslocadas.
+        # detectar colunas (nomes comuns possíveis)
+        date_col_507 = find_column_by_candidates(df_507_raw, ["Data", "Data do Movimento", "data"], fallback_idx=0)
+        code_col_507 = find_column_by_candidates(df_507_raw, ["Codigo", "Código da Empresa", "Código", "codigo"], fallback_idx=1)
+        valor_col_507 = find_column_by_candidates(df_507_raw, ["Valor Total", "Valor", "Valor Líquido (Soma)", "Valor Total - Gojeta", "Valor (R$)", "V. Total"], fallback_idx=3)
+        nome_col_507 = find_column_by_candidates(df_507_raw, ["Nome", "Nome Fantasia", "Nome Fantasia (Razao)"], fallback_idx=2)
+    
+        # extrair e normalizar
         df_507 = pd.DataFrame()
-        # Se a planilha tem pelo menos 1 coluna, usa col1 como data, col2 como codigo, col4 como valor
-        df_507["Data"] = pd.to_datetime(df_507_raw.iloc[:, 0], dayfirst=True, errors="coerce").dt.date if df_507_raw.shape[1] >= 1 else pd.NaT
-        df_507["Codigo"] = df_507_raw.iloc[:, 1].apply(normalize_codigo) if df_507_raw.shape[1] >= 2 else ""
-        df_507["Valor_507"] = df_507_raw.iloc[:, 3].apply(tratar_valor) if df_507_raw.shape[1] >= 4 else 0.0
-        df_507["Nome"] = df_507_raw.iloc[:, 2] if df_507_raw.shape[1] >= 3 else ""
+        df_507["Data"] = pd.to_datetime(df_507_raw[date_col_507], dayfirst=True, errors="coerce").dt.date if date_col_507 else pd.NaT
+        df_507["Codigo"] = df_507_raw[code_col_507].apply(normalize_codigo) if code_col_507 else ""
+        df_507["Valor_507"] = df_507_raw[valor_col_507].apply(tratar_valor) if valor_col_507 else 0.0
+        df_507["Nome"] = df_507_raw[nome_col_507] if nome_col_507 else ""
     
-        # 2) Carregar Dados Meio Pagamento (mantive leitura normal — se também quiser incluir primeira linha,
-        # passe include_header_as_data=True aqui também)
+        # ---------- Ler Meio Pagamento ----------
         try:
             meio_sh = gc.open_by_key(ID_MEIO)
             ws_meio = meio_sh.worksheet(ABA_MEIO)
-            df_meio_raw = safe_df_from_sheet(ws_meio.get_all_values(), include_header_as_data=False)
-            # A=idx0, G=idx6, J=idx9
+            df_meio_raw = safe_df_from_sheet(ws_meio.get_all_values())
+    
+            date_col_meio = find_column_by_candidates(df_meio_raw, ["Data", "Data do Movimento", "data"], fallback_idx=0)
+            code_col_meio = find_column_by_candidates(df_meio_raw, ["Codigo", "Código da Empresa", "Código", "codigo"], fallback_idx=6)
+            valor_col_meio = find_column_by_candidates(df_meio_raw, ["Valor", "Valor Total", "Valor (R$)", "V. Total"], fallback_idx=9)
+    
             df_meio = pd.DataFrame()
-            df_meio["Data"] = pd.to_datetime(df_meio_raw.iloc[:, 0], dayfirst=True, errors="coerce").dt.date if df_meio_raw.shape[1] >= 1 else pd.NaT
-            df_meio["Codigo"] = df_meio_raw.iloc[:, 6].apply(normalize_codigo) if df_meio_raw.shape[1] >= 7 else ""
-            df_meio["Valor_Meio"] = df_meio_raw.iloc[:, 9].apply(tratar_valor) if df_meio_raw.shape[1] >= 10 else 0.0
+            df_meio["Data"] = pd.to_datetime(df_meio_raw[date_col_meio], dayfirst=True, errors="coerce").dt.date if date_col_meio else pd.NaT
+            df_meio["Codigo"] = df_meio_raw[code_col_meio].apply(normalize_codigo) if code_col_meio else ""
+            df_meio["Valor_Meio"] = df_meio_raw[valor_col_meio].apply(tratar_valor) if valor_col_meio else 0.0
         except Exception as e:
-            st.warning(f"Aba Meio Pagamento não encontrada: {e}")
+            st.warning(f"Aba Meio Pagamento não encontrada ou erro ao ler: {e}")
             df_meio = pd.DataFrame(columns=["Data", "Codigo", "Valor_Meio"])
     
-        # ---------- Agregação ----------
+        # ---------- Agregações ----------
         agg_507 = df_507.groupby(["Data", "Codigo"], as_index=False).agg({"Valor_507": "sum", "Nome": "first"})
         agg_meio = df_meio.groupby(["Data", "Codigo"], as_index=False).agg({"Valor_Meio": "sum"})
     
-        # ---------- Datas e Filtros ----------
+        # ---------- Datas disponíveis e inputs ----------
         all_dates = pd.concat([agg_507["Data"], agg_meio["Data"]]).dropna()
         if all_dates.empty:
             st.error("Nenhuma data válida encontrada nas planilhas.")
@@ -2239,32 +2261,40 @@ with st.spinner("⏳ Processando..."):
         with col2:
             end_date = st.date_input("Data Final:", value=data_max, min_value=data_min, max_value=data_max)
     
-        # ---------- Cruzamento ----------
+        # ---------- Filtrar período e criar chaves ----------
         mask_507 = (agg_507["Data"] >= start_date) & (agg_507["Data"] <= end_date)
         mask_meio = (agg_meio["Data"] >= start_date) & (agg_meio["Data"] <= end_date)
     
-        keys = pd.concat([agg_507[mask_507][["Data", "Codigo"]],
-                          agg_meio[mask_meio][["Data", "Codigo"]]]).drop_duplicates()
+        keys = pd.concat([
+            agg_507.loc[mask_507, ["Data", "Codigo"]],
+            agg_meio.loc[mask_meio, ["Data", "Codigo"]]
+        ]).drop_duplicates().reset_index(drop=True)
     
-        result = keys.merge(agg_507[mask_507], on=["Data", "Codigo"], how="left")
-        result = result.merge(agg_meio[mask_meio], on=["Data", "Codigo"], how="left")
+        # ---------- Merge seguro: pegar só colunas necessárias para evitar duplicidade de rótulos ----------
+        res = keys.merge(agg_507.loc[mask_507, ["Data", "Codigo", "Valor_507", "Nome"]], on=["Data", "Codigo"], how="left")
+        res = res.merge(agg_meio.loc[mask_meio, ["Data", "Codigo", "Valor_Meio"]], on=["Data", "Codigo"], how="left")
     
-        # preencher nulos com zero / texto
-        result["Valor_507"] = result["Valor_507"].fillna(0.0)
-        result["Valor_Meio"] = result["Valor_Meio"].fillna(0.0)
-        result["Nome"] = result["Nome"].fillna("Não Identificado")
+        # preencher nulos
+        res["Valor_507"] = pd.to_numeric(res["Valor_507"].fillna(0.0), errors="coerce").fillna(0.0)
+        res["Valor_Meio"] = pd.to_numeric(res["Valor_Meio"].fillna(0.0), errors="coerce").fillna(0.0)
+        res["Nome"] = res["Nome"].fillna("Não Identificado")
     
-        # ordenar
-        result = result.sort_values(["Data", "Codigo"], ascending=[True, True])
+        # calcular diferença (numérico)
+        res["Diff"] = (res["Valor_507"] - res["Valor_Meio"]).round(2)
     
-        # formatar para exibição
-        result["Data_Exib"] = pd.to_datetime(result["Data"]).dt.strftime("%d/%m/%Y")
-        result["V_507"] = result["Valor_507"].apply(fmt_brl)
-        result["V_Meio"] = result["Valor_Meio"].apply(fmt_brl)
-        result["Diff"] = (result["Valor_507"] - result["Valor_Meio"]).round(2)
-        result["V_Diff"] = result["Diff"].apply(fmt_brl)
+        # formatar colunas para exibição
+        res["Data_Exib"] = pd.to_datetime(res["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
+        res["Valor (507)"] = res["Valor_507"].apply(fmt_brl)
+        res["Valor (Meio)"] = res["Valor_Meio"].apply(fmt_brl)
+        res["Diferença"] = res["Diff"].apply(fmt_brl)
     
-        final = result[["Data_Exib", "Codigo", "Nome", "V_507", "V_Meio", "V_Diff"]].copy()
+        # ordenar por Data (cronológico) e Código (tentando numérico)
+        # cria chave de ordenação para Código
+        res["__cod_key"] = res["Codigo"].apply(try_numeric_sort_key)
+        res = res.sort_values(["Data", "__cod_key"], ascending=[True, True]).drop(columns="__cod_key")
+    
+        # escolher colunas finais
+        final = res[["Data_Exib", "Codigo", "Nome", "Valor (507)", "Valor (Meio)", "Diferença"]].copy()
         final.columns = ["Data", "Código", "Nome Fantasia", "Valor (507)", "Valor (Meio)", "Diferença"]
     
         st.subheader("📊 Comparativo de Faturamento")

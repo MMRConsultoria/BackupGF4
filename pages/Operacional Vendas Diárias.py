@@ -2142,7 +2142,7 @@ with st.spinner("⏳ Processando..."):
     
     def tratar_valor(valor):
         try:
-            if pd.isna(valor): return 0.0
+            if pd.isna(valor) or str(valor).strip() == "": return 0.0
             s = str(valor).strip().replace("R$", "").replace("\xa0", "").replace(" ", "")
             if s.count(",") == 1 and s.count(".") >= 1: s = s.replace(".", "").replace(",", ".")
             else: s = s.replace(",", ".")
@@ -2160,23 +2160,20 @@ with st.spinner("⏳ Processando..."):
     def fmt_brl(v):
         try:
             v = float(v)
-            if v == 0: return ""
+            # Retorna R$ 0,00 em vez de vazio
             return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        except: return ""
+        except: 
+            return "R$ 0,00"
     
     # ---------- Configurações conforme sua imagem ----------
-    # Planilha 507 Venda
     ID_507 = "1tqmql1aL6M6A6yZ1QSOiifDjas5Bs_AziI7IkqwmAOM"
     ABA_507 = "Faturamento" 
-    # Colunas: A=Data(0), B=Codigo(1), D=Valor(3)
     
-    # Planilha Meio Pagamento
     ID_MEIO = "1GSI291SEeeU9MtOWkGwsKGCGMi_xXMSiQnL_9GhXxfU"
     ABA_MEIO = "Faturamento Meio Pagamento"
-    # Colunas: A=Data(0), G=Codigo(6), J=Valor(9)
     
     try:
-        # 1. Carregar Dados 507 Venda (Substituiu o Everest)
+        # 1. Carregar Dados 507 Venda
         fat_sh = gc.open_by_key(ID_507)
         ws_507 = fat_sh.worksheet(ABA_507)
         df_507_raw = safe_df_from_sheet(ws_507.get_all_values())
@@ -2185,7 +2182,6 @@ with st.spinner("⏳ Processando..."):
         df_507["Data"] = pd.to_datetime(df_507_raw.iloc[:, 0], dayfirst=True, errors="coerce").dt.date
         df_507["Codigo"] = df_507_raw.iloc[:, 1].apply(normalize_codigo)
         df_507["Valor_507"] = df_507_raw.iloc[:, 3].apply(tratar_valor)
-        # Tenta pegar o nome se existir na coluna C (índice 2)
         df_507["Nome"] = df_507_raw.iloc[:, 2] if df_507_raw.shape[1] > 2 else ""
     
         # 2. Carregar Dados Meio Pagamento
@@ -2199,7 +2195,7 @@ with st.spinner("⏳ Processando..."):
             df_meio["Codigo"] = df_meio_raw.iloc[:, 6].apply(normalize_codigo)
             df_meio["Valor_Meio"] = df_meio_raw.iloc[:, 9].apply(tratar_valor)
         except Exception as e:
-            st.warning(f"Erro ao carregar Meio Pagamento: {e}")
+            st.warning(f"Aba Meio Pagamento não encontrada: {e}")
             df_meio = pd.DataFrame(columns=["Data", "Codigo", "Valor_Meio"])
     
         # ---------- Agregação ----------
@@ -2209,7 +2205,7 @@ with st.spinner("⏳ Processando..."):
         # ---------- Datas e Filtros ----------
         all_dates = pd.concat([agg_507["Data"], agg_meio["Data"]]).dropna()
         if all_dates.empty:
-            st.error("Nenhuma data válida encontrada.")
+            st.error("Nenhuma data válida encontrada nas planilhas.")
             st.stop()
             
         data_min = all_dates.min()
@@ -2222,16 +2218,22 @@ with st.spinner("⏳ Processando..."):
             end_date = st.date_input("Data Final:", value=data_max, min_value=data_min, max_value=data_max)
     
         # ---------- Cruzamento de Dados ----------
-        # Criar base de chaves únicas no período
         mask_507 = (agg_507["Data"] >= start_date) & (agg_507["Data"] <= end_date)
         mask_meio = (agg_meio["Data"] >= start_date) & (agg_meio["Data"] <= end_date)
         
         keys = pd.concat([agg_507[mask_507][["Data", "Codigo"]], 
                           agg_meio[mask_meio][["Data", "Codigo"]]]).drop_duplicates()
     
-        # Merges
         result = keys.merge(agg_507[mask_507], on=["Data", "Codigo"], how="left")
         result = result.merge(agg_meio[mask_meio], on=["Data", "Codigo"], how="left")
+    
+        # Preencher valores nulos com 0.0 antes de formatar
+        result["Valor_507"] = result["Valor_507"].fillna(0.0)
+        result["Valor_Meio"] = result["Valor_Meio"].fillna(0.0)
+        result["Nome"] = result["Nome"].fillna("Não Identificado")
+    
+        # Ordenação: Primeiro por Data, depois por Código
+        result = result.sort_values(["Data", "Codigo"], ascending=[True, True])
     
         # Formatação para exibição
         result["Data_Exib"] = pd.to_datetime(result["Data"]).dt.strftime("%d/%m/%Y")
@@ -2239,15 +2241,13 @@ with st.spinner("⏳ Processando..."):
         result["V_Meio"] = result["Valor_Meio"].apply(fmt_brl)
         
         # Diferença
-        result["Diff"] = (result["Valor_507"].fillna(0) - result["Valor_Meio"].fillna(0)).round(2)
+        result["Diff"] = (result["Valor_507"] - result["Valor_Meio"]).round(2)
         result["V_Diff"] = result["Diff"].apply(fmt_brl)
     
         # Tabela Final
         final = result[["Data_Exib", "Codigo", "Nome", "V_507", "V_Meio", "V_Diff"]].copy()
         final.columns = ["Data", "Código", "Nome Fantasia", "Valor (507)", "Valor (Meio)", "Diferença"]
         
-        final = final.sort_values(["Data", "Código"], ascending=[False, True])
-    
         st.subheader("📊 Comparativo de Faturamento")
         st.dataframe(final, use_container_width=True, height=600)
     

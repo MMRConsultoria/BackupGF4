@@ -2106,11 +2106,10 @@ with st.spinner("⏳ Processando..."):
     
     
     # =======================================
+    # =======================================
     # Aba 4 - Integração Everest (independente do upload)
     # =======================================
-    
-        # Aba Streamlit: Vendas vs Faturamento Meio vs 507 venda (tabela simples)
-    from datetime import date
+    from datetime import date, timedelta
     import streamlit as st
     import pandas as pd
     import unicodedata, re
@@ -2162,9 +2161,20 @@ with st.spinner("⏳ Processando..."):
     
     def fmt_brl(v):
         try:
-            return "R$ {:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".")
+            v = float(v)
         except:
             return ""
+        s = f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"R$ {s}"
+    
+    def first_non_empty(series):
+        for v in series:
+            if pd.isna(v):
+                continue
+            s = str(v).strip()
+            if s != "":
+                return s
+        return ""
     
     # ---------- Configurações (ajuste se necessário) ----------
     WORKSHEET_VENDAS = "Everest"                  # aba com vendas diárias
@@ -2175,7 +2185,7 @@ with st.spinner("⏳ Processando..."):
     
     # ---------- Execução ----------
     try:
-        # carregar VENDAS (Everest)
+        # --------- Carregar VENDAS (Everest) ----------
         planilha = gc.open("Vendas diarias")
         ws_vendas = planilha.worksheet(WORKSHEET_VENDAS)
         vals = ws_vendas.get_all_values()
@@ -2187,7 +2197,6 @@ with st.spinner("⏳ Processando..."):
             df_vendas = pd.DataFrame(rows, columns=[h.strip() for h in header])
     
         if df_vendas.empty:
-            st.warning("Sem dados em Vendas.")
             vendas = pd.DataFrame(columns=["Data","Codigo","Nome","Valor_Vendas"])
         else:
             # detectar colunas por nome ou posição (fallback para índices conhecidos)
@@ -2206,7 +2215,7 @@ with st.spinner("⏳ Processando..."):
             v_date_col = col_or_idx(df_vendas, 0, ["Data", "data"])
             v_codigo_col = col_or_idx(df_vendas, 1, ["Código", "Codigo", "codigo"])
             v_nome_col = col_or_idx(df_vendas, 2, ["Nome", "nome", "Nome Loja", "Nome Loja Everest", "Nome Fantasia"])
-            v_valor_col = col_or_idx(df_vendas, 7, ["Valor", "Valor Bruto", "Valor Bruto (Everest)", "Valor (R$)"])
+            v_valor_col = col_or_idx(df_vendas, 7, ["Valor", "Valor Bruto", "Valor Bruto (Everest)", "Valor (R$)", "Valor_Vendas"])
     
             vendas = pd.DataFrame()
             vendas["Data"] = pd.to_datetime(df_vendas[v_date_col], dayfirst=True, errors="coerce").dt.date if v_date_col else pd.NaT
@@ -2217,7 +2226,7 @@ with st.spinner("⏳ Processando..."):
             vendas["Codigo"] = vendas["Codigo"].apply(normalize_codigo)
             vendas["Valor_Vendas"] = vendas["Valor_Vendas"].apply(tratar_valor).round(2)
     
-        # carregar planilha FAT (507)
+        # --------- Carregar 507 ----------
         try:
             fat_sh = gc.open_by_key(FAT_ID)
             ws_507 = fat_sh.worksheet(FAT_SHEET_507)
@@ -2241,7 +2250,7 @@ with st.spinner("⏳ Processando..."):
             df_507_proc["Codigo"] = df_507.iloc[:, d_code].apply(normalize_codigo) if df_507.shape[1] > d_code else ""
             df_507_proc["Valor_507"] = df_507.iloc[:, d_val].apply(tratar_valor).round(2) if df_507.shape[1] > d_val else 0.0
     
-        # carregar FATURAMENTO MEIO PAGAMENTO
+        # --------- Carregar Faturamento Meio Pagamento ----------
         try:
             ws_meio = fat_sh.worksheet(FAT_SHEET_MEIO)
             vals_meio = ws_meio.get_all_values()
@@ -2265,55 +2274,125 @@ with st.spinner("⏳ Processando..."):
             df_meio_proc["Codigo"] = df_meio.iloc[:, m_code].apply(normalize_codigo) if cols_len > m_code else ""
             df_meio_proc["Valor_Meio"] = df_meio.iloc[:, m_val].apply(tratar_valor).round(2) if cols_len > m_val else 0.0
     
-        # garantir que todos os Codigos das fontes estão normalizados (evita merges por tipos diferentes)
-        # (se quiser incluir ex/ev originais também, você pode normalizar ali)
-        # base = vendas
-        base = vendas[["Data", "Codigo", "Nome", "Valor_Vendas"]].copy()
+        # ---------- Agregar por (Data, Codigo) ----------
+        # Somar valores por dia+codigo; pegar primeiro nome disponível nas vendas
+        vendas_agg = pd.DataFrame(columns=["Data","Codigo","Nome","Valor_Vendas"])
+        if not vendas.empty:
+            vendas_agg = (vendas.dropna(subset=["Codigo"])
+                          .groupby(["Data","Codigo"], as_index=False)
+                          .agg({"Valor_Vendas":"sum", "Nome": lambda s: first_non_empty(s)}))
+        meio_agg = pd.DataFrame(columns=["Data","Codigo","Valor_Meio"])
+        if not df_meio_proc.empty:
+            meio_agg = (df_meio_proc.dropna(subset=["Codigo"])
+                        .groupby(["Data","Codigo"], as_index=False)
+                        .agg({"Valor_Meio":"sum"}))
+        venda507_agg = pd.DataFrame(columns=["Data","Codigo","Valor_507"])
+        if not df_507_proc.empty:
+            venda507_agg = (df_507_proc.dropna(subset=["Codigo"])
+                            .groupby(["Data","Codigo"], as_index=False)
+                            .agg({"Valor_507":"sum"}))
     
-        # merge com faturamento meio (por Data+Codigo quando existir Data, senão por Codigo)
-        if not df_meio_proc.empty and df_meio_proc.shape[0] > 0:
-            if df_meio_proc["Data"].notna().any():
-                merged = pd.merge(base, df_meio_proc[["Data", "Codigo", "Valor_Meio"]], on=["Data", "Codigo"], how="left")
-            else:
-                merged = pd.merge(base, df_meio_proc[["Codigo", "Valor_Meio"]], on=["Codigo"], how="left")
+        # ---------- Determinar data inicial e gerar intervalo até ontem ----------
+        # pegar mínima data entre as três agregações
+        dates = []
+        for df in (vendas_agg, meio_agg, venda507_agg):
+            if (df is not None) and (not df.empty):
+                dmin = pd.to_datetime(df["Data"], errors="coerce").dropna()
+                if not dmin.empty:
+                    dates.append(dmin.min().date())
+        if not dates:
+            st.warning("Nenhuma data encontrada nas tabelas; não há nada para processar.")
+            st.stop()
+    
+        start_date = min(dates)
+        end_date = (pd.Timestamp(date.today()) - pd.Timedelta(days=1)).date()
+        if start_date > end_date:
+            st.warning("A data mais antiga encontrada é posterior a ontem. Nada a processar.")
+            st.stop()
+    
+        # construir conjunto de chaves (Data,Codigo) existentes dentro do intervalo
+        def filter_in_range(df):
+            if df is None or df.empty:
+                return pd.DataFrame(columns=["Data","Codigo"])
+            tmp = df.copy()
+            tmp["Data"] = pd.to_datetime(tmp["Data"], errors="coerce").dt.date
+            return tmp[(tmp["Data"] >= start_date) & (tmp["Data"] <= end_date)][["Data","Codigo"]].drop_duplicates()
+    
+        keys_v = filter_in_range(vendas_agg)
+        keys_m = filter_in_range(meio_agg)
+        keys_5 = filter_in_range(venda507_agg)
+    
+        all_keys = pd.concat([keys_v, keys_m, keys_5], ignore_index=True).drop_duplicates().reset_index(drop=True)
+        if all_keys.empty:
+            st.warning("Não há combinações (Data,Codigo) nas tabelas dentro do intervalo definido.")
+            st.stop()
+    
+        # ---------- Montar tabela final juntando os agregados ----------
+        result = all_keys.copy()
+        # juntar vendas
+        if not vendas_agg.empty:
+            vendas_agg["Data"] = pd.to_datetime(vendas_agg["Data"], errors="coerce").dt.date
+            result = result.merge(vendas_agg, on=["Data","Codigo"], how="left")
         else:
-            merged = base.copy()
-            merged["Valor_Meio"] = 0.0
+            result["Valor_Vendas"] = pd.NA
+            result["Nome"] = ""
     
-        # merge com 507 vendas (por Data+Codigo)
-        if not df_507_proc.empty and df_507_proc.shape[0] > 0:
-            merged = pd.merge(merged, df_507_proc[["Data", "Codigo", "Valor_507"]], on=["Data", "Codigo"], how="left")
+        # juntar meio
+        if not meio_agg.empty:
+            meio_agg["Data"] = pd.to_datetime(meio_agg["Data"], errors="coerce").dt.date
+            result = result.merge(meio_agg, on=["Data","Codigo"], how="left")
         else:
-            merged["Valor_507"] = 0.0
+            result["Valor_Meio"] = pd.NA
     
-        # preencher NaNs e converter numericamente
+        # juntar 507
+        if not venda507_agg.empty:
+            venda507_agg["Data"] = pd.to_datetime(venda507_agg["Data"], errors="coerce").dt.date
+            result = result.merge(venda507_agg, on=["Data","Codigo"], how="left")
+        else:
+            result["Valor_507"] = pd.NA
+    
+        # garantir tipos e não sobrescrever valores reais com zeros
         for col in ["Valor_Vendas", "Valor_Meio", "Valor_507"]:
-            if col in merged.columns:
-                merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0.0).round(2)
-            else:
-                merged[col] = 0.0
+            if col in result.columns:
+                result[col] = pd.to_numeric(result[col], errors="coerce")
     
-        # calcular diferenças
-        merged["Diff_Meio"] = (merged["Valor_Vendas"] - merged["Valor_Meio"]).round(2)
-        merged["Diff_507"] = (merged["Valor_Vendas"] - merged["Valor_507"]).round(2)
+        # nome: garantir string
+        if "Nome" not in result.columns:
+            result["Nome"] = ""
     
-        # formatar Data e valores para exibição
-        merged["Data"] = pd.to_datetime(merged["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
+        # formatar Data string dd/mm/aaaa para exibição
+        result["Data_fmt"] = pd.to_datetime(result["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
     
-        display = merged.copy()
-        display["Valor (Vendas)"] = display["Valor_Vendas"].apply(fmt_brl)
-        display["Valor (Meio)"]  = display["Valor_Meio"].apply(fmt_brl)
-        display["Valor (507)"]   = display["Valor_507"].apply(fmt_brl)
-        display["Diferença (Meio)"] = display["Diff_Meio"].apply(fmt_brl)
-        display["Diferença (507)"]  = display["Diff_507"].apply(fmt_brl)
+        # formatar valores somente quando existem (senão deixar vazio)
+        result["Valor (Vendas)"] = result["Valor_Vendas"].apply(lambda x: fmt_brl(x) if pd.notna(x) else "")
+        result["Valor (Meio)"]   = result["Valor_Meio"].apply(lambda x: fmt_brl(x) if pd.notna(x) else "")
+        result["Valor (507)"]    = result["Valor_507"].apply(lambda x: fmt_brl(x) if pd.notna(x) else "")
     
-        final_cols = ["Data", "Codigo", "Nome", "Valor (Vendas)", "Valor (Meio)", "Valor (507)", "Diferença (Meio)", "Diferença (507)"]
-        final_cols = [c for c in final_cols if c in display.columns]
+        # preparar colunas finais
+        final = result[["Data", "Data_fmt", "Codigo", "Nome", "Valor (Vendas)", "Valor (Meio)", "Valor (507)"]].copy()
+        final = final.rename(columns={"Data_fmt":"Data"})
     
-        st.dataframe(display[final_cols].sort_values(["Data", "Codigo"]), use_container_width=True, height=600)
+        # ordenar por data asc e codigo
+        final = final.sort_values(["Data", "Codigo"]).reset_index(drop=True)
+    
+        # mostrar
+        st.dataframe(final, use_container_width=True, height=600)
     
     except Exception as e:
         st.error(f"❌ Erro ao carregar ou comparar dados: {e}")
+
+
+
+
+
+
+
+
+
+
+
+
+   
     # =======================================
     # Aba 5 - Auditoria PDV x Faturamento Meio Pagamento (tabela única)
     # =======================================

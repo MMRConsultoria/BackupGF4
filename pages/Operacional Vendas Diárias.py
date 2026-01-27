@@ -2107,11 +2107,14 @@ with st.spinner("⏳ Processando..."):
     
     # =======================================
     # =======================================
-    from datetime import date
+    # Aba 4 - Integração Everest (independente do upload)
+    # =======================================
+    from datetime import date, timedelta
     import streamlit as st
     import pandas as pd
     import unicodedata, re
     
+    # ---------- Helpers ----------
     def _norm_key(s):
         if not isinstance(s, str):
             return ""
@@ -2126,310 +2129,130 @@ with st.spinner("⏳ Processando..."):
         out = []
         for h in headers:
             h0 = (h or "").strip()
-            if h0 == "":
-                h0 = "col"
+            if h0 == "": h0 = "col"
             cnt = seen.get(h0, 0) + 1
             seen[h0] = cnt
-            if cnt == 1:
-                out.append(h0)
-            else:
-                out.append(f"{h0}_{cnt}")
+            out.append(h0 if cnt == 1 else f"{h0}_{cnt}")
         return out
     
     def safe_df_from_sheet(vals):
-        if not vals or len(vals) < 1:
-            return pd.DataFrame()
-        headers_raw = [h if h is not None else "" for h in vals[0]]
-        headers = make_unique_headers([h.strip() for h in headers_raw])
-        st.write("Colunas lidas:", headers)  # Debug para ver os nomes das colunas
-        rows = vals[1:] if len(vals) > 1 else []
-        df = pd.DataFrame(rows, columns=headers)
-        return df
+        if not vals or len(vals) < 1: return pd.DataFrame()
+        headers = make_unique_headers([h.strip() for h in vals[0]])
+        return pd.DataFrame(vals[1:], columns=headers)
     
     def tratar_valor(valor):
         try:
-            if pd.isna(valor):
-                return float("nan")
-            s = str(valor).strip().replace("R$", "").replace("\xa0", "").strip()
-            if s.count(",") == 1 and s.count(".") >= 1:
-                s = s.replace(".", "").replace(",", ".")
-            else:
-                s = s.replace(",", ".")
+            if pd.isna(valor): return 0.0
+            s = str(valor).strip().replace("R$", "").replace("\xa0", "").replace(" ", "")
+            if s.count(",") == 1 and s.count(".") >= 1: s = s.replace(".", "").replace(",", ".")
+            else: s = s.replace(",", ".")
             return float(s)
-        except:
-            return float("nan")
+        except: return 0.0
     
     def normalize_codigo(x):
         try:
-            if pd.isna(x):
-                return ""
-            sx = str(x).strip()
-            sx = sx.replace("\xa0", "").strip()
-            if re.fullmatch(r"\d+(\.0+)?", sx):
-                return str(int(float(sx)))
-            try:
-                vx = float(sx)
-                if vx.is_integer():
-                    return str(int(vx))
-            except:
-                pass
+            if pd.isna(x): return ""
+            sx = str(x).strip().replace("\xa0", "")
+            if re.fullmatch(r"\d+(\.0+)?", sx): return str(int(float(sx)))
             return sx
-        except:
-            return str(x)
+        except: return str(x)
     
     def fmt_brl(v):
         try:
             v = float(v)
-        except:
-            return ""
-        s = f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        return f"R$ {s}"
+            if v == 0: return ""
+            return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        except: return ""
     
-    def first_non_empty(series):
-        for v in series:
-            if pd.isna(v):
-                continue
-            s = str(v).strip()
-            if s != "":
-                return s
-        return ""
+    # ---------- Configurações conforme sua imagem ----------
+    # Planilha 507 Venda
+    ID_507 = "1tqmql1aL6M6A6yZ1QSOiifDjas5Bs_AziI7IkqwmAOM"
+    ABA_507 = "Faturamento" 
+    # Colunas: A=Data(0), B=Codigo(1), D=Valor(3)
     
-    FAT_ID = "1tqmql1aL6M6A6yZ1QSOiifDjas5Bs_AziI7IkqwmAOM"
-    FAT_SHEET_507 = "Faturamento"
-    FAT_SHEET_MEIO = "Faturamento Meio Pagamento"
+    # Planilha Meio Pagamento
+    ID_MEIO = "1GSI291SEeeU9MtOWkGwsKGCGMi_xXMSiQnL_9GhXxfU"
+    ABA_MEIO = "Faturamento Meio Pagamento"
+    # Colunas: A=Data(0), G=Codigo(6), J=Valor(9)
     
     try:
-        # Vendas Everest
-        vendas = pd.DataFrame(columns=["Data", "Codigo", "Nome", "Valor_Vendas"])
+        # 1. Carregar Dados 507 Venda (Substituiu o Everest)
+        fat_sh = gc.open_by_key(ID_507)
+        ws_507 = fat_sh.worksheet(ABA_507)
+        df_507_raw = safe_df_from_sheet(ws_507.get_all_values())
+        
+        df_507 = pd.DataFrame()
+        df_507["Data"] = pd.to_datetime(df_507_raw.iloc[:, 0], dayfirst=True, errors="coerce").dt.date
+        df_507["Codigo"] = df_507_raw.iloc[:, 1].apply(normalize_codigo)
+        df_507["Valor_507"] = df_507_raw.iloc[:, 3].apply(tratar_valor)
+        # Tenta pegar o nome se existir na coluna C (índice 2)
+        df_507["Nome"] = df_507_raw.iloc[:, 2] if df_507_raw.shape[1] > 2 else ""
+    
+        # 2. Carregar Dados Meio Pagamento
         try:
-            planilha = gc.open("Vendas diarias")
-            sheet_names = [ws.title for ws in planilha.worksheets()]
-            if "Everest" in sheet_names:
-                ws_vendas = planilha.worksheet("Everest")
-            else:
-                ws_vendas = planilha.worksheets()[0]
-            vals = ws_vendas.get_all_values()
-            df_vendas_raw = safe_df_from_sheet(vals)
+            meio_sh = gc.open_by_key(ID_MEIO)
+            ws_meio = meio_sh.worksheet(ABA_MEIO)
+            df_meio_raw = safe_df_from_sheet(ws_meio.get_all_values())
+            
+            df_meio = pd.DataFrame()
+            df_meio["Data"] = pd.to_datetime(df_meio_raw.iloc[:, 0], dayfirst=True, errors="coerce").dt.date
+            df_meio["Codigo"] = df_meio_raw.iloc[:, 6].apply(normalize_codigo)
+            df_meio["Valor_Meio"] = df_meio_raw.iloc[:, 9].apply(tratar_valor)
         except Exception as e:
-            st.warning(f"Não foi possível abrir 'Vendas diarias' ou ler aba de vendas: {e}")
-            df_vendas_raw = pd.DataFrame()
+            st.warning(f"Erro ao carregar Meio Pagamento: {e}")
+            df_meio = pd.DataFrame(columns=["Data", "Codigo", "Valor_Meio"])
     
-        if not df_vendas_raw.empty:
-            def col_or_idx(df, idx, candidates=None):
-                cols = list(df.columns)
-                cmap = {_norm_key(c): c for c in cols}
-                if candidates:
-                    for cand in candidates:
-                        k = _norm_key(cand)
-                        if k in cmap:
-                            return cmap[k]
-                if 0 <= idx < len(cols):
-                    return cols[idx]
-                return None
+        # ---------- Agregação ----------
+        agg_507 = df_507.groupby(["Data", "Codigo"], as_index=False).agg({"Valor_507": "sum", "Nome": "first"})
+        agg_meio = df_meio.groupby(["Data", "Codigo"], as_index=False).agg({"Valor_Meio": "sum"})
     
-            v_date_col = col_or_idx(df_vendas_raw, 0, ["Data", "data", "data do movimento", "data movimentacao"])
-            v_codigo_col = col_or_idx(df_vendas_raw, 1, ["Código", "Codigo", "codigo", "cod"])
-            v_nome_col = col_or_idx(df_vendas_raw, 2, ["Nome", "nome", "Nome Fantasia", "nome fantasia", "Nome Loja"])
-            v_valor_col = col_or_idx(df_vendas_raw, 7, ["Valor", "Valor Bruto", "Valor Total", "Valor (R$)", "Valor_Vendas", "valor"])
-    
-            vendas = pd.DataFrame()
-            vendas["Data"] = pd.to_datetime(df_vendas_raw[v_date_col], dayfirst=True, errors="coerce").dt.date if v_date_col else pd.NaT
-            vendas["Codigo"] = df_vendas_raw[v_codigo_col] if v_codigo_col else ""
-            vendas["Nome"] = df_vendas_raw[v_nome_col] if v_nome_col else ""
-            vendas["Valor_Vendas"] = df_vendas_raw[v_valor_col] if v_valor_col else 0
-    
-            vendas["Codigo"] = vendas["Codigo"].apply(normalize_codigo)
-            vendas["Valor_Vendas"] = vendas["Valor_Vendas"].apply(tratar_valor).round(2)
-        else:
-            vendas = pd.DataFrame(columns=["Data", "Codigo", "Nome", "Valor_Vendas"])
-    
-        # Faturamento 507
-        try:
-            fat_sh = gc.open_by_key(FAT_ID)
-        except Exception as e:
-            st.error(f"Erro ao abrir planilha de Faturamento por key: {e}")
+        # ---------- Datas e Filtros ----------
+        all_dates = pd.concat([agg_507["Data"], agg_meio["Data"]]).dropna()
+        if all_dates.empty:
+            st.error("Nenhuma data válida encontrada.")
             st.stop()
+            
+        data_min = all_dates.min()
+        data_max = (date.today() - timedelta(days=1))
     
-        try:
-            ws_507 = fat_sh.worksheet(FAT_SHEET_507)
-            vals507 = ws_507.get_all_values()
-            df_507_raw = safe_df_from_sheet(vals507)
-        except Exception as e:
-            st.warning(f"Não foi possível abrir aba 507: {e}")
-            df_507_raw = pd.DataFrame()
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("Data Inicial:", value=data_min, min_value=data_min, max_value=data_max)
+        with col2:
+            end_date = st.date_input("Data Final:", value=data_max, min_value=data_min, max_value=data_max)
     
-        if not df_507_raw.empty:
-            def col_or_idx_local(df, idx, candidates=None):
-                cols = list(df.columns)
-                cmap = {_norm_key(c): c for c in cols}
-                if candidates:
-                    for cand in candidates:
-                        k = _norm_key(cand)
-                        if k in cmap:
-                            return cmap[k]
-                if 0 <= idx < len(cols):
-                    return cols[idx]
-                return None
+        # ---------- Cruzamento de Dados ----------
+        # Criar base de chaves únicas no período
+        mask_507 = (agg_507["Data"] >= start_date) & (agg_507["Data"] <= end_date)
+        mask_meio = (agg_meio["Data"] >= start_date) & (agg_meio["Data"] <= end_date)
+        
+        keys = pd.concat([agg_507[mask_507][["Data", "Codigo"]], 
+                          agg_meio[mask_meio][["Data", "Codigo"]]]).drop_duplicates()
     
-            d_date = col_or_idx_local(df_507_raw, 0, ["Data", "data"])
-            d_code = col_or_idx_local(df_507_raw, 1, ["Código", "Codigo", "codigo"])
-            d_val  = col_or_idx_local(df_507_raw, 3, ["Valor", "Valor Total", "Valor (R$)"])
-            df_507_proc = pd.DataFrame()
-            df_507_proc["Data"] = pd.to_datetime(df_507_raw[d_date], dayfirst=True, errors="coerce").dt.date if d_date else pd.NaT
-            df_507_proc["Codigo"] = df_507_raw[d_code].apply(normalize_codigo) if d_code else ""
-            df_507_proc["Valor_507"] = df_507_raw[d_val].apply(tratar_valor).round(2) if d_val else 0.0
-        else:
-            df_507_proc = pd.DataFrame(columns=["Data", "Codigo", "Valor_507"])
+        # Merges
+        result = keys.merge(agg_507[mask_507], on=["Data", "Codigo"], how="left")
+        result = result.merge(agg_meio[mask_meio], on=["Data", "Codigo"], how="left")
     
-        # Faturamento Meio Pagamento
-        try:
-            ws_meio = fat_sh.worksheet(FAT_SHEET_MEIO)
-            vals_meio = ws_meio.get_all_values()
-            df_meio_raw = safe_df_from_sheet(vals_meio)
-        except Exception as e:
-            st.warning(f"Aba '{FAT_SHEET_MEIO}' não encontrada ou erro ao abrir: {e}")
-            df_meio_raw = pd.DataFrame()
+        # Formatação para exibição
+        result["Data_Exib"] = pd.to_datetime(result["Data"]).dt.strftime("%d/%m/%Y")
+        result["V_507"] = result["Valor_507"].apply(fmt_brl)
+        result["V_Meio"] = result["Valor_Meio"].apply(fmt_brl)
+        
+        # Diferença
+        result["Diff"] = (result["Valor_507"].fillna(0) - result["Valor_Meio"].fillna(0)).round(2)
+        result["V_Diff"] = result["Diff"].apply(fmt_brl)
     
-        if not df_meio_raw.empty:
-            def col_or_idx_local_meio(df, idx, candidates=None):
-                cols = list(df.columns)
-                cmap = {_norm_key(c): c for c in cols}
-                if candidates:
-                    for cand in candidates:
-                        k = _norm_key(cand)
-                        if k in cmap:
-                            return cmap[k]
-                if 0 <= idx < len(cols):
-                    return cols[idx]
-                return None
+        # Tabela Final
+        final = result[["Data_Exib", "Codigo", "Nome", "V_507", "V_Meio", "V_Diff"]].copy()
+        final.columns = ["Data", "Código", "Nome Fantasia", "Valor (507)", "Valor (Meio)", "Diferença"]
+        
+        final = final.sort_values(["Data", "Código"], ascending=[False, True])
     
-            m_date = col_or_idx_local_meio(df_meio_raw, 0, ["Data", "data"])
-            m_code = col_or_idx_local_meio(df_meio_raw, 6, ["Código", "Codigo", "codigo"])
-            m_val  = col_or_idx_local_meio(df_meio_raw, 9, ["Valor", "Valor Total", "Valor (R$)"])
-            df_meio_proc = pd.DataFrame()
-            df_meio_proc["Data"] = pd.to_datetime(df_meio_raw[m_date], dayfirst=True, errors="coerce").dt.date if m_date else pd.NaT
-            df_meio_proc["Codigo"] = df_meio_raw[m_code].apply(normalize_codigo) if m_code else ""
-            df_meio_proc["Valor_Meio"] = df_meio_raw[m_val].apply(tratar_valor).round(2) if m_val else 0.0
-        else:
-            df_meio_proc = pd.DataFrame(columns=["Data", "Codigo", "Valor_Meio"])
-    
-        # Agregar por (Data, Codigo)
-        vendas_agg = pd.DataFrame(columns=["Data","Codigo","Nome","Valor_Vendas"])
-        if not vendas.empty:
-            tmp = vendas.dropna(subset=["Codigo"]) if "Codigo" in vendas.columns else vendas
-            vendas_agg = (tmp.groupby(["Data","Codigo"], as_index=False)
-                          .agg({"Valor_Vendas":"sum", "Nome": lambda s: first_non_empty(s)}))
-    
-        meio_agg = pd.DataFrame(columns=["Data","Codigo","Valor_Meio"])
-        if not df_meio_proc.empty:
-            tmp = df_meio_proc.dropna(subset=["Codigo"]) if "Codigo" in df_meio_proc.columns else df_meio_proc
-            meio_agg = (tmp.groupby(["Data","Codigo"], as_index=False).agg({"Valor_Meio":"sum"}))
-    
-        venda507_agg = pd.DataFrame(columns=["Data","Codigo","Valor_507"])
-        if not df_507_proc.empty:
-            tmp = df_507_proc.dropna(subset=["Codigo"]) if "Codigo" in df_507_proc.columns else df_507_proc
-            venda507_agg = (tmp.groupby(["Data","Codigo"], as_index=False).agg({"Valor_507":"sum"}))
-    
-        # Datas para input usuário
-        dates = []
-        for df in (vendas_agg, meio_agg, venda507_agg):
-            if (df is not None) and (not df.empty):
-                dmin = pd.to_datetime(df["Data"], errors="coerce").dropna()
-                if not dmin.empty:
-                    dates.append(dmin.min().date())
-        if not dates:
-            st.warning("Nenhuma data encontrada nas tabelas; não há nada para processar.")
-            st.stop()
-    
-        data_minima = min(dates)
-        data_maxima = (pd.Timestamp(date.today()) - pd.Timedelta(days=1)).date()
-    
-        data_inicial_usuario = st.date_input(
-            "Escolha a data inicial para o relatório:",
-            value=data_minima,
-            min_value=data_minima,
-            max_value=data_maxima
-        )
-        data_final_usuario = st.date_input(
-            "Escolha a data final para o relatório:",
-            value=data_maxima,
-            min_value=data_minima,
-            max_value=data_maxima
-        )
-    
-        if data_inicial_usuario > data_final_usuario:
-            st.warning("A data inicial não pode ser maior que a data final.")
-            st.stop()
-    
-        start_date = data_inicial_usuario
-        end_date = data_final_usuario
-    
-        def filter_in_range(df):
-            if df is None or df.empty:
-                return pd.DataFrame(columns=["Data","Codigo"])
-            tmp = df.copy()
-            tmp["Data"] = pd.to_datetime(tmp["Data"], errors="coerce").dt.date
-            return tmp[(tmp["Data"] >= start_date) & (tmp["Data"] <= end_date)][["Data","Codigo"]].drop_duplicates()
-    
-        keys_v = filter_in_range(vendas_agg)
-        keys_m = filter_in_range(meio_agg)
-        keys_5 = filter_in_range(venda507_agg)
-    
-        all_keys = pd.concat([keys_v, keys_m, keys_5], ignore_index=True).drop_duplicates().reset_index(drop=True)
-        if all_keys.empty:
-            st.warning("Não há combinações (Data,Codigo) nas tabelas dentro do intervalo definido.")
-            st.stop()
-    
-        def ensure_date_col(df):
-            if "Data" in df.columns:
-                df = df.copy()
-                df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
-            return df
-    
-        vendas_agg = ensure_date_col(vendas_agg)
-        meio_agg = ensure_date_col(meio_agg)
-        venda507_agg = ensure_date_col(venda507_agg)
-        all_keys["Data"] = pd.to_datetime(all_keys["Data"], errors="coerce").dt.date
-    
-        result = all_keys.copy()
-    
-        if not vendas_agg.empty:
-            result = result.merge(vendas_agg, on=["Data","Codigo"], how="left")
-        else:
-            result["Valor_Vendas"] = pd.NA
-            result["Nome"] = ""
-    
-        if not meio_agg.empty:
-            result = result.merge(meio_agg, on=["Data","Codigo"], how="left")
-        else:
-            result["Valor_Meio"] = pd.NA
-    
-        if not venda507_agg.empty:
-            result = result.merge(venda507_agg, on=["Data","Codigo"], how="left")
-        else:
-            result["Valor_507"] = pd.NA
-    
-        for col in ["Valor_Vendas", "Valor_Meio", "Valor_507"]:
-            if col in result.columns:
-                result[col] = pd.to_numeric(result[col], errors="coerce")
-    
-        if "Nome" not in result.columns:
-            result["Nome"] = ""
-    
-        result["Data_str"] = pd.to_datetime(result["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
-    
-        result["Valor (Vendas)"] = result["Valor_Vendas"].apply(lambda x: fmt_brl(x) if pd.notna(x) else "")
-        result["Valor (Meio)"]   = result["Valor_Meio"].apply(lambda x: fmt_brl(x) if pd.notna(x) else "")
-        result["Valor (507)"]    = result["Valor_507"].apply(lambda x: fmt_brl(x) if pd.notna(x) else "")
-    
-        final = result[["Data", "Data_str", "Codigo", "Nome", "Valor (Vendas)", "Valor (Meio)", "Valor (507)"]].copy()
-        final = final.rename(columns={"Data_str":"Data"})
-        final = final.sort_values(["Data", "Codigo"]).reset_index(drop=True)
-    
+        st.subheader("📊 Comparativo de Faturamento")
         st.dataframe(final, use_container_width=True, height=600)
     
     except Exception as e:
-        st.error(f"❌ Erro ao carregar ou comparar dados: {e}")
+        st.error(f"❌ Erro no processamento: {e}")
    
     # =======================================
     # Aba 5 - Auditoria PDV x Faturamento Meio Pagamento (tabela única)

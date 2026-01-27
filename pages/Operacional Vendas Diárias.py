@@ -2110,11 +2110,10 @@ with st.spinner("⏳ Processando..."):
     # =======================================
     # Aba 4 - Integração Everest (independente do upload)
     # =======================================
-    from datetime import date, timedelta
+    from datetime import date
     import streamlit as st
     import pandas as pd
     import unicodedata, re
-    from io import BytesIO
     
     # ---------- Helpers ----------
     def _norm_key(s):
@@ -2127,7 +2126,7 @@ with st.spinner("⏳ Processando..."):
         return s
     
     def make_unique_headers(headers):
-        """Retorna lista de headers garantindo unicidade (adiciona _2, _3 etc. se necessário)."""
+        """Garante que os cabeçalhos sejam únicos, adicionando sufixos se necessário."""
         seen = {}
         out = []
         for h in headers:
@@ -2147,8 +2146,6 @@ with st.spinner("⏳ Processando..."):
             if pd.isna(valor):
                 return float("nan")
             s = str(valor).strip().replace("R$", "").replace("\xa0", "").strip()
-            # detectar formatos BR e EN
-            # se contém '.' e ',' e ',' é último -> formato BR com milhares
             if s.count(",") == 1 and s.count(".") >= 1:
                 s = s.replace(".", "").replace(",", ".")
             else:
@@ -2163,10 +2160,8 @@ with st.spinner("⏳ Processando..."):
                 return ""
             sx = str(x).strip()
             sx = sx.replace("\xa0", "").strip()
-            # se for um float com .0 -> int
             if re.fullmatch(r"\d+(\.0+)?", sx):
                 return str(int(float(sx)))
-            # tentar float -> int
             try:
                 vx = float(sx)
                 if vx.is_integer():
@@ -2195,9 +2190,6 @@ with st.spinner("⏳ Processando..."):
         return ""
     
     def safe_df_from_sheet(vals):
-        """
-        Recebe get_all_values() (lista de listas) e retorna DataFrame com headers únicos.
-        """
         if not vals or len(vals) < 1:
             return pd.DataFrame()
         headers_raw = [h if h is not None else "" for h in vals[0]]
@@ -2206,25 +2198,20 @@ with st.spinner("⏳ Processando..."):
         df = pd.DataFrame(rows, columns=headers)
         return df
     
-    # ---------- Config (mude se necessário) ----------
-    # Nota: removi a constante WORKSHEET_VENDAS fixa conforme pedido; 
-    # mantive os nomes das abas FAT porque você usa a planilha de faturamento por key.
-    FAT_ID = "1tqmql1aL6M6A6yZ1QSOiifDjas5Bs_AziI7IkqwmAOM"  # planilha com Faturamento
-    FAT_SHEET_507 = "Faturamento"                 # aba onde está a 507 venda
-    FAT_SHEET_MEIO = "Faturamento Meio Pagamento" # aba do Faturamento por meio
+    # ---------- Config ----------
+    FAT_ID = "1tqmql1aL6M6A6yZ1QSOiifDjas5Bs_AziI7IkqwmAOM"
+    FAT_SHEET_507 = "Faturamento"
+    FAT_SHEET_MEIO = "Faturamento Meio Pagamento"
     
-    # ---------- Execução ----------
     try:
-        # ----- Ler planilha "Vendas diarias" e tentar detectar a aba das vendas -----
+        # Ler vendas Everest
         vendas = pd.DataFrame(columns=["Data", "Codigo", "Nome", "Valor_Vendas"])
         try:
             planilha = gc.open("Vendas diarias")
-            # se existir uma folha chamada "Everest", usa ela; senão usa a primeira
             sheet_names = [ws.title for ws in planilha.worksheets()]
             if "Everest" in sheet_names:
                 ws_vendas = planilha.worksheet("Everest")
             else:
-                # pega a primeira aba disponível
                 ws_vendas = planilha.worksheets()[0]
             vals = ws_vendas.get_all_values()
             df_vendas_raw = safe_df_from_sheet(vals)
@@ -2233,7 +2220,6 @@ with st.spinner("⏳ Processando..."):
             df_vendas_raw = pd.DataFrame()
     
         if not df_vendas_raw.empty:
-            # detectar colunas por nome (usando versão normalizada) ou posição
             def col_or_idx(df, idx, candidates=None):
                 cols = list(df.columns)
                 cmap = {_norm_key(c): c for c in cols}
@@ -2262,13 +2248,14 @@ with st.spinner("⏳ Processando..."):
         else:
             vendas = pd.DataFrame(columns=["Data", "Codigo", "Nome", "Valor_Vendas"])
     
-        # ----- Ler FAT 507 -----
+        # Abrir planilha FAT
         try:
             fat_sh = gc.open_by_key(FAT_ID)
         except Exception as e:
             st.error(f"Erro ao abrir planilha de Faturamento por key: {e}")
             st.stop()
     
+        # Ler 507
         try:
             ws_507 = fat_sh.worksheet(FAT_SHEET_507)
             vals507 = ws_507.get_all_values()
@@ -2278,15 +2265,6 @@ with st.spinner("⏳ Processando..."):
             df_507_raw = pd.DataFrame()
     
         if not df_507_raw.empty:
-            # Pressupõe A=Data (idx0), B=Codigo (1), D=Valor(3) como fallback
-            # tentar detectar por nomes também
-            def detect_cols_507(df):
-                date_c = None; code_c = None; val_c = None
-                date_c = col_or_idx_local(df, 0, ["Data", "data"])
-                code_c = col_or_idx_local(df, 1, ["Código", "Codigo", "codigo"])
-                val_c = col_or_idx_local(df, 3, ["Valor", "Valor Total", "Valor (R$)", "Valor_507"])
-                return date_c, code_c, val_c
-    
             def col_or_idx_local(df, idx, candidates=None):
                 cols = list(df.columns)
                 cmap = {_norm_key(c): c for c in cols}
@@ -2309,13 +2287,13 @@ with st.spinner("⏳ Processando..."):
         else:
             df_507_proc = pd.DataFrame(columns=["Data", "Codigo", "Valor_507"])
     
-        # ----- Ler FAT MEIO -----
+        # Ler Meio Pagamento (tratar se aba não existir)
         try:
             ws_meio = fat_sh.worksheet(FAT_SHEET_MEIO)
             vals_meio = ws_meio.get_all_values()
             df_meio_raw = safe_df_from_sheet(vals_meio)
         except Exception as e:
-            st.warning(f"Não foi possível abrir aba Faturamento Meio Pagamento: {e}")
+            st.warning(f"Aba '{FAT_SHEET_MEIO}' não encontrada ou erro ao abrir: {e}")
             df_meio_raw = pd.DataFrame()
     
         if not df_meio_raw.empty:
@@ -2341,8 +2319,7 @@ with st.spinner("⏳ Processando..."):
         else:
             df_meio_proc = pd.DataFrame(columns=["Data", "Codigo", "Valor_Meio"])
     
-        # ---------- Agregar por (Data, Codigo) ----------
-        # Somar valores por dia+codigo; pegar primeiro nome disponível nas vendas
+        # Agregar por (Data, Codigo)
         vendas_agg = pd.DataFrame(columns=["Data","Codigo","Nome","Valor_Vendas"])
         if not vendas.empty:
             tmp = vendas.dropna(subset=["Codigo"]) if "Codigo" in vendas.columns else vendas
@@ -2359,7 +2336,7 @@ with st.spinner("⏳ Processando..."):
             tmp = df_507_proc.dropna(subset=["Codigo"]) if "Codigo" in df_507_proc.columns else df_507_proc
             venda507_agg = (tmp.groupby(["Data","Codigo"], as_index=False).agg({"Valor_507":"sum"}))
     
-        # ---------- Determinar data inicial e gerar intervalo até ontem (com input do usuário) ----------
+        # Determinar datas mín e máx para input do usuário
         dates = []
         for df in (vendas_agg, meio_agg, venda507_agg):
             if (df is not None) and (not df.empty):
@@ -2373,24 +2350,26 @@ with st.spinner("⏳ Processando..."):
         data_minima = min(dates)
         data_maxima = (pd.Timestamp(date.today()) - pd.Timedelta(days=1)).date()
     
-        st.write(f"Data mínima disponível nos dados: {data_minima.strftime('%d/%m/%Y')}")
-        st.write(f"Data máxima permitida (ontem): {data_maxima.strftime('%d/%m/%Y')}")
-    
         data_inicial_usuario = st.date_input(
             "Escolha a data inicial para o relatório:",
             value=data_minima,
             min_value=data_minima,
             max_value=data_maxima
         )
+        data_final_usuario = st.date_input(
+            "Escolha a data final para o relatório:",
+            value=data_maxima,
+            min_value=data_minima,
+            max_value=data_maxima
+        )
     
-        if data_inicial_usuario > data_maxima:
-            st.warning("A data inicial não pode ser posterior a ontem.")
+        if data_inicial_usuario > data_final_usuario:
+            st.warning("A data inicial não pode ser maior que a data final.")
             st.stop()
     
         start_date = data_inicial_usuario
-        end_date = data_maxima
+        end_date = data_final_usuario
     
-        # ---------- Construir conjunto de chaves (Data,Codigo) existentes dentro do intervalo ----------
         def filter_in_range(df):
             if df is None or df.empty:
                 return pd.DataFrame(columns=["Data","Codigo"])
@@ -2407,8 +2386,6 @@ with st.spinner("⏳ Processando..."):
             st.warning("Não há combinações (Data,Codigo) nas tabelas dentro do intervalo definido.")
             st.stop()
     
-        # ---------- Montar tabela final juntando os agregados ----------
-        # garantir que 'Data' seja col única e dtype date
         def ensure_date_col(df):
             if "Data" in df.columns:
                 df = df.copy()
@@ -2422,26 +2399,22 @@ with st.spinner("⏳ Processando..."):
     
         result = all_keys.copy()
     
-        # juntar vendas (nome e valor)
         if not vendas_agg.empty:
             result = result.merge(vendas_agg, on=["Data","Codigo"], how="left")
         else:
             result["Valor_Vendas"] = pd.NA
             result["Nome"] = ""
     
-        # juntar meio
         if not meio_agg.empty:
             result = result.merge(meio_agg, on=["Data","Codigo"], how="left")
         else:
             result["Valor_Meio"] = pd.NA
     
-        # juntar 507
         if not venda507_agg.empty:
             result = result.merge(venda507_agg, on=["Data","Codigo"], how="left")
         else:
             result["Valor_507"] = pd.NA
     
-        # garantir tipos (numéricos) e não sobrescrever valores reais com zeros
         for col in ["Valor_Vendas", "Valor_Meio", "Valor_507"]:
             if col in result.columns:
                 result[col] = pd.to_numeric(result[col], errors="coerce")
@@ -2449,26 +2422,20 @@ with st.spinner("⏳ Processando..."):
         if "Nome" not in result.columns:
             result["Nome"] = ""
     
-        # formatar Data string dd/mm/aaaa para exibição
         result["Data_str"] = pd.to_datetime(result["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
     
-        # formatar valores somente quando existem (senão deixar vazio)
         result["Valor (Vendas)"] = result["Valor_Vendas"].apply(lambda x: fmt_brl(x) if pd.notna(x) else "")
         result["Valor (Meio)"]   = result["Valor_Meio"].apply(lambda x: fmt_brl(x) if pd.notna(x) else "")
         result["Valor (507)"]    = result["Valor_507"].apply(lambda x: fmt_brl(x) if pd.notna(x) else "")
     
-        # preparar colunas finais
         final = result[["Data", "Data_str", "Codigo", "Nome", "Valor (Vendas)", "Valor (Meio)", "Valor (507)"]].copy()
         final = final.rename(columns={"Data_str":"Data"})
         final = final.sort_values(["Data", "Codigo"]).reset_index(drop=True)
     
-        # mostrar no Streamlit
         st.dataframe(final, use_container_width=True, height=600)
     
     except Exception as e:
         st.error(f"❌ Erro ao carregar ou comparar dados: {e}")
-
-
 
    
     # =======================================

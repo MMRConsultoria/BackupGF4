@@ -2103,10 +2103,7 @@ with st.spinner("⏳ Processando..."):
 
         
     # =======================================
-    # Aba 4 - Auditoria Everest
-    # =======================================
-    
-    # app_streamlit_3fontes_secrets.py
+    # app_streamlit_3fontes_auto.py
     import json
     import re
     import unicodedata
@@ -2142,8 +2139,7 @@ with st.spinner("⏳ Processando..."):
     COL_VALOR_MEIO = "Coluna J"
     SHORT_MEIO = "Meio"
     
-    # Service account stored in Streamlit secrets under key GOOGLE_SERVICE_ACCOUNT (JSON string)
-    SECRETS_KEY = "GOOGLE_SERVICE_ACCOUNT"
+    SECRETS_KEY = "GOOGLE_SERVICE_ACCOUNT"  # chave em st.secrets contendo JSON string
     
     st.set_page_config(page_title="Comparar 507 / Faturamento / Meio", layout="wide")
     st.title("Comparação: 507 / Faturamento (Vendas Dárias) / Meio Pagamento")
@@ -2198,12 +2194,11 @@ with st.spinner("⏳ Processando..."):
         return None
     
     def find_column_by_candidates(df, candidates, fallback_idx=None):
-        """Procura coluna por candidatos (nomes normalizados) ou por referência 'Coluna X'.
-           Se candidates[0] for 'Coluna A' ele tentará índice 0 primeiro."""
+        """Procura coluna por candidatos (nomes normalizados) ou por referência 'Coluna X'."""
         if df is None or df.empty:
             return None
         cols = list(df.columns)
-        # if first candidate looks like coluna ref, try index
+        # if candidate is coluna ref try index first
         for cand in candidates:
             idx = col_letter_to_index(cand)
             if idx is not None and 0 <= idx < len(cols):
@@ -2215,7 +2210,7 @@ with st.spinner("⏳ Processando..."):
                 return cmap[k]
         if fallback_idx is not None and 0 <= fallback_idx < len(cols):
             return cols[fallback_idx]
-        # fallback: detect most numeric-like column
+        # fallback
         return detect_most_numeric_column(df)
     
     def detect_most_numeric_column(df):
@@ -2267,13 +2262,11 @@ with st.spinner("⏳ Processando..."):
             return "R$ 0,00"
     
     def parse_date_cell(v):
-        # attempts to parse excel serials or common strings
         if pd.isna(v) or str(v).strip() == "":
             return pd.NaT
         try:
             f = float(v)
             if f > 31:
-                # Excel serial heuristic
                 try:
                     return (datetime(1899,12,30) + pd.Timedelta(days=int(f))).date()
                 except:
@@ -2315,7 +2308,6 @@ with st.spinner("⏳ Processando..."):
     # ---------------- Read + normalize function ----------------
     def read_and_normalize(gc, ssid, aba, col_data_ref, col_codigo_ref, col_valor_ref, sample_n=None):
         sh = gc.open_by_key(ssid)
-        # try exact worksheet name, otherwise try case-insensitive match
         try:
             ws = sh.worksheet(aba)
         except Exception:
@@ -2355,125 +2347,158 @@ with st.spinner("⏳ Processando..."):
     # ---------------- UI / run flow ----------------
     preview_mode = st.sidebar.selectbox("Modo", ["Prévia (100 linhas por fonte)", "Completo (tudo)"])
     sample_n = 100 if preview_mode.startswith("Prévia") else None
-    
     st.sidebar.markdown("Autenticação: via st.secrets['GOOGLE_SERVICE_ACCOUNT']")
-    if st.sidebar.button("Executar comparação"):
-        run = True
-    else:
-        run = False
     
-    if run:
-        # authenticate
-        try:
-            gc = gspread_auth_from_secrets()
-        except Exception as e:
-            st.error(f"Erro na autenticação Google (st.secrets): {e}")
-            st.stop()
+    # session state flag - registro se usuário já interagiu com os date_inputs
+    if "dates_selected" not in st.session_state:
+        st.session_state["dates_selected"] = False
     
-        # read 3 fontes
+    # callback que marca que datas foram escolhidas
+    def mark_dates_selected():
+        st.session_state["dates_selected"] = True
+    
+    # Authenticate once (we need to know available dates to populate pickers)
+    try:
+        gc = gspread_auth_from_secrets()
+    except Exception as e:
+        st.error(f"Erro na autenticação Google (st.secrets): {e}")
+        st.stop()
+    
+    # read data (we need to read to know available date range)
+    try:
+        df_fat_ext_all = read_and_normalize(gc, ID_FAT_EXT, ABA_FAT_EXT, COL_DATA_FAT_EXT, COL_CODIGO_FAT_EXT, COL_VALOR_FAT_EXT, sample_n=None)
+    except Exception as e:
+        st.warning(f"Erro lendo Vendas Dárias (Fat Sistema Externo): {e}")
+        df_fat_ext_all = pd.DataFrame(columns=["Data","Codigo","Nome","Valor"])
+    
+    try:
+        df_507_all = read_and_normalize(gc, ID_507, ABA_507, COL_DATA_507, COL_CODIGO_507, COL_VALOR_507, sample_n=None)
+    except Exception as e:
+        st.warning(f"Erro lendo 507 venda: {e}")
+        df_507_all = pd.DataFrame(columns=["Data","Codigo","Nome","Valor"])
+    
+    try:
+        df_meio_all = read_and_normalize(gc, ID_MEIO, ABA_MEIO, COL_DATA_MEIO, COL_CODIGO_MEIO, COL_VALOR_MEIO, sample_n=None)
+    except Exception as e:
+        st.warning(f"Erro lendo Faturamento Meio Pagamento: {e}")
+        df_meio_all = pd.DataFrame(columns=["Data","Codigo","Nome","Valor"])
+    
+    # union keys to detect global date range
+    keys_all = pd.concat([
+        df_507_all[["Data","Codigo"]],
+        df_fat_ext_all[["Data","Codigo"]],
+        df_meio_all[["Data","Codigo"]]
+    ]).drop_duplicates().reset_index(drop=True)
+    
+    all_dates = pd.to_datetime(keys_all["Data"], errors="coerce").dropna().dt.date
+    
+    if all_dates.empty:
+        st.info("Nenhuma data válida encontrada nas fontes.")
+        st.stop()
+    
+    data_min = all_dates.min()
+    data_max = (date.today() - timedelta(days=1))
+    
+    # Date pickers with callback; default values set but we only PROCESS after user changes them
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("Data Inicial:", value=data_min, min_value=data_min, max_value=data_max, key="start_date", on_change=mark_dates_selected)
+    with col2:
+        end_date = st.date_input("Data Final:", value=data_max, min_value=data_min, max_value=data_max, key="end_date", on_change=mark_dates_selected)
+    
+    # If user hasn't interacted with date inputs yet, show blank / instruction
+    if not st.session_state["dates_selected"]:
+        st.info("Selecione o intervalo de datas (Data Inicial e Data Final) para visualizar o comparativo. A tabela será atualizada automaticamente ao alterar as datas.")
+        st.stop()
+    
+    # After user interacted with date inputs -> perform processing using the selected dates
+    # Optionally, use sample mode (preview) to limit read size for speed
+    sample_n = 100 if preview_mode.startswith("Prévia") else None
+    
+    # If preview mode, reload only head(sample_n) to speed up; otherwise use full data already read
+    if sample_n:
         try:
             df_fat_ext = read_and_normalize(gc, ID_FAT_EXT, ABA_FAT_EXT, COL_DATA_FAT_EXT, COL_CODIGO_FAT_EXT, COL_VALOR_FAT_EXT, sample_n=sample_n)
-        except Exception as e:
-            st.warning(f"Erro lendo Vendas Dárias (Fat Sistema Externo): {e}")
-            df_fat_ext = pd.DataFrame(columns=["Data","Codigo","Nome","Valor"])
-    
+        except:
+            df_fat_ext = df_fat_ext_all.head(sample_n) if not df_fat_ext_all.empty else pd.DataFrame(columns=["Data","Codigo","Nome","Valor"])
         try:
             df_507 = read_and_normalize(gc, ID_507, ABA_507, COL_DATA_507, COL_CODIGO_507, COL_VALOR_507, sample_n=sample_n)
-        except Exception as e:
-            st.warning(f"Erro lendo 507 venda: {e}")
-            df_507 = pd.DataFrame(columns=["Data","Codigo","Nome","Valor"])
-    
+        except:
+            df_507 = df_507_all.head(sample_n) if not df_507_all.empty else pd.DataFrame(columns=["Data","Codigo","Nome","Valor"])
         try:
             df_meio = read_and_normalize(gc, ID_MEIO, ABA_MEIO, COL_DATA_MEIO, COL_CODIGO_MEIO, COL_VALOR_MEIO, sample_n=sample_n)
-        except Exception as e:
-            st.warning(f"Erro lendo Faturamento Meio Pagamento: {e}")
-            df_meio = pd.DataFrame(columns=["Data","Codigo","Nome","Valor"])
-    
-        st.write("Exemplo - 507 (primeiras linhas):")
-        st.dataframe(df_507.head(10))
-        st.write("Exemplo - Vendas Dárias (primeiras linhas):")
-        st.dataframe(df_fat_ext.head(10))
-        st.write("Exemplo - Meio (primeiras linhas):")
-        st.dataframe(df_meio.head(10))
-    
-        # aggregate
-        agg_507 = df_507.groupby(["Data","Codigo"], as_index=False).agg({"Valor":"sum","Nome":"first"}).rename(columns={"Valor":"Valor_507","Nome":"Nome_507"})
-        agg_fat = df_fat_ext.groupby(["Data","Codigo"], as_index=False).agg({"Valor":"sum","Nome":"first"}).rename(columns={"Valor":"Valor_Faturamento","Nome":"Nome_Faturamento"})
-        agg_meio = df_meio.groupby(["Data","Codigo"], as_index=False).agg({"Valor":"sum","Nome":"first"}).rename(columns={"Valor":"Valor_Meio","Nome":"Nome_Meio"})
-    
-        # union of keys
-        keys = pd.concat([agg_507[["Data","Codigo"]], agg_fat[["Data","Codigo"]], agg_meio[["Data","Codigo"]]]).drop_duplicates().reset_index(drop=True)
-    
-        # date range picker
-        all_dates = pd.to_datetime(keys["Data"], errors="coerce").dropna().dt.date
-        if all_dates.empty:
-            st.error("Nenhuma data válida encontrada nas fontes.")
-            st.stop()
-        data_min = all_dates.min()
-        data_max = (date.today() - timedelta(days=1))
-        c1, c2 = st.columns(2)
-        with c1:
-            start_date = st.date_input("Data Inicial:", value=data_min, min_value=data_min, max_value=data_max)
-        with c2:
-            end_date = st.date_input("Data Final:", value=data_max, min_value=data_min, max_value=data_max)
-    
-        mask = (keys["Data"] >= pd.to_datetime(start_date).date()) & (keys["Data"] <= pd.to_datetime(end_date).date())
-        keys = keys.loc[mask].reset_index(drop=True)
-    
-        # safe merge
-        res = keys.merge(agg_507, on=["Data","Codigo"], how="left")
-        res = res.merge(agg_fat, on=["Data","Codigo"], how="left")
-        res = res.merge(agg_meio, on=["Data","Codigo"], how="left")
-    
-        # fill nulls
-        res["Valor_507"] = pd.to_numeric(res["Valor_507"].fillna(0.0), errors="coerce").fillna(0.0)
-        res["Valor_Faturamento"] = pd.to_numeric(res["Valor_Faturamento"].fillna(0.0), errors="coerce").fillna(0.0)
-        res["Valor_Meio"] = pd.to_numeric(res["Valor_Meio"].fillna(0.0), errors="coerce").fillna(0.0)
-    
-        # coalesce name: prefer 507, then Faturamento, then Meio
-        def coalesce_nome(row):
-            for c in ("Nome_507","Nome_Faturamento","Nome_Meio"):
-                v = row.get(c)
-                if pd.notna(v) and str(v).strip() != "":
-                    return v
-            return "Não Identificado"
-        res["Nome Fantasia"] = res.apply(coalesce_nome, axis=1)
-    
-        # diffs
-        res["Diff_507_Faturamento"] = (res["Valor_507"] - res["Valor_Faturamento"]).round(2)
-        res["Diff_507_Meio"] = (res["Valor_507"] - res["Valor_Meio"]).round(2)
-    
-        # display formatting
-        disp = res.copy()
-        disp["Data"] = pd.to_datetime(disp["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
-        disp["Valor (507)"] = disp["Valor_507"].apply(fmt_brl)
-        disp["Valor (Faturamento)"] = disp["Valor_Faturamento"].apply(fmt_brl)
-        disp["Valor (Meio)"] = disp["Valor_Meio"].apply(fmt_brl)
-        disp["Diferença (507 - Faturamento)"] = disp["Diff_507_Faturamento"].apply(fmt_brl)
-        disp["Diferença (507 - Meio)"] = disp["Diff_507_Meio"].apply(fmt_brl)
-    
-        # sort by date and numeric-like codigo
-        def try_numeric_sort_key(s):
-            try:
-                return int(s)
-            except:
-                try:
-                    return float(s)
-                except:
-                    return str(s)
-        disp["__cod_key"] = disp["Codigo"].apply(try_numeric_sort_key)
-        disp = disp.sort_values(["Data","__cod_key"], ascending=[True,True]).drop(columns="__cod_key").reset_index(drop=True)
-    
-        final = disp[["Data","Codigo","Nome Fantasia","Valor (507)","Valor (Faturamento)","Valor (Meio)","Diferença (507 - Faturamento)","Diferença (507 - Meio)"]].copy()
-    
-        st.subheader("📊 Comparativo (507 vs Faturamento vs Meio)")
-        st.dataframe(final, use_container_width=True, height=700)
-    
-        st.markdown("### Dados numéricos (para conferência)")
-        st.dataframe(res[["Data","Codigo","Nome Fantasia","Valor_507","Valor_Faturamento","Valor_Meio","Diff_507_Faturamento","Diff_507_Meio"]].head(200))
-    
+        except:
+            df_meio = df_meio_all.head(sample_n) if not df_meio_all.empty else pd.DataFrame(columns=["Data","Codigo","Nome","Valor"])
     else:
-        st.write("Clique em 'Executar comparação' na barra lateral para iniciar.")
+        df_fat_ext = df_fat_ext_all
+        df_507 = df_507_all
+        df_meio = df_meio_all
+    
+    # Filter keys (Data + Codigo) within selected interval
+    keys = pd.concat([df_507[["Data","Codigo"]], df_fat_ext[["Data","Codigo"]], df_meio[["Data","Codigo"]]]).drop_duplicates().reset_index(drop=True)
+    mask = (keys["Data"] >= pd.to_datetime(st.session_state["start_date"]).date()) & (keys["Data"] <= pd.to_datetime(st.session_state["end_date"]).date())
+    keys = keys.loc[mask].reset_index(drop=True)
+    
+    if keys.empty:
+        st.info("Nenhum dado disponível para o intervalo selecionado.")
+        st.stop()
+    
+    # Aggregate by day + code
+    agg_507 = df_507.groupby(["Data","Codigo"], as_index=False).agg({"Valor":"sum","Nome":"first"}).rename(columns={"Valor":"Valor_507","Nome":"Nome_507"})
+    agg_fat = df_fat_ext.groupby(["Data","Codigo"], as_index=False).agg({"Valor":"sum","Nome":"first"}).rename(columns={"Valor":"Valor_Faturamento","Nome":"Nome_Faturamento"})
+    agg_meio = df_meio.groupby(["Data","Codigo"], as_index=False).agg({"Valor":"sum","Nome":"first"}).rename(columns={"Valor":"Valor_Meio","Nome":"Nome_Meio"})
+    
+    # Merge safely
+    res = keys.merge(agg_507, on=["Data","Codigo"], how="left")
+    res = res.merge(agg_fat, on=["Data","Codigo"], how="left")
+    res = res.merge(agg_meio, on=["Data","Codigo"], how="left")
+    
+    # fill nulls and coerce numeric
+    res["Valor_507"] = pd.to_numeric(res["Valor_507"].fillna(0.0), errors="coerce").fillna(0.0)
+    res["Valor_Faturamento"] = pd.to_numeric(res["Valor_Faturamento"].fillna(0.0), errors="coerce").fillna(0.0)
+    res["Valor_Meio"] = pd.to_numeric(res["Valor_Meio"].fillna(0.0), errors="coerce").fillna(0.0)
+    
+    # Nome Fantasia final: prefer 507, then Faturamento, then Meio
+    def coalesce_nome(row):
+        for c in ("Nome_507","Nome_Faturamento","Nome_Meio"):
+            v = row.get(c)
+            if pd.notna(v) and str(v).strip() != "":
+                return v
+        return "Não Identificado"
+    res["Nome Fantasia"] = res.apply(coalesce_nome, axis=1)
+    
+    # differences
+    res["Diff_507_Faturamento"] = (res["Valor_507"] - res["Valor_Faturamento"]).round(2)
+    res["Diff_507_Meio"] = (res["Valor_507"] - res["Valor_Meio"]).round(2)
+    
+    # display formatting
+    disp = res.copy()
+    disp["Data"] = pd.to_datetime(disp["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
+    disp["Valor (507)"] = disp["Valor_507"].apply(fmt_brl)
+    disp["Valor (Faturamento)"] = disp["Valor_Faturamento"].apply(fmt_brl)
+    disp["Valor (Meio)"] = disp["Valor_Meio"].apply(fmt_brl)
+    disp["Diferença (507 - Faturamento)"] = disp["Diff_507_Faturamento"].apply(fmt_brl)
+    disp["Diferença (507 - Meio)"] = disp["Diff_507_Meio"].apply(fmt_brl)
+    
+    # sort by date and numeric-like codigo
+    def try_numeric_sort_key(s):
+        try:
+            return int(s)
+        except:
+            try:
+                return float(s)
+            except:
+                return str(s)
+    disp["__cod_key"] = disp["Codigo"].apply(try_numeric_sort_key)
+    disp = disp.sort_values(["Data","__cod_key"], ascending=[True,True]).drop(columns="__cod_key").reset_index(drop=True)
+    
+    final = disp[["Data","Codigo","Nome Fantasia","Valor (507)","Valor (Faturamento)","Valor (Meio)","Diferença (507 - Faturamento)","Diferença (507 - Meio)"]].copy()
+    
+    st.subheader("📊 Comparativo (507 vs Faturamento vs Meio)")
+    st.dataframe(final, use_container_width=True, height=700)
+    
+    st.markdown("### Dados numéricos (para conferência)")
+    st.dataframe(res[["Data","Codigo","Nome Fantasia","Valor_507","Valor_Faturamento","Valor_Meio","Diff_507_Faturamento","Diff_507_Meio"]].head(200))
    
     # =======================================
     # Aba 5 - Auditoria PDV x Faturamento Meio Pagamento (tabela única)

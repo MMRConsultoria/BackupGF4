@@ -2107,15 +2107,11 @@ with st.spinner("⏳ Processando..."):
     
     # =======================================
     # =======================================
-    # =======================================
-    # Aba 4 - Integração Everest (independente do upload)
-    # =======================================
     from datetime import date
     import streamlit as st
     import pandas as pd
     import unicodedata, re
     
-    # ---------- Helpers ----------
     def _norm_key(s):
         if not isinstance(s, str):
             return ""
@@ -2126,7 +2122,6 @@ with st.spinner("⏳ Processando..."):
         return s
     
     def make_unique_headers(headers):
-        """Garante que os cabeçalhos sejam únicos, adicionando sufixos se necessário."""
         seen = {}
         out = []
         for h in headers:
@@ -2140,6 +2135,16 @@ with st.spinner("⏳ Processando..."):
             else:
                 out.append(f"{h0}_{cnt}")
         return out
+    
+    def safe_df_from_sheet(vals):
+        if not vals or len(vals) < 1:
+            return pd.DataFrame()
+        headers_raw = [h if h is not None else "" for h in vals[0]]
+        headers = make_unique_headers([h.strip() for h in headers_raw])
+        st.write("Colunas lidas:", headers)  # Debug para ver os nomes das colunas
+        rows = vals[1:] if len(vals) > 1 else []
+        df = pd.DataFrame(rows, columns=headers)
+        return df
     
     def tratar_valor(valor):
         try:
@@ -2189,22 +2194,12 @@ with st.spinner("⏳ Processando..."):
                 return s
         return ""
     
-    def safe_df_from_sheet(vals):
-        if not vals or len(vals) < 1:
-            return pd.DataFrame()
-        headers_raw = [h if h is not None else "" for h in vals[0]]
-        headers = make_unique_headers([h.strip() for h in headers_raw])
-        rows = vals[1:] if len(vals) > 1 else []
-        df = pd.DataFrame(rows, columns=headers)
-        return df
-    
-    # ---------- Config ----------
     FAT_ID = "1tqmql1aL6M6A6yZ1QSOiifDjas5Bs_AziI7IkqwmAOM"
     FAT_SHEET_507 = "Faturamento"
     FAT_SHEET_MEIO = "Faturamento Meio Pagamento"
     
     try:
-        # Ler vendas Everest
+        # Vendas Everest
         vendas = pd.DataFrame(columns=["Data", "Codigo", "Nome", "Valor_Vendas"])
         try:
             planilha = gc.open("Vendas diarias")
@@ -2248,14 +2243,13 @@ with st.spinner("⏳ Processando..."):
         else:
             vendas = pd.DataFrame(columns=["Data", "Codigo", "Nome", "Valor_Vendas"])
     
-        # Abrir planilha FAT
+        # Faturamento 507
         try:
             fat_sh = gc.open_by_key(FAT_ID)
         except Exception as e:
             st.error(f"Erro ao abrir planilha de Faturamento por key: {e}")
             st.stop()
     
-        # Ler 507
         try:
             ws_507 = fat_sh.worksheet(FAT_SHEET_507)
             vals507 = ws_507.get_all_values()
@@ -2287,7 +2281,7 @@ with st.spinner("⏳ Processando..."):
         else:
             df_507_proc = pd.DataFrame(columns=["Data", "Codigo", "Valor_507"])
     
-        # Ler Meio Pagamento (tratar se aba não existir)
+        # Faturamento Meio Pagamento
         try:
             ws_meio = fat_sh.worksheet(FAT_SHEET_MEIO)
             vals_meio = ws_meio.get_all_values()
@@ -2336,7 +2330,7 @@ with st.spinner("⏳ Processando..."):
             tmp = df_507_proc.dropna(subset=["Codigo"]) if "Codigo" in df_507_proc.columns else df_507_proc
             venda507_agg = (tmp.groupby(["Data","Codigo"], as_index=False).agg({"Valor_507":"sum"}))
     
-        # Determinar datas mín e máx para input do usuário
+        # Datas para input usuário
         dates = []
         for df in (vendas_agg, meio_agg, venda507_agg):
             if (df is not None) and (not df.empty):
@@ -2436,7 +2430,6 @@ with st.spinner("⏳ Processando..."):
     
     except Exception as e:
         st.error(f"❌ Erro ao carregar ou comparar dados: {e}")
-
    
     # =======================================
     # Aba 5 - Auditoria PDV x Faturamento Meio Pagamento (tabela única)

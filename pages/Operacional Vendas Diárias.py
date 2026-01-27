@@ -2106,45 +2106,25 @@ with st.spinner("⏳ Processando..."):
     # Aba 4 - Auditoria Everest
     # =======================================
     
-    # app_streamlit_3fontes.py
+    # app_streamlit_3fontes_secrets.py
+    import json
+    import re
+    import unicodedata
     from datetime import date, timedelta, datetime
     import streamlit as st
     import pandas as pd
-    import unicodedata, re
+    import numpy as np
     import gspread
-    from google.oauth2.service_account import Credentials
-    # ================================
-    # 1. Conexão com Google Sheets - OTIMIZADO
-    # ================================
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
-    credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
-    gc = gspread.authorize(credentials)
-    planilha_empresa = gc.open("Vendas diarias")
+    from oauth2client.service_account import ServiceAccountCredentials
     
-    # ✅ OTIMIZAÇÃO: Carrega valores brutos e normaliza ANTES de criar DataFrame
-    aba_empresa = planilha_empresa.worksheet("Tabela Empresa")
-    valores_empresa = aba_empresa.get_all_values()
-    
-    if len(valores_empresa) > 1:
-        # Cria DataFrame com cabeçalho
-        df_empresa = pd.DataFrame(valores_empresa[1:], columns=valores_empresa[0])
-        df_empresa.columns = df_empresa.columns.str.strip()
-        
-        # ✅ Força Loja em minúsculo IMEDIATAMENTE após carregar
-        if "Loja" in df_empresa.columns:
-            df_empresa["Loja"] = df_empresa["Loja"].astype(str).str.lower().str.strip()
-    else:
-        df_empresa = pd.DataFrame()
-    
-    # ---------------- Config ----------------
-   
+    # ---------------- Config (IDs / Abas / Colunas) ----------------
     # Fonte 1: Vendas Dárias (Fat Sistema Externo)
     ID_FAT_EXT = "1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU"
     ABA_FAT_EXT = "Fat Sistema Externo"
     COL_DATA_FAT_EXT = "Coluna A"
     COL_CODIGO_FAT_EXT = "Coluna D"
     COL_VALOR_FAT_EXT = "Coluna G"
+    SHORT_FAT_EXT = "FatExt"
     
     # Fonte 2: 507 venda
     ID_507 = "1tqmql1aL6M6A6yZ1QSOiifDjas5Bs_AziI7IkqwmAOM"
@@ -2152,6 +2132,7 @@ with st.spinner("⏳ Processando..."):
     COL_DATA_507 = "Coluna A"
     COL_CODIGO_507 = "Coluna B"
     COL_VALOR_507 = "Coluna D"
+    SHORT_507 = "507"
     
     # Fonte 3: Faturamento Meio Pagamento
     ID_MEIO = "1GSI291SEeeU9MtOWkGwsKGCGMi_xXMSiQnL_9GhXxfU"
@@ -2159,12 +2140,15 @@ with st.spinner("⏳ Processando..."):
     COL_DATA_MEIO = "Coluna A"
     COL_CODIGO_MEIO = "Coluna G"
     COL_VALOR_MEIO = "Coluna J"
-    # ----------------------------------------
+    SHORT_MEIO = "Meio"
+    
+    # Service account stored in Streamlit secrets under key GOOGLE_SERVICE_ACCOUNT (JSON string)
+    SECRETS_KEY = "GOOGLE_SERVICE_ACCOUNT"
     
     st.set_page_config(page_title="Comparar 507 / Faturamento / Meio", layout="wide")
     st.title("Comparação: 507 / Faturamento (Vendas Dárias) / Meio Pagamento")
     
-    # ---------- Helpers ----------
+    # ---------------- Helpers ----------------
     def _norm_key(s):
         if not isinstance(s, str):
             return ""
@@ -2179,7 +2163,8 @@ with st.spinner("⏳ Processando..."):
         out = []
         for h in headers:
             h0 = (h or "").strip()
-            if h0 == "": h0 = "col"
+            if h0 == "":
+                h0 = "col"
             cnt = seen.get(h0, 0) + 1
             seen[h0] = cnt
             out.append(h0 if cnt == 1 else f"{h0}_{cnt}")
@@ -2194,6 +2179,60 @@ with st.spinner("⏳ Processando..."):
         headers = make_unique_headers([h.strip() for h in headers_raw])
         rows = [ [(r[i] if i < len(r) else "") for i in range(ncols)] for r in vals[1:] ]
         return pd.DataFrame(rows, columns=headers)
+    
+    def col_letter_to_index(colref):
+        """Ex.: 'Coluna A' or 'A' -> 0; 'Coluna 10' -> 9; '1' -> index 0"""
+        if not colref:
+            return None
+        s = str(colref).strip()
+        m = re.match(r'(?i)\s*coluna\s*([A-Za-z0-9]+)\s*$', s)
+        if m:
+            token = m.group(1)
+        else:
+            token = s
+        # single letter
+        if re.fullmatch(r'[A-Za-z]', token):
+            return ord(token.upper()) - ord('A')
+        if token.isdigit():
+            return int(token) - 1
+        return None
+    
+    def find_column_by_candidates(df, candidates, fallback_idx=None):
+        """Procura coluna por candidatos (nomes normalizados) ou por referência 'Coluna X'.
+           Se candidates[0] for 'Coluna A' ele tentará índice 0 primeiro."""
+        if df is None or df.empty:
+            return None
+        cols = list(df.columns)
+        # if first candidate looks like coluna ref, try index
+        for cand in candidates:
+            idx = col_letter_to_index(cand)
+            if idx is not None and 0 <= idx < len(cols):
+                return cols[idx]
+        cmap = { _norm_key(c): c for c in cols }
+        for cand in candidates:
+            k = _norm_key(cand)
+            if k in cmap:
+                return cmap[k]
+        if fallback_idx is not None and 0 <= fallback_idx < len(cols):
+            return cols[fallback_idx]
+        # fallback: detect most numeric-like column
+        return detect_most_numeric_column(df)
+    
+    def detect_most_numeric_column(df):
+        best = None
+        best_count = -1
+        for col in df.columns:
+            sample = df[col].dropna().astype(str)
+            if sample.empty:
+                continue
+            count = 0
+            for v in sample.head(200):
+                if tratar_valor(v) is not None:
+                    count += 1
+            if count > best_count:
+                best_count = count
+                best = col
+        return best
     
     def tratar_valor(valor):
         try:
@@ -2227,59 +2266,29 @@ with st.spinner("⏳ Processando..."):
         except:
             return "R$ 0,00"
     
-    def find_column_by_candidates(df, candidates, fallback_idx=None):
-        if df is None or df.empty:
-            return None
-        cmap = {_norm_key(c): c for c in df.columns}
-        for cand in candidates:
-            k = _norm_key(cand)
-            if k in cmap:
-                return cmap[k]
-        if fallback_idx is not None and 0 <= fallback_idx < len(df.columns):
-            return df.columns[fallback_idx]
-        return None
-    
-    def detect_most_numeric_column(df):
-        best = None
-        best_count = -1
-        for col in df.columns:
-            sample = df[col].dropna().astype(str)
-            if sample.empty:
-                continue
-            count = 0
-            for v in sample.head(200):
-                if tratar_valor(v) is not None:
-                    count += 1
-            if count > best_count:
-                best_count = count
-                best = col
-        return best
-    
-    def parse_date_col(series):
-        # tenta interpretar data/serial
-        def _parse(v):
-            if pd.isna(v) or str(v).strip() == "":
+    def parse_date_cell(v):
+        # attempts to parse excel serials or common strings
+        if pd.isna(v) or str(v).strip() == "":
+            return pd.NaT
+        try:
+            f = float(v)
+            if f > 31:
+                # Excel serial heuristic
+                try:
+                    return (datetime(1899,12,30) + pd.Timedelta(days=int(f))).date()
+                except:
+                    pass
+        except:
+            pass
+        try:
+            dt = pd.to_datetime(v, dayfirst=True, errors="coerce")
+            if pd.isna(dt):
+                dt = pd.to_datetime(v, errors="coerce")
+            if pd.isna(dt):
                 return pd.NaT
-            # tenta float (excel serial)
-            try:
-                f = float(v)
-                if f > 31:
-                    try:
-                        return (datetime(1899,12,30) + pd.Timedelta(days=int(f))).date()
-                    except:
-                        pass
-            except:
-                pass
-            try:
-                dt = pd.to_datetime(v, dayfirst=True, errors="coerce")
-                if pd.isna(dt):
-                    dt = pd.to_datetime(v, errors="coerce")
-                if pd.isna(dt):
-                    return pd.NaT
-                return dt.date()
-            except:
-                return pd.NaT
-        return series.apply(_parse)
+            return dt.date()
+        except:
+            return pd.NaT
     
     def detect_name_column(cols):
         for c in cols:
@@ -2288,19 +2297,28 @@ with st.spinner("⏳ Processando..."):
                 return c
         return None
     
-    # ---------- Autenticação Google ----------
-    def gspread_auth():
-        scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly","https://www.googleapis.com/auth/drive.readonly"]
-        creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=scopes)
-        return gspread.authorize(creds)
+    def detect_cancel_column(df):
+        for c in df.columns:
+            if _norm_key(c) in ("cancelado","cancel","stcancelado","cancelada","observacao_cancelado"):
+                return c
+        return None
     
-    # ---------- Leitura e normalização por fonte ----------
+    # ---------------- Auth (st.secrets) ----------------
+    def gspread_auth_from_secrets():
+        if SECRETS_KEY not in st.secrets:
+            raise RuntimeError(f"st.secrets does not contain key '{SECRETS_KEY}'. Add your service account JSON string to secrets.")
+        credentials_dict = json.loads(st.secrets[SECRETS_KEY])
+        scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scopes)
+        return gspread.authorize(credentials)
+    
+    # ---------------- Read + normalize function ----------------
     def read_and_normalize(gc, ssid, aba, col_data_ref, col_codigo_ref, col_valor_ref, sample_n=None):
         sh = gc.open_by_key(ssid)
+        # try exact worksheet name, otherwise try case-insensitive match
         try:
             ws = sh.worksheet(aba)
         except Exception:
-            # tentativa alternativa por título case-insensitive
             ws = next((w for w in sh.worksheets() if w.title.strip().lower() == aba.strip().lower()), None)
             if ws is None:
                 raise
@@ -2311,43 +2329,48 @@ with st.spinner("⏳ Processando..."):
         if sample_n:
             df_raw = df_raw.head(sample_n)
     
-        date_col = find_column_by_candidates(df_raw, [col_data_ref, "Data","Data do Movimento","data"], fallback_idx=0)
-        code_col = find_column_by_candidates(df_raw, [col_codigo_ref, "Codigo","Código da Empresa","Código","codigo","empresa"], fallback_idx=1)
-        val_col  = find_column_by_candidates(df_raw, [col_valor_ref, "Valor","Valor Total","Valor (R$)","V. Total"], fallback_idx=None)
+        date_col = find_column_by_candidates(df_raw, [col_data_ref, "Data", "Data do Movimento", "data"], fallback_idx=0)
+        code_col = find_column_by_candidates(df_raw, [col_codigo_ref, "Codigo", "Código da Empresa", "Código", "codigo", "empresa"], fallback_idx=1)
+        val_col  = find_column_by_candidates(df_raw, [col_valor_ref, "Valor", "Valor Total", "Valor (R$)", "V. Total"], fallback_idx=None)
         if val_col is None:
             val_col = detect_most_numeric_column(df_raw)
     
         name_col = detect_name_column(df_raw.columns)
+        cancel_col = detect_cancel_column(df_raw)
     
-        # construir df normalizado
         out = pd.DataFrame()
-        out["Data"] = parse_date_col(df_raw[date_col]) if date_col else pd.NaT
+        out["Data"] = df_raw[date_col].apply(parse_date_cell) if date_col else pd.NaT
         out["Codigo"] = df_raw[code_col].apply(normalize_codigo) if code_col else ""
         out["Nome"] = df_raw[name_col] if name_col else ""
         out["Valor"] = df_raw[val_col].apply(tratar_valor).fillna(0.0) if val_col else 0.0
     
-        # remover linhas sem data
+        if cancel_col:
+            canc = df_raw[cancel_col].astype(str).str.strip().str.lower()
+            is_cancel = canc.isin(["s","sim","true","1","x","cancelado","c","yes"])
+            out = out[~is_cancel]
+    
         out = out.dropna(subset=["Data"])
         return out[["Data","Codigo","Nome","Valor"]]
     
-    # ---------- UI e execução ----------
+    # ---------------- UI / run flow ----------------
     preview_mode = st.sidebar.selectbox("Modo", ["Prévia (100 linhas por fonte)", "Completo (tudo)"])
     sample_n = 100 if preview_mode.startswith("Prévia") else None
     
-    st.sidebar.write("Arquivo de credenciais:", SERVICE_ACCOUNT_FILE)
+    st.sidebar.markdown("Autenticação: via st.secrets['GOOGLE_SERVICE_ACCOUNT']")
     if st.sidebar.button("Executar comparação"):
         run = True
     else:
         run = False
     
     if run:
+        # authenticate
         try:
-            gc = gspread_auth()
+            gc = gspread_auth_from_secrets()
         except Exception as e:
-            st.error(f"Erro na autenticação Google: {e}")
+            st.error(f"Erro na autenticação Google (st.secrets): {e}")
             st.stop()
     
-        # Ler as 3 fontes
+        # read 3 fontes
         try:
             df_fat_ext = read_and_normalize(gc, ID_FAT_EXT, ABA_FAT_EXT, COL_DATA_FAT_EXT, COL_CODIGO_FAT_EXT, COL_VALOR_FAT_EXT, sample_n=sample_n)
         except Exception as e:
@@ -2373,42 +2396,41 @@ with st.spinner("⏳ Processando..."):
         st.write("Exemplo - Meio (primeiras linhas):")
         st.dataframe(df_meio.head(10))
     
-        # Agregar por Data + Codigo
+        # aggregate
         agg_507 = df_507.groupby(["Data","Codigo"], as_index=False).agg({"Valor":"sum","Nome":"first"}).rename(columns={"Valor":"Valor_507","Nome":"Nome_507"})
         agg_fat = df_fat_ext.groupby(["Data","Codigo"], as_index=False).agg({"Valor":"sum","Nome":"first"}).rename(columns={"Valor":"Valor_Faturamento","Nome":"Nome_Faturamento"})
         agg_meio = df_meio.groupby(["Data","Codigo"], as_index=False).agg({"Valor":"sum","Nome":"first"}).rename(columns={"Valor":"Valor_Meio","Nome":"Nome_Meio"})
     
-        # união das chaves (Data + Codigo)
+        # union of keys
         keys = pd.concat([agg_507[["Data","Codigo"]], agg_fat[["Data","Codigo"]], agg_meio[["Data","Codigo"]]]).drop_duplicates().reset_index(drop=True)
     
-        # Data range picker baseado nos dados disponíveis
+        # date range picker
         all_dates = pd.to_datetime(keys["Data"], errors="coerce").dropna().dt.date
         if all_dates.empty:
             st.error("Nenhuma data válida encontrada nas fontes.")
             st.stop()
         data_min = all_dates.min()
         data_max = (date.today() - timedelta(days=1))
-        col1, col2 = st.columns(2)
-        with col1:
+        c1, c2 = st.columns(2)
+        with c1:
             start_date = st.date_input("Data Inicial:", value=data_min, min_value=data_min, max_value=data_max)
-        with col2:
+        with c2:
             end_date = st.date_input("Data Final:", value=data_max, min_value=data_min, max_value=data_max)
     
-        # filtrar chaves
         mask = (keys["Data"] >= pd.to_datetime(start_date).date()) & (keys["Data"] <= pd.to_datetime(end_date).date())
         keys = keys.loc[mask].reset_index(drop=True)
     
-        # merge seguro
+        # safe merge
         res = keys.merge(agg_507, on=["Data","Codigo"], how="left")
         res = res.merge(agg_fat, on=["Data","Codigo"], how="left")
         res = res.merge(agg_meio, on=["Data","Codigo"], how="left")
     
-        # preencher nulos e coerção
+        # fill nulls
         res["Valor_507"] = pd.to_numeric(res["Valor_507"].fillna(0.0), errors="coerce").fillna(0.0)
         res["Valor_Faturamento"] = pd.to_numeric(res["Valor_Faturamento"].fillna(0.0), errors="coerce").fillna(0.0)
         res["Valor_Meio"] = pd.to_numeric(res["Valor_Meio"].fillna(0.0), errors="coerce").fillna(0.0)
     
-        # Nome Fantasia final: preferir 507, depois Faturamento, depois Meio
+        # coalesce name: prefer 507, then Faturamento, then Meio
         def coalesce_nome(row):
             for c in ("Nome_507","Nome_Faturamento","Nome_Meio"):
                 v = row.get(c)
@@ -2417,11 +2439,11 @@ with st.spinner("⏳ Processando..."):
             return "Não Identificado"
         res["Nome Fantasia"] = res.apply(coalesce_nome, axis=1)
     
-        # diferenças numéricas
+        # diffs
         res["Diff_507_Faturamento"] = (res["Valor_507"] - res["Valor_Faturamento"]).round(2)
         res["Diff_507_Meio"] = (res["Valor_507"] - res["Valor_Meio"]).round(2)
     
-        # formatação para exibição
+        # display formatting
         disp = res.copy()
         disp["Data"] = pd.to_datetime(disp["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
         disp["Valor (507)"] = disp["Valor_507"].apply(fmt_brl)
@@ -2430,7 +2452,7 @@ with st.spinner("⏳ Processando..."):
         disp["Diferença (507 - Faturamento)"] = disp["Diff_507_Faturamento"].apply(fmt_brl)
         disp["Diferença (507 - Meio)"] = disp["Diff_507_Meio"].apply(fmt_brl)
     
-        # ordenar por Data e código (tentando numérico)
+        # sort by date and numeric-like codigo
         def try_numeric_sort_key(s):
             try:
                 return int(s)
@@ -2443,6 +2465,7 @@ with st.spinner("⏳ Processando..."):
         disp = disp.sort_values(["Data","__cod_key"], ascending=[True,True]).drop(columns="__cod_key").reset_index(drop=True)
     
         final = disp[["Data","Codigo","Nome Fantasia","Valor (507)","Valor (Faturamento)","Valor (Meio)","Diferença (507 - Faturamento)","Diferença (507 - Meio)"]].copy()
+    
         st.subheader("📊 Comparativo (507 vs Faturamento vs Meio)")
         st.dataframe(final, use_container_width=True, height=700)
     

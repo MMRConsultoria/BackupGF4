@@ -2109,271 +2109,411 @@ with st.spinner("⏳ Processando..."):
     # Aba 4 - Integração Everest (independente do upload)
     # =======================================
     
-    from datetime import date
-    import streamlit as st
-    import pandas as pd
-    
     # =======================================
-    # Aba 4 - Integração Everest (independente do upload)
-    # =======================================
-    
-    with aba4:
+# Aba 4 - Integração Everest (independente do upload)
+# =======================================
 
-        try:
-            planilha = gc.open("Vendas diarias")
-            aba_everest = planilha.worksheet("Everest")
-            aba_externo = planilha.worksheet("Fat Sistema Externo")
-    
-            df_everest = pd.DataFrame(aba_everest.get_all_values()[1:])
-            df_externo = pd.DataFrame(aba_externo.get_all_values()[1:])
-    
-            df_everest.columns = [f"col{i}" for i in range(df_everest.shape[1])]
-            df_externo.columns = [f"col{i}" for i in range(df_externo.shape[1])]
-    
-            df_everest["col0"] = pd.to_datetime(df_everest["col0"], dayfirst=True, errors="coerce")
-            df_externo["col0"] = pd.to_datetime(df_externo["col0"], dayfirst=True, errors="coerce")
-    
-            datas_validas = df_everest["col0"].dropna()
-    
+from datetime import date
+import streamlit as st
+import pandas as pd
+from io import BytesIO
+
+with aba4:
+
+    try:
+        # planilha principal onde estão as abas Everest / Fat Sistema Externo
+        planilha = gc.open("Vendas diarias")
+        aba_everest = planilha.worksheet("Everest")
+        aba_externo = planilha.worksheet("Fat Sistema Externo")
+
+        df_everest = pd.DataFrame(aba_everest.get_all_values()[1:])
+        df_externo = pd.DataFrame(aba_externo.get_all_values()[1:])
+
+        df_everest.columns = [f"col{i}" for i in range(df_everest.shape[1])]
+        df_externo.columns = [f"col{i}" for i in range(df_externo.shape[1])]
+
+        df_everest["col0"] = pd.to_datetime(df_everest["col0"], dayfirst=True, errors="coerce")
+        df_externo["col0"] = pd.to_datetime(df_externo["col0"], dayfirst=True, errors="coerce")
+
+        datas_validas = df_everest["col0"].dropna()
+
+        if not datas_validas.empty:
+            # Garantir objetos do tipo date
+            datas_validas = pd.to_datetime(df_everest["col0"], errors="coerce").dropna().dt.date
+
             if not datas_validas.empty:
-               # Garantir objetos do tipo date
-                datas_validas = pd.to_datetime(df_everest["col0"], errors="coerce").dropna()
-                datas_validas = datas_validas.dt.date
-    
-                if not datas_validas.empty:
-                   from datetime import date
-    
-                # Garantir tipo date para todas as datas
-                datas_validas = pd.to_datetime(df_everest["col0"], errors="coerce").dropna().dt.date
-    
-                if not datas_validas.empty:
-                    datas_validas = df_everest["col0"].dropna()
-    
-                    if not datas_validas.empty:
-                        min_data = datas_validas.min().date()
-                        max_data_planilha = datas_validas.max().date()
-                        sugestao_data = max_data_planilha
-                    
-                        data_range = st.date_input(
-                            label="Selecione o intervalo de datas:",
-                            value=(sugestao_data, sugestao_data),
-                            min_value=min_data,
-                            max_value=max_data_planilha
-                        )
-                    
-                        if isinstance(data_range, tuple) and len(data_range) == 2:
-                            data_inicio, data_fim = data_range
-                            # Aqui já segue direto o processamento normal
-    
-    
-               
-                    def tratar_valor(valor):
-                        try:
-                            return float(str(valor).replace("R$", "").replace(".", "").replace(",", ".").strip())
-                        except:
-                            return None
-    
-                    ev = df_everest.rename(columns={
-                        "col0": "Data", "col1": "Codigo",
-                        "col7": "Valor Bruto (Everest)", "col6": "Impostos (Everest)"
-                    })
-                    
-                    # 🔥 Remove linhas do Everest que são Total/Subtotal
-                    ev = ev[~ev["Codigo"].astype(str).str.lower().str.contains("total", na=False)]
-                    ev = ev[~ev["Codigo"].astype(str).str.lower().str.contains("subtotal", na=False)]
-                    
-                    ex = df_externo.rename(columns={
-                        "col0": "Data",
-                        "col2": "Nome Loja Sistema Externo",
-                        "col3": "Codigo",
-                        "col6": "Valor Bruto (Externo)",
-                        "col8": "Valor Real (Externo)"
-                    })
-    
-                    ev["Data"] = pd.to_datetime(ev["Data"], errors="coerce").dt.date
-                    ex["Data"] = pd.to_datetime(ex["Data"], errors="coerce").dt.date
-    
-                    ev = ev[(ev["Data"] >= data_inicio) & (ev["Data"] <= data_fim)].copy()
-                    ex = ex[(ex["Data"] >= data_inicio) & (ex["Data"] <= data_fim)].copy()
-    
-                    for col in ["Valor Bruto (Everest)", "Impostos (Everest)"]:
+                min_data = datas_validas.min()
+                max_data_planilha = datas_validas.max()
+                sugestao_data = max_data_planilha
+
+                data_range = st.date_input(
+                    label="Selecione o intervalo de datas:",
+                    value=(sugestao_data, sugestao_data),
+                    min_value=min_data,
+                    max_value=max_data_planilha
+                )
+
+                if isinstance(data_range, tuple) and len(data_range) == 2:
+                    data_inicio, data_fim = data_range
+                    # segue processamento normal
+
+                # Função auxiliar de conversão de valores (mantida)
+                def tratar_valor(valor):
+                    try:
+                        if pd.isna(valor):
+                            return float("nan")
+                        s = str(valor)
+                        s = s.replace("R$", "").replace(" ", "").replace("\xa0", "")
+                        # Lida com formatos 1.234,56 e 1234.56 e 1,234.56 etc
+                        if s.count(",") == 1 and s.count(".") >= 1:
+                            # Ex: '1.234,56' -> '1234.56'
+                            s = s.replace(".", "").replace(",", ".")
+                        else:
+                            s = s.replace(",", ".")
+                        return float(s)
+                    except:
+                        return float("nan")
+
+                # renomear colunas do Everest/Externo como antes
+                ev = df_everest.rename(columns={
+                    "col0": "Data", "col1": "Codigo",
+                    "col7": "Valor Bruto (Everest)", "col6": "Impostos (Everest)"
+                })
+
+                # 🔥 Remove linhas do Everest que são Total/Subtotal
+                ev = ev[~ev["Codigo"].astype(str).str.lower().str.contains("total", na=False)]
+                ev = ev[~ev["Codigo"].astype(str).str.lower().str.contains("subtotal", na=False)]
+
+                ex = df_externo.rename(columns={
+                    "col0": "Data",
+                    "col2": "Nome Loja Sistema Externo",
+                    "col3": "Codigo",
+                    "col6": "Valor Bruto (Externo)",
+                    "col8": "Valor Real (Externo)"
+                })
+
+                # Conversão das colunas Data para date
+                ev["Data"] = pd.to_datetime(ev["Data"], errors="coerce").dt.date
+                ex["Data"] = pd.to_datetime(ex["Data"], errors="coerce").dt.date
+
+                # Limitar pelo intervalo de datas selecionado
+                ev = ev[(ev["Data"] >= data_inicio) & (ev["Data"] <= data_fim)].copy()
+                ex = ex[(ex["Data"] >= data_inicio) & (ex["Data"] <= data_fim)].copy()
+
+                # aplicar tratamento numérico nas colunas existentes
+                for col in ["Valor Bruto (Everest)", "Impostos (Everest)"]:
+                    if col in ev.columns:
                         ev[col] = ev[col].apply(tratar_valor)
-                    for col in ["Valor Bruto (Externo)", "Valor Real (Externo)"]:
+                for col in ["Valor Bruto (Externo)", "Valor Real (Externo)"]:
+                    if col in ex.columns:
                         ex[col] = ex[col].apply(tratar_valor)
-    
-                    if "Impostos (Everest)" in ev.columns:
-                        ev["Impostos (Everest)"] = pd.to_numeric(ev["Impostos (Everest)"], errors="coerce").fillna(0)
-                        ev["Valor Real (Everest)"] = ev["Valor Bruto (Everest)"] - ev["Impostos (Everest)"]
+
+                # recalcula Valor Real do Everest como antes
+                if "Impostos (Everest)" in ev.columns:
+                    ev["Impostos (Everest)"] = pd.to_numeric(ev["Impostos (Everest)"], errors="coerce").fillna(0)
+                    ev["Valor Real (Everest)"] = ev["Valor Bruto (Everest)"] - ev["Impostos (Everest)"]
+                else:
+                    ev["Valor Real (Everest)"] = ev["Valor Bruto (Everest)"]
+
+                ev["Valor Bruto (Everest)"] = pd.to_numeric(ev["Valor Bruto (Everest)"], errors="coerce").round(2)
+                ev["Valor Real (Everest)"] = pd.to_numeric(ev["Valor Real (Everest)"], errors="coerce").round(2)
+                ex["Valor Bruto (Externo)"] = pd.to_numeric(ex["Valor Bruto (Externo)"], errors="coerce").round(2)
+                ex["Valor Real (Externo)"] = pd.to_numeric(ex["Valor Real (Externo)"], errors="coerce").round(2)
+
+                # mapear nome loja do externo para o ev (mantendo sua lógica)
+                mapa_nome_loja = ex.drop_duplicates(subset="Codigo")[["Codigo", "Nome Loja Sistema Externo"]]\
+                    .set_index("Codigo").to_dict()["Nome Loja Sistema Externo"]
+                ev["Nome Loja Everest"] = ev["Codigo"].map(mapa_nome_loja)
+
+                # ---------------- LEITURA DA PLANILHA DE FATURAMENTO (ID e aba Faturamento) ----------------
+                FAT_ID = "1tqmql1aL6M6A6yZ1QSOiifDjas5Bs_AziI7IkqwmAOM"
+                FAT_SHEET_NAME = "Faturamento"
+
+                try:
+                    fat_sh = gc.open_by_key(FAT_ID)
+                    ws_fat = fat_sh.worksheet(FAT_SHEET_NAME)
+                    vals_fat = ws_fat.get_all_values()
+                    if len(vals_fat) < 2:
+                        st.warning(f"Aba '{FAT_SHEET_NAME}' vazia na planilha de faturamento (ID {FAT_ID}).")
+                        df_fat = pd.DataFrame()
                     else:
-                        ev["Valor Real (Everest)"] = ev["Valor Bruto (Everest)"]
-    
-                    ev["Valor Bruto (Everest)"] = pd.to_numeric(ev["Valor Bruto (Everest)"], errors="coerce").round(2)
-                    ev["Valor Real (Everest)"] = pd.to_numeric(ev["Valor Real (Everest)"], errors="coerce").round(2)
-                    ex["Valor Bruto (Externo)"] = pd.to_numeric(ex["Valor Bruto (Externo)"], errors="coerce").round(2)
-                    ex["Valor Real (Externo)"] = pd.to_numeric(ex["Valor Real (Externo)"], errors="coerce").round(2)
-    
-                    mapa_nome_loja = ex.drop_duplicates(subset="Codigo")[["Codigo", "Nome Loja Sistema Externo"]]\
-                        .set_index("Codigo").to_dict()["Nome Loja Sistema Externo"]
-                    ev["Nome Loja Everest"] = ev["Codigo"].map(mapa_nome_loja)
-    
-                    df_comp = pd.merge(ev, ex, on=["Data", "Codigo"], how="outer", suffixes=("_Everest", "_Externo"))
-    
-                    # 🔄 Comparação
-                    df_comp["Valor Bruto Iguais"] = df_comp["Valor Bruto (Everest)"] == df_comp["Valor Bruto (Externo)"]
-                    df_comp["Valor Real Iguais"] = df_comp["Valor Real (Everest)"] == df_comp["Valor Real (Externo)"]
-                    
-                    # 🔄 Criar coluna auxiliar só para lógica interna
-                    df_comp["_Tem_Diferenca"] = ~(df_comp["Valor Bruto Iguais"] & df_comp["Valor Real Iguais"])
-                    
-                    # 🔥 Filtro para ignorar as diferenças do grupo Kopp (apenas nas diferenças)
-                    df_comp["_Ignorar_Kopp"] = df_comp["Nome Loja Sistema Externo"].str.contains("kop", case=False, na=False)
-                    df_comp_filtrado = df_comp[~(df_comp["_Tem_Diferenca"] & df_comp["_Ignorar_Kopp"])].copy()
-                    
-                    # 🔧 Filtro no Streamlit
-                    opcao = st.selectbox("Filtro de diferenças:", ["Todas", "Somente com diferenças", "Somente sem diferenças"])
-                    
-                    if opcao == "Todas":
-                        df_resultado = df_comp_filtrado.copy()
-                    elif opcao == "Somente com diferenças":
-                        df_resultado = df_comp_filtrado[df_comp_filtrado["_Tem_Diferenca"]].copy()
+                        header_fat, rows_fat = vals_fat[0], vals_fat[1:]
+                        df_fat = pd.DataFrame(rows_fat, columns=[c.strip() for c in header_fat])
+                except Exception as e:
+                    st.error(f"Erro ao abrir a planilha de Faturamento (ID {FAT_ID}): {e}")
+                    df_fat = pd.DataFrame()
+
+                # ---------------- PREPARAR df_fat (Código=B, Valor=D, opcional Data=A) ----------------
+                if df_fat.empty:
+                    df_fat_proc = pd.DataFrame()
+                else:
+                    # tenta pegar por índice (B->1, D->3), ou por nomes comuns
+                    def _col_by_idx_or_name(df, idx, candidates=None):
+                        cols = list(df.columns)
+                        if candidates:
+                            cand_map = {_norm_key(c): c for c in cols}
+                            for cand in candidates:
+                                k = _norm_key(cand)
+                                if k in cand_map:
+                                    return cand_map[k]
+                        # fallback por posição
+                        if 0 <= idx < len(cols):
+                            return cols[idx]
+                        return None
+
+                    code_col = _col_by_idx_or_name(df_fat, 1, candidates=["Código", "Código da Empresa", "Codigo"])
+                    val_col = _col_by_idx_or_name(df_fat, 3, candidates=["Valor", "Valor Bruto", "Valor Bruto (R$)", "Valor Bruto Everest"])
+                    date_col = _col_by_idx_or_name(df_fat, 0, candidates=["Data", "data"])
+
+                    fat_proc = pd.DataFrame()
+                    # Código
+                    if code_col:
+                        fat_proc["Codigo"] = pd.to_numeric(df_fat[code_col], errors="coerce")
                     else:
-                        df_resultado = df_comp_filtrado[~df_comp_filtrado["_Tem_Diferenca"]].copy()
-                    
-                    # 🔧 Remover as colunas auxiliares antes de exibir
-                    df_resultado = df_resultado.drop(columns=["Valor Bruto Iguais", "Valor Real Iguais", "_Tem_Diferenca", "_Ignorar_Kopp"], errors='ignore')
-                    
-                    # 🔧 Ajuste de colunas para exibição
-                    df_resultado = df_resultado[[
-                        "Data",
-                        "Nome Loja Everest", "Codigo", "Valor Bruto (Everest)", "Valor Real (Everest)",
-                        "Nome Loja Sistema Externo", "Valor Bruto (Externo)", "Valor Real (Externo)"
-                    ]].sort_values("Data")
-                    
-                    df_resultado.columns = [
-                        "Data",
-                        "Nome (Everest)", "Código", "Valor Bruto (Everest)", "Valor Real (Everest)",
-                        "Nome (Externo)", "Valor Bruto (Externo)", "Valor Real (Externo)"
-                    ]
-                    
-                    colunas_texto = ["Nome (Everest)", "Nome (Externo)"]
-                    df_resultado[colunas_texto] = df_resultado[colunas_texto].fillna("")
-                    df_resultado = df_resultado.fillna(0)
-    
-                    df_resultado = df_resultado.reset_index(drop=True)
-    
-                    # ✅ Aqui adiciona o Total do dia logo após cada dia
-                    dfs_com_totais = []
-                    for data, grupo in df_resultado.groupby("Data", sort=False):
-                        dfs_com_totais.append(grupo)
-                    
-                        total_dia = {
-                            "Data": data,
-                            "Nome (Everest)": "Total do dia",
-                            "Código": "",
-                            "Valor Bruto (Everest)": grupo["Valor Bruto (Everest)"].sum(),
-                            "Valor Real (Everest)": grupo["Valor Real (Everest)"].sum(),
-                            "Nome (Externo)": "",
-                            "Valor Bruto (Externo)": grupo["Valor Bruto (Externo)"].sum(),
-                            "Valor Real (Externo)": grupo["Valor Real (Externo)"].sum(),
-                        }
-                        dfs_com_totais.append(pd.DataFrame([total_dia]))
-                    
-                    df_resultado_final = pd.concat(dfs_com_totais, ignore_index=True)
-                    
-                    # 🔄 E continua com seu Total Geral normalmente
-                    linha_total = pd.DataFrame([{
-                        "Data": "",
-                        "Nome (Everest)": "Total Geral",
+                        # fallback para segunda coluna
+                        if df_fat.shape[1] > 1:
+                            fat_proc["Codigo"] = pd.to_numeric(df_fat.iloc[:, 1], errors="coerce")
+                        else:
+                            fat_proc["Codigo"] = pd.Series(dtype="float64")
+                    # Valor bruto vindo da planilha (string -> número)
+                    if val_col:
+                        fat_proc["Valor Bruto Everest Planilha"] = df_fat[val_col].astype(str)
+                    else:
+                        if df_fat.shape[1] > 3:
+                            fat_proc["Valor Bruto Everest Planilha"] = df_fat.iloc[:, 3].astype(str)
+                        else:
+                            fat_proc["Valor Bruto Everest Planilha"] = None
+
+                    # Data (opcional)
+                    if date_col:
+                        fat_proc["Data"] = pd.to_datetime(df_fat[date_col], dayfirst=True, errors="coerce").dt.date
+                    else:
+                        fat_proc["Data"] = pd.NaT
+
+                    # converter valores BR/EN
+                    def _to_float_from_str(s):
+                        try:
+                            if pd.isna(s):
+                                return float("nan")
+                            s = str(s).strip().replace("R$", "").replace(" ", "").replace("\xa0", "")
+                            if s.count(",") == 1 and s.count(".") >= 1:
+                                s = s.replace(".", "").replace(",", ".")
+                            else:
+                                s = s.replace(",", ".")
+                            return float(s)
+                        except:
+                            return float("nan")
+
+                    fat_proc["Valor Bruto Everest Planilha"] = fat_proc["Valor Bruto Everest Planilha"].apply(_to_float_from_str)
+                    fat_proc["Codigo"] = pd.to_numeric(fat_proc["Codigo"], errors="coerce")
+
+                    # agregação: se tiver Data válida, agrupa por Data+Codigo; senão por Codigo apenas
+                    if fat_proc["Data"].notna().any():
+                        df_fat_proc = (fat_proc.dropna(subset=["Codigo"])
+                                       .groupby(["Data", "Codigo"], as_index=False)["Valor Bruto Everest Planilha"].sum())
+                    else:
+                        df_fat_proc = (fat_proc.dropna(subset=["Codigo"])
+                                       .groupby(["Codigo"], as_index=False)["Valor Bruto Everest Planilha"].sum())
+
+                # ---------------- Merge EV x EX ----------------
+                df_comp = pd.merge(ev, ex, on=["Data", "Codigo"], how="outer", suffixes=("_Everest", "_Externo"))
+
+                # ---------------- Integrar FATURAMENTO (df_fat_proc) ----------------
+                if not df_fat_proc.empty:
+                    if "Data" in df_fat_proc.columns:
+                        df_comp = pd.merge(df_comp, df_fat_proc, on=["Data", "Codigo"], how="left")
+                    else:
+                        df_comp = pd.merge(df_comp, df_fat_proc, on=["Codigo"], how="left")
+                    # substituir Valor Bruto (Everest) pela planilha quando houver
+                    df_comp["Valor Bruto (Everest) - Origem (Arquivo)"] = df_comp.get("Valor Bruto Everest Planilha")
+                    # quando houver valor no arquivo, usa ele; caso contrário mantém o valor original
+                    df_comp["Valor Bruto (Everest)"] = df_comp["Valor Bruto Everest Planilha"].fillna(df_comp.get("Valor Bruto (Everest)"))
+                else:
+                    # sem dados do arquivo, apenas manter o comportamento anterior
+                    df_comp["Valor Bruto (Everest) - Origem (Arquivo)"] = pd.NA
+
+                # Garantir colunas numéricas e preencher NaNs com 0 para somas/totais
+                for col in ["Valor Bruto (Everest)", "Valor Real (Everest)", "Valor Bruto (Externo)", "Valor Real (Externo)"]:
+                    if col in df_comp.columns:
+                        df_comp[col] = pd.to_numeric(df_comp[col], errors="coerce").fillna(0.0).round(2)
+                    else:
+                        df_comp[col] = 0.0
+
+                # Criar coluna Diferença (Bruto) = Valor Bruto (Everest) - Valor Bruto (Externo)
+                df_comp["Diferença (Bruto)"] = (df_comp["Valor Bruto (Everest)"] - df_comp["Valor Bruto (Externo)"]).round(2)
+
+                # 🔄 Comparação booleana (mantém para filtros)
+                df_comp["Valor Bruto Iguais"] = (df_comp["Valor Bruto (Everest)"] == df_comp["Valor Bruto (Externo)"])
+                df_comp["Valor Real Iguais"] = (df_comp["Valor Real (Everest)"] == df_comp["Valor Real (Externo)"])
+
+                # 🔄 Criar coluna auxiliar só para lógica interna
+                df_comp["_Tem_Diferenca"] = ~(df_comp["Valor Bruto Iguais"] & df_comp["Valor Real Iguais"])
+
+                # 🔥 Filtro para ignorar as diferenças do grupo Kopp (apenas nas diferenças)
+                df_comp["_Ignorar_Kopp"] = df_comp["Nome Loja Sistema Externo"].str.contains("kop", case=False, na=False)
+                df_comp_filtrado = df_comp[~(df_comp["_Tem_Diferenca"] & df_comp["_Ignorar_Kopp"])].copy()
+
+                # 🔧 Filtro no Streamlit
+                opcao = st.selectbox("Filtro de diferenças:", ["Todas", "Somente com diferenças", "Somente sem diferenças"])
+
+                if opcao == "Todas":
+                    df_resultado = df_comp_filtrado.copy()
+                elif opcao == "Somente com diferenças":
+                    df_resultado = df_comp_filtrado[df_comp_filtrado["_Tem_Diferenca"]].copy()
+                else:
+                    df_resultado = df_comp_filtrado[~df_comp_filtrado["_Tem_Diferenca"]].copy()
+
+                # 🔧 Remover as colunas auxiliares antes de exibir
+                df_resultado = df_resultado.drop(columns=["Valor Bruto Iguais", "Valor Real Iguais", "_Tem_Diferenca", "_Ignorar_Kopp"], errors='ignore')
+
+                # 🔧 Ajuste de colunas para exibição (colocando a coluna de faturamento da planilha à esquerda)
+                # Reorganiza: Data, Nome (Everest), Código, Valor Bruto (Everest) [orig/planilha], Valor Bruto (Externo), Diferença (Bruto), Valor Real...
+                display_cols = [
+                    "Data",
+                    "Nome Loja Everest", "Codigo",
+                    "Valor Bruto (Everest)", "Valor Bruto (Everest) - Origem (Arquivo)",
+                    "Nome Loja Sistema Externo", "Valor Bruto (Externo)", "Diferença (Bruto)",
+                    "Valor Real (Everest)", "Valor Real (Externo)"
+                ]
+                # mantém apenas colunas que existem
+                display_cols = [c for c in display_cols if c in df_resultado.columns]
+                df_resultado = df_resultado[display_cols].sort_values("Data")
+
+                # Renomear para exibição amigável
+                rename_map = {
+                    "Nome Loja Everest": "Nome (Everest)",
+                    "Codigo": "Código",
+                    "Valor Bruto (Everest)": "Valor Bruto (Everest)",
+                    "Valor Bruto (Everest) - Origem (Arquivo)": "Faturamento Everest (Planilha)",
+                    "Nome Loja Sistema Externo": "Nome (Externo)",
+                    "Valor Bruto (Externo)": "Valor Bruto (Externo)",
+                    "Valor Real (Everest)": "Valor Real (Everest)",
+                    "Valor Real (Externo)": "Valor Real (Externo)",
+                    "Diferença (Bruto)": "Diferença (Bruto)"
+                }
+                df_resultado = df_resultado.rename(columns=rename_map)
+
+                # preencher NAs e ajustar formatos
+                col_text = ["Nome (Everest)", "Nome (Externo)"]
+                for c in col_text:
+                    if c in df_resultado.columns:
+                        df_resultado[c] = df_resultado[c].fillna("")
+
+                df_resultado = df_resultado.fillna(0)
+
+                df_resultado = df_resultado.reset_index(drop=True)
+
+                # ✅ Aqui adiciona o Total do dia logo após cada dia
+                dfs_com_totais = []
+                for data, grupo in df_resultado.groupby("Data", sort=False):
+                    dfs_com_totais.append(grupo)
+
+                    total_dia = {
+                        "Data": data,
+                        "Nome (Everest)": "Total do dia",
                         "Código": "",
-                        "Valor Bruto (Everest)": ev["Valor Bruto (Everest)"].sum(),
-                        "Valor Real (Everest)": ev["Valor Real (Everest)"].sum(),
+                        "Valor Bruto (Everest)": grupo.get("Valor Bruto (Everest)", pd.Series()).sum() if "Valor Bruto (Everest)" in grupo.columns else 0.0,
+                        "Faturamento Everest (Planilha)": grupo.get("Faturamento Everest (Planilha)", pd.Series()).sum() if "Faturamento Everest (Planilha)" in grupo.columns else 0.0,
                         "Nome (Externo)": "",
-                        "Valor Bruto (Externo)": ex["Valor Bruto (Externo)"].sum(),
-                        "Valor Real (Externo)": ex["Valor Real (Externo)"].sum()
-                    }])
-                    
-                    df_resultado_final = pd.concat([df_resultado_final, linha_total], ignore_index=True)
-    
-                                    
-                    st.session_state.df_resultado = df_resultado
-                                          
-                    # 🔹 Estilo linha: destacar se tiver diferença (em vermelho)
-                    def highlight_diferenca(row):
-                        if (row["Valor Bruto (Everest)"] != row["Valor Bruto (Externo)"]) or (row["Valor Real (Everest)"] != row["Valor Real (Externo)"]):
-                            return ["background-color: #ff9999"] * len(row)  # vermelho claro
-                        else:
-                            return [""] * len(row)
-                    
-                    # 🔹 Estilo colunas: manter azul e rosa padrão
-                    def destacar_colunas_por_origem(col):
-                        if "Everest" in col:
-                            return "background-color: #e6f2ff"
-                        elif "Externo" in col:
-                            return "background-color: #fff5e6"
-                        else:
-                            return ""
-                    
-                    # 🔹 Aplicar estilos
-                    st.dataframe(
-                        df_resultado_final.style
-                            .apply(highlight_diferenca, axis=1)
-                            .set_properties(subset=["Valor Bruto (Everest)", "Valor Real (Everest)"], **{"background-color": "#e6f2ff"})
-                            .set_properties(subset=["Valor Bruto (Externo)", "Valor Real (Externo)"], **{"background-color": "#fff5e6"})
-                            .format({
-                                "Valor Bruto (Everest)": "R$ {:,.2f}",
-                                "Valor Real (Everest)": "R$ {:,.2f}",
-                                "Valor Bruto (Externo)": "R$ {:,.2f}",
-                                "Valor Real (Externo)": "R$ {:,.2f}"
-                            }),
-                        use_container_width=True,
-                        height=600
-                    )
-    
-    
-                    
+                        "Valor Bruto (Externo)": grupo.get("Valor Bruto (Externo)", pd.Series()).sum() if "Valor Bruto (Externo)" in grupo.columns else 0.0,
+                        "Diferença (Bruto)": grupo.get("Diferença (Bruto)", pd.Series()).sum() if "Diferença (Bruto)" in grupo.columns else 0.0,
+                        "Valor Real (Everest)": grupo.get("Valor Real (Everest)", pd.Series()).sum() if "Valor Real (Everest)" in grupo.columns else 0.0,
+                        "Valor Real (Externo)": grupo.get("Valor Real (Externo)", pd.Series()).sum() if "Valor Real (Externo)" in grupo.columns else 0.0
+                    }
+                    dfs_com_totais.append(pd.DataFrame([total_dia]))
+
+                df_resultado_final = pd.concat(dfs_com_totais, ignore_index=True)
+
+                # 🔄 E continua com seu Total Geral normalmente
+                linha_total = pd.DataFrame([{
+                    "Data": "",
+                    "Nome (Everest)": "Total Geral",
+                    "Código": "",
+                    "Valor Bruto (Everest)": ev["Valor Bruto (Everest)"].sum() if "Valor Bruto (Everest)" in ev.columns else 0.0,
+                    "Faturamento Everest (Planilha)": df_fat_proc["Valor Bruto Everest Planilha"].sum() if (not df_fat_proc.empty and "Valor Bruto Everest Planilha" in df_fat_proc.columns) else 0.0,
+                    "Nome (Externo)": "",
+                    "Valor Bruto (Externo)": ex["Valor Bruto (Externo)"].sum() if "Valor Bruto (Externo)" in ex.columns else 0.0,
+                    "Diferença (Bruto)": df_resultado_final.get("Diferença (Bruto)", pd.Series()).sum() if "Diferença (Bruto)" in df_resultado_final.columns else 0.0,
+                    "Valor Real (Everest)": ev["Valor Real (Everest)"].sum() if "Valor Real (Everest)" in ev.columns else 0.0,
+                    "Valor Real (Externo)": ex["Valor Real (Externo)"].sum() if "Valor Real (Externo)" in ex.columns else 0.0
+                }])
+
+                df_resultado_final = pd.concat([df_resultado_final, linha_total], ignore_index=True)
+
+                st.session_state.df_resultado = df_resultado
+
+                # 🔹 Estilo linha: destacar se tiver diferença (em vermelho)
+                def highlight_diferenca(row):
+                    # se tiver coluna Diferença (Bruto), destaque quando diferente de zero
+                    if "Diferença (Bruto)" in row.index and float(row["Diferença (Bruto)"] or 0) != 0:
+                        return ["background-color: #ff9999"] * len(row)  # vermelho claro
+                    # senão, se Valor Real diferente
+                    if ("Valor Real (Everest)" in row.index and "Valor Real (Externo)" in row.index) and (float(row["Valor Real (Everest)"] or 0) != float(row["Valor Real (Externo)"] or 0)):
+                        return ["background-color: #ff9999"] * len(row)
+                    return [""] * len(row)
+
+                # 🔹 Aplicar estilos e formatação
+                format_map = {}
+                for c in ["Valor Bruto (Everest)", "Faturamento Everest (Planilha)", "Valor Bruto (Externo)", "Diferença (Bruto)", "Valor Real (Everest)", "Valor Real (Externo)"]:
+                    if c in df_resultado_final.columns:
+                        format_map[c] = "R$ {:,.2f}"
+
+                st.dataframe(
+                    df_resultado_final.style
+                        .apply(highlight_diferenca, axis=1)
+                        .format(format_map),
+                    use_container_width=True,
+                    height=600
+                )
+
+                # ==================================
+                # Botão download Excel estilizado
+                # ==================================
+                def to_excel_com_estilo(df):
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                        df.to_excel(writer, index=False, sheet_name='Comparativo')
+                        workbook  = writer.book
+                        worksheet = writer.sheets['Comparativo']
+
+                        # Formatos
+                        formato_everest = workbook.add_format({'bg_color': '#e6f2ff'})
+                        formato_externo = workbook.add_format({'bg_color': '#fff5e6'})
+                        formato_dif     = workbook.add_format({'bg_color': '#ff9999'})
+
+                        # Ajustar colunas (tenta detectar range, aqui aproximado)
+                        # exemplo: colocar colunas Everest estilizadas (col D/E), Externo (col G/H)
+                        # Ajuste manual se necessário
+                        # worksheet.set_column('D:E', 15, formato_everest)
+                        # worksheet.set_column('G:H', 15, formato_externo)
+
+                        # Destacar linhas com diferença
+                        for row_num, row_data in enumerate(df.itertuples(index=False)):
+                            # procura índice das colunas no df
+                            # se a diferença existir, pinta a linha
+                            try:
+                                if ("Diferença (Bruto)" in df.columns and getattr(row_data, df.columns.get_loc("Diferença (Bruto)")) != 0) or \
+                                   ("Valor Real (Everest)" in df.columns and "Valor Real (Externo)" in df.columns and getattr(row_data, df.columns.get_loc("Valor Real (Everest)")) != getattr(row_data, df.columns.get_loc("Valor Real (Externo)"))):
+                                    worksheet.set_row(row_num+1, None, formato_dif)
+                            except Exception:
+                                pass
+
+                    output.seek(0)
+                    return output
+
+                excel_bytes = to_excel_com_estilo(df_resultado_final)
+                st.download_button(
+                    label="📥 Baixar Excel",
+                    data=excel_bytes,
+                    file_name="comparativo_everest_externo.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
             else:
                 st.warning("⚠️ Nenhuma data válida encontrada nas abas do Google Sheets.")
-    
-        except Exception as e:
-            st.error(f"❌ Erro ao carregar ou comparar dados: {e}")
-    
-        # ==================================
-        # Botão download Excel estilizado
-        # ==================================
-        
-        def to_excel_com_estilo(df):
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df.to_excel(writer, index=False, sheet_name='Comparativo')
-                workbook  = writer.book
-                worksheet = writer.sheets['Comparativo']
-        
-                # Formatos
-                formato_everest = workbook.add_format({'bg_color': '#e6f2ff'})
-                formato_externo = workbook.add_format({'bg_color': '#fff5e6'})
-                formato_dif     = workbook.add_format({'bg_color': '#ff9999'})
-        
-                # Formatar colunas Everest e Externo
-                worksheet.set_column('D:E', 15, formato_everest)
-                worksheet.set_column('G:H', 15, formato_externo)
-        
-                # Destacar linhas com diferença
-                for row_num, row_data in enumerate(df.itertuples(index=False)):
-                    if (row_data[3] != row_data[6]) or (row_data[4] != row_data[7]):
-                        worksheet.set_row(row_num+1, None, formato_dif)
-        
-            output.seek(0)
-            return output
-        
-            # botão de download
-            excel_bytes = to_excel_com_estilo(df_resultado_final)
-            st.download_button(
-                label="📥 Baixar Excel",
-                data=excel_bytes,
-                file_name="comparativo_everest_externo.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
 
+    except Exception as e:
+        st.error(f"❌ Erro ao carregar ou comparar dados: {e}")
     # =======================================
     # =======================================
     # Aba 5 - Auditoria PDV x Faturamento Meio Pagamento (tabela única)

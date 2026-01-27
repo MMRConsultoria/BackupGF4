@@ -2109,360 +2109,211 @@ with st.spinner("⏳ Processando..."):
     # Aba 4 - Integração Everest (independente do upload)
     # =======================================
     
+        # Aba Streamlit: Vendas vs Faturamento Meio vs 507 venda (tabela simples)
     from datetime import date
     import streamlit as st
     import pandas as pd
+    import unicodedata, re
     from io import BytesIO
-    import unicodedata
-    import re
     
+    # ---------- Funções utilitárias ----------
     def _norm_key(s):
         if not isinstance(s, str):
             return ""
         s = s.lower()
         s = unicodedata.normalize('NFKD', s)
         s = "".join(c for c in s if not unicodedata.combining(c))
-        s = re.sub(r'\W+', '', s)  # remove tudo que não for letra/número
+        s = re.sub(r'\W+', '', s)
         return s
     
-    with aba4:
+    def tratar_valor(valor):
         try:
-            # planilha principal onde estão as abas Everest / Fat Sistema Externo
-            planilha = gc.open("Vendas diarias")
-            aba_everest = planilha.worksheet("Everest")
-            aba_externo = planilha.worksheet("Fat Sistema Externo")
-    
-            df_everest = pd.DataFrame(aba_everest.get_all_values()[1:])
-            df_externo = pd.DataFrame(aba_externo.get_all_values()[1:])
-    
-            df_everest.columns = [f"col{i}" for i in range(df_everest.shape[1])]
-            df_externo.columns = [f"col{i}" for i in range(df_externo.shape[1])]
-    
-            # garantir colunas de data
-            df_everest["col0"] = pd.to_datetime(df_everest["col0"], dayfirst=True, errors="coerce")
-            df_externo["col0"] = pd.to_datetime(df_externo["col0"], dayfirst=True, errors="coerce")
-    
-            datas_validas = df_everest["col0"].dropna()
-    
-            if datas_validas.empty:
-                st.warning("⚠️ Nenhuma data válida encontrada na aba 'Everest'.")
+            if pd.isna(valor):
+                return float("nan")
+            s = str(valor).strip().replace("R$", "").replace("\xa0", "").replace(" ", "")
+            # detectar formatos BR e EN
+            if s.count(",") == 1 and s.count(".") >= 1:
+                s = s.replace(".", "").replace(",", ".")
             else:
-                # Datas para o date_input
-                datas_validas = pd.to_datetime(df_everest["col0"], errors="coerce").dropna().dt.date
-                min_data = datas_validas.min()
-                max_data_planilha = datas_validas.max()
-                sugestao_data = max_data_planilha
+                s = s.replace(",", ".")
+            return float(s)
+        except:
+            return float("nan")
     
-                data_range = st.date_input(
-                    label="Selecione o intervalo de datas:",
-                    value=(sugestao_data, sugestao_data),
-                    min_value=min_data,
-                    max_value=max_data_planilha
-                )
+    def normalize_codigo(x):
+        try:
+            if pd.isna(x):
+                return ""
+            sx = str(x).strip()
+            sx = sx.replace("\xa0", "").strip()
+            # se for um float com .0 -> int
+            if re.fullmatch(r"\d+(\.0+)?", sx):
+                return str(int(float(sx)))
+            # tentar float -> int
+            try:
+                vx = float(sx)
+                if vx.is_integer():
+                    return str(int(vx))
+            except:
+                pass
+            return sx
+        except:
+            return str(x)
     
-                if isinstance(data_range, tuple) and len(data_range) == 2:
-                    data_inicio, data_fim = data_range
-                else:
-                    data_inicio = data_fim = sugestao_data
+    def fmt_brl(v):
+        try:
+            return "R$ {:,.2f}".format(v).replace(",", "X").replace(".", ",").replace("X", ".")
+        except:
+            return ""
     
-                # Função auxiliar de conversão de valores (mantida)
-                def tratar_valor(valor):
-                    try:
-                        if pd.isna(valor):
-                            return float("nan")
-                        s = str(valor)
-                        s = s.replace("R$", "").replace(" ", "").replace("\xa0", "")
-                        if s.count(",") == 1 and s.count(".") >= 1:
-                            s = s.replace(".", "").replace(",", ".")
-                        else:
-                            s = s.replace(",", ".")
-                        return float(s)
-                    except:
-                        return float("nan")
+    # ---------- Configurações (ajuste se necessário) ----------
+    WORKSHEET_VENDAS = "Everest"                  # aba com vendas diárias
+    WORKSHEET_EXTERNO = "Fat Sistema Externo"    # aba externa (mantive caso queira)
+    FAT_ID = "1tqmql1aL6M6A6yZ1QSOiifDjas5Bs_AziI7IkqwmAOM"  # planilha com Faturamento
+    FAT_SHEET_507 = "Faturamento"                 # aba onde está a 507 venda (A=Data, B=Codigo, D=Valor)
+    FAT_SHEET_MEIO = "Faturamento Meio Pagamento" # aba do Faturamento por meio (A=Data, G=Codigo, J=Valor)
     
-                # renomear colunas do Everest/Externo como antes
-                ev = df_everest.rename(columns={
-                    "col0": "Data", "col1": "Codigo",
-                    "col7": "Valor Bruto (Everest)", "col6": "Impostos (Everest)"
-                })
+    # ---------- Execução ----------
+    try:
+        # carregar VENDAS (Everest)
+        planilha = gc.open("Vendas diarias")
+        ws_vendas = planilha.worksheet(WORKSHEET_VENDAS)
+        vals = ws_vendas.get_all_values()
+        if len(vals) < 2:
+            st.warning("A aba de vendas está vazia.")
+            df_vendas = pd.DataFrame()
+        else:
+            header, rows = vals[0], vals[1:]
+            df_vendas = pd.DataFrame(rows, columns=[h.strip() for h in header])
     
-                # remover linhas Total/Subtotal
-                ev = ev[~ev["Codigo"].astype(str).str.lower().str.contains("total", na=False)]
-                ev = ev[~ev["Codigo"].astype(str).str.lower().str.contains("subtotal", na=False)]
+        if df_vendas.empty:
+            st.warning("Sem dados em Vendas.")
+            vendas = pd.DataFrame(columns=["Data","Codigo","Nome","Valor_Vendas"])
+        else:
+            # detectar colunas por nome ou posição (fallback para índices conhecidos)
+            def col_or_idx(df, idx, candidates=None):
+                cols = list(df.columns)
+                if candidates:
+                    cmap = {_norm_key(c): c for c in cols}
+                    for cand in candidates:
+                        k = _norm_key(cand)
+                        if k in cmap:
+                            return cmap[k]
+                if 0 <= idx < len(cols):
+                    return cols[idx]
+                return None
     
-                ex = df_externo.rename(columns={
-                    "col0": "Data",
-                    "col2": "Nome Loja Sistema Externo",
-                    "col3": "Codigo",
-                    "col6": "Valor Bruto (Externo)",
-                    "col8": "Valor Real (Externo)"
-                })
+            v_date_col = col_or_idx(df_vendas, 0, ["Data", "data"])
+            v_codigo_col = col_or_idx(df_vendas, 1, ["Código", "Codigo", "codigo"])
+            v_nome_col = col_or_idx(df_vendas, 2, ["Nome", "nome", "Nome Loja", "Nome Loja Everest", "Nome Fantasia"])
+            v_valor_col = col_or_idx(df_vendas, 7, ["Valor", "Valor Bruto", "Valor Bruto (Everest)", "Valor (R$)"])
     
-                # Conversão das colunas Data para date
-                ev["Data"] = pd.to_datetime(ev["Data"], errors="coerce").dt.date
-                ex["Data"] = pd.to_datetime(ex["Data"], errors="coerce").dt.date
+            vendas = pd.DataFrame()
+            vendas["Data"] = pd.to_datetime(df_vendas[v_date_col], dayfirst=True, errors="coerce").dt.date if v_date_col else pd.NaT
+            vendas["Codigo"] = df_vendas[v_codigo_col] if v_codigo_col else ""
+            vendas["Nome"] = df_vendas[v_nome_col] if v_nome_col else ""
+            vendas["Valor_Vendas"] = df_vendas[v_valor_col] if v_valor_col else 0
     
-                # Filtrar pelo intervalo
-                ev = ev[(ev["Data"] >= data_inicio) & (ev["Data"] <= data_fim)].copy()
-                ex = ex[(ex["Data"] >= data_inicio) & (ex["Data"] <= data_fim)].copy()
+            vendas["Codigo"] = vendas["Codigo"].apply(normalize_codigo)
+            vendas["Valor_Vendas"] = vendas["Valor_Vendas"].apply(tratar_valor).round(2)
     
-                # aplicar tratamento numérico nas colunas existentes
-                for col in ["Valor Bruto (Everest)", "Impostos (Everest)"]:
-                    if col in ev.columns:
-                        ev[col] = ev[col].apply(tratar_valor)
-                for col in ["Valor Bruto (Externo)", "Valor Real (Externo)"]:
-                    if col in ex.columns:
-                        ex[col] = ex[col].apply(tratar_valor)
-    
-                # recalcula Valor Real do Everest como antes
-                if "Impostos (Everest)" in ev.columns:
-                    ev["Impostos (Everest)"] = pd.to_numeric(ev["Impostos (Everest)"], errors="coerce").fillna(0)
-                    ev["Valor Real (Everest)"] = ev["Valor Bruto (Everest)"] - ev["Impostos (Everest)"]
-                else:
-                    ev["Valor Real (Everest)"] = ev["Valor Bruto (Everest)"]
-    
-                ev["Valor Bruto (Everest)"] = pd.to_numeric(ev["Valor Bruto (Everest)"], errors="coerce").round(2)
-                ev["Valor Real (Everest)"] = pd.to_numeric(ev["Valor Real (Everest)"], errors="coerce").round(2)
-                ex["Valor Bruto (Externo)"] = pd.to_numeric(ex["Valor Bruto (Externo)"], errors="coerce").round(2)
-                ex["Valor Real (Externo)"] = pd.to_numeric(ex["Valor Real (Externo)"], errors="coerce").round(2)
-    
-                # mapear nome loja do externo para o ev (mantendo lógica)
-                mapa_nome_loja = ex.drop_duplicates(subset="Codigo")[["Codigo", "Nome Loja Sistema Externo"]].set_index("Codigo").to_dict()["Nome Loja Sistema Externo"]
-                ev["Nome Loja Everest"] = ev["Codigo"].map(mapa_nome_loja)
-    
-                # ---------------- LEITURA DA PLANILHA DE FATURAMENTO (ID e aba Faturamento) ----------------
-                FAT_ID = "1tqmql1aL6M6A6yZ1QSOiifDjas5Bs_AziI7IkqwmAOM"
-                FAT_SHEET_NAME = "Faturamento"
-    
-                try:
-                    fat_sh = gc.open_by_key(FAT_ID)
-                    ws_fat = fat_sh.worksheet(FAT_SHEET_NAME)
-                    vals_fat = ws_fat.get_all_values()
-                    if len(vals_fat) < 2:
-                        st.warning(f"Aba '{FAT_SHEET_NAME}' vazia na planilha de faturamento (ID {FAT_ID}).")
-                        df_fat = pd.DataFrame()
-                    else:
-                        header_fat, rows_fat = vals_fat[0], vals_fat[1:]
-                        df_fat = pd.DataFrame(rows_fat, columns=[c.strip() for c in header_fat])
-                except Exception as e:
-                    st.error(f"Erro ao abrir a planilha de Faturamento (ID {FAT_ID}): {e}")
-                    df_fat = pd.DataFrame()
-    
-                # ---------------- PREPARAR df_fat (Código=B, Valor=D, opcional Data=A) ----------------
-                if df_fat.empty:
-                    df_fat_proc = pd.DataFrame()
-                else:
-                    # detecta colunas por nome (normalizado) ou por posição: B->index1, D->index3
-                    def _col_by_idx_or_name(df, idx, candidates=None):
-                        cols = list(df.columns)
-                        if candidates:
-                            cand_map = {_norm_key(c): c for c in cols}
-                            for cand in candidates:
-                                k = _norm_key(cand)
-                                if k in cand_map:
-                                    return cand_map[k]
-                        if 0 <= idx < len(cols):
-                            return cols[idx]
-                        return None
-    
-                    code_col = _col_by_idx_or_name(df_fat, 1, candidates=["Código", "Código da Empresa", "Codigo"])
-                    val_col = _col_by_idx_or_name(df_fat, 3, candidates=["Valor", "Valor Bruto", "Valor Bruto (R$)", "Valor Bruto Everest"])
-                    date_col = _col_by_idx_or_name(df_fat, 0, candidates=["Data", "data"])
-    
-                    fat_proc = pd.DataFrame()
-                    # Código
-                    if code_col:
-                        fat_proc["Codigo"] = pd.to_numeric(df_fat[code_col], errors="coerce")
-                    else:
-                        if df_fat.shape[1] > 1:
-                            fat_proc["Codigo"] = pd.to_numeric(df_fat.iloc[:, 1], errors="coerce")
-                        else:
-                            fat_proc["Codigo"] = pd.Series(dtype="float64")
-                    # Valor bruto vindo da planilha
-                    if val_col:
-                        fat_proc["Valor Bruto Everest Planilha"] = df_fat[val_col].astype(str)
-                    else:
-                        if df_fat.shape[1] > 3:
-                            fat_proc["Valor Bruto Everest Planilha"] = df_fat.iloc[:, 3].astype(str)
-                        else:
-                            fat_proc["Valor Bruto Everest Planilha"] = None
-    
-                    # Data (opcional)
-                    if date_col:
-                        fat_proc["Data"] = pd.to_datetime(df_fat[date_col], dayfirst=True, errors="coerce").dt.date
-                    else:
-                        fat_proc["Data"] = pd.NaT
-    
-                    # converter valores BR/EN
-                    def _to_float_from_str(s):
-                        try:
-                            if pd.isna(s):
-                                return float("nan")
-                            s = str(s).strip().replace("R$", "").replace(" ", "").replace("\xa0", "")
-                            if s.count(",") == 1 and s.count(".") >= 1:
-                                s = s.replace(".", "").replace(",", ".")
-                            else:
-                                s = s.replace(",", ".")
-                            return float(s)
-                        except:
-                            return float("nan")
-    
-                    fat_proc["Valor Bruto Everest Planilha"] = fat_proc["Valor Bruto Everest Planilha"].apply(_to_float_from_str)
-                    fat_proc["Codigo"] = pd.to_numeric(fat_proc["Codigo"], errors="coerce")
-    
-                    # agregação: se tiver Data válida, agrupa por Data+Codigo; senão por Codigo apenas
-                    if fat_proc["Data"].notna().any():
-                        df_fat_proc = (fat_proc.dropna(subset=["Codigo"])
-                                       .groupby(["Data", "Codigo"], as_index=False)["Valor Bruto Everest Planilha"].sum())
-                    else:
-                        df_fat_proc = (fat_proc.dropna(subset=["Codigo"])
-                                       .groupby(["Codigo"], as_index=False)["Valor Bruto Everest Planilha"].sum())
-    
-                # ---------------- Merge EV x EX ----------------
-                df_comp = pd.merge(ev, ex, on=["Data", "Codigo"], how="outer", suffixes=("_Everest", "_Externo"))
-    
-                # ---------------- Integrar FATURAMENTO (df_fat_proc) ----------------
-                if not df_fat_proc.empty:
-                    if "Data" in df_fat_proc.columns:
-                        df_comp = pd.merge(df_comp, df_fat_proc, on=["Data", "Codigo"], how="left")
-                    else:
-                        df_comp = pd.merge(df_comp, df_fat_proc, on=["Codigo"], how="left")
-                    # coluna que veio do arquivo:
-                    df_comp["Faturamento Everest (Planilha)"] = df_comp.get("Valor Bruto Everest Planilha")
-                    # quando houver valor no arquivo, usa ele; caso contrário mantém o valor original
-                    df_comp["Valor Bruto (Everest)"] = df_comp["Valor Bruto Everest Planilha"].fillna(df_comp.get("Valor Bruto (Everest)"))
-                else:
-                    df_comp["Faturamento Everest (Planilha)"] = pd.NA
-    
-                # garantir colunas numéricas
-                for col in ["Valor Bruto (Everest)", "Valor Real (Everest)", "Valor Bruto (Externo)", "Valor Real (Externo)"]:
-                    df_comp[col] = pd.to_numeric(df_comp.get(col, 0), errors="coerce").fillna(0.0).round(2)
-    
-                # Diferença bruto
-                df_comp["Diferença (Bruto)"] = (df_comp["Valor Bruto (Everest)"] - df_comp["Valor Bruto (Externo)"]).round(2)
-    
-                # filtros e lógica de destaque (mantido)
-                df_comp["Valor Bruto Iguais"] = (df_comp["Valor Bruto (Everest)"] == df_comp["Valor Bruto (Externo)"])
-                df_comp["Valor Real Iguais"] = (df_comp["Valor Real (Everest)"] == df_comp["Valor Real (Externo)"])
-                df_comp["_Tem_Diferenca"] = ~(df_comp["Valor Bruto Iguais"] & df_comp["Valor Real Iguais"])
-                df_comp["_Ignorar_Kopp"] = df_comp["Nome Loja Sistema Externo"].str.contains("kop", case=False, na=False)
-                df_comp_filtrado = df_comp[~(df_comp["_Tem_Diferenca"] & df_comp["_Ignorar_Kopp"])].copy()
-    
-                opcao = st.selectbox("Filtro de diferenças:", ["Todas", "Somente com diferenças", "Somente sem diferenças"])
-                if opcao == "Todas":
-                    df_resultado = df_comp_filtrado.copy()
-                elif opcao == "Somente com diferenças":
-                    df_resultado = df_comp_filtrado[df_comp_filtrado["_Tem_Diferenca"]].copy()
-                else:
-                    df_resultado = df_comp_filtrado[~df_comp_filtrado["_Tem_Diferenca"]].copy()
-    
-                # organizar colunas para exibição
-                display_cols = [
-                    "Data",
-                    "Nome Loja Everest", "Codigo",
-                    "Valor Bruto (Everest)", "Faturamento Everest (Planilha)",
-                    "Nome Loja Sistema Externo", "Valor Bruto (Externo)", "Diferença (Bruto)",
-                    "Valor Real (Everest)", "Valor Real (Externo)"
-                ]
-                display_cols = [c for c in display_cols if c in df_resultado.columns]
-                df_resultado = df_resultado[display_cols].sort_values("Data")
-    
-                rename_map = {
-                    "Nome Loja Everest": "Nome (Everest)",
-                    "Codigo": "Código",
-                    "Valor Bruto (Everest)": "Valor Bruto (Everest)",
-                    "Faturamento Everest (Planilha)": "Faturamento Everest (Planilha)",
-                    "Nome Loja Sistema Externo": "Nome (Externo)",
-                    "Valor Bruto (Externo)": "Valor Bruto (Externo)",
-                    "Valor Real (Everest)": "Valor Real (Everest)",
-                    "Valor Real (Externo)": "Valor Real (Externo)",
-                    "Diferença (Bruto)": "Diferença (Bruto)"
-                }
-                df_resultado = df_resultado.rename(columns=rename_map)
-    
-                # preencher NAs
-                for c in ["Nome (Everest)", "Nome (Externo)"]:
-                    if c in df_resultado.columns:
-                        df_resultado[c] = df_resultado[c].fillna("")
-                df_resultado = df_resultado.fillna(0)
-                df_resultado = df_resultado.reset_index(drop=True)
-    
-                # adicionar totais por dia
-                dfs_com_totais = []
-                for data, grupo in df_resultado.groupby("Data", sort=False):
-                    dfs_com_totais.append(grupo)
-                    total_dia = {
-                        "Data": data,
-                        "Nome (Everest)": "Total do dia",
-                        "Código": "",
-                        "Valor Bruto (Everest)": grupo.get("Valor Bruto (Everest)", pd.Series()).sum() if "Valor Bruto (Everest)" in grupo.columns else 0.0,
-                        "Faturamento Everest (Planilha)": grupo.get("Faturamento Everest (Planilha)", pd.Series()).sum() if "Faturamento Everest (Planilha)" in grupo.columns else 0.0,
-                        "Nome (Externo)": "",
-                        "Valor Bruto (Externo)": grupo.get("Valor Bruto (Externo)", pd.Series()).sum() if "Valor Bruto (Externo)" in grupo.columns else 0.0,
-                        "Diferença (Bruto)": grupo.get("Diferença (Bruto)", pd.Series()).sum() if "Diferença (Bruto)" in grupo.columns else 0.0,
-                        "Valor Real (Everest)": grupo.get("Valor Real (Everest)", pd.Series()).sum() if "Valor Real (Everest)" in grupo.columns else 0.0,
-                        "Valor Real (Externo)": grupo.get("Valor Real (Externo)", pd.Series()).sum() if "Valor Real (Externo)" in grupo.columns else 0.0
-                    }
-                    dfs_com_totais.append(pd.DataFrame([total_dia]))
-    
-                df_resultado_final = pd.concat(dfs_com_totais, ignore_index=True)
-    
-                # Total geral
-                linha_total = pd.DataFrame([{
-                    "Data": "",
-                    "Nome (Everest)": "Total Geral",
-                    "Código": "",
-                    "Valor Bruto (Everest)": ev["Valor Bruto (Everest)"].sum() if "Valor Bruto (Everest)" in ev.columns else 0.0,
-                    "Faturamento Everest (Planilha)": df_fat_proc["Valor Bruto Everest Planilha"].sum() if (not df_fat_proc.empty and "Valor Bruto Everest Planilha" in df_fat_proc.columns) else 0.0,
-                    "Nome (Externo)": "",
-                    "Valor Bruto (Externo)": ex["Valor Bruto (Externo)"].sum() if "Valor Bruto (Externo)" in ex.columns else 0.0,
-                    "Diferença (Bruto)": df_resultado_final.get("Diferença (Bruto)", pd.Series()).sum() if "Diferença (Bruto)" in df_resultado_final.columns else 0.0,
-                    "Valor Real (Everest)": ev["Valor Real (Everest)"].sum() if "Valor Real (Everest)" in ev.columns else 0.0,
-                    "Valor Real (Externo)": ex["Valor Real (Externo)"].sum() if "Valor Real (Externo)" in ex.columns else 0.0
-                }])
-                df_resultado_final = pd.concat([df_resultado_final, linha_total], ignore_index=True)
-    
-                st.session_state.df_resultado = df_resultado
-    
-                # destaque linhas com diferença
-                def highlight_diferenca(row):
-                    if "Diferença (Bruto)" in row.index and float(row["Diferença (Bruto)"] or 0) != 0:
-                        return ["background-color: #ff9999"] * len(row)
-                    if ("Valor Real (Everest)" in row.index and "Valor Real (Externo)" in row.index) and (float(row["Valor Real (Everest)"] or 0) != float(row["Valor Real (Externo)"] or 0)):
-                        return ["background-color: #ff9999"] * len(row)
-                    return [""] * len(row)
-    
-                format_map = {}
-                for c in ["Valor Bruto (Everest)", "Faturamento Everest (Planilha)", "Valor Bruto (Externo)", "Diferença (Bruto)", "Valor Real (Everest)", "Valor Real (Externo)"]:
-                    if c in df_resultado_final.columns:
-                        format_map[c] = "R$ {:,.2f}"
-    
-                st.dataframe(
-                    df_resultado_final.style
-                        .apply(highlight_diferenca, axis=1)
-                        .format(format_map),
-                    use_container_width=True,
-                    height=600
-                )
-    
-                # botão de download (simples)
-                def to_excel_com_estilo(df):
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                        df.to_excel(writer, index=False, sheet_name='Comparativo')
-                    output.seek(0)
-                    return output
-    
-                excel_bytes = to_excel_com_estilo(df_resultado_final)
-                st.download_button(
-                    label="📥 Baixar Excel",
-                    data=excel_bytes,
-                    file_name="comparativo_everest_externo.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-    
+        # carregar planilha FAT (507)
+        try:
+            fat_sh = gc.open_by_key(FAT_ID)
+            ws_507 = fat_sh.worksheet(FAT_SHEET_507)
+            vals507 = ws_507.get_all_values()
+            if len(vals507) < 2:
+                df_507 = pd.DataFrame()
+            else:
+                header507, rows507 = vals507[0], vals507[1:]
+                df_507 = pd.DataFrame(rows507, columns=[h.strip() for h in header507])
         except Exception as e:
-            st.error(f"❌ Erro ao carregar ou comparar dados: {e}")
+            st.warning(f"Não foi possível abrir aba 507: {e}")
+            df_507 = pd.DataFrame()
+    
+        if df_507.empty:
+            df_507_proc = pd.DataFrame(columns=["Data","Codigo","Valor_507"])
+        else:
+            # pressupõe A=Data (idx0), B=Codigo (1), D=Valor (3)
+            d_date = 0; d_code = 1; d_val = 3
+            df_507_proc = pd.DataFrame()
+            df_507_proc["Data"] = pd.to_datetime(df_507.iloc[:, d_date], dayfirst=True, errors="coerce").dt.date if df_507.shape[1] > d_date else pd.NaT
+            df_507_proc["Codigo"] = df_507.iloc[:, d_code].apply(normalize_codigo) if df_507.shape[1] > d_code else ""
+            df_507_proc["Valor_507"] = df_507.iloc[:, d_val].apply(tratar_valor).round(2) if df_507.shape[1] > d_val else 0.0
+    
+        # carregar FATURAMENTO MEIO PAGAMENTO
+        try:
+            ws_meio = fat_sh.worksheet(FAT_SHEET_MEIO)
+            vals_meio = ws_meio.get_all_values()
+            if len(vals_meio) < 2:
+                df_meio = pd.DataFrame()
+            else:
+                header_meio, rows_meio = vals_meio[0], vals_meio[1:]
+                df_meio = pd.DataFrame(rows_meio, columns=[h.strip() for h in header_meio])
+        except Exception as e:
+            st.warning(f"Não foi possível abrir aba Faturamento Meio Pagamento: {e}")
+            df_meio = pd.DataFrame()
+    
+        if df_meio.empty:
+            df_meio_proc = pd.DataFrame(columns=["Data","Codigo","Valor_Meio"])
+        else:
+            # pressupõe A=Data(0), G=Codigo(6), J=Valor(9)
+            m_date = 0; m_code = 6; m_val = 9
+            df_meio_proc = pd.DataFrame()
+            cols_len = df_meio.shape[1]
+            df_meio_proc["Data"] = pd.to_datetime(df_meio.iloc[:, m_date], dayfirst=True, errors="coerce").dt.date if cols_len > m_date else pd.NaT
+            df_meio_proc["Codigo"] = df_meio.iloc[:, m_code].apply(normalize_codigo) if cols_len > m_code else ""
+            df_meio_proc["Valor_Meio"] = df_meio.iloc[:, m_val].apply(tratar_valor).round(2) if cols_len > m_val else 0.0
+    
+        # garantir que todos os Codigos das fontes estão normalizados (evita merges por tipos diferentes)
+        # (se quiser incluir ex/ev originais também, você pode normalizar ali)
+        # base = vendas
+        base = vendas[["Data", "Codigo", "Nome", "Valor_Vendas"]].copy()
+    
+        # merge com faturamento meio (por Data+Codigo quando existir Data, senão por Codigo)
+        if not df_meio_proc.empty and df_meio_proc.shape[0] > 0:
+            if df_meio_proc["Data"].notna().any():
+                merged = pd.merge(base, df_meio_proc[["Data", "Codigo", "Valor_Meio"]], on=["Data", "Codigo"], how="left")
+            else:
+                merged = pd.merge(base, df_meio_proc[["Codigo", "Valor_Meio"]], on=["Codigo"], how="left")
+        else:
+            merged = base.copy()
+            merged["Valor_Meio"] = 0.0
+    
+        # merge com 507 vendas (por Data+Codigo)
+        if not df_507_proc.empty and df_507_proc.shape[0] > 0:
+            merged = pd.merge(merged, df_507_proc[["Data", "Codigo", "Valor_507"]], on=["Data", "Codigo"], how="left")
+        else:
+            merged["Valor_507"] = 0.0
+    
+        # preencher NaNs e converter numericamente
+        for col in ["Valor_Vendas", "Valor_Meio", "Valor_507"]:
+            if col in merged.columns:
+                merged[col] = pd.to_numeric(merged[col], errors="coerce").fillna(0.0).round(2)
+            else:
+                merged[col] = 0.0
+    
+        # calcular diferenças
+        merged["Diff_Meio"] = (merged["Valor_Vendas"] - merged["Valor_Meio"]).round(2)
+        merged["Diff_507"] = (merged["Valor_Vendas"] - merged["Valor_507"]).round(2)
+    
+        # formatar Data e valores para exibição
+        merged["Data"] = pd.to_datetime(merged["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
+    
+        display = merged.copy()
+        display["Valor (Vendas)"] = display["Valor_Vendas"].apply(fmt_brl)
+        display["Valor (Meio)"]  = display["Valor_Meio"].apply(fmt_brl)
+        display["Valor (507)"]   = display["Valor_507"].apply(fmt_brl)
+        display["Diferença (Meio)"] = display["Diff_Meio"].apply(fmt_brl)
+        display["Diferença (507)"]  = display["Diff_507"].apply(fmt_brl)
+    
+        final_cols = ["Data", "Codigo", "Nome", "Valor (Vendas)", "Valor (Meio)", "Valor (507)", "Diferença (Meio)", "Diferença (507)"]
+        final_cols = [c for c in final_cols if c in display.columns]
+    
+        st.dataframe(display[final_cols].sort_values(["Data", "Codigo"]), use_container_width=True, height=600)
+    
+    except Exception as e:
+        st.error(f"❌ Erro ao carregar ou comparar dados: {e}")
     # =======================================
     # Aba 5 - Auditoria PDV x Faturamento Meio Pagamento (tabela única)
     # =======================================

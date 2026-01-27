@@ -2107,6 +2107,7 @@ with st.spinner("⏳ Processando..."):
     
     # =======================================
     # =======================================
+    # =======================================
     # Aba 4 - Integração Everest (independente do upload)
     # =======================================
     from datetime import date, timedelta
@@ -2115,7 +2116,7 @@ with st.spinner("⏳ Processando..."):
     import unicodedata, re
     from io import BytesIO
     
-    # ---------- Funções utilitárias ----------
+    # ---------- Helpers ----------
     def _norm_key(s):
         if not isinstance(s, str):
             return ""
@@ -2125,12 +2126,29 @@ with st.spinner("⏳ Processando..."):
         s = re.sub(r'\W+', '', s)
         return s
     
+    def make_unique_headers(headers):
+        """Retorna lista de headers garantindo unicidade (adiciona _2, _3 etc. se necessário)."""
+        seen = {}
+        out = []
+        for h in headers:
+            h0 = (h or "").strip()
+            if h0 == "":
+                h0 = "col"
+            cnt = seen.get(h0, 0) + 1
+            seen[h0] = cnt
+            if cnt == 1:
+                out.append(h0)
+            else:
+                out.append(f"{h0}_{cnt}")
+        return out
+    
     def tratar_valor(valor):
         try:
             if pd.isna(valor):
                 return float("nan")
-            s = str(valor).strip().replace("R$", "").replace("\xa0", "").replace(" ", "")
+            s = str(valor).strip().replace("R$", "").replace("\xa0", "").strip()
             # detectar formatos BR e EN
+            # se contém '.' e ',' e ',' é último -> formato BR com milhares
             if s.count(",") == 1 and s.count(".") >= 1:
                 s = s.replace(".", "").replace(",", ".")
             else:
@@ -2176,34 +2194,50 @@ with st.spinner("⏳ Processando..."):
                 return s
         return ""
     
-    # ---------- Configurações (ajuste se necessário) ----------
-    WORKSHEET_VENDAS = "Everest"                  # aba com vendas diárias
-    WORKSHEET_EXTERNO = "Fat Sistema Externo"    # aba externa (mantive caso queira)
+    def safe_df_from_sheet(vals):
+        """
+        Recebe get_all_values() (lista de listas) e retorna DataFrame com headers únicos.
+        """
+        if not vals or len(vals) < 1:
+            return pd.DataFrame()
+        headers_raw = [h if h is not None else "" for h in vals[0]]
+        headers = make_unique_headers([h.strip() for h in headers_raw])
+        rows = vals[1:] if len(vals) > 1 else []
+        df = pd.DataFrame(rows, columns=headers)
+        return df
+    
+    # ---------- Config (mude se necessário) ----------
+    # Nota: removi a constante WORKSHEET_VENDAS fixa conforme pedido; 
+    # mantive os nomes das abas FAT porque você usa a planilha de faturamento por key.
     FAT_ID = "1tqmql1aL6M6A6yZ1QSOiifDjas5Bs_AziI7IkqwmAOM"  # planilha com Faturamento
-    FAT_SHEET_507 = "Faturamento"                 # aba onde está a 507 venda (A=Data, B=Codigo, D=Valor)
-    FAT_SHEET_MEIO = "Faturamento Meio Pagamento" # aba do Faturamento por meio (A=Data, G=Codigo, J=Valor)
+    FAT_SHEET_507 = "Faturamento"                 # aba onde está a 507 venda
+    FAT_SHEET_MEIO = "Faturamento Meio Pagamento" # aba do Faturamento por meio
     
     # ---------- Execução ----------
     try:
-        # --------- Carregar VENDAS (Everest) ----------
-        planilha = gc.open("Vendas diarias")
-        ws_vendas = planilha.worksheet(WORKSHEET_VENDAS)
-        vals = ws_vendas.get_all_values()
-        if len(vals) < 2:
-            st.warning("A aba de vendas está vazia.")
-            df_vendas = pd.DataFrame()
-        else:
-            header, rows = vals[0], vals[1:]
-            df_vendas = pd.DataFrame(rows, columns=[h.strip() for h in header])
+        # ----- Ler planilha "Vendas diarias" e tentar detectar a aba das vendas -----
+        vendas = pd.DataFrame(columns=["Data", "Codigo", "Nome", "Valor_Vendas"])
+        try:
+            planilha = gc.open("Vendas diarias")
+            # se existir uma folha chamada "Everest", usa ela; senão usa a primeira
+            sheet_names = [ws.title for ws in planilha.worksheets()]
+            if "Everest" in sheet_names:
+                ws_vendas = planilha.worksheet("Everest")
+            else:
+                # pega a primeira aba disponível
+                ws_vendas = planilha.worksheets()[0]
+            vals = ws_vendas.get_all_values()
+            df_vendas_raw = safe_df_from_sheet(vals)
+        except Exception as e:
+            st.warning(f"Não foi possível abrir 'Vendas diarias' ou ler aba de vendas: {e}")
+            df_vendas_raw = pd.DataFrame()
     
-        if df_vendas.empty:
-            vendas = pd.DataFrame(columns=["Data","Codigo","Nome","Valor_Vendas"])
-        else:
-            # detectar colunas por nome ou posição (fallback para índices conhecidos)
+        if not df_vendas_raw.empty:
+            # detectar colunas por nome (usando versão normalizada) ou posição
             def col_or_idx(df, idx, candidates=None):
                 cols = list(df.columns)
+                cmap = {_norm_key(c): c for c in cols}
                 if candidates:
-                    cmap = {_norm_key(c): c for c in cols}
                     for cand in candidates:
                         k = _norm_key(cand)
                         if k in cmap:
@@ -2212,88 +2246,120 @@ with st.spinner("⏳ Processando..."):
                     return cols[idx]
                 return None
     
-            v_date_col = col_or_idx(df_vendas, 0, ["Data", "data"])
-            v_codigo_col = col_or_idx(df_vendas, 1, ["Código", "Codigo", "codigo"])
-            v_nome_col = col_or_idx(df_vendas, 2, ["Nome", "nome", "Nome Loja", "Nome Loja Everest", "Nome Fantasia"])
-            v_valor_col = col_or_idx(df_vendas, 7, ["Valor", "Valor Bruto", "Valor Bruto (Everest)", "Valor (R$)", "Valor_Vendas"])
+            v_date_col = col_or_idx(df_vendas_raw, 0, ["Data", "data", "data do movimento", "data movimentacao"])
+            v_codigo_col = col_or_idx(df_vendas_raw, 1, ["Código", "Codigo", "codigo", "cod"])
+            v_nome_col = col_or_idx(df_vendas_raw, 2, ["Nome", "nome", "Nome Fantasia", "nome fantasia", "Nome Loja"])
+            v_valor_col = col_or_idx(df_vendas_raw, 7, ["Valor", "Valor Bruto", "Valor Total", "Valor (R$)", "Valor_Vendas", "valor"])
     
             vendas = pd.DataFrame()
-            vendas["Data"] = pd.to_datetime(df_vendas[v_date_col], dayfirst=True, errors="coerce").dt.date if v_date_col else pd.NaT
-            vendas["Codigo"] = df_vendas[v_codigo_col] if v_codigo_col else ""
-            vendas["Nome"] = df_vendas[v_nome_col] if v_nome_col else ""
-            vendas["Valor_Vendas"] = df_vendas[v_valor_col] if v_valor_col else 0
+            vendas["Data"] = pd.to_datetime(df_vendas_raw[v_date_col], dayfirst=True, errors="coerce").dt.date if v_date_col else pd.NaT
+            vendas["Codigo"] = df_vendas_raw[v_codigo_col] if v_codigo_col else ""
+            vendas["Nome"] = df_vendas_raw[v_nome_col] if v_nome_col else ""
+            vendas["Valor_Vendas"] = df_vendas_raw[v_valor_col] if v_valor_col else 0
     
             vendas["Codigo"] = vendas["Codigo"].apply(normalize_codigo)
             vendas["Valor_Vendas"] = vendas["Valor_Vendas"].apply(tratar_valor).round(2)
+        else:
+            vendas = pd.DataFrame(columns=["Data", "Codigo", "Nome", "Valor_Vendas"])
     
-        # --------- Carregar 507 ----------
+        # ----- Ler FAT 507 -----
         try:
             fat_sh = gc.open_by_key(FAT_ID)
+        except Exception as e:
+            st.error(f"Erro ao abrir planilha de Faturamento por key: {e}")
+            st.stop()
+    
+        try:
             ws_507 = fat_sh.worksheet(FAT_SHEET_507)
             vals507 = ws_507.get_all_values()
-            if len(vals507) < 2:
-                df_507 = pd.DataFrame()
-            else:
-                header507, rows507 = vals507[0], vals507[1:]
-                df_507 = pd.DataFrame(rows507, columns=[h.strip() for h in header507])
+            df_507_raw = safe_df_from_sheet(vals507)
         except Exception as e:
             st.warning(f"Não foi possível abrir aba 507: {e}")
-            df_507 = pd.DataFrame()
+            df_507_raw = pd.DataFrame()
     
-        if df_507.empty:
-            df_507_proc = pd.DataFrame(columns=["Data","Codigo","Valor_507"])
-        else:
-            # pressupõe A=Data (idx0), B=Codigo (1), D=Valor (3)
-            d_date = 0; d_code = 1; d_val = 3
+        if not df_507_raw.empty:
+            # Pressupõe A=Data (idx0), B=Codigo (1), D=Valor(3) como fallback
+            # tentar detectar por nomes também
+            def detect_cols_507(df):
+                date_c = None; code_c = None; val_c = None
+                date_c = col_or_idx_local(df, 0, ["Data", "data"])
+                code_c = col_or_idx_local(df, 1, ["Código", "Codigo", "codigo"])
+                val_c = col_or_idx_local(df, 3, ["Valor", "Valor Total", "Valor (R$)", "Valor_507"])
+                return date_c, code_c, val_c
+    
+            def col_or_idx_local(df, idx, candidates=None):
+                cols = list(df.columns)
+                cmap = {_norm_key(c): c for c in cols}
+                if candidates:
+                    for cand in candidates:
+                        k = _norm_key(cand)
+                        if k in cmap:
+                            return cmap[k]
+                if 0 <= idx < len(cols):
+                    return cols[idx]
+                return None
+    
+            d_date = col_or_idx_local(df_507_raw, 0, ["Data", "data"])
+            d_code = col_or_idx_local(df_507_raw, 1, ["Código", "Codigo", "codigo"])
+            d_val  = col_or_idx_local(df_507_raw, 3, ["Valor", "Valor Total", "Valor (R$)"])
             df_507_proc = pd.DataFrame()
-            df_507_proc["Data"] = pd.to_datetime(df_507.iloc[:, d_date], dayfirst=True, errors="coerce").dt.date if df_507.shape[1] > d_date else pd.NaT
-            df_507_proc["Codigo"] = df_507.iloc[:, d_code].apply(normalize_codigo) if df_507.shape[1] > d_code else ""
-            df_507_proc["Valor_507"] = df_507.iloc[:, d_val].apply(tratar_valor).round(2) if df_507.shape[1] > d_val else 0.0
+            df_507_proc["Data"] = pd.to_datetime(df_507_raw[d_date], dayfirst=True, errors="coerce").dt.date if d_date else pd.NaT
+            df_507_proc["Codigo"] = df_507_raw[d_code].apply(normalize_codigo) if d_code else ""
+            df_507_proc["Valor_507"] = df_507_raw[d_val].apply(tratar_valor).round(2) if d_val else 0.0
+        else:
+            df_507_proc = pd.DataFrame(columns=["Data", "Codigo", "Valor_507"])
     
-        # --------- Carregar Faturamento Meio Pagamento ----------
+        # ----- Ler FAT MEIO -----
         try:
             ws_meio = fat_sh.worksheet(FAT_SHEET_MEIO)
             vals_meio = ws_meio.get_all_values()
-            if len(vals_meio) < 2:
-                df_meio = pd.DataFrame()
-            else:
-                header_meio, rows_meio = vals_meio[0], vals_meio[1:]
-                df_meio = pd.DataFrame(rows_meio, columns=[h.strip() for h in header_meio])
+            df_meio_raw = safe_df_from_sheet(vals_meio)
         except Exception as e:
             st.warning(f"Não foi possível abrir aba Faturamento Meio Pagamento: {e}")
-            df_meio = pd.DataFrame()
+            df_meio_raw = pd.DataFrame()
     
-        if df_meio.empty:
-            df_meio_proc = pd.DataFrame(columns=["Data","Codigo","Valor_Meio"])
-        else:
-            # pressupõe A=Data(0), G=Codigo(6), J=Valor(9)
-            m_date = 0; m_code = 6; m_val = 9
+        if not df_meio_raw.empty:
+            def col_or_idx_local_meio(df, idx, candidates=None):
+                cols = list(df.columns)
+                cmap = {_norm_key(c): c for c in cols}
+                if candidates:
+                    for cand in candidates:
+                        k = _norm_key(cand)
+                        if k in cmap:
+                            return cmap[k]
+                if 0 <= idx < len(cols):
+                    return cols[idx]
+                return None
+    
+            m_date = col_or_idx_local_meio(df_meio_raw, 0, ["Data", "data"])
+            m_code = col_or_idx_local_meio(df_meio_raw, 6, ["Código", "Codigo", "codigo"])
+            m_val  = col_or_idx_local_meio(df_meio_raw, 9, ["Valor", "Valor Total", "Valor (R$)"])
             df_meio_proc = pd.DataFrame()
-            cols_len = df_meio.shape[1]
-            df_meio_proc["Data"] = pd.to_datetime(df_meio.iloc[:, m_date], dayfirst=True, errors="coerce").dt.date if cols_len > m_date else pd.NaT
-            df_meio_proc["Codigo"] = df_meio.iloc[:, m_code].apply(normalize_codigo) if cols_len > m_code else ""
-            df_meio_proc["Valor_Meio"] = df_meio.iloc[:, m_val].apply(tratar_valor).round(2) if cols_len > m_val else 0.0
+            df_meio_proc["Data"] = pd.to_datetime(df_meio_raw[m_date], dayfirst=True, errors="coerce").dt.date if m_date else pd.NaT
+            df_meio_proc["Codigo"] = df_meio_raw[m_code].apply(normalize_codigo) if m_code else ""
+            df_meio_proc["Valor_Meio"] = df_meio_raw[m_val].apply(tratar_valor).round(2) if m_val else 0.0
+        else:
+            df_meio_proc = pd.DataFrame(columns=["Data", "Codigo", "Valor_Meio"])
     
         # ---------- Agregar por (Data, Codigo) ----------
         # Somar valores por dia+codigo; pegar primeiro nome disponível nas vendas
         vendas_agg = pd.DataFrame(columns=["Data","Codigo","Nome","Valor_Vendas"])
         if not vendas.empty:
-            vendas_agg = (vendas.dropna(subset=["Codigo"])
-                          .groupby(["Data","Codigo"], as_index=False)
+            tmp = vendas.dropna(subset=["Codigo"]) if "Codigo" in vendas.columns else vendas
+            vendas_agg = (tmp.groupby(["Data","Codigo"], as_index=False)
                           .agg({"Valor_Vendas":"sum", "Nome": lambda s: first_non_empty(s)}))
+    
         meio_agg = pd.DataFrame(columns=["Data","Codigo","Valor_Meio"])
         if not df_meio_proc.empty:
-            meio_agg = (df_meio_proc.dropna(subset=["Codigo"])
-                        .groupby(["Data","Codigo"], as_index=False)
-                        .agg({"Valor_Meio":"sum"}))
+            tmp = df_meio_proc.dropna(subset=["Codigo"]) if "Codigo" in df_meio_proc.columns else df_meio_proc
+            meio_agg = (tmp.groupby(["Data","Codigo"], as_index=False).agg({"Valor_Meio":"sum"}))
+    
         venda507_agg = pd.DataFrame(columns=["Data","Codigo","Valor_507"])
         if not df_507_proc.empty:
-            venda507_agg = (df_507_proc.dropna(subset=["Codigo"])
-                            .groupby(["Data","Codigo"], as_index=False)
-                            .agg({"Valor_507":"sum"}))
+            tmp = df_507_proc.dropna(subset=["Codigo"]) if "Codigo" in df_507_proc.columns else df_507_proc
+            venda507_agg = (tmp.groupby(["Data","Codigo"], as_index=False).agg({"Valor_507":"sum"}))
     
-        # ---------- Determinar data inicial e gerar intervalo até ontem ----------
-        # pegar mínima data entre as três agregações
+        # ---------- Determinar data inicial e gerar intervalo até ontem (com input do usuário) ----------
         dates = []
         for df in (vendas_agg, meio_agg, venda507_agg):
             if (df is not None) and (not df.empty):
@@ -2304,13 +2370,27 @@ with st.spinner("⏳ Processando..."):
             st.warning("Nenhuma data encontrada nas tabelas; não há nada para processar.")
             st.stop()
     
-        start_date = min(dates)
-        end_date = (pd.Timestamp(date.today()) - pd.Timedelta(days=1)).date()
-        if start_date > end_date:
-            st.warning("A data mais antiga encontrada é posterior a ontem. Nada a processar.")
+        data_minima = min(dates)
+        data_maxima = (pd.Timestamp(date.today()) - pd.Timedelta(days=1)).date()
+    
+        st.write(f"Data mínima disponível nos dados: {data_minima.strftime('%d/%m/%Y')}")
+        st.write(f"Data máxima permitida (ontem): {data_maxima.strftime('%d/%m/%Y')}")
+    
+        data_inicial_usuario = st.date_input(
+            "Escolha a data inicial para o relatório:",
+            value=data_minima,
+            min_value=data_minima,
+            max_value=data_maxima
+        )
+    
+        if data_inicial_usuario > data_maxima:
+            st.warning("A data inicial não pode ser posterior a ontem.")
             st.stop()
     
-        # construir conjunto de chaves (Data,Codigo) existentes dentro do intervalo
+        start_date = data_inicial_usuario
+        end_date = data_maxima
+    
+        # ---------- Construir conjunto de chaves (Data,Codigo) existentes dentro do intervalo ----------
         def filter_in_range(df):
             if df is None or df.empty:
                 return pd.DataFrame(columns=["Data","Codigo"])
@@ -2328,10 +2408,22 @@ with st.spinner("⏳ Processando..."):
             st.stop()
     
         # ---------- Montar tabela final juntando os agregados ----------
+        # garantir que 'Data' seja col única e dtype date
+        def ensure_date_col(df):
+            if "Data" in df.columns:
+                df = df.copy()
+                df["Data"] = pd.to_datetime(df["Data"], errors="coerce").dt.date
+            return df
+    
+        vendas_agg = ensure_date_col(vendas_agg)
+        meio_agg = ensure_date_col(meio_agg)
+        venda507_agg = ensure_date_col(venda507_agg)
+        all_keys["Data"] = pd.to_datetime(all_keys["Data"], errors="coerce").dt.date
+    
         result = all_keys.copy()
-        # juntar vendas
+    
+        # juntar vendas (nome e valor)
         if not vendas_agg.empty:
-            vendas_agg["Data"] = pd.to_datetime(vendas_agg["Data"], errors="coerce").dt.date
             result = result.merge(vendas_agg, on=["Data","Codigo"], how="left")
         else:
             result["Valor_Vendas"] = pd.NA
@@ -2339,29 +2431,26 @@ with st.spinner("⏳ Processando..."):
     
         # juntar meio
         if not meio_agg.empty:
-            meio_agg["Data"] = pd.to_datetime(meio_agg["Data"], errors="coerce").dt.date
             result = result.merge(meio_agg, on=["Data","Codigo"], how="left")
         else:
             result["Valor_Meio"] = pd.NA
     
         # juntar 507
         if not venda507_agg.empty:
-            venda507_agg["Data"] = pd.to_datetime(venda507_agg["Data"], errors="coerce").dt.date
             result = result.merge(venda507_agg, on=["Data","Codigo"], how="left")
         else:
             result["Valor_507"] = pd.NA
     
-        # garantir tipos e não sobrescrever valores reais com zeros
+        # garantir tipos (numéricos) e não sobrescrever valores reais com zeros
         for col in ["Valor_Vendas", "Valor_Meio", "Valor_507"]:
             if col in result.columns:
                 result[col] = pd.to_numeric(result[col], errors="coerce")
     
-        # nome: garantir string
         if "Nome" not in result.columns:
             result["Nome"] = ""
     
         # formatar Data string dd/mm/aaaa para exibição
-        result["Data_fmt"] = pd.to_datetime(result["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
+        result["Data_str"] = pd.to_datetime(result["Data"], errors="coerce").dt.strftime("%d/%m/%Y").fillna("")
     
         # formatar valores somente quando existem (senão deixar vazio)
         result["Valor (Vendas)"] = result["Valor_Vendas"].apply(lambda x: fmt_brl(x) if pd.notna(x) else "")
@@ -2369,26 +2458,15 @@ with st.spinner("⏳ Processando..."):
         result["Valor (507)"]    = result["Valor_507"].apply(lambda x: fmt_brl(x) if pd.notna(x) else "")
     
         # preparar colunas finais
-        final = result[["Data", "Data_fmt", "Codigo", "Nome", "Valor (Vendas)", "Valor (Meio)", "Valor (507)"]].copy()
-        final = final.rename(columns={"Data_fmt":"Data"})
-    
-        # ordenar por data asc e codigo
+        final = result[["Data", "Data_str", "Codigo", "Nome", "Valor (Vendas)", "Valor (Meio)", "Valor (507)"]].copy()
+        final = final.rename(columns={"Data_str":"Data"})
         final = final.sort_values(["Data", "Codigo"]).reset_index(drop=True)
     
-        # mostrar
+        # mostrar no Streamlit
         st.dataframe(final, use_container_width=True, height=600)
     
     except Exception as e:
         st.error(f"❌ Erro ao carregar ou comparar dados: {e}")
-
-
-
-
-
-
-
-
-
 
 
 

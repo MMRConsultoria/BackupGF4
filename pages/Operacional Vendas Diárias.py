@@ -2145,16 +2145,15 @@ with st.spinner("⏳ Processando..."):
     def tratar_valor(valor):
         try:
             if pd.isna(valor) or str(valor).strip() == "":
-                return 0.0
+                return None
             s = str(valor).strip().replace("R$", "").replace("\xa0", "").strip()
-            # normaliza milhar/ponto e decimal/virgula
             if s.count(",") == 1 and s.count(".") >= 1:
                 s = s.replace(".", "").replace(",", ".")
             else:
                 s = s.replace(",", ".")
             return float(s)
         except:
-            return 0.0
+            return None
     
     def normalize_codigo(x):
         try:
@@ -2176,7 +2175,7 @@ with st.spinner("⏳ Processando..."):
     
     def find_column_by_candidates(df, candidates, fallback_idx=None):
         """Procura no df uma coluna cujo nome normalizado esteja entre candidates (lista).
-           Retorna nome da coluna encontrada; se não, retorna coluna por índice fallback_idx (se válido), ou None."""
+           Se não achar, retorna fallback_idx se válido; se não, retorna None."""
         if df is None or df.empty:
             return None
         cmap = {_norm_key(c): c for c in df.columns}
@@ -2184,10 +2183,26 @@ with st.spinner("⏳ Processando..."):
             k = _norm_key(cand)
             if k in cmap:
                 return cmap[k]
-        # fallback por índice
         if fallback_idx is not None and 0 <= fallback_idx < len(df.columns):
             return df.columns[fallback_idx]
         return None
+    
+    def detect_most_numeric_column(df):
+        """Retorna nome da coluna que tem mais valores convertíveis em número (tratar_valor)."""
+        best = None
+        best_count = -1
+        for col in df.columns:
+            sample = df[col].dropna().astype(str)
+            if sample.empty:
+                continue
+            count = 0
+            for v in sample.head(200):  # amostra limitada
+                if tratar_valor(v) is not None:
+                    count += 1
+            if count > best_count:
+                best_count = count
+                best = col
+        return best
     
     def try_numeric_sort_key(s):
         try:
@@ -2211,17 +2226,47 @@ with st.spinner("⏳ Processando..."):
         ws_507 = fat_sh.worksheet(ABA_507)
         df_507_raw = safe_df_from_sheet(ws_507.get_all_values())
     
+        st.write("507 - Colunas lidas:", list(df_507_raw.columns))
+    
         # detectar colunas (nomes comuns possíveis)
-        date_col_507 = find_column_by_candidates(df_507_raw, ["Data", "Data do Movimento", "data"], fallback_idx=0)
-        code_col_507 = find_column_by_candidates(df_507_raw, ["Codigo", "Código da Empresa", "Código", "codigo"], fallback_idx=1)
-        valor_col_507 = find_column_by_candidates(df_507_raw, ["Valor Total", "Valor", "Valor Líquido (Soma)", "Valor Total - Gojeta", "Valor (R$)", "V. Total"], fallback_idx=3)
-        nome_col_507 = find_column_by_candidates(df_507_raw, ["Nome", "Nome Fantasia", "Nome Fantasia (Razao)"], fallback_idx=2)
+        date_col_507 = find_column_by_candidates(
+            df_507_raw,
+            ["Data", "Data do Movimento", "data", "dia"],
+            fallback_idx=0
+        )
+        code_col_507 = find_column_by_candidates(
+            df_507_raw,
+            ["Codigo", "Código da Empresa", "Código", "codigo", "empresa"],
+            fallback_idx=1
+        )
+        valor_col_507 = find_column_by_candidates(
+            df_507_raw,
+            ["Valor Total", "Valor", "Valor Líquido (Soma)", "Valor Total - Gojeta", "Valor (R$)", "V. Total", "V. L\u00edquido", "valor"],
+            fallback_idx=3
+        )
+    
+        # se não encontrou por candidatos, tentar detectar coluna mais numérica
+        if valor_col_507 is None:
+            detected = detect_most_numeric_column(df_507_raw)
+            st.write("507 - coluna de valor não encontrada por nome. Detectada por amostragem numérica:", detected)
+            valor_col_507 = detected
+    
+        st.write(f"507 -> Data: {date_col_507}, Codigo: {code_col_507}, Valor detectado: {valor_col_507}")
     
         # extrair e normalizar
         df_507 = pd.DataFrame()
         df_507["Data"] = pd.to_datetime(df_507_raw[date_col_507], dayfirst=True, errors="coerce").dt.date if date_col_507 else pd.NaT
         df_507["Codigo"] = df_507_raw[code_col_507].apply(normalize_codigo) if code_col_507 else ""
-        df_507["Valor_507"] = df_507_raw[valor_col_507].apply(tratar_valor) if valor_col_507 else 0.0
+        # tratar_valor pode devolver None: map e substituir por 0
+        df_507["Valor_507"] = df_507_raw[valor_col_507].apply(tratar_valor).fillna(0.0) if valor_col_507 else 0.0
+        # tentar pegar nome se existir (col próxima)
+        nome_col_507 = None
+        for cand in ["Nome", "Nome Fantasia", "nome fantasia", "Nome Fantasia (Razao)", "empresa", "Empresa"]:
+            if cand in df_507_raw.columns:
+                nome_col_507 = cand
+                break
+        if nome_col_507 is None and len(df_507_raw.columns) >= 3:
+            nome_col_507 = df_507_raw.columns[2]
         df_507["Nome"] = df_507_raw[nome_col_507] if nome_col_507 else ""
     
         # ---------- Ler Meio Pagamento ----------
@@ -2230,14 +2275,23 @@ with st.spinner("⏳ Processando..."):
             ws_meio = meio_sh.worksheet(ABA_MEIO)
             df_meio_raw = safe_df_from_sheet(ws_meio.get_all_values())
     
+            st.write("Meio - Colunas lidas:", list(df_meio_raw.columns))
+    
             date_col_meio = find_column_by_candidates(df_meio_raw, ["Data", "Data do Movimento", "data"], fallback_idx=0)
             code_col_meio = find_column_by_candidates(df_meio_raw, ["Codigo", "Código da Empresa", "Código", "codigo"], fallback_idx=6)
-            valor_col_meio = find_column_by_candidates(df_meio_raw, ["Valor", "Valor Total", "Valor (R$)", "V. Total"], fallback_idx=9)
+            valor_col_meio = find_column_by_candidates(df_meio_raw, ["Valor", "Valor Total", "Valor (R$)", "V. Total", "Valor Líquido"], fallback_idx=9)
+    
+            if valor_col_meio is None:
+                detected_m = detect_most_numeric_column(df_meio_raw)
+                st.write("Meio - coluna de valor não encontrada por nome. Detectada por amostragem numérica:", detected_m)
+                valor_col_meio = detected_m
+    
+            st.write(f"Meio -> Data: {date_col_meio}, Codigo: {code_col_meio}, Valor detectado: {valor_col_meio}")
     
             df_meio = pd.DataFrame()
             df_meio["Data"] = pd.to_datetime(df_meio_raw[date_col_meio], dayfirst=True, errors="coerce").dt.date if date_col_meio else pd.NaT
             df_meio["Codigo"] = df_meio_raw[code_col_meio].apply(normalize_codigo) if code_col_meio else ""
-            df_meio["Valor_Meio"] = df_meio_raw[valor_col_meio].apply(tratar_valor) if valor_col_meio else 0.0
+            df_meio["Valor_Meio"] = df_meio_raw[valor_col_meio].apply(tratar_valor).fillna(0.0) if valor_col_meio else 0.0
         except Exception as e:
             st.warning(f"Aba Meio Pagamento não encontrada ou erro ao ler: {e}")
             df_meio = pd.DataFrame(columns=["Data", "Codigo", "Valor_Meio"])
@@ -2246,7 +2300,7 @@ with st.spinner("⏳ Processando..."):
         agg_507 = df_507.groupby(["Data", "Codigo"], as_index=False).agg({"Valor_507": "sum", "Nome": "first"})
         agg_meio = df_meio.groupby(["Data", "Codigo"], as_index=False).agg({"Valor_Meio": "sum"})
     
-        # ---------- Datas disponíveis e inputs ----------
+        # ---------- Datas e Filtros ----------
         all_dates = pd.concat([agg_507["Data"], agg_meio["Data"]]).dropna()
         if all_dates.empty:
             st.error("Nenhuma data válida encontrada nas planilhas.")
@@ -2270,7 +2324,7 @@ with st.spinner("⏳ Processando..."):
             agg_meio.loc[mask_meio, ["Data", "Codigo"]]
         ]).drop_duplicates().reset_index(drop=True)
     
-        # ---------- Merge seguro: pegar só colunas necessárias para evitar duplicidade de rótulos ----------
+        # ---------- Merge seguro ----------
         res = keys.merge(agg_507.loc[mask_507, ["Data", "Codigo", "Valor_507", "Nome"]], on=["Data", "Codigo"], how="left")
         res = res.merge(agg_meio.loc[mask_meio, ["Data", "Codigo", "Valor_Meio"]], on=["Data", "Codigo"], how="left")
     
@@ -2289,7 +2343,6 @@ with st.spinner("⏳ Processando..."):
         res["Diferença"] = res["Diff"].apply(fmt_brl)
     
         # ordenar por Data (cronológico) e Código (tentando numérico)
-        # cria chave de ordenação para Código
         res["__cod_key"] = res["Codigo"].apply(try_numeric_sort_key)
         res = res.sort_values(["Data", "__cod_key"], ascending=[True, True]).drop(columns="__cod_key")
     

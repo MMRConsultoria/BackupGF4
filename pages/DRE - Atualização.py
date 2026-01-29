@@ -496,7 +496,7 @@ with tab_atual:
         data_ate = st.date_input("Até", value=date.today(), key="at_ate")
 
     # Botão para atualizar Desconto 3S
-    if st.button("🔄 Atualizar Desconto 3S)", use_container_width=True):
+    if st.button("🔄 Atualizar Desconto 3S", use_container_width=True):
         try:
             with st.spinner("Buscando Tabela Empresa (Vendas diarias)..."):
                 df_empresa = fetch_tabela_empresa()

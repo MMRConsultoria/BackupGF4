@@ -434,6 +434,66 @@ with tab_atual:
                                 logs.append(f"{row['Planilha']}: MP OK.")
                             else:
                                 logs.append(f"{row['Planilha']}: MP Sem dados.")
+
+                        # --- ATUALIZAR DESCONTO ---
+                        if row.get("Desconto"):
+                            try:
+                                # abrir origem Desconto
+                                sh_orig_des = gc.open_by_key(ID_PLANILHA_ORIGEM_DESCONTO)
+                                ws_orig_des = sh_orig_des.worksheet(ABA_ORIGEM_DESCONTO)
+                                h_orig_des, df_orig_des = get_headers_and_df_raw(ws_orig_des)
+
+                                df_ins_des = df_orig_des.copy()
+
+                                # Filtro pelo B2: coluna H na origem => índice 7 (coluna H)
+                                if len(h_orig_des) > 7 and b2:
+                                    c_b2_des = h_orig_des[7]
+                                    df_ins_des = df_ins_des[df_ins_des[c_b2_des].astype(str).str.strip() == str(b2).strip()]
+
+                                # Filtro por lojas (B3,B4...) usando COL G da origem => índice 6 (coluna G)
+                                if lojas_filtro and not df_ins_des.empty and len(h_orig_des) > 6:
+                                    c_loja_des = h_orig_des[6]
+                                    df_ins_des = df_ins_des[df_ins_des[c_loja_des].astype(str).str.strip().isin(lojas_filtro)]
+
+                                if not df_ins_des.empty:
+                                    try:
+                                        # destino: aba "Desconto" (cria se não existir)
+                                        try:
+                                            ws_dest_des = sh_dest.worksheet("Desconto")
+                                        except:
+                                            ws_dest_des = sh_dest.add_worksheet("Desconto", 1000, max(30, len(h_orig_des)))
+
+                                        h_dest_des, df_dest_des = get_headers_and_df_raw(ws_dest_des)
+
+                                        # Se destino vazio: usamos cabeçalho/origem
+                                        if df_dest_des.empty:
+                                            df_f_des, h_f_des = df_ins_des, h_orig_des
+                                        else:
+                                            # tenta evitar duplicação por período (se houver coluna data)
+                                            c_dt_d_des = detect_date_col(h_dest_des)
+                                            if c_dt_d_des:
+                                                df_dest_des["_dt"] = pd.to_datetime(df_dest_des[c_dt_d_des], dayfirst=True, errors="coerce").dt.date
+                                                rem_des = (df_dest_des["_dt"] >= data_de) & (df_dest_des["_dt"] <= data_ate)
+                                            else:
+                                                rem_des = pd.Series([False] * len(df_dest_des))
+
+                                            # preserva filtro B2 ao remover duplicados se coluna existir no destino
+                                            if len(h_orig_des) > 7 and 'c_b2_des' in locals() and c_b2_des in df_dest_des.columns:
+                                                rem_des &= (df_dest_des[c_b2_des].astype(str).str.strip() == str(b2).strip())
+
+                                            df_f_des = pd.concat([df_dest_des.loc[~rem_des], df_ins_des], ignore_index=True)
+                                            h_f_des = h_dest_des if h_dest_des else h_orig_des
+
+                                        if "_dt" in df_f_des.columns: df_f_des = df_f_des.drop(columns=["_dt"])
+                                        send_des = df_f_des[h_f_des].fillna("")
+                                        ws_dest_des.clear()
+                                        ws_dest_des.update("A1", [h_f_des] + send_des.values.tolist(), value_input_option="USER_ENTERED")
+                                        logs.append(f"{row['Planilha']}: Desconto OK.")
+                                    except Exception as e:
+                                        logs.append(f"{row['Planilha']}: Desconto Erro ao gravar destino: {e}")
+                                else:
+                                    logs.append(f"{row['Planilha']}: Desconto Sem dados.")
+
                     except Exception as e:
                         logs.append(f"{row['Planilha']}: Erro {e}")
                     prog.progress((i+1)/total)

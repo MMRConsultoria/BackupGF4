@@ -1,4 +1,4 @@
-# streamlit_relatorio_desconto_import.py
+# streamlit_desconto_gsheet_upload.py
 import os
 import re
 import json
@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import psycopg2
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -20,6 +21,7 @@ def _parse_money_to_float(x):
     s = re.sub(r"[^\d,\-\.]", "", s)
     if s == "":
         return 0.0
+    # normaliza separadores
     if s.count(",") == 1 and s.count(".") >= 1:
         s = s.replace(".", "").replace(",", ".")
     elif s.count(",") == 1 and s.count(".") == 0:
@@ -84,11 +86,19 @@ def create_gspread_client():
 @st.cache_data(ttl=300)
 def fetch_tabela_empresa():
     gc = create_gspread_client()
-    sh = gc.open("Vendas diarias")
-    ws = sh.worksheet("Tabela Empresa")
+    try:
+        sh = gc.open("Vendas diarias")
+    except Exception as e:
+        raise RuntimeError(f"Erro ao abrir a planilha 'Vendas diarias': {e}")
+    try:
+        ws = sh.worksheet("Tabela Empresa")
+    except Exception as e:
+        raise RuntimeError(f"Erro ao abrir a aba 'Tabela Empresa': {e}")
+
     values = ws.get_all_values()
     if not values:
         return pd.DataFrame()
+
     max_cols = max(len(r) for r in values)
     rows = [r + [""] * (max_cols - len(r)) for r in values]
     cols = [chr(ord("A") + i) for i in range(max_cols)]
@@ -102,6 +112,7 @@ def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999
     params = _get_db_params()
     if not params["dbname"] or not params["user"] or not params["password"]:
         raise RuntimeError("Credenciais do banco nao encontradas. Configure st.secrets['db'] ou variaveis de ambiente PG*.")
+
     conn = create_db_conn(params)
     try:
         base_sql = """
@@ -174,18 +185,21 @@ def process_and_build_report_summary(df_orders: pd.DataFrame, df_empresa: pd.Dat
         "Grupo (lookup)": "first"
     })
 
-    grouped["order_discount_amount_fmt"] = grouped["order_discount_amount_val"].apply(lambda x: _format_brl(x if pd.notna(x) else 0.0))
-
+    # Mantemos o valor numérico para envio ao Sheets
     df_final = pd.DataFrame({
-        "3S Checkout": ["3S Checkout"] * len(grouped),
+        "3S Checkout": ["3S Checkout"]  len(grouped),
         "Business Month": grouped["business_month"],
         "Loja": grouped["Loja Nome (lookup)"],
         "Grupo": grouped["ColB (lookup)"],
         "Loja Nome": grouped["Loja Nome (lookup)"],
-        "Order Discount Amount (BRL)": grouped["order_discount_amount_fmt"],
+        "Order Discount Amount (BRL)": grouped["order_discount_amount_val"],  # numeric
         "Store Code": grouped["store_code"],
         "Código do Grupo": grouped["Grupo (lookup)"]
     })
+
+    # opcional: se quiser também uma coluna formatada para visualização local/Excel,
+    # você pode descomentar a linha abaixo:
+    # df_final["Order Discount Amount (Formatted)"] = df_final["Order Discount Amount (BRL)"].apply(lambda x: _format_brl(x))
 
     col_order = [
         "3S Checkout", "Business Month", "Loja", "Grupo",
@@ -198,10 +212,12 @@ def to_excel_bytes(df: pd.DataFrame, sheet_name="Desconto"):
     output = BytesIO()
     try:
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            df.to_excel(writer, index=False, sheet_name=sheet_name)
+            df_to_write = df.copy()
+            # Para Excel, se preferir colunas formatadas, podemos formatar aqui.
+            df_to_write.to_excel(writer, index=False, sheet_name=sheet_name)
             worksheet = writer.sheets[sheet_name]
-            for i, col in enumerate(df.columns):
-                max_len = max(df[col].astype(str).map(len).max() if not df.empty else 0, len(col)) + 2
+            for i, col in enumerate(df_to_write.columns):
+                max_len = max(df_to_write[col].astype(str).map(len).max() if not df_to_write.empty else 0, len(col)) + 2
                 worksheet.set_column(i, i, max_len)
     except Exception:
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -218,6 +234,7 @@ def upload_df_to_gsheet_replace_months(df: pd.DataFrame,
       - coluna A == "3S Checkout" e
       - coluna B está em qualquer Business Month presente em df
     Depois cola (append) as linhas de df.
+    Garante que colunas numéricas sejam enviadas como números.
     """
     if df is None or df.empty:
         raise ValueError("DataFrame vazio. Nada a importar.")
@@ -240,7 +257,6 @@ def upload_df_to_gsheet_replace_months(df: pd.DataFrame,
 
     # filtra linhas: mantém as que NÃO correspondem ao padrão (3S Checkout, mês em meses_importar)
     def keep_row(row):
-        # row pode ter comprimento menor; defensivamente checamos índice
         a = row[0].strip() if len(row) > 0 else ""
         b = row[1].strip() if len(row) > 1 else ""
         if a == "3S Checkout" and b in meses_importar:
@@ -249,16 +265,41 @@ def upload_df_to_gsheet_replace_months(df: pd.DataFrame,
 
     filtered_existing = [r for r in existing_rows if keep_row(r)]
 
-    # prepara novas linhas a partir do df (como strings)
-    # garante ordem das colunas igual à do DataFrame
-    df_rows = df.astype(str).values.tolist()
+    # PREPARA df_rows preservando tipos numéricos
+    df_clean = df.copy()
+    # substitui NaN por None (vamos lidar depois)
+    df_clean = df_clean.where(pd.notnull(df_clean), None)
+
+    # detecta colunas numéricas
+    numeric_cols = df_clean.select_dtypes(include=[np.number]).columns.tolist()
+
+    df_rows = []
+    for _, row in df_clean.iterrows():
+        converted = []
+        for col in df_clean.columns:
+            val = row[col]
+            if val is None:
+                # usa string vazia para células vazias
+                converted.append("")
+            elif col in numeric_cols:
+                # converte numpy numerics para python native
+                if isinstance(val, (np.integer,)):
+                    converted.append(int(val))
+                elif isinstance(val, (np.floating,)):
+                    converted.append(float(val))
+                else:
+                    # caso já seja int/float nativo
+                    converted.append(val)
+            else:
+                # para texto, garante string
+                converted.append(str(val))
+        df_rows.append(converted)
 
     # constrói o conteúdo final: header + filtered_existing + df_rows
     final_values = [header] + filtered_existing + df_rows
 
     # atualiza a planilha: limpa e escreve o novo conteúdo
     ws.clear()
-    # update em bloco a partir de A1
     ws.update("A1", final_values)
     return {"kept_rows": len(filtered_existing), "inserted_rows": len(df_rows), "header": header}
 
@@ -295,14 +336,11 @@ if st.button("🔁 Gerar relatório resumido"):
                 file_name=nome_arquivo,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
-            # guarda df_final em session_state para uso posterior no upload
             st.session_state["last_df_final"] = df_final
     except Exception as e:
         st.error(f"Erro ao gerar relatório: {e}")
         st.exception(e)
 
-# Botão para enviar para Google Sheets (usa o último df gerado)
 if st.button("⬆️ Importar para Google Sheets (substituir meses importados)"):
     df_to_upload = st.session_state.get("last_df_final")
     if df_to_upload is None:

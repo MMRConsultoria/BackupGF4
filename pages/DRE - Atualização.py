@@ -107,7 +107,29 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("Atualizar DRE")
+# --- ESTILO DO BOTÃO DESCONTO 3S (VERMELHO) ---
+st.markdown(
+    """
+    <style>
+    /* Seleciona o botão pelo texto contido nele */
+    div.stButton > button:has(div:contains("Atualizar Desconto 3S")) {
+        background-color: #ff3b3b !important;
+        color: white !important;
+        font-weight: bold !important;
+        border-radius: 8px !important;
+        border: none !important;
+        transition: background-color 0.3s ease !important;
+    }
 
+    /* Efeito ao passar o mouse */
+    div.stButton > button:has(div:contains("Atualizar Desconto 3S")):hover {
+        background-color: #d32f2f !important;
+        color: white !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 # ----------------- Helpers para Desconto 3S / DB / GSheets -----------------
 
 def _parse_money_to_float(x):
@@ -473,8 +495,8 @@ with tab_atual:
     with col_d2:
         data_ate = st.date_input("Até", value=date.today(), key="at_ate")
 
-    # Botão para atualizar Desconto 3S via API
-    if st.button("🔄 Atualizar Desconto 3S (via 3S API)", use_container_width=True):
+    # Botão para atualizar Desconto 3S
+    if st.button("🔄 Atualizar Desconto 3S)", use_container_width=True):
         try:
             with st.spinner("Buscando Tabela Empresa (Vendas diarias)..."):
                 df_empresa = fetch_tabela_empresa()

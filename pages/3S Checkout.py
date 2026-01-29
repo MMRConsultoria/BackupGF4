@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import json
 import psycopg2
 
-st.set_page_config(page_title="Atualização 3S Checkou", layout="wide")
+st.set_page_config(page_title="Atualização 3S", layout="wide")
 
 # ================================
 # 1. Certificado AWS

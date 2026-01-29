@@ -43,7 +43,6 @@ def _format_brl(v):
     return f"R$ {s}"
 
 def _get_db_params():
-    # tenta st.secrets['db'] (quando rodando no Streamlit cloud)
     try:
         db = st.secrets["db"]
         return {
@@ -54,7 +53,6 @@ def _get_db_params():
             "password": db["password"]
         }
     except Exception:
-        # fallback para variáveis de ambiente locais
         return {
             "host": os.environ.get("PGHOST", "localhost"),
             "port": int(os.environ.get("PGPORT", 5432)),
@@ -73,7 +71,6 @@ def create_db_conn(params):
     )
 
 def create_gspread_client():
-    # Verifica se as credenciais estão em st.secrets
     if "GOOGLE_SERVICE_ACCOUNT" not in st.secrets:
         raise RuntimeError(
             "Credenciais do Google não encontradas em st.secrets['GOOGLE_SERVICE_ACCOUNT']. "
@@ -88,14 +85,8 @@ def create_gspread_client():
     credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     return gspread.authorize(credentials)
 
-# ----------------- Fetch / Cache -----------------
 @st.cache_data(ttl=300)
 def fetch_tabela_empresa():
-    """
-    Lê a aba 'Tabela Empresa' da planilha 'Vendas diarias' e retorna um DataFrame
-    com colunas nomeadas por letras 'A','B','C',... correspondendo às colunas da planilha.
-    Assume que a primeira linha é cabeçalho e ignora-a (mantendo somente os dados a partir da 2ª linha).
-    """
     gc = create_gspread_client()
     try:
         sh = gc.open("Vendas diarias")
@@ -110,15 +101,11 @@ def fetch_tabela_empresa():
     if not values:
         return pd.DataFrame()
 
-    # garante colunas regulares
     max_cols = max(len(r) for r in values)
     rows = [r + [""] * (max_cols - len(r)) for r in values]
-    # cria colunas 'A','B','C',...
     cols = [chr(ord("A") + i) for i in range(max_cols)]
-    # considera rows[1:] como dados (row 0 = header)
     data_rows = rows[1:] if len(rows) > 1 else []
     df = pd.DataFrame(data_rows, columns=cols)
-    # remove linhas completamente vazias
     df = df.loc[~(df[cols].apply(lambda r: all(str(x).strip() == "" for x in r), axis=1))]
     return df
 
@@ -137,6 +124,7 @@ def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999
               AND business_dt <= %s
               AND store_code NOT IN %s
               AND state_id = %s
+              AND (VOID_TYPE IS NULL OR VOID_TYPE = '' OR LOWER(VOID_TYPE) NOT LIKE '%void%')
             ORDER BY business_dt, store_code
         """
         df = pd.read_sql(sql, conn, params=(data_de, data_ate, tuple(excluir_stores), estado_filtrar))
@@ -144,19 +132,7 @@ def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999
         conn.close()
     return df
 
-# ----------------- Processamento e montagem do relatório -----------------
 def process_and_build_report(df_orders: pd.DataFrame, df_empresa: pd.DataFrame) -> pd.DataFrame:
-    """
-    Monta o relatório com colunas na ordem:
-    A: "3S Checkout"
-    B: Business Month (mm/YYYY)
-    C: Loja (nome da loja -> coluna A da Tabela Empresa)
-    D: Grupo (coluna B da Tabela Empresa)  <-- alteração solicitada
-    E: Loja Nome (nome da loja -> coluna A)
-    F: Order Discount Amount (BRL)
-    G: Store Code
-    H: Código do Grupo (coluna D da Tabela Empresa)
-    """
     if df_orders is None or df_orders.empty:
         return pd.DataFrame(columns=[
             "3S Checkout", "Business Month", "Loja", "Grupo",
@@ -170,9 +146,6 @@ def process_and_build_report(df_orders: pd.DataFrame, df_empresa: pd.DataFrame) 
     df["order_discount_amount_val"] = df["order_discount_amount"].apply(_parse_money_to_float)
     df["order_discount_amount_fmt"] = df["order_discount_amount_val"].apply(lambda x: _format_brl(x if pd.notna(x) else 0.0))
 
-    # prepara mapas a partir da Tabela Empresa (usando índices fixos das colunas)
-    # A -> 'A' (nome da loja) ; B -> 'B' (valor que você quer na Coluna D do relatório)
-    # C -> 'C' (código da loja) ; D -> 'D' (código do grupo)
     if df_empresa is None or df_empresa.empty:
         mapa_codigo_para_nome = {}
         mapa_codigo_para_colB = {}
@@ -183,22 +156,22 @@ def process_and_build_report(df_orders: pd.DataFrame, df_empresa: pd.DataFrame) 
                 df_empresa[col] = ""
         codigo_col = df_empresa["C"].astype(str).str.replace(r"\D", "", regex=True).str.lstrip("0").replace("", "0")
         mapa_codigo_para_nome = dict(zip(codigo_col, df_empresa["A"].astype(str)))
-        mapa_codigo_para_colB = dict(zip(codigo_col, df_empresa["B"].astype(str)))  # <-- coluna B -> relatório D
+        mapa_codigo_para_colB = dict(zip(codigo_col, df_empresa["B"].astype(str)))
         mapa_codigo_para_grupo = dict(zip(codigo_col, df_empresa["D"].astype(str)))
 
     df["Loja Nome (lookup)"] = df["store_code"].map(mapa_codigo_para_nome)
-    df["ColB (lookup)"] = df["store_code"].map(mapa_codigo_para_colB)        # para Coluna D
-    df["Grupo (lookup)"] = df["store_code"].map(mapa_codigo_para_grupo)      # para Coluna H
+    df["ColB (lookup)"] = df["store_code"].map(mapa_codigo_para_colB)
+    df["Grupo (lookup)"] = df["store_code"].map(mapa_codigo_para_grupo)
 
     df_final = pd.DataFrame({
         "3S Checkout": ["3S Checkout"] * len(df),
         "Business Month": df["business_month"],
-        "Loja": df["Loja Nome (lookup)"],                   # Col C
-        "Grupo": df["ColB (lookup)"],                       # Col D -> coluna B da Tabela Empresa
-        "Loja Nome": df["Loja Nome (lookup)"],              # Col E
-        "Order Discount Amount (BRL)": df["order_discount_amount_fmt"],  # Col F
-        "Store Code": df["store_code"],                     # Col G
-        "Código do Grupo": df["Grupo (lookup)"]             # Col H -> coluna D da Tabela Empresa
+        "Loja": df["Loja Nome (lookup)"],
+        "Grupo": df["ColB (lookup)"],
+        "Loja Nome": df["Loja Nome (lookup)"],
+        "Order Discount Amount (BRL)": df["order_discount_amount_fmt"],
+        "Store Code": df["store_code"],
+        "Código do Grupo": df["Grupo (lookup)"]
     })
 
     col_order = [
@@ -224,7 +197,6 @@ def to_excel_bytes(df: pd.DataFrame, sheet_name="Desconto"):
     output.seek(0)
     return output
 
-# ----------------- Streamlit UI -----------------
 st.title("Relatório Desconto (lookup: Tabela Empresa) — Somente leitura")
 
 st.markdown(

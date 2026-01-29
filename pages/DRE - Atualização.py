@@ -300,6 +300,134 @@ with tab_atual:
         else:
             df_list = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
             df_list = df_list.rename(columns={"name": "Planilha", "id": "ID_Planilha"})
+
+            # --- BOTÃO: Atualizar Desconto 3S (usa data_de / data_ate) ---
+            if st.button("🔄 Atualizar Desconto 3S", use_container_width=True, key="btn_desconto_3s"):
+                logs_btn = []
+                status = st.empty()
+                status.info("Iniciando atualização DESCONTO (3S)...")
+            
+                # Carregar origem Desconto (3S)
+                try:
+                    sh_orig_des = gc.open_by_key(ID_PLANILHA_ORIGEM_DESCONTO)
+                    ws_orig_des = sh_orig_des.worksheet(ABA_ORIGEM_DESCONTO)
+                    h_orig_des, df_orig_des = get_headers_and_df_raw(ws_orig_des)
+                except Exception as e:
+                    st.error(f"Erro ao carregar origem Desconto: {e}")
+                    status.empty()
+                    raise
+            
+                # Filtrar por data (forçando coluna B / índice 1)
+                try:
+                    if len(h_orig_des) > 1:
+                        c_dt_orig_des = h_orig_des[1]  # coluna B
+                        df_orig_des["_dt_orig"] = pd.to_datetime(df_orig_des[c_dt_orig_des], dayfirst=True, errors="coerce").dt.date
+                        df_orig_des_periodo = df_orig_des[(df_orig_des["_dt_orig"] >= data_de) & (df_orig_des["_dt_orig"] <= data_ate)].copy()
+                    else:
+                        df_orig_des_periodo = df_orig_des.copy()
+                except Exception as e:
+                    st.warning(f"Atenção: erro ao filtrar data na origem Desconto: {e}")
+                    df_orig_des_periodo = df_orig_des.copy()
+            
+                # colunas fixas que vamos pegar da origem: indices [1,3,4,5,6,7] (B,D,E,F,G,H)
+                desired_idx = [1, 3, 4, 5, 6, 7]
+                cols_to_take = [h_orig_des[i] for i in desired_idx if i < len(h_orig_des)]
+            
+                total_planilhas = len(planilhas)
+                prog = st.progress(0)
+                for i, p in enumerate(planilhas):
+                    try:
+                        pname = p.get("name", "Sem Nome")
+                        sid = p.get("id")
+                        if not sid:
+                            logs_btn.append(f"{pname}: ID ausente — pulando.")
+                            continue
+            
+                        # abre destino e lê códigos B2/B3/B4/B5
+                        try:
+                            sh_dest = gc.open_by_key(sid)
+                        except Exception as e:
+                            logs_btn.append(f"{pname}: falha ao abrir planilha destino ({e})")
+                            continue
+            
+                        b2, b3, b4, b5 = read_codes_from_config_sheet(sh_dest)
+                        if not b2:
+                            logs_btn.append(f"{pname}: sem B2 — pulando.")
+                            continue
+            
+                        lojas_f = []
+                        if b3: lojas_f.append(str(b3).strip())
+                        if b4: lojas_f.append(str(b4).strip())
+                        if b5: lojas_f.append(str(b5).strip())
+            
+                        df_ins = df_orig_des_periodo.copy()
+            
+                        # Filtros H (B2) e G (Loja)
+                        c_h = h_orig_des[7] if len(h_orig_des) > 7 else None
+                        c_g = h_orig_des[6] if len(h_orig_des) > 6 else None
+            
+                        if c_h:
+                            df_ins = df_ins[df_ins[c_h].astype(str).str.strip() == str(b2).strip()]
+                        if lojas_f and c_g:
+                            l_norm = [normalize_code(x) for x in lojas_f]
+                            df_ins = df_ins[df_ins[c_g].apply(lambda x: normalize_code(x) if pd.notna(x) else "").isin(l_norm)]
+            
+                        if not df_ins.empty:
+                            df_ins = df_ins[[c for c in cols_to_take if c in df_ins.columns]].copy()
+                            try:
+                                try:
+                                    ws_dest = sh_dest.worksheet("Desconto")
+                                except Exception:
+                                    ws_dest = sh_dest.add_worksheet("Desconto", 1000, max(30, len(cols_to_take)))
+                                
+                                h_dest, df_dest = get_headers_and_df_raw(ws_dest)
+                                if df_dest.empty:
+                                    df_f_ws, h_f = df_ins, list(df_ins.columns)
+                                else:
+                                    # Evitar duplicação no destino (Usa a coluna de data do destino)
+                                    c_dt_d = detect_date_col(h_dest)
+                                    if c_dt_d:
+                                        df_dest["_dt"] = pd.to_datetime(df_dest[c_dt_d], dayfirst=True, errors="coerce").dt.date
+                                        rem = (df_dest["_dt"] >= data_de) & (df_dest["_dt"] <= data_ate)
+                                    else:
+                                        rem = pd.Series([False] * len(df_dest))
+            
+                                    if c_h and c_h in df_dest.columns:
+                                        rem &= (df_dest[c_h].astype(str).str.strip() == str(b2).strip())
+            
+                                    # Alinha colunas existentes e adiciona vazias se necessário
+                                    df_dest_sub = df_dest.copy()
+                                    for col in cols_to_take:
+                                        if col not in df_dest_sub.columns:
+                                            df_dest_sub[col] = ""
+                                    df_dest_sub = df_dest_sub[[c for c in cols_to_take if c in df_dest_sub.columns]]
+            
+                                    for col in cols_to_take:
+                                        if col not in df_ins.columns:
+                                            df_ins[col] = ""
+                                    df_ins = df_ins[[c for c in cols_to_take if c in df_ins.columns]]
+            
+                                    df_f_ws = pd.concat([df_dest_sub.loc[~rem], df_ins], ignore_index=True)
+                                    h_f = [c for c in cols_to_take if c in df_f_ws.columns]
+            
+                                if "_dt" in df_f_ws.columns: df_f_ws = df_f_ws.drop(columns=["_dt"])
+                                if "_dt_orig" in df_f_ws.columns: df_f_ws = df_f_ws.drop(columns=["_dt_orig"])
+            
+                                send = df_f_ws[h_f].fillna("")
+                                ws_dest.clear()
+                                ws_dest.update("A1", [h_f] + send.values.tolist(), value_input_option="USER_ENTERED")
+                                logs_btn.append(f"{pname}: OK.")
+                            except Exception as e:
+                                logs_btn.append(f"{pname}: Erro ao gravar destino: {e}")
+                        else:
+                            logs_btn.append(f"{pname}: Sem dados.")
+                    except Exception as e:
+                        logs_btn.append(f"{p.get('name')}: Erro {e}")
+                    prog.progress((i + 1) / total_planilhas)
+            
+                status.success("Processamento concluído!")
+                st.text("\n".join(logs_btn))
+            
             c1, c2, c3, _ = st.columns([1.2, 1.2, 1.2, 5])
             with c1: s_desc = st.checkbox("Desconto", value=False, key="at_chk1")
             with c2: s_mp = st.checkbox("Meio Pagto", value=True, key="at_chk2")

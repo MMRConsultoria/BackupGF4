@@ -267,8 +267,18 @@ def to_bool_like(x):
     return s in ("true", "t", "1", "yes", "y", "sim", "s")
 
 # ---- TABS ----
-tab_atual,tab_audit = st.tabs(["Atualização", "Auditoria" ])
+#tab_atual,tab_audit = st.tabs(["Atualização", "Auditoria" ])
+# TABS + botão alinhado na mesma linha (botão FORA das tabs)
+col_tabs, col_btn = st.columns([8, 1])  # ajuste proporção [8,1] conforme desejar
+with col_tabs:
+    tab_atual, tab_audit = st.tabs(["Atualização", "Auditoria"])
 
+with col_btn:
+    # botão ficará visível na mesma linha das tabs, mas fora do conteúdo delas
+    if st.button("🔄 Atualizar Desconto 3S", use_container_width=True, key="btn_desconto_top"):
+        # chama sua rotina aqui (ou substitua pela rotina inline)
+        # ex: atualizar_desconto_3s(planilhas, gc, data_de, data_ate, ID_PLANILHA_ORIGEM_DESCONTO, ABA_ORIGEM_DESCONTO)
+        st.info("Botão superior clicado — implementar rotina aqui")
 # -----------------------------
 # ABA: ATUALIZAÇÃO (mantive seu código praticamente intacto)
 # -----------------------------

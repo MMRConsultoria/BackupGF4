@@ -7,9 +7,6 @@ from datetime import datetime, timedelta, date
 from oauth2client.service_account import ServiceAccountCredentials
 import gspread
 
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
-from st_aggrid.shared import JsCode
-
 try:
     from googleapiclient.discovery import build
 except Exception:
@@ -21,10 +18,8 @@ from st_aggrid.shared import JsCode
 
 # ================= BLOQUEIO DE ACESSO – RH (simples, EM-CÓDIGO) =================
 USUARIOS_AUTORIZADOS_CONTROLADORIA = {
-    
     "maricelisrossi@gmail.com",
     "alex.komatsu@grupofit.com.br",
-    
 }
 
 # usuário vindo do login/SSO (espera-se que seja preenchido externamente)
@@ -117,10 +112,6 @@ st.markdown("""
         }
     </style>
 """, unsafe_allow_html=True)
-# --- DEFINIÇÃO DAS TABS COM ÍCONES ---
-# Inverti a ordem para Auditoria vir primeiro se desejar, ou mantenha como preferir
-#tab_atual, tab_audit = st.tabs(["🔄 Atualização", "🔍 Auditoria"])
-
 st.title("Atualizar")
 
 # ---- AUTENTICAÇÃO ----
@@ -267,105 +258,25 @@ def to_bool_like(x):
     return s in ("true", "t", "1", "yes", "y", "sim", "s")
 
 # ---- TABS ----
-tab_atual,tab_audit = st.tabs(["Atualização", "Auditoria" ])
-# --- TABS ---
+tab_atual, tab_audit = st.tabs(["Atualização", "Auditoria"])
+
 # --- BOTÃO NO MEIO (Abaixo das abas, antes dos filtros) ---
 c_espaco_esq, c_botao, c_espaco_dir = st.columns([3, 2, 3])
 with c_botao:
     if st.button("🔄 Atualizar Desconto 3S", use_container_width=True, key="btn_desconto_meio"):
-        # Aqui você coloca a rotina ou chama a função de atualização
         st.info("Iniciando atualização...")
 
-# --- CONTEÚDO DAS TABS ---
+# -----------------------------
+# ABA: ATUALIZAÇÃO (bloco único e corrido)
+# -----------------------------
 with tab_atual:
-    # --- BOTÃO NA POSIÇÃO AMARELA (Topo da aba, antes das datas) ---
-    col_btn_top, _ = st.columns([2, 6]) # Cria uma coluna curta para o botão não ocupar a tela toda
+    # BOTÃO na posição desejada (embaixo das tabs, antes dos filtros)
+    col_btn_top, _ = st.columns([2, 6])
     with col_btn_top:
         if st.button("🔄 Atualizar Desconto 3S", use_container_width=True, key="btn_desconto_amarelo"):
-            # --- INÍCIO DA ROTINA DE ATUALIZAÇÃO ---
-            logs_btn = []
-            status = st.empty()
-            status.info("Iniciando atualização DESCONTO (3S)...")
+            # Aqui você pode invocar a rotina curta se quiser (mantive simples)
+            st.info("Iniciando atualização...")
 
-            try:
-                # Carregar origem Desconto
-                sh_orig_des = gc.open_by_key(ID_PLANILHA_ORIGEM_DESCONTO)
-                ws_orig_des = sh_orig_des.worksheet(ABA_ORIGEM_DESCONTO)
-                h_orig_des, df_orig_des = get_headers_and_df_raw(ws_orig_des)
-
-                # Filtrar por data (Coluna B / Índice 1)
-                if len(h_orig_des) > 1:
-                    c_dt_orig_des = h_orig_des[1]
-                    df_orig_des["_dt_orig"] = pd.to_datetime(df_orig_des[c_dt_orig_des], dayfirst=True, errors="coerce").dt.date
-                    df_orig_des_periodo = df_orig_des[(df_orig_des["_dt_orig"] >= data_de) & (df_orig_des["_dt_orig"] <= data_ate)].copy()
-                else:
-                    df_orig_des_periodo = df_orig_des.copy()
-
-                # Colunas B, D, E, F, G, H (índices 1, 3, 4, 5, 6, 7)
-                desired_idx = [1, 3, 4, 5, 6, 7]
-                cols_to_take = [h_orig_des[i] for i in desired_idx if i < len(h_orig_des)]
-
-                # Processar todas as planilhas listadas na pasta selecionada
-                if 'planilhas' in locals() and planilhas:
-                    total_p = len(planilhas)
-                    prog_bar = st.progress(0)
-                    for idx_p, p in enumerate(planilhas):
-                        try:
-                            sid = p.get("id")
-                            pname = p.get("name", "Sem Nome")
-                            if not sid: continue
-
-                            sh_dest = gc.open_by_key(sid)
-                            b2, b3, b4, b5 = read_codes_from_config_sheet(sh_dest)
-                            if not b2:
-                                logs_btn.append(f"{pname}: Sem B2.")
-                                continue
-
-                            lojas_f = [str(x).strip() for x in [b3, b4, b5] if x]
-                            df_ins = df_orig_des_periodo.copy()
-
-                            # Filtros H (B2) e G (Loja)
-                            c_h = h_orig_des[7] if len(h_orig_des) > 7 else None
-                            c_g = h_orig_des[6] if len(h_orig_des) > 6 else None
-
-                            if c_h: df_ins = df_ins[df_ins[c_h].astype(str).str.strip() == str(b2).strip()]
-                            if lojas_f and c_g:
-                                l_norm = [normalize_code(x) for x in lojas_f]
-                                df_ins = df_ins[df_ins[c_g].apply(lambda x: normalize_code(x) if pd.notna(x) else "").isin(l_norm)]
-
-                            if not df_ins.empty:
-                                df_ins = df_ins[[c for c in cols_to_take if c in df_ins.columns]].copy()
-                                try:
-                                    ws_dest = sh_dest.worksheet("Desconto")
-                                except:
-                                    ws_dest = sh_dest.add_worksheet("Desconto", 1000, 20)
-                                
-                                h_d, df_d = get_headers_and_df_raw(ws_dest)
-                                # Lógica de merge/limpeza de período (simplificada para o botão)
-                                ws_dest.clear()
-                                ws_dest.update("A1", [list(df_ins.columns)] + df_ins.fillna("").values.tolist(), value_input_option="USER_ENTERED")
-                                logs_btn.append(f"{pname}: OK.")
-                            else:
-                                logs_btn.append(f"{pname}: Sem dados.")
-                        except Exception as e:
-                            logs_btn.append(f"{p.get('name')}: Erro {e}")
-                        prog_bar.progress((idx_p + 1) / total_p)
-                
-                status.success("Processamento concluído!")
-                st.text("\n".join(logs_btn))
-            except Exception as e:
-                st.error(f"Erro geral: {e}")
-            # --- FIM DA ROTINA ---
-
-    # --- AGORA CONTINUA O RESTO DO SEU CÓDIGO (DATAS, ETC) ---
-    col_d1, col_d2 = st.columns(2)
-    with col_d1:
-        data_de = st.date_input("De", value=date.today() - timedelta(days=30), key="at_de")
-    # ... resto do arquivo ...
-# -----------------------------
-# ABA: ATUALIZAÇÃO (mantive seu código praticamente intacto)
-# -----------------------------
-with tab_atual:
     col_d1, col_d2 = st.columns(2)
     with col_d1:
         data_de = st.date_input("De", value=date.today() - timedelta(days=30), key="at_de")
@@ -453,98 +364,46 @@ with tab_atual:
                             logs_btn.append(f"{pname}: sem B2 — pulando.")
                             continue
             
-                        lojas_filtro = []
-                        if b3: lojas_filtro.append(str(b3).strip())
-                        if b4: lojas_filtro.append(str(b4).strip())
-                        if b5: lojas_filtro.append(str(b5).strip())
+                        lojas_f = []
+                        if b3: lojas_f.append(str(b3).strip())
+                        if b4: lojas_f.append(str(b4).strip())
+                        if b5: lojas_f.append(str(b5).strip())
             
-                        # faz uma cópia do período filtrado e aplica filtros por B2 (coluna H) e loja (col G)
-                        df_ins_des = df_orig_des_periodo.copy()
+                        df_ins = df_orig_des_periodo.copy()
             
-                        c_b2_des = h_orig_des[7] if len(h_orig_des) > 7 else None  # H
-                        c_loja_des = h_orig_des[6] if len(h_orig_des) > 6 else None  # G
+                        # Filtros H (B2) e G (Loja)
+                        c_h = h_orig_des[7] if len(h_orig_des) > 7 else None
+                        c_g = h_orig_des[6] if len(h_orig_des) > 6 else None
             
-                        if c_b2_des and b2:
-                            df_ins_des = df_ins_des[df_ins_des[c_b2_des].astype(str).str.strip() == str(b2).strip()]
+                        if c_h: df_ins = df_ins[df_ins[c_h].astype(str).str.strip() == str(b2).strip()]
+                        if lojas_f and c_g:
+                            l_norm = [normalize_code(x) for x in lojas_f]
+                            df_ins = df_ins[df_ins[c_g].apply(lambda x: normalize_code(x) if pd.notna(x) else "").isin(l_norm)]
             
-                        if lojas_filtro and not df_ins_des.empty and c_loja_des:
-                            lojas_norm = [normalize_code(x) for x in lojas_filtro]
-                            df_ins_des = df_ins_des[df_ins_des[c_loja_des].apply(lambda x: normalize_code(x) if pd.notna(x) else "").isin(lojas_norm)]
-            
-                        # seleciona apenas as colunas B/D/E/F/G/H (existentes)
-                        if not df_ins_des.empty and cols_to_take:
-                            existing_take = [c for c in cols_to_take if c in df_ins_des.columns]
-                            df_ins_des = df_ins_des[existing_take].copy()
-            
-                        if df_ins_des.empty:
-                            logs_btn.append(f"{pname}: Desconto — sem dados no período/filtros.")
-                            continue
-            
-                        # grava no destino (aba "Desconto")
-                        try:
+                        if not df_ins.empty:
+                            df_ins = df_ins[[c for c in cols_to_take if c in df_ins.columns]].copy()
                             try:
-                                ws_dest_des = sh_dest.worksheet("Desconto")
-                            except Exception:
-                                ws_dest_des = sh_dest.add_worksheet("Desconto", 1000, max(30, len(cols_to_take)))
-            
-                            h_dest_des, df_dest_des = get_headers_and_df_raw(ws_dest_des)
-            
-                            # se destino vazio -> grava diretamente
-                            if df_dest_des.empty:
-                                df_f_des, h_f_des = df_ins_des, list(df_ins_des.columns)
-                            else:
-                                # evita duplicação - usa coluna de data do destino para remover período
-                                c_dt_d_des = detect_date_col(h_dest_des)
-                                if c_dt_d_des:
-                                    df_dest_des["_dt"] = pd.to_datetime(df_dest_des[c_dt_d_des], dayfirst=True, errors="coerce").dt.date
-                                    rem_des = (df_dest_des["_dt"] >= data_de) & (df_dest_des["_dt"] <= data_ate)
-                                else:
-                                    rem_des = pd.Series([False] * len(df_dest_des))
-            
-                                if c_b2_des and c_b2_des in df_dest_des.columns and b2:
-                                    rem_des &= (df_dest_des[c_b2_des].astype(str).str.strip() == str(b2).strip())
-            
-                                # alinhar colunas entre destino atual e o que vamos escrever
-                                df_dest_sub = df_dest_des.copy()
-                                for col in cols_to_take:
-                                    if col not in df_dest_sub.columns:
-                                        df_dest_sub[col] = ""
-                                df_dest_sub = df_dest_sub[[c for c in cols_to_take if c in df_dest_sub.columns]]
-            
-                                for col in cols_to_take:
-                                    if col not in df_ins_des.columns:
-                                        df_ins_des[col] = ""
-                                df_ins_des = df_ins_des[[c for c in cols_to_take if c in df_ins_des.columns]]
-            
-                                df_f_des = pd.concat([df_dest_sub.loc[~rem_des], df_ins_des], ignore_index=True)
-                                h_f_des = [c for c in cols_to_take if c in df_f_des.columns]
-            
-                            # limpar colunas temporárias
-                            if "_dt" in df_f_des.columns: df_f_des = df_f_des.drop(columns=["_dt"])
-                            if "_dt_orig" in df_f_des.columns: df_f_des = df_f_des.drop(columns=["_dt_orig"])
-            
-                            send_des = df_f_des[h_f_des].fillna("")
-                            ws_dest_des.clear()
-                            ws_dest_des.update("A1", [h_f_des] + send_des.values.tolist(), value_input_option="USER_ENTERED")
-                            logs_btn.append(f"{pname}: Desconto OK.")
-                        except Exception as e:
-                            logs_btn.append(f"{pname}: Desconto Erro ao gravar destino: {e}")
-            
+                                try:
+                                    ws_dest = sh_dest.worksheet("Desconto")
+                                except:
+                                    ws_dest = sh_dest.add_worksheet("Desconto", 1000, 20)
+                                
+                                h_d, df_d = get_headers_and_df_raw(ws_dest)
+                                # Lógica de merge/limpeza de período (simplificada para o botão)
+                                ws_dest.clear()
+                                ws_dest.update("A1", [list(df_ins.columns)] + df_ins.fillna("").values.tolist(), value_input_option="USER_ENTERED")
+                                logs_btn.append(f"{pname}: OK.")
+                            except Exception as e:
+                                logs_btn.append(f"{pname}: Erro ao gravar destino: {e}")
+                        else:
+                            logs_btn.append(f"{pname}: Sem dados.")
                     except Exception as e:
-                        logs_btn.append(f"{p.get('name','(sem nome)')}: Erro {e}")
-            
-                    # progresso
-                    if total_planilhas:
-                        prog.progress((i + 1) / total_planilhas)
-            
-                status.empty()
-                st.markdown("### Log Atualizar Desconto 3S")
+                        logs_btn.append(f"{p.get('name')}: Erro {e}")
+                    prog.progress((i + 1) / total_planilhas)
+                
+                status.success("Processamento concluído!")
                 st.text("\n".join(logs_btn))
-                st.success("Atualização DESCONTO (3S) concluída.")
 
-
-
-            
             c1, c2, c3, _ = st.columns([1.2, 1.2, 1.2, 5])
             with c1: s_desc = st.checkbox("Desconto", value=False, key="at_chk1")
             with c2: s_mp = st.checkbox("Meio Pagto", value=True, key="at_chk2")
@@ -715,7 +574,6 @@ with tab_atual:
                             except Exception as e:
                                 logs.append(f"{row.get('Planilha', '(sem nome)')}: MP Erro {e}")
 
-                        # --- ATUALIZAR DESCONTO ---
                         # --- ATUALIZAR DESCONTO ---
                         if row.get("Desconto"):
                             try:

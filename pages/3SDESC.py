@@ -11,7 +11,7 @@ import psycopg2
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# ----------------- Helpers -----------------
+# Helpers
 def _parse_money_to_float(x):
     if pd.isna(x):
         return None
@@ -20,7 +20,6 @@ def _parse_money_to_float(x):
     s = re.sub(r"[^\d,\-\.]", "", s)
     if s == "":
         return None
-    # normaliza separadores
     if s.count(",") == 1 and s.count(".") >= 1:
         s = s.replace(".", "").replace(",", ".")
     elif s.count(",") == 1 and s.count(".") == 0:
@@ -43,7 +42,6 @@ def _format_brl(v):
     return f"R$ {s}"
 
 def _get_db_params():
-    # tenta st.secrets['db'] (quando rodando no Streamlit cloud)
     try:
         db = st.secrets["db"]
         return {
@@ -54,7 +52,6 @@ def _get_db_params():
             "password": db["password"]
         }
     except Exception:
-        # fallback para variáveis de ambiente locais
         return {
             "host": os.environ.get("PGHOST", "localhost"),
             "port": int(os.environ.get("PGPORT", 5432)),
@@ -73,11 +70,9 @@ def create_db_conn(params):
     )
 
 def create_gspread_client():
-    # Verifica se as credenciais estão em st.secrets
     if "GOOGLE_SERVICE_ACCOUNT" not in st.secrets:
         raise RuntimeError(
-            "Credenciais do Google não encontradas em st.secrets['GOOGLE_SERVICE_ACCOUNT']. "
-            "Adicione as credenciais da service account (JSON) em st.secrets antes de usar esta função."
+            "Google credentials not found in st.secrets['GOOGLE_SERVICE_ACCOUNT']."
         )
     creds_json = st.secrets["GOOGLE_SERVICE_ACCOUNT"]
     if isinstance(creds_json, str):
@@ -116,7 +111,7 @@ def fetch_tabela_empresa():
 def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999"), estado_filtrar=5):
     params = _get_db_params()
     if not params["dbname"] or not params["user"] or not params["password"]:
-        raise RuntimeError("Credenciais do banco não encontradas. Configure st.secrets['db'] ou variáveis de ambiente PG*.")
+        raise RuntimeError("Credenciais do banco nao encontradas. Configure st.secrets['db'] ou variaveis de ambiente PG*.")
 
     conn = create_db_conn(params)
     try:
@@ -168,7 +163,7 @@ def process_and_build_report(df_orders: pd.DataFrame, df_empresa: pd.DataFrame) 
     df["Grupo (lookup)"] = df["store_code"].map(mapa_codigo_para_grupo)
 
     df_final = pd.DataFrame({
-        "3S Checkout": ["3S Checkout"]  len(df),
+        "3S Checkout": ["3S Checkout"] * len(df),
         "Business Month": df["business_month"],
         "Loja": df["Loja Nome (lookup)"],
         "Grupo": df["ColB (lookup)"],
@@ -190,7 +185,6 @@ def to_excel_bytes(df: pd.DataFrame, sheet_name="Desconto"):
     try:
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             df.to_excel(writer, index=False, sheet_name=sheet_name)
-            workbook = writer.book
             worksheet = writer.sheets[sheet_name]
             for i, col in enumerate(df.columns):
                 max_len = max(df[col].astype(str).map(len).max() if not df.empty else 0, len(col)) + 2
@@ -201,39 +195,39 @@ def to_excel_bytes(df: pd.DataFrame, sheet_name="Desconto"):
     output.seek(0)
     return output
 
-st.title("Relatório Desconto (lookup: Tabela Empresa) — Somente leitura")
+# Streamlit UI
+st.title("Relatorio Desconto - lookup Tabela Empresa")
 
 st.markdown(
-    "Gera um relatório Excel com as colunas na ordem solicitada, usando a aba 'Tabela Empresa' da planilha 'Vendas diarias' para lookup. "
-    "Nenhuma planilha será atualizada."
+    "Gera um relatorio Excel com colunas na ordem solicitada, usando a aba 'Tabela Empresa' da planilha 'Vendas diarias' para lookup."
 )
 
-dias_default = st.number_input("Últimos quantos dias", min_value=1, max_value=365, value=30)
-data_ate = st.date_input("Data até", value=(datetime.utcnow() - timedelta(hours=3) - timedelta(days=1)).date())
+dias_default = st.number_input("Ultimos quantos dias", min_value=1, max_value=365, value=30)
+data_ate = st.date_input("Data ate", value=(datetime.utcnow() - timedelta(hours=3) - timedelta(days=1)).date())
 data_de = st.date_input("Data de", value=(data_ate - timedelta(days=dias_default - 1)))
 
 nome_arquivo = st.text_input("Nome do arquivo para download", value="relatorio_desconto_completo.xlsx")
 
-if st.button("🔁 Gerar relatório completo"):
+if st.button("Gerar relatorio completo"):
     try:
         with st.spinner("Buscando Tabela Empresa (Google Sheets)..."):
             df_empresa = fetch_tabela_empresa()
         with st.spinner("Buscando dados do banco..."):
             df_orders = fetch_order_picture(data_de, data_ate)
-        with st.spinner("Processando relatório..."):
+        with st.spinner("Processando relatorio..."):
             df_final = process_and_build_report(df_orders, df_empresa)
 
         if df_final.empty:
-            st.warning("Nenhum dado encontrado para o período selecionado.")
+            st.warning("Nenhum dado encontrado para o periodo selecionado.")
         else:
             st.dataframe(df_final.head(200))
             excel_bytes = to_excel_bytes(df_final, sheet_name="Desconto")
             st.download_button(
-                label="⬇️ Baixar relatório Excel",
+                label="Baixar relatorio Excel",
                 data=excel_bytes,
                 file_name=nome_arquivo,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
     except Exception as e:
-        st.error(f"Erro ao gerar relatório: {e}")
+        st.error(f"Erro ao gerar relatorio: {e}")
         st.exception(e)

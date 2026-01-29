@@ -20,7 +20,6 @@ def _parse_money_to_float(x):
     s = re.sub(r"[^\d,\-\.]", "", s)
     if s == "":
         return None
-    # normaliza separators
     if s.count(",") == 1 and s.count(".") >= 1:
         s = s.replace(".", "").replace(",", ".")
     elif s.count(",") == 1 and s.count(".") == 0:
@@ -94,7 +93,6 @@ def fetch_tabela_empresa():
     """
     Lê a aba 'Tabela Empresa' da planilha 'Vendas diarias' e retorna um DataFrame
     com colunas nomeadas por letras 'A','B','C',... correspondendo às colunas da planilha.
-    Usa get_all_values() para preservar posições fixas (A=0, C=2, D=3).
     """
     gc = create_gspread_client()
     try:
@@ -108,20 +106,13 @@ def fetch_tabela_empresa():
 
     values = ws.get_all_values()
     if not values:
-        return pd.DataFrame()  # vazio
+        return pd.DataFrame()
 
-    # Normalizar número de colunas
     max_cols = max(len(r) for r in values)
     rows = [r + [""] * (max_cols - len(r)) for r in values]
-
-    # Primeira linha pode ser cabeçalho; mas usaremos colunas por índice fixo,
-    # então criamos colunas 'A','B','C',...
     cols = [chr(ord("A") + i) for i in range(max_cols)]
-    # Ignorar a primeira linha (supondo que seja header) e retornar o restante.
-    # Se preferir incluir a primeira linha como dado, remova [1:].
     data_rows = rows[1:] if len(rows) > 1 else []
     df = pd.DataFrame(data_rows, columns=cols)
-    # Remove possíveis linhas em branco
     df = df.loc[~(df[cols].apply(lambda r: all(str(x).strip() == "" for x in r), axis=1))]
     return df
 
@@ -147,21 +138,14 @@ def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999
         conn.close()
     return df
 
-# ----------------- Processamento e montagem do relatório -----------------
+# ----------------- Processamento -----------------
 def process_and_build_report(df_orders: pd.DataFrame, df_empresa: pd.DataFrame) -> pd.DataFrame:
-    """
-    Recebe:
-      - df_orders com colunas: store_code, business_dt, order_discount_amount
-      - df_empresa com colunas indexadas por letras 'A','B','C',... (A=nome loja, C=codigo loja, D=codigo grupo)
-    Retorna DataFrame final com colunas na ordem solicitada.
-    """
     if df_orders is None or df_orders.empty:
         return pd.DataFrame(columns=[
             "3S Checkout", "Business Month", "Loja", "Grupo",
             "Loja Nome", "Order Discount Amount (BRL)", "Store Code", "Código do Grupo"
         ])
 
-    # processa orders
     df = df_orders.copy()
     df["store_code"] = df["store_code"].astype(str).str.replace(r"\D", "", regex=True).str.lstrip("0").replace("", "0")
     df["business_dt"] = pd.to_datetime(df["business_dt"], errors="coerce")
@@ -169,42 +153,33 @@ def process_and_build_report(df_orders: pd.DataFrame, df_empresa: pd.DataFrame) 
     df["order_discount_amount_val"] = df["order_discount_amount"].apply(_parse_money_to_float)
     df["order_discount_amount_fmt"] = df["order_discount_amount_val"].apply(lambda x: _format_brl(x if pd.notna(x) else 0.0))
 
-    # prepara mapas a partir da Tabela Empresa (usando índices fixos)
-    # Coluna A -> index 0 -> letra 'A'
-    # Coluna C -> index 2 -> letra 'C'
-    # Coluna D -> index 3 -> letter 'D'
     if df_empresa is None or df_empresa.empty:
         mapa_codigo_para_nome = {}
         mapa_codigo_para_grupo = {}
     else:
-        # garantir que temos colunas 'A','C','D' no df_empresa
-        cols_present = set(df_empresa.columns.tolist())
-        # cria colunas faltantes vazias se necessário
+        # Garante existência das colunas A, C, D
         for col in ["A", "C", "D"]:
-            if col not in cols_present:
+            if col not in df_empresa.columns:
                 df_empresa[col] = ""
-        mapa_codigo_para_nome = dict(zip(df_empresa["C"].astype(str).str.replace(r"\D", "", regex=True).str.lstrip("0").replace("", "0"),
-                                         df_empresa["A"].astype(str)))
-        mapa_codigo_para_grupo = dict(zip(df_empresa["C"].astype(str).str.replace(r"\D", "", regex=True).str.lstrip("0").replace("", "0"),
-                                          df_empresa["D"].astype(str)))
+        # normaliza códigos de loja na tabela empresa
+        codigo_col = df_empresa["C"].astype(str).str.replace(r"\D", "", regex=True).str.lstrip("0").replace("", "0")
+        mapa_codigo_para_nome = dict(zip(codigo_col, df_empresa["A"].astype(str)))
+        mapa_codigo_para_grupo = dict(zip(codigo_col, df_empresa["D"].astype(str)))
 
-    # aplica lookup
     df["Loja Nome (lookup)"] = df["store_code"].map(mapa_codigo_para_nome)
     df["Grupo (lookup)"] = df["store_code"].map(mapa_codigo_para_grupo)
 
-    # Monta DataFrame final
     df_final = pd.DataFrame({
-        "3S Checkout": ["3S Checkout"]  len(df),
+        "3S Checkout": ["3S Checkout"] * len(df),
         "Business Month": df["business_month"],
-        "Loja": df["Loja Nome (lookup)"],                # Col C: Loja (usando nome da Tabela Empresa Col A)
-        "Grupo": df["Grupo (lookup)"],                   # Col D: Grupo (código do grupo da Tabela Empresa Col D)
-        "Loja Nome": df["Loja Nome (lookup)"],           # Col E: Loja Nome (idem)
-        "Order Discount Amount (BRL)": df["order_discount_amount_fmt"],  # Col F
-        "Store Code": df["store_code"],                  # Col G
-        "Código do Grupo": df["Grupo (lookup)"]          # Col H (mesmo que D)
+        "Loja": df["Loja Nome (lookup)"],
+        "Grupo": df["Grupo (lookup)"],
+        "Loja Nome": df["Loja Nome (lookup)"],
+        "Order Discount Amount (BRL)": df["order_discount_amount_fmt"],
+        "Store Code": df["store_code"],
+        "Código do Grupo": df["Grupo (lookup)"]
     })
 
-    # Opcional: reordenar colunas (já na ordem desejada)
     col_order = [
         "3S Checkout", "Business Month", "Loja", "Grupo",
         "Loja Nome", "Order Discount Amount (BRL)", "Store Code", "Código do Grupo"

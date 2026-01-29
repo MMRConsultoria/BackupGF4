@@ -267,18 +267,19 @@ def to_bool_like(x):
     return s in ("true", "t", "1", "yes", "y", "sim", "s")
 
 # ---- TABS ----
-#tab_atual,tab_audit = st.tabs(["Atualização", "Auditoria" ])
-# TABS + botão alinhado na mesma linha (botão FORA das tabs)
-col_tabs, col_btn = st.columns([8, 1])  # ajuste proporção [8,1] conforme desejar
-with col_tabs:
-    tab_atual, tab_audit = st.tabs(["Atualização", "Auditoria"])
+tab_atual,tab_audit = st.tabs(["Atualização", "Auditoria" ])
+# --- TABS ---
+# --- BOTÃO NO MEIO (Abaixo das abas, antes dos filtros) ---
+c_espaco_esq, c_botao, c_espaco_dir = st.columns([3, 2, 3])
+with c_botao:
+    if st.button("🔄 Atualizar Desconto 3S", use_container_width=True, key="btn_desconto_meio"):
+        # Aqui você coloca a rotina ou chama a função de atualização
+        st.info("Iniciando atualização...")
 
-with col_btn:
-    # botão ficará visível na mesma linha das tabs, mas fora do conteúdo delas
-    if st.button("🔄 Atualizar Desconto 3S", use_container_width=True, key="btn_desconto_top"):
-        # chama sua rotina aqui (ou substitua pela rotina inline)
-        # ex: atualizar_desconto_3s(planilhas, gc, data_de, data_ate, ID_PLANILHA_ORIGEM_DESCONTO, ABA_ORIGEM_DESCONTO)
-        st.info("Botão superior clicado — implementar rotina aqui")
+# --- CONTEÚDO DAS TABS ---
+with tab_atual:
+    col_d1, col_d2 = st.columns(2)
+    # ... resto do seu código (filtros de data, etc)
 # -----------------------------
 # ABA: ATUALIZAÇÃO (mantive seu código praticamente intacto)
 # -----------------------------

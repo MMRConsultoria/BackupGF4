@@ -1,4 +1,3 @@
-# streamlit_app_desconto.py
 import os
 import re
 from io import BytesIO
@@ -7,6 +6,8 @@ from datetime import datetime, timedelta
 import streamlit as st
 import pandas as pd
 import psycopg2
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # ----------------- Helpers -----------------
 def _parse_money_to_float(x):
@@ -39,7 +40,6 @@ def _format_brl(v):
     return f"R$ {s}"
 
 def _get_db_params():
-    # tenta st.secrets['db'] (quando rodando no Streamlit cloud)
     try:
         db = st.secrets["db"]
         return {
@@ -50,7 +50,6 @@ def _get_db_params():
             "password": db["password"]
         }
     except Exception:
-        # fallback para variáveis de ambiente locais
         return {
             "host": os.environ.get("PGHOST", "localhost"),
             "port": int(os.environ.get("PGPORT", 5432)),
@@ -59,20 +58,44 @@ def _get_db_params():
             "password": os.environ.get("PGPASSWORD", "")
         }
 
-# ----------------- Funções de negócio -----------------
-@st.cache_data(ttl=300)
-def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999"), estado_filtrar=5):
-    params = _get_db_params()
-    if not params["dbname"] or not params["user"] or not params["password"]:
-        raise RuntimeError("Credenciais do banco não encontradas. Configure st.secrets['db'] ou variáveis de ambiente PG*.")
-
-    conn = psycopg2.connect(
+def create_db_conn(params):
+    return psycopg2.connect(
         host=params["host"],
         port=params["port"],
         dbname=params["dbname"],
         user=params["user"],
         password=params["password"]
     )
+
+def create_gspread_client():
+    creds_json = st.secrets["GOOGLE_SERVICE_ACCOUNT"]
+    if isinstance(creds_json, str):
+        creds_dict = json.loads(creds_json)
+    else:
+        creds_dict = creds_json
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    return gspread.authorize(credentials)
+
+# ----------------- Funções -----------------
+@st.cache_data(ttl=300)
+def fetch_tabela_empresa():
+    gc = create_gspread_client()
+    sh = gc.open("Vendas diarias")
+    ws = sh.worksheet("Tabela Empresa")
+    data = ws.get_all_records()
+    df = pd.DataFrame(data)
+    # Normaliza nomes colunas para evitar erros
+    df.columns = [c.strip() for c in df.columns]
+    return df
+
+@st.cache_data(ttl=300)
+def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999"), estado_filtrar=5):
+    params = _get_db_params()
+    if not params["dbname"] or not params["user"] or not params["password"]:
+        raise RuntimeError("Credenciais do banco não encontradas. Configure st.secrets['db'] ou variáveis de ambiente PG*.")
+
+    conn = create_db_conn(params)
     try:
         sql = """
             SELECT store_code, business_dt, order_discount_amount
@@ -88,32 +111,54 @@ def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999
         conn.close()
     return df
 
-def process_df(df):
-    if df is None or df.empty:
-        return pd.DataFrame(columns=[
-            "Store Code", "Business Date", "Business Month",
-            "Order Discount Amount (num)", "Order Discount Amount (BRL)"
-        ])
-    df["store_code"] = df["store_code"].astype(str).str.replace(r"\D", "", regex=True).str.lstrip("0").replace("", "0")
-    df["business_dt"] = pd.to_datetime(df["business_dt"], errors="coerce")
-    df["business_month"] = df["business_dt"].dt.strftime("%m/%Y").fillna("")
-    df["order_discount_amount_val"] = df["order_discount_amount"].apply(_parse_money_to_float)
-    df["order_discount_amount_fmt"] = df["order_discount_amount_val"].apply(lambda x: _format_brl(x if pd.notna(x) else 0.0))
-    df_out = df[[
-        "store_code", "business_dt", "business_month",
-        "order_discount_amount_val", "order_discount_amount_fmt"
-    ]].rename(columns={
-        "store_code": "Store Code",
-        "business_dt": "Business Date",
-        "business_month": "Business Month",
-        "order_discount_amount_val": "Order Discount Amount (num)",
-        "order_discount_amount_fmt": "Order Discount Amount (BRL)"
+def process_and_merge(df_orders, df_empresa):
+    if df_orders is None or df_orders.empty:
+        return pd.DataFrame()
+
+    # Limpa store_code e remove zeros à esquerda
+    df_orders["store_code"] = df_orders["store_code"].astype(str).str.replace(r"\D", "", regex=True).str.lstrip("0").replace("", "0")
+    df_orders["business_dt"] = pd.to_datetime(df_orders["business_dt"], errors="coerce")
+    df_orders["business_month"] = df_orders["business_dt"].dt.strftime("%m/%Y").fillna("")
+
+    df_orders["order_discount_amount_val"] = df_orders["order_discount_amount"].apply(_parse_money_to_float)
+    df_orders["order_discount_amount_fmt"] = df_orders["order_discount_amount_val"].apply(lambda x: _format_brl(x if pd.notna(x) else 0.0))
+
+    # Normaliza colunas da tabela empresa para facilitar merge
+    df_empresa.columns = [c.strip() for c in df_empresa.columns]
+    # Ajuste os nomes abaixo conforme sua planilha
+    # Supondo:
+    # Col A: Nome da loja (ex: "Loja Nome")
+    # Col C: Código da loja (ex: "Store Code")
+    # Col D: Código do grupo (ex: "Grupo")
+    nome_loja_col = df_empresa.columns[0]  # Col A
+    codigo_loja_col = df_empresa.columns[2]  # Col C
+    codigo_grupo_col = df_empresa.columns[3]  # Col D
+
+    # Faz merge para trazer Grupo e Loja Nome
+    df_merged = pd.merge(
+        df_orders,
+        df_empresa[[codigo_loja_col, codigo_grupo_col, nome_loja_col]],
+        how="left",
+        left_on="store_code",
+        right_on=codigo_loja_col
+    )
+
+    # Monta DataFrame final com as colunas na ordem pedida
+    df_final = pd.DataFrame({
+        "3S Checkout": "3S Checkout",
+        "Business Month": df_merged["business_month"],
+        "Loja": df_merged[nome_loja_col],
+        "Grupo": df_merged[codigo_grupo_col],
+        "Loja Nome": df_merged[nome_loja_col],
+        "Order Discount Amount (BRL)": df_merged["order_discount_amount_fmt"],
+        "Store Code": df_merged["store_code"],
+        "Código do Grupo": df_merged[codigo_grupo_col]
     })
-    return df_out
+
+    return df_final
 
 def to_excel_bytes(df: pd.DataFrame, sheet_name="Desconto"):
     output = BytesIO()
-    # tenta usar xlsxwriter se disponível
     try:
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             df.to_excel(writer, index=False, sheet_name=sheet_name)
@@ -123,47 +168,35 @@ def to_excel_bytes(df: pd.DataFrame, sheet_name="Desconto"):
                 max_len = max(df[col].astype(str).map(len).max() if not df.empty else 0, len(col)) + 2
                 worksheet.set_column(i, i, max_len)
     except Exception:
-        # fallback sem formatação
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name=sheet_name)
     output.seek(0)
     return output
 
 # ----------------- UI Streamlit -----------------
-st.title("Gerar Desconto (.xlsx) — Somente leitura")
+st.title("Relatório Desconto com dados da Tabela Empresa")
 
-st.markdown(
-    "Este botão consulta public.order_picture no banco, processa os dados e gera um arquivo Excel em memória. "
-    "Nada é gravado no disco e nenhuma planilha Google será atualizada automaticamente."
-)
-
-# Parâmetros do período
 dias_default = st.number_input("Últimos quantos dias", min_value=1, max_value=365, value=30)
 data_ate = st.date_input("Data até", value=(datetime.utcnow() - timedelta(hours=3) - timedelta(days=1)).date())
 data_de = st.date_input("Data de", value=(data_ate - timedelta(days=dias_default - 1)))
 
-col1, col2 = st.columns([3, 1])
-with col1:
-    nome_arquivo = st.text_input("Nome do arquivo para download (ex.: relatorio_desconto.xlsx)", value="relatorio_desconto.xlsx")
-with col2:
-    st.write("")  # alinhamento
-    st.write("") 
+nome_arquivo = st.text_input("Nome do arquivo para download", value="relatorio_desconto_completo.xlsx")
 
-if st.button("🔁 Gerar relatório (somente Excel)"):
+if st.button("🔁 Gerar relatório completo"):
     try:
-        with st.spinner("Consultando banco e gerando relatório..."):
-            df_raw = fetch_order_picture(data_de, data_ate)
-            df_proc = process_df(df_raw)
-            if df_proc.empty:
-                st.info("Nenhum registro encontrado no período selecionado.")
-            else:
-                st.success(f"{len(df_proc)} linhas processadas.")
-            excel_bytes = to_excel_bytes(df_proc, sheet_name="Desconto")
-            # exibe uma pré-visualização (primeiras linhas)
-            st.dataframe(df_proc.head(200))
-            # botão de download — sem gravar no disco e sem acionar reload
+        with st.spinner("Buscando dados da Tabela Empresa..."):
+            df_empresa = fetch_tabela_empresa()
+        with st.spinner("Buscando dados do banco..."):
+            df_orders = fetch_order_picture(data_de, data_ate)
+        with st.spinner("Processando e juntando dados..."):
+            df_final = process_and_merge(df_orders, df_empresa)
+        if df_final.empty:
+            st.warning("Nenhum dado encontrado para o período selecionado.")
+        else:
+            st.dataframe(df_final.head(200))
+            excel_bytes = to_excel_bytes(df_final, sheet_name="Desconto")
             st.download_button(
-                label="⬇️ Baixar arquivo .xlsx",
+                label="⬇️ Baixar relatório Excel",
                 data=excel_bytes,
                 file_name=nome_arquivo,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

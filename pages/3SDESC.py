@@ -1,4 +1,4 @@
-# streamlit_relatorio_desconto.py
+# streamlit_relatorio_desconto_summary.py
 import os
 import re
 import json
@@ -14,16 +14,16 @@ from oauth2client.service_account import ServiceAccountCredentials
 # ----------------- Helpers -----------------
 def _parse_money_to_float(x):
     if pd.isna(x):
-        return None
+        return 0.0
     s = str(x).strip()
     s = s.replace("R$", "").replace("\u00A0", "").replace(" ", "")
     s = re.sub(r"[^\d,\-\.]", "", s)
     if s == "":
-        return None
+        return 0.0
     # normaliza separadores
     if s.count(",") == 1 and s.count(".") >= 1:
         s = s.replace(".", "").replace(",", ".")
-    elif s.count(",") == 1 and s.count(".") == 0:
+    elif s.count(",", ) == 1 and s.count(".") == 0:
         s = s.replace(",", ".")
     try:
         return float(s)
@@ -31,7 +31,7 @@ def _parse_money_to_float(x):
         try:
             return float(s.replace(",", "."))
         except Exception:
-            return None
+            return 0.0
 
 def _format_brl(v):
     try:
@@ -43,7 +43,6 @@ def _format_brl(v):
     return f"R$ {s}"
 
 def _get_db_params():
-    # tenta st.secrets['db'] (quando rodando no Streamlit cloud)
     try:
         db = st.secrets["db"]
         return {
@@ -54,7 +53,6 @@ def _get_db_params():
             "password": db["password"]
         }
     except Exception:
-        # fallback para variáveis de ambiente locais
         return {
             "host": os.environ.get("PGHOST", "localhost"),
             "port": int(os.environ.get("PGPORT", 5432)),
@@ -73,17 +71,12 @@ def create_db_conn(params):
     )
 
 def create_gspread_client():
-    # Verifica se as credenciais estão em st.secrets
     if "GOOGLE_SERVICE_ACCOUNT" not in st.secrets:
         raise RuntimeError(
-            "Credenciais do Google não encontradas em st.secrets['GOOGLE_SERVICE_ACCOUNT']. "
-            "Adicione as credenciais da service account (JSON) em st.secrets antes de usar esta função."
+            "Google credentials not found in st.secrets['GOOGLE_SERVICE_ACCOUNT']."
         )
     creds_json = st.secrets["GOOGLE_SERVICE_ACCOUNT"]
-    if isinstance(creds_json, str):
-        creds_dict = json.loads(creds_json)
-    else:
-        creds_dict = creds_json
+    creds_dict = json.loads(creds_json) if isinstance(creds_json, str) else creds_json
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     return gspread.authorize(credentials)
@@ -115,13 +108,9 @@ def fetch_tabela_empresa():
 
 @st.cache_data(ttl=300)
 def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999"), estado_filtrar=5):
-    """
-    Tenta aplicar filtro por coluna VOID_TYPE; se coluna não existir, tenta pod_type;
-    se também não existir, busca sem filtro de void/pod.
-    """
     params = _get_db_params()
     if not params["dbname"] or not params["user"] or not params["password"]:
-        raise RuntimeError("Credenciais do banco não encontradas. Configure st.secrets['db'] ou variáveis de ambiente PG*.")
+        raise RuntimeError("Credenciais do banco nao encontradas. Configure st.secrets['db'] ou variaveis de ambiente PG*.")
 
     conn = create_db_conn(params)
     try:
@@ -133,7 +122,6 @@ def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999
               AND store_code NOT IN %s
               AND state_id = %s
         """
-        # tentativas de coluna que podem representar o "void"
         try_cols = [
             ("VOID_TYPE", "AND (VOID_TYPE IS NULL OR VOID_TYPE = '' OR LOWER(VOID_TYPE) NOT LIKE %s)"),
             ("pod_type", "AND (pod_type IS NULL OR pod_type = '' OR LOWER(pod_type) NOT LIKE %s)")
@@ -149,21 +137,20 @@ def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999
             except Exception as e:
                 last_exc = e
                 msg = str(e).lower()
-                # se o erro é por coluna inexistente, tenta próxima opção; caso contrário, re-raise
-                if "does not exist" in msg or "column" in msg and col_name.lower() in msg:
+                if "does not exist" in msg or (("column" in msg) and (col_name.lower() in msg)):
                     continue
                 else:
                     raise
 
-        # fallback: buscar sem filtro de void/pod (para não quebrar o processo)
+        # fallback: search without void/pod filter
         sql = f"{base_sql} ORDER BY business_dt, store_code"
         df = pd.read_sql(sql, conn, params=(data_de, data_ate, tuple(excluir_stores), estado_filtrar))
         return df
     finally:
         conn.close()
 
-# ----------------- Processamento -----------------
-def process_and_build_report(df_orders: pd.DataFrame, df_empresa: pd.DataFrame) -> pd.DataFrame:
+# ----------------- Processing / Summary -----------------
+def process_and_build_report_summary(df_orders: pd.DataFrame, df_empresa: pd.DataFrame) -> pd.DataFrame:
     if df_orders is None or df_orders.empty:
         return pd.DataFrame(columns=[
             "3S Checkout", "Business Month", "Loja", "Grupo",
@@ -175,9 +162,7 @@ def process_and_build_report(df_orders: pd.DataFrame, df_empresa: pd.DataFrame) 
     df["business_dt"] = pd.to_datetime(df["business_dt"], errors="coerce")
     df["business_month"] = df["business_dt"].dt.strftime("%m/%Y").fillna("")
     df["order_discount_amount_val"] = df["order_discount_amount"].apply(_parse_money_to_float)
-    df["order_discount_amount_fmt"] = df["order_discount_amount_val"].apply(lambda x: _format_brl(x if pd.notna(x) else 0.0))
 
-    # prepara mapas a partir da Tabela Empresa (usando índices fixos das colunas)
     if df_empresa is None or df_empresa.empty:
         mapa_codigo_para_nome = {}
         mapa_codigo_para_colB = {}
@@ -195,15 +180,24 @@ def process_and_build_report(df_orders: pd.DataFrame, df_empresa: pd.DataFrame) 
     df["ColB (lookup)"] = df["store_code"].map(mapa_codigo_para_colB)
     df["Grupo (lookup)"] = df["store_code"].map(mapa_codigo_para_grupo)
 
+    grouped = df.groupby(["business_month", "store_code"], as_index=False).agg({
+        "order_discount_amount_val": "sum",
+        "Loja Nome (lookup)": "first",
+        "ColB (lookup)": "first",
+        "Grupo (lookup)": "first"
+    })
+
+    grouped["order_discount_amount_fmt"] = grouped["order_discount_amount_val"].apply(lambda x: _format_brl(x if pd.notna(x) else 0.0))
+
     df_final = pd.DataFrame({
-        "3S Checkout": ["3S Checkout"] * len(df),
-        "Business Month": df["business_month"],
-        "Loja": df["Loja Nome (lookup)"],
-        "Grupo": df["ColB (lookup)"],                       # Coluna D -> coluna B da Tabela Empresa
-        "Loja Nome": df["Loja Nome (lookup)"],
-        "Order Discount Amount (BRL)": df["order_discount_amount_fmt"],
-        "Store Code": df["store_code"],
-        "Código do Grupo": df["Grupo (lookup)"]
+        "3S Checkout": ["3S Checkout"] * len(grouped),
+        "Business Month": grouped["business_month"],
+        "Loja": grouped["Loja Nome (lookup)"],
+        "Grupo": grouped["ColB (lookup)"],
+        "Loja Nome": grouped["Loja Nome (lookup)"],
+        "Order Discount Amount (BRL)": grouped["order_discount_amount_fmt"],
+        "Store Code": grouped["store_code"],
+        "Código do Grupo": grouped["Grupo (lookup)"]
     })
 
     col_order = [
@@ -218,7 +212,6 @@ def to_excel_bytes(df: pd.DataFrame, sheet_name="Desconto"):
     try:
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             df.to_excel(writer, index=False, sheet_name=sheet_name)
-            workbook = writer.book
             worksheet = writer.sheets[sheet_name]
             for i, col in enumerate(df.columns):
                 max_len = max(df[col].astype(str).map(len).max() if not df.empty else 0, len(col)) + 2
@@ -230,27 +223,27 @@ def to_excel_bytes(df: pd.DataFrame, sheet_name="Desconto"):
     return output
 
 # ----------------- Streamlit UI -----------------
-st.title("Relatório Desconto (lookup: Tabela Empresa) — Somente leitura")
+st.title("Relatório Desconto — Resumo por Business Month e Store Code")
 
 st.markdown(
-    "Gera um relatório Excel com as colunas na ordem solicitada, usando a aba 'Tabela Empresa' da planilha 'Vendas diarias' para lookup. "
-    "Nenhuma planilha será atualizada."
+    "Gera um relatório Excel resumido (agregado) por Business Month e Store Code. "
+    "Agrupa somando os descontos e mantém nome da loja / grupo conforme Tabela Empresa."
 )
 
 dias_default = st.number_input("Últimos quantos dias", min_value=1, max_value=365, value=30)
 data_ate = st.date_input("Data até", value=(datetime.utcnow() - timedelta(hours=3) - timedelta(days=1)).date())
 data_de = st.date_input("Data de", value=(data_ate - timedelta(days=dias_default - 1)))
 
-nome_arquivo = st.text_input("Nome do arquivo para download", value="relatorio_desconto_completo.xlsx")
+nome_arquivo = st.text_input("Nome do arquivo para download", value="relatorio_desconto_resumido.xlsx")
 
-if st.button("🔁 Gerar relatório completo"):
+if st.button("🔁 Gerar relatório resumido"):
     try:
         with st.spinner("Buscando Tabela Empresa (Google Sheets)..."):
             df_empresa = fetch_tabela_empresa()
         with st.spinner("Buscando dados do banco..."):
             df_orders = fetch_order_picture(data_de, data_ate)
-        with st.spinner("Processando relatório..."):
-            df_final = process_and_build_report(df_orders, df_empresa)
+        with st.spinner("Processando resumo..."):
+            df_final = process_and_build_report_summary(df_orders, df_empresa)
 
         if df_final.empty:
             st.warning("Nenhum dado encontrado para o período selecionado.")
@@ -258,7 +251,7 @@ if st.button("🔁 Gerar relatório completo"):
             st.dataframe(df_final.head(200))
             excel_bytes = to_excel_bytes(df_final, sheet_name="Desconto")
             st.download_button(
-                label="⬇️ Baixar relatório Excel",
+                label="⬇️ Baixar relatório Excel (resumido)",
                 data=excel_bytes,
                 file_name=nome_arquivo,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

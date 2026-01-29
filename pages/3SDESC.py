@@ -130,7 +130,7 @@ def to_excel_bytes(df: pd.DataFrame, sheet_name="Desconto"):
     return output
 
 # ----------------- UI Streamlit -----------------
-st.title("Gerar relatório de Desconto (.xlsx) — Somente leitura")
+st.title("Gerar Desconto (.xlsx) — Somente leitura")
 
 st.markdown(
     "Este botão consulta public.order_picture no banco, processa os dados e gera um arquivo Excel em memória. "

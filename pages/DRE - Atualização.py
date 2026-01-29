@@ -121,7 +121,7 @@ st.markdown("""
 # Inverti a ordem para Auditoria vir primeiro se desejar, ou mantenha como preferir
 #tab_atual, tab_audit = st.tabs(["🔄 Atualização", "🔍 Auditoria"])
 
-st.title("Atualizar DRE")
+st.title("Atualizar")
 
 # ---- AUTENTICAÇÃO ----
 @st.cache_resource

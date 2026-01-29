@@ -289,7 +289,9 @@ with tab_atual:
         s_ids = [map_s[n] for n in s_sel]
     except Exception:
         st.error("Erro ao listar pastas."); st.stop()
-
+    # botão sempre visível (para teste ou preferência)
+    if st.button("🔄 Atualizar Desconto 3S (visível sempre)", key="btn_desconto_3s_always"):
+        st.info("Botão visível sempre clicado - implementar rotina aqui")
     if not s_ids:
         st.info("Selecione as subpastas.")
     else:
@@ -299,7 +301,11 @@ with tab_atual:
         else:
             df_list = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
             df_list = df_list.rename(columns={"name": "Planilha", "id": "ID_Planilha"})
-
+            # DEBUG: confirmar que chegamos aqui e quantas planilhas existem
+            st.write("DEBUG: estou no bloco das planilhas. len(planilhas) =", len(planilhas))
+            # botão de teste simples
+            if st.button("TESTE: botão aparece aqui?", key="teste_btn"):
+                st.success("Botão de teste clicado")
             # --- BOTÃO: Atualizar Desconto 3S (usa data_de / data_ate) ---
             if st.button("🔄 Atualizar Desconto 3S", use_container_width=True, key="btn_desconto_3s"):
                 logs_btn = []

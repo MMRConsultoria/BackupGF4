@@ -193,7 +193,7 @@ def buscar_dados_3s_checkout():
 # ================================
 # 6. Interface do Streamlit
 # ================================
-st.title("🔄 Atualização 3S Checkout")
+st.title("🔄 Atualização 3S")
 
 if "resumo_pagamento" not in st.session_state:
     st.session_state["resumo_pagamento"] = None

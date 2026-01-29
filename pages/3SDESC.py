@@ -43,6 +43,7 @@ def _format_brl(v):
     return f"R$ {s}"
 
 def _get_db_params():
+    # tenta st.secrets['db'] (quando rodando no Streamlit cloud)
     try:
         db = st.secrets["db"]
         return {
@@ -53,6 +54,7 @@ def _get_db_params():
             "password": db["password"]
         }
     except Exception:
+        # fallback para variáveis de ambiente locais
         return {
             "host": os.environ.get("PGHOST", "localhost"),
             "port": int(os.environ.get("PGPORT", 5432)),
@@ -71,6 +73,7 @@ def create_db_conn(params):
     )
 
 def create_gspread_client():
+    # Verifica se as credenciais estão em st.secrets
     if "GOOGLE_SERVICE_ACCOUNT" not in st.secrets:
         raise RuntimeError(
             "Credenciais do Google não encontradas em st.secrets['GOOGLE_SERVICE_ACCOUNT']. "
@@ -124,10 +127,11 @@ def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999
               AND business_dt <= %s
               AND store_code NOT IN %s
               AND state_id = %s
-              AND (VOID_TYPE IS NULL OR VOID_TYPE = '' OR LOWER(VOID_TYPE) NOT LIKE '%void%')
+              AND (VOID_TYPE IS NULL OR VOID_TYPE = '' OR LOWER(VOID_TYPE) NOT LIKE %s)
             ORDER BY business_dt, store_code
         """
-        df = pd.read_sql(sql, conn, params=(data_de, data_ate, tuple(excluir_stores), estado_filtrar))
+        like_void = "%void%"
+        df = pd.read_sql(sql, conn, params=(data_de, data_ate, tuple(excluir_stores), estado_filtrar, like_void))
     finally:
         conn.close()
     return df
@@ -164,7 +168,7 @@ def process_and_build_report(df_orders: pd.DataFrame, df_empresa: pd.DataFrame) 
     df["Grupo (lookup)"] = df["store_code"].map(mapa_codigo_para_grupo)
 
     df_final = pd.DataFrame({
-        "3S Checkout": ["3S Checkout"] * len(df),
+        "3S Checkout": ["3S Checkout"]  len(df),
         "Business Month": df["business_month"],
         "Loja": df["Loja Nome (lookup)"],
         "Grupo": df["ColB (lookup)"],
@@ -197,7 +201,7 @@ def to_excel_bytes(df: pd.DataFrame, sheet_name="Desconto"):
     output.seek(0)
     return output
 
-st.title("Relatório Desconto (Tabela Empresa) — Somente leitura")
+st.title("Relatório Desconto (lookup: Tabela Empresa) — Somente leitura")
 
 st.markdown(
     "Gera um relatório Excel com as colunas na ordem solicitada, usando a aba 'Tabela Empresa' da planilha 'Vendas diarias' para lookup. "

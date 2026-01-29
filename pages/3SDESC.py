@@ -197,7 +197,7 @@ def to_excel_bytes(df: pd.DataFrame, sheet_name="Desconto"):
     output.seek(0)
     return output
 
-st.title("Relatório Desconto (lookup: Tabela Empresa) — Somente leitura")
+st.title("Relatório Desconto (Tabela Empresa) — Somente leitura")
 
 st.markdown(
     "Gera um relatório Excel com as colunas na ordem solicitada, usando a aba 'Tabela Empresa' da planilha 'Vendas diarias' para lookup. "

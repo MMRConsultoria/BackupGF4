@@ -1,30 +1,38 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import streamlit as st
+
+import os
+import re
+import json
+from datetime import datetime, timedelta
 import pandas as pd
 import psycopg2
-import json
-import re
-from datetime import datetime, timedelta
-import unicodedata
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from psycopg2 import sql
 
-# ---------- Helpers ----------
+# Optional: try to import streamlit to read st.secrets if running in Streamlit
+try:
+    import streamlit as st  # type: ignore
+    _HAS_ST = True
+except Exception:
+    _HAS_ST = False
+
+# ----------------- Helpers -----------------
 def _parse_money_to_float(x):
+    """Tenta converter textos como 'R$ 1.234,56' para float 1234.56"""
     if pd.isna(x):
         return None
     s = str(x).strip()
-    # remove símbolos comuns e espaços no meio
-    s = s.replace("R$", "").replace("\u00A0", "").replace(" ", "")
-    s = re.sub(r"[^\d,\-\.]", "", s)
     if s == "":
         return None
-    # normaliza separador decimal (tenta lidar com milhares)
-    # Se existir '.' e ',' assume que '.' são milhares -> remove '.' e troca ',' por '.'
+    # remove non-numeric except comma, dot and minus
+    s = s.replace("R$", "").replace("\u00A0", "").replace(" ", "")
+    s = re.sub(r"[^\d\-,\.]", "", s)
+    # Se houver '.' e ',' assume que '.' são milhares -> remove '.' e troca ',' por '.'
     if s.count(",") == 1 and s.count(".") >= 1:
         s = s.replace(".", "").replace(",", ".")
     elif s.count(",") == 1 and s.count(".") == 0:
         s = s.replace(",", ".")
+    # else assume '.' is decimal or no decimal
     try:
         return float(s)
     except Exception:
@@ -34,193 +42,169 @@ def _parse_money_to_float(x):
             return None
 
 def _format_brl(v):
+    """Formata número em padrão BRL como string 'R$ 1.234,56'."""
     try:
         v = float(v)
     except Exception:
         return "R$ 0,00"
-    s = f"{v:,.2f}"              # 1,234.56
+    s = f"{v:,.2f}"               # 1,234.56
     s = s.replace(",", "X").replace(".", ",").replace("X", ".")  # 1.234,56
     return f"R$ {s}"
 
-def _strip_accents(text: str) -> str:
-    if text is None:
-        return ""
-    text = str(text)
-    nfkd = unicodedata.normalize("NFKD", text)
-    return "".join([c for c in nfkd if not unicodedata.combining(c)])
+def _get_db_params_from_env_or_secrets():
+    """Tenta obter credenciais do ambiente ou de st.secrets (se disponível)."""
+    # Primeiro tenta st.secrets["db"] quando disponível
+    if _HAS_ST:
+        try:
+            db = st.secrets["db"]
+            return {
+                "host": db["host"],
+                "port": int(db.get("port", 5432)),
+                "dbname": db["database"],
+                "user": db["user"],
+                "password": db["password"]
+            }
+        except Exception:
+            pass
+    # Fallback para variáveis de ambiente
+    return {
+        "host": os.environ.get("PGHOST", "localhost"),
+        "port": int(os.environ.get("PGPORT", 5432)),
+        "dbname": os.environ.get("PGDATABASE", ""),
+        "user": os.environ.get("PGUSER", ""),
+        "password": os.environ.get("PGPASSWORD", "")
+    }
 
-# ---------- Conexões ----------
-def create_db_conn_from_secrets():
-    try:
-        db = st.secrets["db"]
-        conn = psycopg2.connect(
-            host=db["host"],
-            port=db.get("port", 5432),
-            dbname=db["database"],
-            user=db["user"],
-            password=db["password"]
-        )
-        return conn
-    except Exception as e:
-        raise RuntimeError(f"Erro criando conexão com DB: {e}")
+def create_db_conn(params):
+    conn = psycopg2.connect(
+        host=params["host"],
+        port=params["port"],
+        dbname=params["dbname"],
+        user=params["user"],
+        password=params["password"]
+    )
+    return conn
 
-def create_gspread_client_from_secrets():
-    try:
-        creds_json = st.secrets["GOOGLE_SERVICE_ACCOUNT"]
-        # creds_json pode ser já um dict ou uma string JSON
-        if isinstance(creds_json, str):
-            creds_dict = json.loads(creds_json)
-        else:
-            creds_dict = creds_json
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        gc = gspread.authorize(credentials)
-        return gc
-    except Exception as e:
-        raise RuntimeError(f"Erro criando cliente Google Sheets: {e}")
-
-# ---------- Função principal ----------
-def atualizar_desconto_3s_checkout(
-    data_de=None,
-    data_ate=None,
-    planilha_nome="Vendas diarias",
-    aba_destino_nome="Desconto",
-    excluir_stores=("0000", "0001", "9999"),
-    estado_filtrar=5
+# ----------------- Main report generator -----------------
+def gerar_relatorio_excel(
+    filename: str = "relatorio_desconto.xlsx",
+    data_de: str | None = None,   # 'YYYY-MM-DD' ou None
+    data_ate: str | None = None,  # 'YYYY-MM-DD' ou None
+    dias_default: int = 30,
+    excluir_stores: tuple = ("0000", "0001", "9999"),
+    estado_filtrar: int = 5
 ):
-    conn = None
-    try:
-        # 1) abrir conexões
-        conn = create_db_conn_from_secrets()
-        gc = create_gspread_client_from_secrets()
+    """
+    Gera um Excel local com colunas:
+      - store_code (sem zeros à esquerda)
+      - business_dt (datetime original)
+      - business_month (mm/YYYY)
+      - order_discount_amount (valor numérico)
+      - order_discount_amount_fmt (string 'R$ ...')
+    """
+    # definir período
+    hoje_utc = datetime.utcnow()
+    ontem = (hoje_utc - timedelta(hours=3) - timedelta(days=1)).date()
+    if data_ate is None:
+        data_ate = ontem
+    if data_de is None:
+        data_de = (pd.to_datetime(data_ate).date() - timedelta(days=dias_default - 1))
+    # aceitar strings
+    if isinstance(data_de, str):
+        data_de = pd.to_datetime(data_de).date()
+    if isinstance(data_ate, str):
+        data_ate = pd.to_datetime(data_ate).date()
 
-        # 2) definir período padrão (últimos 30 dias até ontem)
-        hoje_utc = datetime.utcnow()
-        ontem = (hoje_utc - timedelta(hours=3) - timedelta(days=1)).date()
-        if data_ate is None:
-            data_ate = ontem
-        if data_de is None:
-            data_de = (data_ate - timedelta(days=29))
-        # aceita string 'YYYY-MM-DD'
-        if isinstance(data_de, str):
-            data_de = pd.to_datetime(data_de).date()
-        if isinstance(data_ate, str):
-            data_ate = pd.to_datetime(data_ate).date()
+    # query
+    sql_query = """
+        SELECT store_code, business_dt, order_discount_amount
+        FROM public.order_picture
+        WHERE business_dt >= %s
+          AND business_dt <= %s
+          AND store_code NOT IN %s
+          AND state_id = %s
+        ORDER BY business_dt, store_code
+    """
 
-        # 3) query
-        sql = """
-            SELECT store_code, business_dt, order_discount_amount
-            FROM public.order_picture
-            WHERE business_dt >= %s
-              AND business_dt <= %s
-              AND store_code NOT IN %s
-              AND state_id = %s
-        """
-        params = (data_de, data_ate, tuple(excluir_stores), estado_filtrar)
-        df = pd.read_sql(sql, conn, params=params)
-        if df is None or df.empty:
-            return True, "Nenhum registro encontrado no período.", 0
+    params = (data_de, data_ate, tuple(excluir_stores), estado_filtrar)
 
-        # 4) processamentos
-        # limpar store_code e remover zeros à esquerda
-        df["store_code"] = df["store_code"].astype(str).str.replace(r"\D", "", regex=True).str.lstrip("0").replace("", "0")
-
-        # business_dt -> mm/aaaa
-        df["business_dt"] = pd.to_datetime(df["business_dt"], errors="coerce")
-        df["business_month"] = df["business_dt"].dt.strftime("%m/%Y").fillna("")
-
-        # order_discount_amount -> numeric -> format BRL
-        df["order_discount_amount_val"] = df["order_discount_amount"].apply(_parse_money_to_float)
-        df["order_discount_amount_fmt"] = df["order_discount_amount_val"].apply(lambda x: _format_brl(x if pd.notna(x) else 0.0))
-
-        # 5) preparar df de saída com colunas desejadas (B, D, E, F, G, H não aplicam aqui, adaptamos)
-        # Como solicitado antes: armazenamos store_code, business_month e valor formatado
-        df_out = pd.DataFrame({
-            "Store Code": df["store_code"].astype(str),
-            "Business Month": df["business_month"],
-            "Order Discount Amount": df["order_discount_amount_fmt"]
-        })
-
-        # 6) abrir planilha e aba destino (cria se não existir)
-        try:
-            sh = gc.open(planilha_nome)
-        except Exception as e:
-            return False, f"Erro ao abrir planilha '{planilha_nome}': {e}", 0
-
-        try:
-            ws = sh.worksheet(aba_destino_nome)
-        except Exception:
-            # cria nova aba com linhas e colunas suficientes
-            ws = sh.add_worksheet(title=aba_destino_nome, rows=max(1000, len(df_out)+10), cols=max(3, df_out.shape[1]))
-
-        # 7) tenta mapear cabeçalho existente; se não encontrar, usa padrão
-        try:
-            header_row = ws.row_values(1)
-            header_norm = [ _strip_accents(str(h)).strip().lower() for h in header_row ]
-            # tenta encontrar colunas equivalentes
-            col_store = None
-            col_month = None
-            col_discount = None
-            for i, hn in enumerate(header_norm):
-                if hn and ("loja" in hn or "store" in hn or "codigo" in hn or "store code" in hn):
-                    col_store = header_row[i]
-                if hn and ("mes" in hn or "mês" in hn or "business" in hn or "data" in hn or "month" in hn):
-                    col_month = header_row[i]
-                if hn and ("descont" in hn or "discount" in hn or "order_discount" in hn):
-                    col_discount = header_row[i]
-            if col_store and col_month and col_discount:
-                headers_to_write = [col_store, col_month, col_discount]
-                df_write = pd.DataFrame({
-                    col_store: df_out["Store Code"],
-                    col_month: df_out["Business Month"],
-                    col_discount: df_out["Order Discount Amount"]
-                })
-            else:
-                headers_to_write = ["Store Code", "Business Month", "Order Discount Amount"]
-                df_write = df_out[headers_to_write]
-        except Exception:
-            headers_to_write = ["Store Code", "Business Month", "Order Discount Amount"]
-            df_write = df_out[headers_to_write]
-
-        # 8) escrever (substitui todo o conteúdo da aba)
-        send_vals = [headers_to_write] + df_write.fillna("").values.tolist()
-        ws.clear()
-        ws.update("A1", send_vals, value_input_option="USER_ENTERED")
-        linhas = len(df_write)
-        return True, f"Aba '{aba_destino_nome}' atualizada com {linhas} linhas.", linhas
-
-    except Exception as e:
-        return False, f"Erro interno na atualização: {e}", 0
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-# ---------- UI Streamlit ----------
-st.title("Atualizar aba Desconto (autônomo)")
-
-st.markdown(
-    "Este botão executa uma extração de `public.order_picture` e grava o resultado na aba "
-    "`Desconto` da planilha especificada (usa credenciais em `st.secrets`)."
-)
-
-planilha_input = st.text_input("Nome da planilha (Google Sheets)", value="Vendas diarias")
-aba_input = st.text_input("Nome da aba destino", value="Desconto")
-dias_default = st.number_input("Últimos quantos dias (padrão 30)", min_value=1, max_value=365, value=30)
-
-if st.button("🔁 Atualizar Desconto (autônomo)"):
-    with st.spinner("Executando consulta e atualizando aba..."):
-        data_ate = (datetime.utcnow() - timedelta(hours=3) - timedelta(days=1)).date()
-        data_de = data_ate - timedelta(days=int(dias_default) - 1)
-        ok, msg, n = atualizar_desconto_3s_checkout(
-            data_de=data_de,
-            data_ate=data_ate,
-            planilha_nome=planilha_input,
-            aba_destino_nome=aba_input
+    # conectar e ler
+    db_params = _get_db_params_from_env_or_secrets()
+    if not db_params["dbname"] or not db_params["user"]:
+        raise RuntimeError(
+            "Credenciais do banco não encontradas. Defina variáveis de ambiente PGDATABASE/PGUSER/PGPASSWORD/etc "
+            "ou forneça st.secrets['db'] quando rodando em Streamlit."
         )
-        if ok:
-            st.success(msg)
-        else:
-            st.error(msg)
+
+    conn = create_db_conn(db_params)
+    try:
+        df = pd.read_sql(sql_query, conn, params=params)
+    finally:
+        conn.close()
+
+    if df is None or df.empty:
+        print("Nenhum registro encontrado no período solicitado.")
+        # cria excel vazio com cabeçalho
+        df_empty = pd.DataFrame(columns=[
+            "store_code", "business_dt", "business_month",
+            "order_discount_amount", "order_discount_amount_fmt"
+        ])
+        df_empty.to_excel(filename, index=False)
+        print(f"Arquivo gerado: {filename}")
+        return filename
+
+    # processamentos
+    df["store_code"] = df["store_code"].astype(str).str.replace(r"\D", "", regex=True).str.lstrip("0").replace("", "0")
+    df["business_dt"] = pd.to_datetime(df["business_dt"], errors="coerce")
+    df["business_month"] = df["business_dt"].dt.strftime("%m/%Y").fillna("")
+
+    df["order_discount_amount_val"] = df["order_discount_amount"].apply(_parse_money_to_float)
+    df["order_discount_amount_fmt"] = df["order_discount_amount_val"].apply(lambda x: _format_brl(x if pd.notna(x) else 0.0))
+
+    # organizar colunas finais
+    df_out = df[[
+        "store_code", "business_dt", "business_month",
+        "order_discount_amount_val", "order_discount_amount_fmt"
+    ]].rename(columns={
+        "store_code": "Store Code",
+        "business_dt": "Business Date",
+        "business_month": "Business Month",
+        "order_discount_amount_val": "Order Discount Amount (num)",
+        "order_discount_amount_fmt": "Order Discount Amount (BRL)"
+    })
+
+    # gravar excel com formatação simples
+    try:
+        # tenta xlsxwriter para formatar coluna numérica
+        with pd.ExcelWriter(filename, engine="xlsxwriter") as writer:
+            df_out.to_excel(writer, sheet_name="Desconto", index=False, startrow=0)
+            workbook = writer.book
+            worksheet = writer.sheets["Desconto"]
+            # ajustar larguras
+            for i, col in enumerate(df_out.columns):
+                max_len = max(
+                    df_out[col].astype(str).map(len).max(),
+                    len(col)
+                ) + 2
+                worksheet.set_column(i, i, max_len)
+            # formatar coluna numérica (índice da coluna)
+            num_col_idx = df_out.columns.get_loc("Order Discount Amount (num)")
+            money_fmt = workbook.add_format({"num_format": "#,##0.00"})
+            worksheet.set_column(num_col_idx, num_col_idx, 16, money_fmt)
+    except Exception:
+        # fallback sem xlsxwriter
+        df_out.to_excel(filename, sheet_name="Desconto", index=False)
+
+    print(f"Relatório gerado em: {filename}  (linhas: {len(df_out)})")
+    return filename
+
+# ----------------- Execução direta -----------------
+if __name__ == "__main__":
+    # Exemplo de uso:
+    # - Para usar variáveis de ambiente, exporte PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD antes de rodar
+    # - Ou rode dentro do Streamlit com st.secrets['db'] configurado
+    try:
+        arquivo = gerar_relatorio_excel(filename="relatorio_desconto.xlsx", dias_default=30)
+    except Exception as e:
+        print("Erro ao gerar relatório:", e)
+        raise

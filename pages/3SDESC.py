@@ -187,7 +187,7 @@ def process_and_build_report_summary(df_orders: pd.DataFrame, df_empresa: pd.Dat
 
     # Mantemos o valor numérico para envio ao Sheets
     df_final = pd.DataFrame({
-        "3S Checkout": ["3S Checkout"]  len(grouped),
+        "3S Checkout": ["3S Checkout"] * len(grouped),
         "Business Month": grouped["business_month"],
         "Loja": grouped["Loja Nome (lookup)"],
         "Grupo": grouped["ColB (lookup)"],
@@ -196,10 +196,6 @@ def process_and_build_report_summary(df_orders: pd.DataFrame, df_empresa: pd.Dat
         "Store Code": grouped["store_code"],
         "Código do Grupo": grouped["Grupo (lookup)"]
     })
-
-    # opcional: se quiser também uma coluna formatada para visualização local/Excel,
-    # você pode descomentar a linha abaixo:
-    # df_final["Order Discount Amount (Formatted)"] = df_final["Order Discount Amount (BRL)"].apply(lambda x: _format_brl(x))
 
     col_order = [
         "3S Checkout", "Business Month", "Loja", "Grupo",
@@ -213,7 +209,6 @@ def to_excel_bytes(df: pd.DataFrame, sheet_name="Desconto"):
     try:
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             df_to_write = df.copy()
-            # Para Excel, se preferir colunas formatadas, podemos formatar aqui.
             df_to_write.to_excel(writer, index=False, sheet_name=sheet_name)
             worksheet = writer.sheets[sheet_name]
             for i, col in enumerate(df_to_write.columns):
@@ -249,7 +244,6 @@ def upload_df_to_gsheet_replace_months(df: pd.DataFrame,
     # lê todos os valores existentes
     existing = ws.get_all_values()
     header = existing[0] if existing else df.columns.tolist()
-
     existing_rows = existing[1:] if len(existing) > 1 else []
 
     # meses que vamos substituir (strings)
@@ -279,7 +273,6 @@ def upload_df_to_gsheet_replace_months(df: pd.DataFrame,
         for col in df_clean.columns:
             val = row[col]
             if val is None:
-                # usa string vazia para células vazias
                 converted.append("")
             elif col in numeric_cols:
                 # converte numpy numerics para python native
@@ -288,10 +281,8 @@ def upload_df_to_gsheet_replace_months(df: pd.DataFrame,
                 elif isinstance(val, (np.floating,)):
                     converted.append(float(val))
                 else:
-                    # caso já seja int/float nativo
                     converted.append(val)
             else:
-                # para texto, garante string
                 converted.append(str(val))
         df_rows.append(converted)
 

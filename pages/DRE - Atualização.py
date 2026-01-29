@@ -339,19 +339,28 @@ with tab_atual:
                 except Exception as e:
                     st.error(f"Erro origem MP: {e}"); st.stop()
 
+                
+                total = len(df_marcadas)
                 prog = st.progress(0)
                 logs = []
                 log_placeholder = st.empty()
 
-                total = len(df_marcadas)
                 for i, (_, row) in enumerate(df_marcadas.iterrows()):
                     try:
-                        sid = row["ID_Planilha"]
+                        sid = row.get("ID_Planilha")
+                        if not sid:
+                            sid = row.get("ID_Planilha")  # fallback (mantive seu padrão)
+                        if not sid:
+                            logs.append(f"{row.get('Planilha', '(sem nome)')}: ID não encontrado.")
+                            prog.progress((i+1)/total)
+                            log_placeholder.text("\n".join(logs))
+                            continue
+
                         sh_dest = gc.open_by_key(sid)
                         b2, b3, b4, b5 = read_codes_from_config_sheet(sh_dest)
 
                         if not b2:
-                            logs.append(f"{row['Planilha']}: Sem B2.")
+                            logs.append(f"{row.get('Planilha', '(sem nome)')}: Sem B2.")
                             log_placeholder.text("\n".join(logs))
                             prog.progress((i+1)/total)
                             continue
@@ -362,118 +371,123 @@ with tab_atual:
                         if b5: lojas_filtro.append(str(b5).strip())
 
                         # --- ATUALIZAR FATURAMENTO ---
-                        if row["Faturamento"]:
-                            df_ins = df_orig_fat_f.copy()
-                            if len(h_orig_fat) > 5:
-                                c_b2 = h_orig_fat[5]
-                                df_ins = df_ins[df_ins[c_b2].astype(str).str.strip() == b2]
-                            if lojas_filtro and not df_ins.empty:
-                                if len(h_orig_fat) > 3:
-                                    c_loja = h_orig_fat[3]
-                                    df_ins = df_ins[df_ins[c_loja].astype(str).str.strip().isin(lojas_filtro)]
-                            if not df_ins.empty:
-                                try:
-                                    ws_dest = sh_dest.worksheet("Importado_Fat")
-                                except:
-                                    ws_dest = sh_dest.add_worksheet("Importado_Fat", 1000, 30)
-                                h_dest, df_dest = get_headers_and_df_raw(ws_dest)
-                                if df_dest.empty:
-                                    df_f_ws, h_f = df_ins, h_orig_fat
+                        if row.get("Faturamento"):
+                            try:
+                                df_ins = df_orig_fat_f.copy()
+                                if len(h_orig_fat) > 5:
+                                    c_b2 = h_orig_fat[5]
+                                    df_ins = df_ins[df_ins[c_b2].astype(str).str.strip() == str(b2).strip()]
+                                if lojas_filtro and not df_ins.empty:
+                                    if len(h_orig_fat) > 3:
+                                        c_loja = h_orig_fat[3]
+                                        df_ins = df_ins[df_ins[c_loja].astype(str).str.strip().isin(lojas_filtro)]
+                                if not df_ins.empty:
+                                    try:
+                                        try:
+                                            ws_dest = sh_dest.worksheet("Importado_Fat")
+                                        except Exception:
+                                            ws_dest = sh_dest.add_worksheet("Importado_Fat", 1000, 30)
+                                        h_dest, df_dest = get_headers_and_df_raw(ws_dest)
+                                        if df_dest.empty:
+                                            df_f_ws, h_f = df_ins, h_orig_fat
+                                        else:
+                                            c_dt_d = detect_date_col(h_dest)
+                                            if c_dt_d:
+                                                df_dest["_dt"] = pd.to_datetime(df_dest[c_dt_d], dayfirst=True, errors="coerce").dt.date
+                                                rem = (df_dest["_dt"] >= data_de) & (df_dest["_dt"] <= data_ate)
+                                            else:
+                                                rem = pd.Series([False] * len(df_dest))
+                                            if len(h_orig_fat) > 5 and c_b2 in df_dest.columns:
+                                                rem &= (df_dest[c_b2].astype(str).str.strip() == str(b2).strip())
+                                            df_f_ws = pd.concat([df_dest.loc[~rem], df_ins], ignore_index=True)
+                                            h_f = h_dest if h_dest else h_orig_fat
+                                        if "_dt" in df_f_ws.columns:
+                                            df_f_ws = df_f_ws.drop(columns=["_dt"])
+                                        send = df_f_ws[h_f].fillna("")
+                                        ws_dest.clear()
+                                        ws_dest.update("A1", [h_f] + send.values.tolist(), value_input_option="USER_ENTERED")
+                                        logs.append(f"{row.get('Planilha', '(sem nome)')}: Fat OK.")
+                                    except Exception as e:
+                                        logs.append(f"{row.get('Planilha', '(sem nome)')}: Fat Erro ao gravar destino: {e}")
                                 else:
-                                    c_dt_d = detect_date_col(h_dest)
-                                    if c_dt_d:
-                                        df_dest["_dt"] = pd.to_datetime(df_dest[c_dt_d], dayfirst=True, errors="coerce").dt.date
-                                        rem = (df_dest["_dt"] >= data_de) & (df_dest["_dt"] <= data_ate)
-                                    else:
-                                        rem = pd.Series([False] * len(df_dest))
-                                    if len(h_orig_fat) > 5 and c_b2 in df_dest.columns:
-                                        rem &= (df_dest[c_b2].astype(str).str.strip() == b2)
-                                    df_f_ws = pd.concat([df_dest.loc[~rem], df_ins], ignore_index=True)
-                                    h_f = h_dest if h_dest else h_orig_fat
-                                if "_dt" in df_f_ws.columns: df_f_ws = df_f_ws.drop(columns=["_dt"])
-                                send = df_f_ws[h_f].fillna("")
-                                ws_dest.clear()
-                                ws_dest.update("A1", [h_f] + send.values.tolist(), value_input_option="USER_ENTERED")
-                                logs.append(f"{row['Planilha']}: Fat OK.")
-                            else:
-                                logs.append(f"{row['Planilha']}: Fat Sem dados.")
+                                    logs.append(f"{row.get('Planilha', '(sem nome)')}: Fat Sem dados.")
+                            except Exception as e:
+                                logs.append(f"{row.get('Planilha', '(sem nome)')}: Fat Erro {e}")
 
                         # --- ATUALIZAR MEIO DE PAGAMENTO ---
-                        if row["Meio Pagamento"]:
-                            df_ins_mp = df_orig_mp_f.copy()
-                            if len(h_orig_mp) > 8:
-                                c_b2_mp = h_orig_mp[8]
-                                df_ins_mp = df_ins_mp[df_ins_mp[c_b2_mp].astype(str).str.strip() == b2]
-                            if lojas_filtro and not df_ins_mp.empty:
-                                if len(h_orig_mp) > 6:
-                                    c_loja_mp = h_orig_mp[6]
-                                    df_ins_mp = df_ins_mp[df_ins_mp[c_loja_mp].astype(str).str.strip().isin(lojas_filtro)]
-                            if not df_ins_mp.empty:
-                                try:
-                                    ws_dest_mp = sh_dest.worksheet("Meio de Pagamento")
-                                except:
-                                    ws_dest_mp = sh_dest.add_worksheet("Meio de Pagamento", 1000, 30)
-                                h_dest_mp, df_dest_mp = get_headers_and_df_raw(ws_dest_mp)
-                                if df_dest_mp.empty:
-                                    df_f_mp, h_f_mp = df_ins_mp, h_orig_mp
+                        if row.get("Meio Pagamento"):
+                            try:
+                                df_ins_mp = df_orig_mp_f.copy()
+                                if len(h_orig_mp) > 8:
+                                    c_b2_mp = h_orig_mp[8]
+                                    df_ins_mp = df_ins_mp[df_ins_mp[c_b2_mp].astype(str).str.strip() == str(b2).strip()]
+                                if lojas_filtro and not df_ins_mp.empty:
+                                    if len(h_orig_mp) > 6:
+                                        c_loja_mp = h_orig_mp[6]
+                                        df_ins_mp = df_ins_mp[df_ins_mp[c_loja_mp].astype(str).str.strip().isin(lojas_filtro)]
+                                if not df_ins_mp.empty:
+                                    try:
+                                        try:
+                                            ws_dest_mp = sh_dest.worksheet("Meio de Pagamento")
+                                        except Exception:
+                                            ws_dest_mp = sh_dest.add_worksheet("Meio de Pagamento", 1000, 30)
+                                        h_dest_mp, df_dest_mp = get_headers_and_df_raw(ws_dest_mp)
+                                        if df_dest_mp.empty:
+                                            df_f_mp, h_f_mp = df_ins_mp, h_orig_mp
+                                        else:
+                                            c_dt_d_mp = detect_date_col(h_dest_mp)
+                                            if c_dt_d_mp:
+                                                df_dest_mp["_dt"] = pd.to_datetime(df_dest_mp[c_dt_d_mp], dayfirst=True, errors="coerce").dt.date
+                                                rem_mp = (df_dest_mp["_dt"] >= data_de) & (df_dest_mp["_dt"] <= data_ate)
+                                            else:
+                                                rem_mp = pd.Series([False] * len(df_dest_mp))
+                                            if len(h_orig_mp) > 8 and c_b2_mp in df_dest_mp.columns:
+                                                rem_mp &= (df_dest_mp[c_b2_mp].astype(str).str.strip() == str(b2).strip())
+                                            df_f_mp = pd.concat([df_dest_mp.loc[~rem_mp], df_ins_mp], ignore_index=True)
+                                            h_f_mp = h_dest_mp if h_dest_mp else h_orig_mp
+                                        if "_dt" in df_f_mp.columns:
+                                            df_f_mp = df_f_mp.drop(columns=["_dt"])
+                                        send_mp = df_f_mp[h_f_mp].fillna("")
+                                        ws_dest_mp.clear()
+                                        ws_dest_mp.update("A1", [h_f_mp] + send_mp.values.tolist(), value_input_option="USER_ENTERED")
+                                        logs.append(f"{row.get('Planilha', '(sem nome)')}: MP OK.")
+                                    except Exception as e:
+                                        logs.append(f"{row.get('Planilha', '(sem nome)')}: MP Erro ao gravar destino: {e}")
                                 else:
-                                    c_dt_d_mp = detect_date_col(h_dest_mp)
-                                    if c_dt_d_mp:
-                                        df_dest_mp["_dt"] = pd.to_datetime(df_dest_mp[c_dt_d_mp], dayfirst=True, errors="coerce").dt.date
-                                        rem_mp = (df_dest_mp["_dt"] >= data_de) & (df_dest_mp["_dt"] <= data_ate)
-                                    else:
-                                        rem_mp = pd.Series([False] * len(df_dest_mp))
-                                    if len(h_orig_mp) > 8 and c_b2_mp in df_dest_mp.columns:
-                                        rem_mp &= (df_dest_mp[c_b2_mp].astype(str).str.strip() == b2)
-                                    df_f_mp = pd.concat([df_dest_mp.loc[~rem_mp], df_ins_mp], ignore_index=True)
-                                    h_f_mp = h_dest_mp if h_dest_mp else h_orig_mp
-                                if "_dt" in df_f_mp.columns: df_f_mp = df_f_mp.drop(columns=["_dt"])
-                                send_mp = df_f_mp[h_f_mp].fillna("")
-                                ws_dest_mp.clear()
-                                ws_dest_mp.update("A1", [h_f_mp] + send_mp.values.tolist(), value_input_option="USER_ENTERED")
-                                logs.append(f"{row['Planilha']}: MP OK.")
-                            else:
-                                logs.append(f"{row['Planilha']}: MP Sem dados.")
+                                    logs.append(f"{row.get('Planilha', '(sem nome)')}: MP Sem dados.")
+                            except Exception as e:
+                                logs.append(f"{row.get('Planilha', '(sem nome)')}: MP Erro {e}")
 
                         # --- ATUALIZAR DESCONTO ---
                         if row.get("Desconto"):
                             try:
-                                # abrir origem Desconto (abre a planilha de origem)
+                                # abrir origem Desconto
                                 sh_orig_des = gc.open_by_key(ID_PLANILHA_ORIGEM_DESCONTO)
                                 ws_orig_des = sh_orig_des.worksheet(ABA_ORIGEM_DESCONTO)
                                 h_orig_des, df_orig_des = get_headers_and_df_raw(ws_orig_des)
-
-                                # copia entrada
                                 df_ins_des = df_orig_des.copy()
 
-                                # prepara nomes de colunas (verifica existência)
                                 c_b2_des = h_orig_des[7] if len(h_orig_des) > 7 else None  # coluna H (filtro B2)
                                 c_loja_des = h_orig_des[6] if len(h_orig_des) > 6 else None  # coluna G (loja)
 
-                                # Filtro pelo B2 (coluna H da origem)
                                 if c_b2_des and b2:
                                     df_ins_des = df_ins_des[df_ins_des[c_b2_des].astype(str).str.strip() == str(b2).strip()]
 
-                                # Filtro por lojas usando COL G (coluna de loja) na origem
                                 if lojas_filtro and not df_ins_des.empty and c_loja_des:
                                     lojas_norm = [normalize_code(x) for x in lojas_filtro]
                                     df_ins_des = df_ins_des[df_ins_des[c_loja_des].apply(lambda x: normalize_code(x) if pd.notna(x) else "").isin(lojas_norm)]
 
                                 if not df_ins_des.empty:
                                     try:
-                                        # destino: aba "Desconto" (cria se não existir)
                                         try:
                                             ws_dest_des = sh_dest.worksheet("Desconto")
                                         except Exception:
                                             ws_dest_des = sh_dest.add_worksheet("Desconto", 1000, max(30, len(h_orig_des)))
-
                                         h_dest_des, df_dest_des = get_headers_and_df_raw(ws_dest_des)
 
-                                        # Se destino vazio: usamos cabeçalho/origem
                                         if df_dest_des.empty:
                                             df_f_des, h_f_des = df_ins_des, h_orig_des
                                         else:
-                                            # tenta evitar duplicação por período (se houver coluna data)
                                             c_dt_d_des = detect_date_col(h_dest_des)
                                             if c_dt_d_des:
                                                 df_dest_des["_dt"] = pd.to_datetime(df_dest_des[c_dt_d_des], dayfirst=True, errors="coerce").dt.date
@@ -481,26 +495,32 @@ with tab_atual:
                                             else:
                                                 rem_des = pd.Series([False] * len(df_dest_des))
 
-                                            # preserva filtro B2 ao remover duplicados se coluna existir no destino
                                             if c_b2_des and c_b2_des in df_dest_des.columns and b2:
                                                 rem_des &= (df_dest_des[c_b2_des].astype(str).str.strip() == str(b2).strip())
 
                                             df_f_des = pd.concat([df_dest_des.loc[~rem_des], df_ins_des], ignore_index=True)
                                             h_f_des = h_dest_des if h_dest_des else h_orig_des
 
-                                        # remove coluna temporária _dt se existir e grava
                                         if "_dt" in df_f_des.columns:
                                             df_f_des = df_f_des.drop(columns=["_dt"])
                                         send_des = df_f_des[h_f_des].fillna("")
                                         ws_dest_des.clear()
                                         ws_dest_des.update("A1", [h_f_des] + send_des.values.tolist(), value_input_option="USER_ENTERED")
-                                        logs.append(f"{row['Planilha']}: Desconto OK.")
+                                        logs.append(f"{row.get('Planilha', '(sem nome)')}: Desconto OK.")
                                     except Exception as e:
-                                        logs.append(f"{row['Planilha']}: Desconto Erro ao gravar destino: {e}")
+                                        logs.append(f"{row.get('Planilha', '(sem nome)')}: Desconto Erro ao gravar destino: {e}")
                                 else:
-                                    logs.append(f"{row['Planilha']}: Desconto Sem dados.")
+                                    logs.append(f"{row.get('Planilha', '(sem nome)')}: Desconto Sem dados.")
                             except Exception as e:
-                                logs.append(f"{row['Planilha']}: Desconto Erro {e}")
+                                logs.append(f"{row.get('Planilha', '(sem nome)')}: Desconto Erro {e}")
+
+                    except Exception as e:
+                        logs.append(f"{row.get('Planilha', '(sem nome)')}: Erro {e}")
+
+                    prog.progress((i+1)/total)
+                    log_placeholder.text("\n".join(logs))
+
+                st.success("Concluído!")
 
 # -----------------------------
 # ABA: AUDITORIA (Lógica Intacta)

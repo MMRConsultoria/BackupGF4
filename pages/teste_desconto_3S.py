@@ -60,7 +60,7 @@ def _get_db_params():
         }
 
 # ----------------- Funções de negócio -----------------
-@st.cache_data(ttl=300)
+
 def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999"), estado_filtrar=5):
     params = _get_db_params()
     if not params["dbname"] or not params["user"] or not params["password"]:

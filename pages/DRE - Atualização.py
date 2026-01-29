@@ -293,20 +293,29 @@ def upload_df_to_gsheet_replace_months(df: pd.DataFrame,
         ws = sh.worksheet(worksheet_name)
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title=worksheet_name, rows="1000", cols="20")
+
     existing = ws.get_all_values()
     header = existing[0] if existing else df.columns.tolist()
     existing_rows = existing[1:] if len(existing) > 1 else []
+
     meses_importar = set(df["Business Month"].astype(str).unique())
+
     def keep_row(row):
         a = row[0].strip() if len(row) > 0 else ""
         b = row[1].strip() if len(row) > 1 else ""
         if a == "3S Checkout" and b in meses_importar:
             return False
         return True
+
     filtered_existing = [r for r in existing_rows if keep_row(r)]
+
+    # Prepara df convertendo NaN -> None para não virar "nan" e preservando tipos numéricos nativos
     df_clean = df.copy()
     df_clean = df_clean.where(pd.notnull(df_clean), None)
+
+    # Detecta colunas numéricas (pandas) para preservar como números
     numeric_cols = df_clean.select_dtypes(include=[np.number]).columns.tolist()
+
     df_rows = []
     for _, row in df_clean.iterrows():
         converted = []
@@ -315,18 +324,30 @@ def upload_df_to_gsheet_replace_months(df: pd.DataFrame,
             if val is None:
                 converted.append("")
             elif col in numeric_cols:
+                # garante tipos nativos do Python para o gspread entender como número
                 if isinstance(val, (np.integer,)):
                     converted.append(int(val))
                 elif isinstance(val, (np.floating,)):
                     converted.append(float(val))
-                else:
+                elif isinstance(val, (int, float)):
                     converted.append(val)
+                else:
+                    # fallback: tenta converter
+                    try:
+                        converted.append(float(val))
+                    except Exception:
+                        converted.append(str(val))
             else:
-                converted.append(str(val))
+                # Mantém strings (datas no formato "MM/YYYY" ou "dd/mm/yyyy" serão interpretadas pelo Sheets)
+                converted.append("" if val is None else str(val))
         df_rows.append(converted)
+
     final_values = [header] + filtered_existing + df_rows
+
     ws.clear()
-    ws.update("A1", final_values)
+    # IMPORTANTE: usar USER_ENTERED para que o Sheets interprete números/datas corretamente
+    ws.update("A1", final_values, value_input_option="USER_ENTERED")
+
     return {"kept_rows": len(filtered_existing), "inserted_rows": len(df_rows), "header": header}
 
 # ---- AUTENTICAÇÃO ----

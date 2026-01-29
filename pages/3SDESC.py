@@ -1,4 +1,4 @@
-# streamlit_relatorio_desconto_summary.py
+# streamlit_relatorio_desconto_import.py
 import os
 import re
 import json
@@ -20,10 +20,9 @@ def _parse_money_to_float(x):
     s = re.sub(r"[^\d,\-\.]", "", s)
     if s == "":
         return 0.0
-    # normaliza separadores
     if s.count(",") == 1 and s.count(".") >= 1:
         s = s.replace(".", "").replace(",", ".")
-    elif s.count(",", ) == 1 and s.count(".") == 0:
+    elif s.count(",") == 1 and s.count(".") == 0:
         s = s.replace(",", ".")
     try:
         return float(s)
@@ -73,7 +72,7 @@ def create_db_conn(params):
 def create_gspread_client():
     if "GOOGLE_SERVICE_ACCOUNT" not in st.secrets:
         raise RuntimeError(
-            "Google credentials not found in st.secrets['GOOGLE_SERVICE_ACCOUNT']."
+            "Credenciais do Google não encontradas em st.secrets['GOOGLE_SERVICE_ACCOUNT']."
         )
     creds_json = st.secrets["GOOGLE_SERVICE_ACCOUNT"]
     creds_dict = json.loads(creds_json) if isinstance(creds_json, str) else creds_json
@@ -85,19 +84,11 @@ def create_gspread_client():
 @st.cache_data(ttl=300)
 def fetch_tabela_empresa():
     gc = create_gspread_client()
-    try:
-        sh = gc.open("Vendas diarias")
-    except Exception as e:
-        raise RuntimeError(f"Erro ao abrir a planilha 'Vendas diarias': {e}")
-    try:
-        ws = sh.worksheet("Tabela Empresa")
-    except Exception as e:
-        raise RuntimeError(f"Erro ao abrir a aba 'Tabela Empresa': {e}")
-
+    sh = gc.open("Vendas diarias")
+    ws = sh.worksheet("Tabela Empresa")
     values = ws.get_all_values()
     if not values:
         return pd.DataFrame()
-
     max_cols = max(len(r) for r in values)
     rows = [r + [""] * (max_cols - len(r)) for r in values]
     cols = [chr(ord("A") + i) for i in range(max_cols)]
@@ -111,7 +102,6 @@ def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999
     params = _get_db_params()
     if not params["dbname"] or not params["user"] or not params["password"]:
         raise RuntimeError("Credenciais do banco nao encontradas. Configure st.secrets['db'] ou variaveis de ambiente PG*.")
-
     conn = create_db_conn(params)
     try:
         base_sql = """
@@ -127,7 +117,6 @@ def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999
             ("pod_type", "AND (pod_type IS NULL OR pod_type = '' OR LOWER(pod_type) NOT LIKE %s)")
         ]
         like_void = "%void%"
-
         last_exc = None
         for col_name, cond_sql in try_cols:
             sql = f"{base_sql} {cond_sql} ORDER BY business_dt, store_code"
@@ -141,8 +130,6 @@ def fetch_order_picture(data_de, data_ate, excluir_stores=("0000", "0001", "9999
                     continue
                 else:
                     raise
-
-        # fallback: search without void/pod filter
         sql = f"{base_sql} ORDER BY business_dt, store_code"
         df = pd.read_sql(sql, conn, params=(data_de, data_ate, tuple(excluir_stores), estado_filtrar))
         return df
@@ -222,12 +209,64 @@ def to_excel_bytes(df: pd.DataFrame, sheet_name="Desconto"):
     output.seek(0)
     return output
 
+# ----------------- Google Sheets import (remove existing months + append) -----------------
+def upload_df_to_gsheet_replace_months(df: pd.DataFrame,
+                                       spreadsheet_name="Vendas diarias",
+                                       worksheet_name="Desconto"):
+    """
+    Remove linhas existentes onde:
+      - coluna A == "3S Checkout" e
+      - coluna B está em qualquer Business Month presente em df
+    Depois cola (append) as linhas de df.
+    """
+    if df is None or df.empty:
+        raise ValueError("DataFrame vazio. Nada a importar.")
+
+    gc = create_gspread_client()
+    sh = gc.open(spreadsheet_name)
+    try:
+        ws = sh.worksheet(worksheet_name)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title=worksheet_name, rows="1000", cols="20")
+
+    # lê todos os valores existentes
+    existing = ws.get_all_values()
+    header = existing[0] if existing else df.columns.tolist()
+
+    existing_rows = existing[1:] if len(existing) > 1 else []
+
+    # meses que vamos substituir (strings)
+    meses_importar = set(df["Business Month"].astype(str).unique())
+
+    # filtra linhas: mantém as que NÃO correspondem ao padrão (3S Checkout, mês em meses_importar)
+    def keep_row(row):
+        # row pode ter comprimento menor; defensivamente checamos índice
+        a = row[0].strip() if len(row) > 0 else ""
+        b = row[1].strip() if len(row) > 1 else ""
+        if a == "3S Checkout" and b in meses_importar:
+            return False
+        return True
+
+    filtered_existing = [r for r in existing_rows if keep_row(r)]
+
+    # prepara novas linhas a partir do df (como strings)
+    # garante ordem das colunas igual à do DataFrame
+    df_rows = df.astype(str).values.tolist()
+
+    # constrói o conteúdo final: header + filtered_existing + df_rows
+    final_values = [header] + filtered_existing + df_rows
+
+    # atualiza a planilha: limpa e escreve o novo conteúdo
+    ws.clear()
+    # update em bloco a partir de A1
+    ws.update("A1", final_values)
+    return {"kept_rows": len(filtered_existing), "inserted_rows": len(df_rows), "header": header}
+
 # ----------------- Streamlit UI -----------------
 st.title("Relatório Desconto — Resumo por Business Month e Store Code")
 
 st.markdown(
-    "Gera um relatório Excel resumido (agregado) por Business Month e Store Code. "
-    "Agrupa somando os descontos e mantém nome da loja / grupo conforme Tabela Empresa."
+    "Gera um relatório Excel resumido e permite importar para Google Sheets substituindo os meses importados."
 )
 
 dias_default = st.number_input("Últimos quantos dias", min_value=1, max_value=365, value=30)
@@ -256,6 +295,26 @@ if st.button("🔁 Gerar relatório resumido"):
                 file_name=nome_arquivo,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
+            # guarda df_final em session_state para uso posterior no upload
+            st.session_state["last_df_final"] = df_final
     except Exception as e:
         st.error(f"Erro ao gerar relatório: {e}")
         st.exception(e)
+
+# Botão para enviar para Google Sheets (usa o último df gerado)
+if st.button("⬆️ Importar para Google Sheets (substituir meses importados)"):
+    df_to_upload = st.session_state.get("last_df_final")
+    if df_to_upload is None:
+        st.error("Não há relatório gerado. Gere o relatório resumido antes de importar.")
+    else:
+        try:
+            with st.spinner("Importando para Google Sheets..."):
+                result = upload_df_to_gsheet_replace_months(df_to_upload,
+                                                           spreadsheet_name="Vendas diarias",
+                                                           worksheet_name="Desconto")
+            st.success(f"Importação concluída. Linhas mantidas: {result['kept_rows']}; Linhas inseridas: {result['inserted_rows']}.")
+            st.write("Header usado:", result["header"])
+        except Exception as e:
+            st.error(f"Erro ao importar para Google Sheets: {e}")
+            st.exception(e)

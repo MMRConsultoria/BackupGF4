@@ -299,6 +299,153 @@ with tab_atual:
         else:
             df_list = pd.DataFrame(planilhas).sort_values("name").reset_index(drop=True)
             df_list = df_list.rename(columns={"name": "Planilha", "id": "ID_Planilha"})
+
+            # --- BOTÃO: Atualizar Desconto 3S (usa data_de / data_ate) ---
+            if st.button("🔄 Atualizar Desconto 3S", use_container_width=True, key="btn_desconto_3s"):
+                logs_btn = []
+                status = st.empty()
+                status.info("Iniciando atualização DESCONTO (3S)...")
+            
+                # Carregar origem Desconto (3S)
+                try:
+                    sh_orig_des = gc.open_by_key(ID_PLANILHA_ORIGEM_DESCONTO)
+                    ws_orig_des = sh_orig_des.worksheet(ABA_ORIGEM_DESCONTO)
+                    h_orig_des, df_orig_des = get_headers_and_df_raw(ws_orig_des)
+                except Exception as e:
+                    st.error(f"Erro ao carregar origem Desconto: {e}")
+                    status.empty()
+                    raise
+            
+                # Filtrar por data (forçando coluna B / índice 1 conforme sua regra)
+                try:
+                    if len(h_orig_des) > 1:
+                        c_dt_orig_des = h_orig_des[1]  # coluna B
+                        df_orig_des["_dt_orig"] = pd.to_datetime(df_orig_des[c_dt_orig_des], dayfirst=True, errors="coerce").dt.date
+                        df_orig_des_periodo = df_orig_des[(df_orig_des["_dt_orig"] >= data_de) & (df_orig_des["_dt_orig"] <= data_ate)].copy()
+                    else:
+                        df_orig_des_periodo = df_orig_des.copy()
+                except Exception as e:
+                    st.warning(f"Atenção: erro ao filtrar data na origem Desconto: {e}")
+                    df_orig_des_periodo = df_orig_des.copy()
+            
+                # colunas fixas que vamos pegar da origem: indices [1,3,4,5,6,7] (B,D,E,F,G,H)
+                desired_idx = [1, 3, 4, 5, 6, 7]
+                cols_to_take = [h_orig_des[i] for i in desired_idx if i < len(h_orig_des)]
+            
+                total_planilhas = len(planilhas)
+                prog = st.progress(0)
+                for i, p in enumerate(planilhas):
+                    try:
+                        pname = p.get("name", "Sem Nome")
+                        sid = p.get("id")
+                        if not sid:
+                            logs_btn.append(f"{pname}: ID ausente — pulando.")
+                            continue
+            
+                        # abre destino e lê códigos B2/B3/B4/B5
+                        try:
+                            sh_dest = gc.open_by_key(sid)
+                        except Exception as e:
+                            logs_btn.append(f"{pname}: falha ao abrir planilha destino ({e})")
+                            continue
+            
+                        b2, b3, b4, b5 = read_codes_from_config_sheet(sh_dest)
+                        if not b2:
+                            logs_btn.append(f"{pname}: sem B2 — pulando.")
+                            continue
+            
+                        lojas_filtro = []
+                        if b3: lojas_filtro.append(str(b3).strip())
+                        if b4: lojas_filtro.append(str(b4).strip())
+                        if b5: lojas_filtro.append(str(b5).strip())
+            
+                        # faz uma cópia do período filtrado e aplica filtros por B2 (coluna H) e loja (col G)
+                        df_ins_des = df_orig_des_periodo.copy()
+            
+                        c_b2_des = h_orig_des[7] if len(h_orig_des) > 7 else None  # H
+                        c_loja_des = h_orig_des[6] if len(h_orig_des) > 6 else None  # G
+            
+                        if c_b2_des and b2:
+                            df_ins_des = df_ins_des[df_ins_des[c_b2_des].astype(str).str.strip() == str(b2).strip()]
+            
+                        if lojas_filtro and not df_ins_des.empty and c_loja_des:
+                            lojas_norm = [normalize_code(x) for x in lojas_filtro]
+                            df_ins_des = df_ins_des[df_ins_des[c_loja_des].apply(lambda x: normalize_code(x) if pd.notna(x) else "").isin(lojas_norm)]
+            
+                        # seleciona apenas as colunas B/D/E/F/G/H (existentes)
+                        if not df_ins_des.empty and cols_to_take:
+                            existing_take = [c for c in cols_to_take if c in df_ins_des.columns]
+                            df_ins_des = df_ins_des[existing_take].copy()
+            
+                        if df_ins_des.empty:
+                            logs_btn.append(f"{pname}: Desconto — sem dados no período/filtros.")
+                            continue
+            
+                        # grava no destino (aba "Desconto")
+                        try:
+                            try:
+                                ws_dest_des = sh_dest.worksheet("Desconto")
+                            except Exception:
+                                ws_dest_des = sh_dest.add_worksheet("Desconto", 1000, max(30, len(cols_to_take)))
+            
+                            h_dest_des, df_dest_des = get_headers_and_df_raw(ws_dest_des)
+            
+                            # se destino vazio -> grava diretamente
+                            if df_dest_des.empty:
+                                df_f_des, h_f_des = df_ins_des, list(df_ins_des.columns)
+                            else:
+                                # evita duplicação - usa coluna de data do destino para remover período
+                                c_dt_d_des = detect_date_col(h_dest_des)
+                                if c_dt_d_des:
+                                    df_dest_des["_dt"] = pd.to_datetime(df_dest_des[c_dt_d_des], dayfirst=True, errors="coerce").dt.date
+                                    rem_des = (df_dest_des["_dt"] >= data_de) & (df_dest_des["_dt"] <= data_ate)
+                                else:
+                                    rem_des = pd.Series([False] * len(df_dest_des))
+            
+                                if c_b2_des and c_b2_des in df_dest_des.columns and b2:
+                                    rem_des &= (df_dest_des[c_b2_des].astype(str).str.strip() == str(b2).strip())
+            
+                                # alinhar colunas entre destino atual e o que vamos escrever
+                                df_dest_sub = df_dest_des.copy()
+                                for col in cols_to_take:
+                                    if col not in df_dest_sub.columns:
+                                        df_dest_sub[col] = ""
+                                df_dest_sub = df_dest_sub[[c for c in cols_to_take if c in df_dest_sub.columns]]
+            
+                                for col in cols_to_take:
+                                    if col not in df_ins_des.columns:
+                                        df_ins_des[col] = ""
+                                df_ins_des = df_ins_des[[c for c in cols_to_take if c in df_ins_des.columns]]
+            
+                                df_f_des = pd.concat([df_dest_sub.loc[~rem_des], df_ins_des], ignore_index=True)
+                                h_f_des = [c for c in cols_to_take if c in df_f_des.columns]
+            
+                            # limpar colunas temporárias
+                            if "_dt" in df_f_des.columns: df_f_des = df_f_des.drop(columns=["_dt"])
+                            if "_dt_orig" in df_f_des.columns: df_f_des = df_f_des.drop(columns=["_dt_orig"])
+            
+                            send_des = df_f_des[h_f_des].fillna("")
+                            ws_dest_des.clear()
+                            ws_dest_des.update("A1", [h_f_des] + send_des.values.tolist(), value_input_option="USER_ENTERED")
+                            logs_btn.append(f"{pname}: Desconto OK.")
+                        except Exception as e:
+                            logs_btn.append(f"{pname}: Desconto Erro ao gravar destino: {e}")
+            
+                    except Exception as e:
+                        logs_btn.append(f"{p.get('name','(sem nome)')}: Erro {e}")
+            
+                    # progresso
+                    if total_planilhas:
+                        prog.progress((i + 1) / total_planilhas)
+            
+                status.empty()
+                st.markdown("### Log Atualizar Desconto 3S")
+                st.text("\n".join(logs_btn))
+                st.success("Atualização DESCONTO (3S) concluída.")
+
+
+
+            
             c1, c2, c3, _ = st.columns([1.2, 1.2, 1.2, 5])
             with c1: s_desc = st.checkbox("Desconto", value=False, key="at_chk1")
             with c2: s_mp = st.checkbox("Meio Pagto", value=True, key="at_chk2")

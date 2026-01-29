@@ -466,49 +466,50 @@ with tab_atual:
                                 sh_orig_des = gc.open_by_key(ID_PLANILHA_ORIGEM_DESCONTO)
                                 ws_orig_des = sh_orig_des.worksheet(ABA_ORIGEM_DESCONTO)
                                 h_orig_des, df_orig_des = get_headers_and_df_raw(ws_orig_des)
-                                df_ins_des = df_orig_des.copy()
+                                
+                                # --- FILTRO DE DATA NA ORIGEM ---
+                                c_dt_orig_des = detect_date_col(h_orig_des)
+                                if c_dt_orig_des:
+                                    df_orig_des["_dt_orig"] = pd.to_datetime(df_orig_des[c_dt_orig_des], dayfirst=True, errors="coerce").dt.date
+                                    df_ins_des = df_orig_des[(df_orig_des["_dt_orig"] >= data_de) & (df_orig_des["_dt_orig"] <= data_ate)].copy()
+                                else:
+                                    df_ins_des = df_orig_des.copy()
 
                                 # nomes/índices fixos solicitados: B, D, E, F, G, H => índices 1,3,4,5,6,7
                                 desired_idx = [1, 3, 4, 5, 6, 7]
                                 cols_to_take = [h_orig_des[i] for i in desired_idx if i < len(h_orig_des)]
 
-                                # prepara nomes de colunas para filtros (se existirem)
-                                c_b2_des = h_orig_des[7] if len(h_orig_des) > 7 else None  # coluna H (filtro B2)
-                                c_loja_des = h_orig_des[6] if len(h_orig_des) > 6 else None  # coluna G (loja)
+                                # prepara nomes de colunas para filtros de B2 e Loja
+                                c_b2_des = h_orig_des[7] if len(h_orig_des) > 7 else None  # coluna H
+                                c_loja_des = h_orig_des[6] if len(h_orig_des) > 6 else None  # coluna G
 
                                 # Filtro pelo B2 (coluna H da origem)
                                 if c_b2_des and b2:
                                     df_ins_des = df_ins_des[df_ins_des[c_b2_des].astype(str).str.strip() == str(b2).strip()]
 
-                                # Filtro por lojas usando COL G (coluna de loja) na origem
+                                # Filtro por lojas usando COL G na origem
                                 if lojas_filtro and not df_ins_des.empty and c_loja_des:
                                     lojas_norm = [normalize_code(x) for x in lojas_filtro]
                                     df_ins_des = df_ins_des[df_ins_des[c_loja_des].apply(lambda x: normalize_code(x) if pd.notna(x) else "").isin(lojas_norm)]
 
-                                # Seleciona apenas as colunas solicitadas (se existirem)
-                                if cols_to_take:
-                                    # garante que exista ao menos uma coluna para escrever
-                                    # se alguma coluna não existir no df_ins_des, ela é ignorada
+                                # Seleciona apenas as colunas solicitadas
+                                if not df_ins_des.empty and cols_to_take:
                                     existing_take = [c for c in cols_to_take if c in df_ins_des.columns]
                                     df_ins_des = df_ins_des[existing_take].copy()
-                                else:
-                                    # sem colunas, marca sem dados e segue
-                                    logs.append(f"{row.get('Planilha', '(sem nome)')}: Desconto Sem colunas para trazer.")
-                                    continue
-
+                                
                                 if not df_ins_des.empty:
                                     try:
                                         try:
                                             ws_dest_des = sh_dest.worksheet("Desconto")
                                         except Exception:
                                             ws_dest_des = sh_dest.add_worksheet("Desconto", 1000, max(30, len(cols_to_take)))
+                                        
                                         h_dest_des, df_dest_des = get_headers_and_df_raw(ws_dest_des)
 
-                                        # Se destino vazio: usamos apenas as colunas desejadas
                                         if df_dest_des.empty:
                                             df_f_des, h_f_des = df_ins_des, list(df_ins_des.columns)
                                         else:
-                                            # tenta evitar duplicação por período (se houver coluna data no destino)
+                                            # Evitar duplicação no destino (remove o que já existe no período)
                                             c_dt_d_des = detect_date_col(h_dest_des)
                                             if c_dt_d_des:
                                                 df_dest_des["_dt"] = pd.to_datetime(df_dest_des[c_dt_d_des], dayfirst=True, errors="coerce").dt.date
@@ -516,33 +517,29 @@ with tab_atual:
                                             else:
                                                 rem_des = pd.Series([False] * len(df_dest_des))
 
-                                            # preserva filtro B2 ao remover duplicados se coluna existir no destino
+                                            # Filtro B2 para remoção
                                             if c_b2_des and c_b2_des in df_dest_des.columns and b2:
                                                 rem_des &= (df_dest_des[c_b2_des].astype(str).str.strip() == str(b2).strip())
 
-                                            # preparar uma versão do destino apenas com as colunas que vamos escrever
+                                            # Alinha colunas do destino com as colunas que queremos trazer
                                             df_dest_sub = df_dest_des.copy()
                                             for col in cols_to_take:
-                                                if col not in df_dest_sub.columns:
-                                                    df_dest_sub[col] = ""
-
-                                            # agora reduzimos às colunas desejadas (na ordem cols_to_take)
+                                                if col not in df_dest_sub.columns: df_dest_sub[col] = ""
+                                            
                                             df_dest_sub = df_dest_sub[[c for c in cols_to_take if c in df_dest_sub.columns]]
-
-                                            # se df_ins_des tem colunas faltantes em cols_to_take, completamos com ""
+                                            
+                                            # Alinha colunas da inserção
                                             for col in cols_to_take:
-                                                if col not in df_ins_des.columns:
-                                                    df_ins_des[col] = ""
-
-                                            # garantimos a ordem final
+                                                if col not in df_ins_des.columns: df_ins_des[col] = ""
+                                            
                                             df_ins_des = df_ins_des[[c for c in cols_to_take if c in df_ins_des.columns]]
 
-                                            df_f_des = pd.concat([df_dest_sub.loc[~rem_des].reset_index(drop=True), df_ins_des.reset_index(drop=True)], ignore_index=True)
+                                            df_f_des = pd.concat([df_dest_sub.loc[~rem_des], df_ins_des], ignore_index=True)
                                             h_f_des = [c for c in cols_to_take if c in df_f_des.columns]
 
-                                        # remove coluna temporária _dt se existir e grava
-                                        if "_dt" in df_f_des.columns:
-                                            df_f_des = df_f_des.drop(columns=["_dt"])
+                                        if "_dt" in df_f_des.columns: df_f_des = df_f_des.drop(columns=["_dt"])
+                                        if "_dt_orig" in df_f_des.columns: df_f_des = df_f_des.drop(columns=["_dt_orig"])
+                                        
                                         send_des = df_f_des[h_f_des].fillna("")
                                         ws_dest_des.clear()
                                         ws_dest_des.update("A1", [h_f_des] + send_des.values.tolist(), value_input_option="USER_ENTERED")
@@ -550,7 +547,7 @@ with tab_atual:
                                     except Exception as e:
                                         logs.append(f"{row.get('Planilha', '(sem nome)')}: Desconto Erro ao gravar destino: {e}")
                                 else:
-                                    logs.append(f"{row.get('Planilha', '(sem nome)')}: Desconto Sem dados.")
+                                    logs.append(f"{row.get('Planilha', '(sem nome)')}: Desconto Sem dados no período/filtros.")
                             except Exception as e:
                                 logs.append(f"{row.get('Planilha', '(sem nome)')}: Desconto Erro {e}")
 

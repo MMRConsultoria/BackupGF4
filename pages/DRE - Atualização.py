@@ -467,12 +467,15 @@ with tab_atual:
                                 ws_orig_des = sh_orig_des.worksheet(ABA_ORIGEM_DESCONTO)
                                 h_orig_des, df_orig_des = get_headers_and_df_raw(ws_orig_des)
                                 
-                                # --- FILTRO DE DATA NA ORIGEM ---
+                                # --- FILTRO DE DATA NA ORIGEM (Tratando Data e Hora) ---
                                 c_dt_orig_des = detect_date_col(h_orig_des)
                                 if c_dt_orig_des:
+                                    # Converte para datetime e extrai apenas a DATA (.dt.date) para comparar com data_de/data_ate
                                     df_orig_des["_dt_orig"] = pd.to_datetime(df_orig_des[c_dt_orig_des], dayfirst=True, errors="coerce").dt.date
                                     df_ins_des = df_orig_des[(df_orig_des["_dt_orig"] >= data_de) & (df_orig_des["_dt_orig"] <= data_ate)].copy()
                                 else:
+                                    # Se não detectar a data, o filtro não funciona. Vamos avisar no log.
+                                    logs.append(f"{row.get('Planilha')}: Desconto - Coluna de data não detectada na origem.")
                                     df_ins_des = df_orig_des.copy()
 
                                 # nomes/índices fixos solicitados: B, D, E, F, G, H => índices 1,3,4,5,6,7
@@ -509,7 +512,7 @@ with tab_atual:
                                         if df_dest_des.empty:
                                             df_f_des, h_f_des = df_ins_des, list(df_ins_des.columns)
                                         else:
-                                            # Evitar duplicação no destino (remove o que já existe no período)
+                                            # Evitar duplicação no destino
                                             c_dt_d_des = detect_date_col(h_dest_des)
                                             if c_dt_d_des:
                                                 df_dest_des["_dt"] = pd.to_datetime(df_dest_des[c_dt_d_des], dayfirst=True, errors="coerce").dt.date
@@ -517,21 +520,17 @@ with tab_atual:
                                             else:
                                                 rem_des = pd.Series([False] * len(df_dest_des))
 
-                                            # Filtro B2 para remoção
                                             if c_b2_des and c_b2_des in df_dest_des.columns and b2:
                                                 rem_des &= (df_dest_des[c_b2_des].astype(str).str.strip() == str(b2).strip())
 
-                                            # Alinha colunas do destino com as colunas que queremos trazer
+                                            # Alinha colunas
                                             df_dest_sub = df_dest_des.copy()
                                             for col in cols_to_take:
                                                 if col not in df_dest_sub.columns: df_dest_sub[col] = ""
-                                            
                                             df_dest_sub = df_dest_sub[[c for c in cols_to_take if c in df_dest_sub.columns]]
                                             
-                                            # Alinha colunas da inserção
                                             for col in cols_to_take:
                                                 if col not in df_ins_des.columns: df_ins_des[col] = ""
-                                            
                                             df_ins_des = df_ins_des[[c for c in cols_to_take if c in df_ins_des.columns]]
 
                                             df_f_des = pd.concat([df_dest_sub.loc[~rem_des], df_ins_des], ignore_index=True)
@@ -543,13 +542,13 @@ with tab_atual:
                                         send_des = df_f_des[h_f_des].fillna("")
                                         ws_dest_des.clear()
                                         ws_dest_des.update("A1", [h_f_des] + send_des.values.tolist(), value_input_option="USER_ENTERED")
-                                        logs.append(f"{row.get('Planilha', '(sem nome)')}: Desconto OK.")
+                                        logs.append(f"{row.get('Planilha')}: Desconto OK.")
                                     except Exception as e:
-                                        logs.append(f"{row.get('Planilha', '(sem nome)')}: Desconto Erro ao gravar destino: {e}")
+                                        logs.append(f"{row.get('Planilha')}: Desconto Erro ao gravar destino: {e}")
                                 else:
-                                    logs.append(f"{row.get('Planilha', '(sem nome)')}: Desconto Sem dados no período/filtros.")
+                                    logs.append(f"{row.get('Planilha')}: Desconto Sem dados no período/filtros.")
                             except Exception as e:
-                                logs.append(f"{row.get('Planilha', '(sem nome)')}: Desconto Erro {e}")
+                                logs.append(f"{row.get('Planilha')}: Desconto Erro {e}")
 
                     except Exception as e:
                         logs.append(f"{row.get('Planilha', '(sem nome)')}: Erro {e}")

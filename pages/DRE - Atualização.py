@@ -467,15 +467,14 @@ with tab_atual:
                                 ws_orig_des = sh_orig_des.worksheet(ABA_ORIGEM_DESCONTO)
                                 h_orig_des, df_orig_des = get_headers_and_df_raw(ws_orig_des)
                                 
-                                # --- FILTRO DE DATA NA ORIGEM (Tratando Data e Hora) ---
-                                c_dt_orig_des = detect_date_col(h_orig_des)
-                                if c_dt_orig_des:
-                                    # Converte para datetime e extrai apenas a DATA (.dt.date) para comparar com data_de/data_ate
+                                # --- FILTRO DE DATA NA ORIGEM (Forçando Coluna B / Índice 1) ---
+                                if len(h_orig_des) > 1:
+                                    c_dt_orig_des = h_orig_des[1] # Coluna B
+                                    # Converte para datetime e extrai apenas a DATA para comparar
                                     df_orig_des["_dt_orig"] = pd.to_datetime(df_orig_des[c_dt_orig_des], dayfirst=True, errors="coerce").dt.date
                                     df_ins_des = df_orig_des[(df_orig_des["_dt_orig"] >= data_de) & (df_orig_des["_dt_orig"] <= data_ate)].copy()
                                 else:
-                                    # Se não detectar a data, o filtro não funciona. Vamos avisar no log.
-                                    logs.append(f"{row.get('Planilha')}: Desconto - Coluna de data não detectada na origem.")
+                                    logs.append(f"{row.get('Planilha')}: Desconto - Coluna B não encontrada.")
                                     df_ins_des = df_orig_des.copy()
 
                                 # nomes/índices fixos solicitados: B, D, E, F, G, H => índices 1,3,4,5,6,7
@@ -512,7 +511,7 @@ with tab_atual:
                                         if df_dest_des.empty:
                                             df_f_des, h_f_des = df_ins_des, list(df_ins_des.columns)
                                         else:
-                                            # Evitar duplicação no destino
+                                            # Evitar duplicação no destino (Usa a coluna de data do destino)
                                             c_dt_d_des = detect_date_col(h_dest_des)
                                             if c_dt_d_des:
                                                 df_dest_des["_dt"] = pd.to_datetime(df_dest_des[c_dt_d_des], dayfirst=True, errors="coerce").dt.date

@@ -1145,8 +1145,8 @@ with st.spinner("⏳ Processando..."):
                 dados_n_existentes = conjunto (
                     valores_existentes_df.apply(
                         lambda row: str (row[ "N" ]).replace( str (row[ "Sistema" ]).strip(), "" ).strip()
-                         if  "N"  in colunas_df_existente and  "Sistema"  in colunas_df_existente
-                         else  str (row.get( "N" , "" )).strip(),
+                        if  "N"  in colunas_df_existente and  "Sistema"  in colunas_df_existente
+                        else  str (row.get( "N" , "" )).strip(),
                         eixo= 1
                     )
                 ) se  "N"  em colunas_df_existente senão  definir ()

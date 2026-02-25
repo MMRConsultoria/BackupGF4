@@ -1142,14 +1142,14 @@ with st.spinner("⏳ Processando..."):
                 valores_existentes_df = get_as_dataframe(aba_destino, evaluate_formulas=True, dtype=str).fillna("")
                 colunas_df_existente = valores_existentes_df.columns.str.strip().tolist()
                 dados_existentes   = set(valores_existentes_df["M"].astype(str).str.strip()) if "M" in colunas_df_existente else set()
-                dados_n_existentes = conjunto (
+                dados_n_existentes = set(
                     valores_existentes_df.apply(
-                        lambda row: str (row[ "N" ]).replace( str (row[ "Sistema" ]).strip(), "" ).strip()
-                        if  "N"  in colunas_df_existente and  "Sistema"  in colunas_df_existente
-                        else  str (row.get( "N" , "" )).strip(),
-                        eixo= 1
+                        lambda row: str(row["N"]).replace(str(row["Sistema"]).strip(), "").strip()
+                        if "N" in colunas_df_existente and "Sistema" in colunas_df_existente
+                        else str(row.get("N","")).strip(),
+                        axis=1
                     )
-                ) se  "N"  em colunas_df_existente senão  definir ()
+                ) if "N" in colunas_df_existente else set()
                         
                 # ===== 3) Garantir N (yyyy-mm-dd + Código) =====
                 df_final['Data_Formatada'] = pd.to_datetime(

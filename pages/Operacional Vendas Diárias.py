@@ -1228,19 +1228,19 @@ with st.spinner("⏳ Processando..."):
                 extras = [c for c in df_final.columns if c not in headers]
                 df_final = df_final.reindex(columns=headers + extras, fill_value="")
         
-                # ===== 5) Classificar: NOVOS / DUP(M) / SUS(N) ===== 
-                M_in = df_final[ "M" ].astype( str ). str .strip()
+                # ===== 5) Classificar: NOVOS / DUP(M) / SUS(N) =====
+                M_in = df_final["M"].astype(str).str.strip()
 
                 # N sem Sistema para comparação (Sistema gravado na coluna O é removido via replace)
                 N_sem_sistema = df_final.apply(
-                    lambda linha: str (linha[ "N" ]).replace( str (linha[ "Sistema" ]).strip(), "" ).strip(),
-                    eixo= 1
+                    lambda row: str(row["N"]).replace(str(row["Sistema"]).strip(), "").strip(),
+                    axis=1
                 )
 
                 is_dup_M = M_in.isin(dados_existentes)
                 is_dup_N = N_sem_sistema.isin(dados_n_existentes)
-                máscara_suspeitos = (~is_dup_M) & is_dup_N
-                mask_novos = (~is_dup_M) & (~is_dup_N)
+                mask_suspeitos = (~is_dup_M) & is_dup_N
+                mask_novos     = (~is_dup_M) & (~is_dup_N)
                 
                 df_suspeitos = df_final.loc[mask_suspeitos].copy()
                 df_novos     = df_final.loc[mask_novos].copy()

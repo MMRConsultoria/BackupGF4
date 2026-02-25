@@ -1142,8 +1142,15 @@ with st.spinner("⏳ Processando..."):
                 valores_existentes_df = get_as_dataframe(aba_destino, evaluate_formulas=True, dtype=str).fillna("")
                 colunas_df_existente = valores_existentes_df.columns.str.strip().tolist()
                 dados_existentes   = set(valores_existentes_df["M"].astype(str).str.strip()) if "M" in colunas_df_existente else set()
-                dados_n_existentes = set(valores_existentes_df["N"].astype(str).str.strip()) if "N" in colunas_df_existente else set()
-        
+                dados_n_existentes = conjunto (
+                    valores_existentes_df.apply(
+                        lambda row: str (row[ "N" ]).replace( str (row[ "Sistema" ]).strip(), "" ).strip()
+                         if  "N"  in colunas_df_existente and  "Sistema"  in colunas_df_existente
+                         else  str (row.get( "N" , "" )).strip(),
+                        eixo= 1
+                    )
+                ) se  "N"  em colunas_df_existente senão  definir ()
+                        
                 # ===== 3) Garantir N (yyyy-mm-dd + Código) =====
                 df_final['Data_Formatada'] = pd.to_datetime(
                     df_final['Data'], origin="1899-12-30", unit='D', errors="coerce"
@@ -1221,20 +1228,19 @@ with st.spinner("⏳ Processando..."):
                 extras = [c for c in df_final.columns if c not in headers]
                 df_final = df_final.reindex(columns=headers + extras, fill_value="")
         
-                # ===== 5) Classificar: NOVOS / DUP(M) / SUS(N) =====
-                M_in = df_final["M"].astype(str).str.strip()
-                N_in = df_final["N"].astype(str).str.strip()
-                is_dup_M = M_in.isin(dados_existentes)
-                is_dup_N = N_in.isin(dados_n_existentes)
-        
+                # ===== 5) Classificar: NOVOS / DUP(M) / SUS(N) ===== 
+                M_in = df_final[ "M" ].astype( str ). str .strip()
 
-                # classificar
-                M_in = df_final["M"].astype(str).str.strip()
-                N_in = df_final["N"].astype(str).str.strip()
+                # N sem Sistema para comparação (Sistema gravado na coluna O é removido via replace)
+                N_sem_sistema = df_final.apply(
+                    lambda linha: str (linha[ "N" ]).replace( str (linha[ "Sistema" ]).strip(), "" ).strip(),
+                    eixo= 1
+                )
+
                 is_dup_M = M_in.isin(dados_existentes)
-                is_dup_N = N_in.isin(dados_n_existentes)
-                mask_suspeitos = (~is_dup_M) & is_dup_N
-                mask_novos     = (~is_dup_M) & (~is_dup_N)
+                is_dup_N = N_sem_sistema.isin(dados_n_existentes)
+                máscara_suspeitos = (~is_dup_M) & is_dup_N
+                mask_novos = (~is_dup_M) & (~is_dup_N)
                 
                 df_suspeitos = df_final.loc[mask_suspeitos].copy()
                 df_novos     = df_final.loc[mask_novos].copy()
@@ -1286,14 +1292,21 @@ with st.spinner("⏳ Processando..."):
                     #st.warning("🔎 Existem possíveis duplicados por N. Revise-os na seção de conflitos.")
                 
                     # normaliza N do sheet para casar
-                    def _normN(x): return str(x).strip().replace(".0", "")
+                    # _normN agora remove o Sistema da string N via replace (split por valor da col O)
+                    def _normN(x, sistema=""):
+                        return str(x).strip().replace(".0", "").replace(str(sistema).strip(), "").strip()
+
                     valores_existentes_df2 = valores_existentes_df.copy()
-                    if "N" in valores_existentes_df2.columns:
-                        valores_existentes_df2["N"] = valores_existentes_df2["N"].map(_normN)
-                
+                    if "N" in valores_existentes_df2.columns and "Sistema" in valores_existentes_df2.columns:
+                        valores_existentes_df2["N"] = valores_existentes_df2.apply(
+                            lambda row: _normN(row["N"], row["Sistema"]), axis=1
+                        )
+                    elif "N" in valores_existentes_df2.columns:
+                        valores_existentes_df2["N"] = valores_existentes_df2["N"].map(lambda x: _normN(x))
+
                     entrada_por_n = {}
                     for _, r in df_suspeitos.iterrows():
-                        nkey = _normN(r.get("N",""))
+                        nkey = _normN(r.get("N",""), r.get("Sistema",""))
                         entrada_por_n[nkey] = r.to_dict()
                 
                     sheet_por_n = {nkey: valores_existentes_df2[valores_existentes_df2["N"] == nkey].copy()
@@ -1358,7 +1371,7 @@ with st.spinner("⏳ Processando..."):
                         # entrada
                         d_in = canonize_dict(entrada_por_n[nkey].copy())
                         d_in["_origem_"] = "Nova Arquivo"
-                        d_in["N"] = _normN(d_in.get("N",""))
+                        d_in["N"] = _normN(d_in.get("N",""), d_in.get("Sistema",""))
                         if "Data" in d_in: d_in["Data"] = _fmt_serial_to_br(d_in["Data"])
                         conflitos_linhas.append(d_in)
                 

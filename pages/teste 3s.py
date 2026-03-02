@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import psycopg2
+import uuid
 from datetime import datetime
 from io import BytesIO
 
@@ -47,17 +48,41 @@ def list_columns(conn, table_name, schema="public"):
     return pd.read_sql(q, conn, params=(schema, table_name))
 
 def fetch_table_limit(conn, table_name, limit=1000, schema="public"):
-    # Sem alteração: SELECT direto
     q = f'SELECT * FROM "{schema}"."{table_name}" LIMIT {int(limit)}'
     return pd.read_sql(q, conn)
 
 def df_to_excel_bytes(df: pd.DataFrame, sheet_name="data"):
+    df_safe = df.copy()
+    for col in df_safe.columns:
+        # timedelta
+        if pd.api.types.is_timedelta64_dtype(df_safe[col]):
+            df_safe[col] = df_safe[col].astype(str)
+            continue
+        # object: dict, list, bytes, uuid
+        if df_safe[col].dtype == object:
+            def _safe(x):
+                if x is None:
+                    return ""
+                if isinstance(x, (dict, list, bytes)):
+                    return str(x)
+                if isinstance(x, uuid.UUID):
+                    return str(x)
+                return x
+            df_safe[col] = df_safe[col].apply(_safe)
+        # UUID direto (tipo psycopg2)
+        try:
+            if df_safe[col].apply(lambda x: isinstance(x, uuid.UUID)).any():
+                df_safe[col] = df_safe[col].astype(str)
+        except Exception:
+            pass
+
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+        df_safe.to_excel(writer, index=False, sheet_name=sheet_name[:31])
     output.seek(0)
     return output.getvalue()
 
+# ========================
 ensure_cert_written()
 
 st.title("3S (Postgres) — Exportador RAW de Tabelas")
@@ -68,8 +93,7 @@ with st.sidebar:
     limit = st.number_input("LIMIT por tabela", min_value=1, max_value=500000, value=1000, step=1000)
     show_columns = st.checkbox("Mostrar colunas e tipos", value=True)
     show_preview = st.checkbox("Mostrar preview (dataframe)", value=True)
-
-    st.caption("Nada aqui normaliza/limpa dados. É dump bruto com LIMIT.")
+    st.caption("Nenhum dado é normalizado ou alterado. Dump bruto com LIMIT.")
 
 # Conecta
 try:
@@ -78,96 +102,118 @@ except Exception as e:
     st.error(f"Falha ao conectar no banco: {e}")
     st.stop()
 
-with conn:
-    try:
-        tables = list_tables(conn, schema=schema)
-    except Exception as e:
-        st.error(f"Falha listando tabelas: {e}")
-        st.stop()
+try:
+    tables = list_tables(conn, schema=schema)
+except Exception as e:
+    st.error(f"Falha listando tabelas: {e}")
+    conn.close()
+    st.stop()
 
 st.success(f"Conectado. {len(tables)} tabelas encontradas em `{schema}`.")
 
-# Seleção
-tab_mode = st.radio("Modo", ["Selecionar tabela", "Dump em lote (uma por vez)"], horizontal=True)
+tab_mode = st.radio("Modo", ["Selecionar tabela", "Dump em lote"], horizontal=True)
 
 if tab_mode == "Selecionar tabela":
     tbl = st.selectbox("Tabela", tables)
-    col1, col2 = st.columns([1, 1])
 
-    with col1:
-        if show_columns:
-            st.subheader("Colunas")
-            with conn:
-                df_cols = list_columns(conn, tbl, schema=schema)
+    if show_columns:
+        st.subheader("Colunas")
+        try:
+            df_cols = list_columns(conn, tbl, schema=schema)
             st.dataframe(df_cols, use_container_width=True)
+        except Exception as e:
+            st.warning(f"Erro ao listar colunas: {e}")
 
-    with col2:
-        st.subheader("Carregar dados RAW")
-        if st.button("Carregar", type="primary"):
-            with st.spinner(f"Carregando `{tbl}`..."):
-                with conn:
-                    df = fetch_table_limit(conn, tbl, limit=limit, schema=schema)
-
-            st.write(f"Linhas: {len(df)} | Colunas: {df.shape[1]}")
-            if show_preview:
-                st.dataframe(df, use_container_width=True, height=520)
-
-            # Downloads
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            csv_bytes = df.to_csv(index=False).encode("utf-8")
-            xlsx_bytes = df_to_excel_bytes(df, sheet_name=tbl)
-
-            st.download_button(
-                "Baixar CSV",
-                data=csv_bytes,
-                file_name=f"{tbl}_{ts}.csv",
-                mime="text/csv",
-            )
-            st.download_button(
-                "Baixar Excel",
-                data=xlsx_bytes,
-                file_name=f"{tbl}_{ts}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-
-else:
-    st.subheader("Dump em lote (interativo)")
-    st.write("Vai tabela por tabela, pra não estourar memória. Você escolhe e baixa.")
-
-    selected = st.multiselect("Selecione tabelas", tables, default=tables[:5])
-    if st.button("Carregar selecionadas (uma por vez)", type="primary"):
-        for tbl in selected:
-            st.markdown(f"### {tbl}")
-            with conn:
+    if st.button("Carregar dados", type="primary"):
+        with st.spinner(f"Carregando `{tbl}`..."):
+            try:
                 df = fetch_table_limit(conn, tbl, limit=limit, schema=schema)
+            except Exception as e:
+                st.error(f"Erro ao carregar tabela: {e}")
+                st.stop()
 
-            st.write(f"Linhas: {len(df)} | Colunas: {df.shape[1]}")
-            if show_columns:
-                with conn:
-                    df_cols = list_columns(conn, tbl, schema=schema)
-                st.dataframe(df_cols, use_container_width=True)
+        st.write(f"**Linhas:** {len(df)} | **Colunas:** {df.shape[1]}")
 
-            if show_preview:
-                st.dataframe(df, use_container_width=True, height=360)
+        if show_preview:
+            st.dataframe(df, use_container_width=True, height=520)
 
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        try:
             csv_bytes = df.to_csv(index=False).encode("utf-8")
-            xlsx_bytes = df_to_excel_bytes(df, sheet_name=tbl)
-
-            c1, c2 = st.columns(2)
-            c1.download_button(
-                "Baixar CSV",
+            st.download_button(
+                "📥 Baixar CSV",
                 data=csv_bytes,
                 file_name=f"{tbl}_{ts}.csv",
                 mime="text/csv",
                 key=f"csv_{tbl}_{ts}",
             )
-            c2.download_button(
-                "Baixar Excel",
+        except Exception as e:
+            st.warning(f"Erro ao gerar CSV: {e}")
+
+        try:
+            xlsx_bytes = df_to_excel_bytes(df, sheet_name=tbl)
+            st.download_button(
+                "📥 Baixar Excel",
                 data=xlsx_bytes,
                 file_name=f"{tbl}_{ts}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key=f"xlsx_{tbl}_{ts}",
             )
+        except Exception as e:
+            st.warning(f"Erro ao gerar Excel: {e}")
+
+else:
+    st.subheader("Dump em lote")
+    selected = st.multiselect("Selecione as tabelas", tables, default=tables[:3])
+
+    if st.button("Carregar selecionadas", type="primary"):
+        for tbl in selected:
+            st.markdown(f"---\n### {tbl}")
+            with st.spinner(f"Carregando `{tbl}`..."):
+                try:
+                    df = fetch_table_limit(conn, tbl, limit=limit, schema=schema)
+                except Exception as e:
+                    st.error(f"Erro em `{tbl}`: {e}")
+                    continue
+
+            st.write(f"**Linhas:** {len(df)} | **Colunas:** {df.shape[1]}")
+
+            if show_columns:
+                try:
+                    df_cols = list_columns(conn, tbl, schema=schema)
+                    st.dataframe(df_cols, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Erro ao listar colunas de `{tbl}`: {e}")
+
+            if show_preview:
+                st.dataframe(df, use_container_width=True, height=360)
+
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            c1, c2 = st.columns(2)
+
+            try:
+                csv_bytes = df.to_csv(index=False).encode("utf-8")
+                c1.download_button(
+                    "📥 CSV",
+                    data=csv_bytes,
+                    file_name=f"{tbl}_{ts}.csv",
+                    mime="text/csv",
+                    key=f"csv_{tbl}_{ts}",
+                )
+            except Exception as e:
+                c1.warning(f"Erro CSV: {e}")
+
+            try:
+                xlsx_bytes = df_to_excel_bytes(df, sheet_name=tbl)
+                c2.download_button(
+                    "📥 Excel",
+                    data=xlsx_bytes,
+                    file_name=f"{tbl}_{ts}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"xlsx_{tbl}_{ts}",
+                )
+            except Exception as e:
+                c2.warning(f"Erro Excel: {e}")
 
 conn.close()

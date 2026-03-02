@@ -668,7 +668,10 @@ with st.spinner("⏳ Processando..."):
             # Verificar meios não localizados
             meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
             st.write("**Meios na tabela Google (normalizados):**", sorted(list(meios_norm_tabela)))
-            st.write("**Meios vindos do banco 3S:**", sorted(resumo_3s["Meio de Pagamento"].unique().tolist()))
+
+            # Tratando None para evitar o erro de ordenação
+            meios_banco = [str(m) if m is not None else "VALOR_NULO" for m in resumo_3s["Meio de Pagamento"].unique()]
+            st.write("**Meios vindos do banco 3S:**", sorted(meios_banco))
             meios_nao_localizados = resumo_3s[
                 ~resumo_3s["Meio de Pagamento"].astype(str).str.strip().map(_norm).isin(meios_norm_tabela)
             ]["Meio de Pagamento"].astype(str).unique()

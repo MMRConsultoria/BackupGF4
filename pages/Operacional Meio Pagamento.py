@@ -469,11 +469,13 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
         tender_props = df_tender["details"].apply(parse_props)
         df_tender["Meio de Pagamento"] = tender_props.apply(
             lambda x: x.get("tenderDescr") if isinstance(x, dict) else None
-        )
-        # DEBUG REAL DO BANCO
-        if True:
-            meios_unicos_banco = df_tender["Meio de Pagamento"].unique()
-            print("MEIOS VINDO DO BANCO:")
+    )
+    # DEBUG REAL DO BANCO
+    if True:
+        meios_unicos_banco = df_tender["Meio de Pagamento"].unique()
+        print("MEIOS VINDO DO BANCO:")
+        for m in meios_unicos_banco:
+            print(repr(m))
             
     for m in meios_unicos_banco:
         print(repr(m))

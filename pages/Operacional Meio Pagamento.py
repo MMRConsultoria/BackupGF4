@@ -521,9 +521,16 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
         if "__meio_norm__" not in df_meio_pgto_google.columns:
             df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].map(_norm)
 
-        pgto_map = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"].astype(str)))
-        dre_map  = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"].astype(str)))
-
+        # CÓDIGO CORRIGIDO
+        df_validos = df_meio_pgto_google[
+            (df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip() != "") &
+            (df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip() != "nan") &
+            (df_meio_pgto_google["Tipo de Pagamento"].notna())
+        ].copy()
+        
+        pgto_map = dict(zip(df_validos["__meio_norm__"], df_validos["Tipo de Pagamento"].astype(str)))
+        dre_map  = dict(zip(df_validos["__meio_norm__"], df_validos["Tipo DRE"].astype(str)))
+        
         df_tender["__meio_norm__"] = df_tender["Meio de Pagamento"].astype(str).str.strip().map(_norm)
         df_tender["Tipo de Pagamento"] = df_tender["__meio_norm__"].map(pgto_map).fillna("")
         df_tender["Tipo DRE"] = df_tender["__meio_norm__"].map(dre_map).fillna("")

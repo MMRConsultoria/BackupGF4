@@ -216,37 +216,40 @@ with st.spinner("⏳ Processando..."):
             # 5. Criar coluna de data sem hora para agrupamento
             df['data'] = df['business_dt'].dt.date
             
-            # 6. Agrupar totais por store_code e data (Contando order_code para o Ticket)
+            # 6. Agrupar totais por store_code e data
             resumo = df.groupby(['store_code', 'data']).agg(
                 Fat_Real=('total_gross', 'sum'),
                 Serv_Tx=('TIP_AMOUNT', 'sum'),
-                Qtd_Pedidos=('order_code', 'count')  # <-- Conta quantos pedidos cada loja fez no dia
+                Qtd_Pedidos=('order_code', 'count')
             ).reset_index()
             
             # 7. Calcular Fat.Total
             resumo['Fat_Total'] = resumo['Fat_Real'] + resumo['Serv_Tx']
+
+            # 8. CALCULAR TICKET MÉDIO ANTES DO MERGE (enquanto Qtd_Pedidos ainda existe)
+            resumo['Ticket'] = (resumo['Fat_Real'] / resumo['Qtd_Pedidos']).replace([np.inf, -np.inf], 0).fillna(0).round(2)
+            resumo.drop(columns=['Qtd_Pedidos'], inplace=True)
             
-            # 8. Renomear colunas para o formato correto (mantendo Qtd_Pedidos com nome correto)
+            # 9. Renomear colunas
             resumo = resumo.rename(columns={
                 'store_code': 'Código Everest',
                 'data': 'Data',
                 'Fat_Real': 'Fat.Real',
                 'Serv_Tx': 'Serv/Tx',
-                'Qtd_Pedidos': 'Qtd_Pedidos',  # mantém o nome para usar no cálculo do Ticket
                 'Fat_Total': 'Fat.Total'
             })
             
-            # 9. Formatar Data
+            # 10. Formatar Data
             resumo['Data'] = pd.to_datetime(resumo['Data']).dt.strftime('%d/%m/%Y')
             
-            # 10. Adicionar Dia da Semana
+            # 11. Adicionar Dia da Semana
             dias_traducao = {
                 "Monday": "segunda-feira", "Tuesday": "terça-feira", "Wednesday": "quarta-feira",
                 "Thursday": "quinta-feira", "Friday": "sexta-feira", "Saturday": "sábado", "Sunday": "domingo"
             }
             resumo.insert(1, 'Dia da Semana', pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.day_name().map(dias_traducao))
             
-            # 11. Buscar informações da Tabela Empresa
+            # 12. Buscar informações da Tabela Empresa
             df_empresa["Código Everest"] = (
                 df_empresa["Código Everest"]
                 .astype(str)
@@ -259,13 +262,6 @@ with st.spinner("⏳ Processando..."):
                              on="Código Everest", how="left")
             
             resumo["Loja"] = resumo["Loja"].astype(str).str.strip().str.lower()
-
-            # 12. CALCULAR TICKET MÉDIO (Fat.Real / Qtd_Pedidos)
-            # Substitui o antigo resumo['Ticket'] = 0 por este cálculo:
-            resumo['Ticket'] = (resumo['Fat.Real'] / resumo['Qtd_Pedidos']).replace([np.inf, -np.inf], 0).fillna(0).round(2)
-            
-            # Remove a coluna auxiliar para não aparecer no Excel
-            resumo.drop(columns=['Qtd_Pedidos'], inplace=True)
 
             # Continua com o Mês, Ano e Sistema...
             resumo['Mês'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.strftime('%b').str.lower()

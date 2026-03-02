@@ -193,29 +193,30 @@ with st.spinner("⏳ Processando..."):
             props = df['custom_properties'].apply(parse_props)
             df['TIP_AMOUNT'] = pd.to_numeric(props.apply(lambda x: x.get('TIP_AMOUNT')), errors='coerce').fillna(0)
             df['VOID_TYPE'] = props.apply(lambda x: x.get('VOID_TYPE'))
-            
-            # 4. FILTRAGEM: Criar uma coluna booleana para identificar o que é venda válida
-            # Um pedido é válido se o VOID_TYPE for nulo, vazio ou zero
-            df['is_valid'] = (df['VOID_TYPE'].isna()) | (df['VOID_TYPE'] == "") | (df['VOID_TYPE'] == 0)
-            
-            # Agora criamos um DataFrame APENAS com as vendas válidas para o agrupamento
-            df_validos = df[df['is_valid'] == True].copy()
-            
-            # 5. Criar coluna de data para o agrupamento no DF de válidos
-            df_validos['data'] = df_validos['business_dt'].dt.date
+            df['total_gross'] = pd.to_numeric(df['total_gross'], errors='coerce').fillna(0)
 
-            # 6. Agrupar usando APENAS o DataFrame de válidos
-            # Isso garante que o faturamento E a contagem ignorem completamente os VOIDs
-            resumo = df_validos.groupby(['store_code', 'data']).agg(
+            # 4. LIMPEZA TOTAL: Remover os VOIDs do DataFrame
+            # Aqui o pedido cancelado (VOID) é excluído fisicamente da lista
+            # Se tinha 16 linhas e 1 era VOID, agora o 'df' terá apenas 15 linhas
+            df = df[df['VOID_TYPE'].isna() | (df['VOID_TYPE'] == "") | (df['VOID_TYPE'] == 0)].copy()
+            
+            # Opcional: Remover também pedidos com valor zero (cortesias) se eles não devem contar no Ticket
+            # df = df[df['total_gross'] > 0].copy()
+
+            # 5. Criar coluna de data para o agrupamento
+            df['data'] = df['business_dt'].dt.date
+
+            # 6. Agrupar (O faturamento e a contagem agora batem 100%)
+            resumo = df.groupby(['store_code', 'data']).agg(
                 Fat_Real=('total_gross', 'sum'),
                 Serv_Tx=('TIP_AMOUNT', 'sum'),
-                Qtd_Pedidos=('order_code', 'nunique')  # <-- USAR 'nunique' para evitar duplicados
+                Qtd_Pedidos=('order_code', 'nunique') # 'nunique' garante que não conte a mesma venda duas vezes
             ).reset_index()
 
             # 7. Cálculos Finais
             resumo['Fat.Total'] = resumo['Fat_Real'] + resumo['Serv_Tx']
             
-            # O Ticket agora divide o faturamento real apenas pela quantidade de pedidos válidos únicos
+            # Agora o Ticket será: (Soma das 15 vendas) / 15
             resumo['Ticket'] = (resumo['Fat_Real'] / resumo['Qtd_Pedidos'].replace(0, np.nan)).fillna(0).round(2)
 
             # 8. Renomear e selecionar colunas — Qtd_Pedidos fica de fora automaticamente

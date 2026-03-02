@@ -906,24 +906,21 @@ with st.spinner("⏳ Processando..."):
 
                    
                     # ======================================================
+                    # ======================================================
                     # ✅ VALIDAÇÃO DE MEIOS NÃO LOCALIZADOS (CORRIGIDA)
                     # ======================================================
-                    # Criamos um conjunto (set) com os nomes normalizados que existem no Google Sheets
-                    # Isso garante que "pix" seja igual a "PIX"
-                    meios_norm_google = set(df_meio_pgto_google["Meio de Pagamento"].astype(str).map(_norm))
+                    meios_norm_google = set(df_meio_pgto_google["__meio_norm__"])
                     
-                    # Identificamos quais linhas do seu upload NÃO estão no Google (usando a mesma normalização)
                     df_erros_meio = df_meio_pagamento[
                         ~df_meio_pagamento["Meio de Pagamento"].astype(str).map(_norm).isin(meios_norm_google)
                     ]
                     
-                    # Pegamos os nomes originais (como vieram no arquivo) para mostrar o erro ao usuário
                     meios_nao_localizados = df_erros_meio["Meio de Pagamento"].unique()
-
+                    
                     # Validação de Empresas (Loja)
                     empresas_nao_localizadas = df_meio_pagamento[
-                        df_meio_pagamento["Loja"].astype(str).str.strip().isin(["", "nan"])
-                    ]["Código Everest"].unique() if "Código Everest" in df_meio_pagamento.columns else []
+                        df_meio_pagamento["Código Everest"].astype(str).str.strip().isin(["", "nan", "None"])
+                    ]["Loja"].unique() if "Código Everest" in df_meio_pagamento.columns else []
 
                     # ======================================================
                     # 📊 EXPORTAR EXCEL (O código continua aqui...)

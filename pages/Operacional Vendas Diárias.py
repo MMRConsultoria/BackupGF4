@@ -226,8 +226,15 @@ with st.spinner("⏳ Processando..."):
             # 7. Calcular Fat.Total
             resumo['Fat_Total'] = resumo['Fat_Real'] + resumo['Serv_Tx']
             
-            # 8. Renomear colunas para o formato correto (incluindo a temporária Qtd_Pedidos)
-            resumo.columns = ['Código Everest', 'Data', 'Fat.Real', 'Serv/Tx', 'Qtd_Pedidos', 'Fat.Total']
+            # 8. Renomear colunas para o formato correto (mantendo Qtd_Pedidos com nome correto)
+            resumo = resumo.rename(columns={
+                'store_code': 'Código Everest',
+                'data': 'Data',
+                'Fat_Real': 'Fat.Real',
+                'Serv_Tx': 'Serv/Tx',
+                'Qtd_Pedidos': 'Qtd_Pedidos',  # mantém o nome para usar no cálculo do Ticket
+                'Fat_Total': 'Fat.Total'
+            })
             
             # 9. Formatar Data
             resumo['Data'] = pd.to_datetime(resumo['Data']).dt.strftime('%d/%m/%Y')

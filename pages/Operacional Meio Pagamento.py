@@ -539,6 +539,9 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
             df_meio_local.groupby("__meio_norm__", as_index=False)
             .agg({"Tipo de Pagamento": _pegar_preenchido, "Tipo DRE": _pegar_preenchido})
         )
+      
+
+        
         pgto_map = dict(zip(df_ref["__meio_norm__"], df_ref["Tipo de Pagamento"]))
         dre_map  = dict(zip(df_ref["__meio_norm__"], df_ref["Tipo DRE"]))
         
@@ -557,6 +560,7 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
         ).agg({"Valor (R$)": "sum"})
 
         resumo["Valor (R$)"] = pd.to_numeric(resumo["Valor (R$)"], errors="coerce").fillna(0).round(2)
+        resumo["Meio de Pagamento"] = resumo["Meio de Pagamento"].fillna("").astype(str).str.strip()
 
         # remove coluna auxiliar
         resumo.drop(columns=["Data_dt"], inplace=True, errors="ignore")
@@ -697,9 +701,11 @@ with st.spinner("⏳ Processando..."):
         # ========== EXIBIR RESULTADO 3S ==========
         # ========== EXIBIR RESULTADO 3S ==========
         if st.session_state.modo_3s_mp and "resumo_3s_mp" in st.session_state:
-            # 1. Pegamos os dados
-            # Garante que None/NaN na coluna Meio de Pagamento vire string vazia
-            df_exibir["Meio de Pagamento"] = df_exibir["Meio de Pagamento"].fillna("").astype(str).str.strip()
+        # 1. Pegamos os dados
+        df_exibir = st.session_state.resumo_3s_mp.copy()
+        total_registros = st.session_state.total_registros_3s_mp
+        # Garante que None/NaN na coluna Meio de Pagamento vire string vazia
+        df_exibir["Meio de Pagamento"] = df_exibir["Meio de Pagamento"].fillna("").astype(str).str.strip()
 
             # 2. RE-APLICAR MAPEAMENTO (Sem apagar a coluna original)
             df_meio_ref = df_meio_pgto_google.copy()

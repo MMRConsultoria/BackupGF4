@@ -696,43 +696,61 @@ with st.spinner("⏳ Processando..."):
         # ========== EXIBIR RESULTADO 3S ==========
         # ========== EXIBIR RESULTADO 3S ==========
         if st.session_state.modo_3s_mp and "resumo_3s_mp" in st.session_state:
-            # 1. Pegamos os dados do estado da sessão
+            # 1. Pegamos os dados brutos do banco (que vimos no debug que estão vindo preenchidos)
             df_exibir = st.session_state.resumo_3s_mp.copy()
             total_registros = st.session_state.total_registros_3s_mp
 
-            # 2. RE-APLICAR MAPEAMENTO (Garantia de que as colunas não fiquem vazias)
-            # Criamos o mapa a partir da tabela Google carregada no início
+            # 2. RE-APLICAR MAPEAMENTO E GARANTIR COLUNAS
             df_meio_ref = df_meio_pgto_google.copy()
             df_meio_ref["__k__"] = df_meio_ref["Meio de Pagamento"].astype(str).map(_norm)
             
-            # Função para evitar pegar valores nulos em duplicatas
             def _get_val(s):
                 l = [x for x in s.tolist() if x and str(x).strip().lower() not in ["nan", ""]]
                 return l[0] if l else ""
 
-            df_mapa = df_meio_ref.groupby("__k__").agg({"Tipo de Pagamento": _get_val, "Tipo DRE": _get_val}).reset_index()
+            df_mapa = df_meio_ref.groupby("__k__").agg({
+                "Tipo de Pagamento": _get_val, 
+                "Tipo DRE": _get_val
+            }).reset_index()
+            
             map_pgto = dict(zip(df_mapa["__k__"], df_mapa["Tipo de Pagamento"]))
             map_dre = dict(zip(df_mapa["__k__"], df_mapa["Tipo DRE"]))
 
-            # Aplicamos no DF que será exibido/baixado
+            # Criamos a chave de normalização no DF de exibição
             df_exibir["__k__"] = df_exibir["Meio de Pagamento"].astype(str).map(_norm)
+            
+            # Preenchemos as colunas de classificação
             df_exibir["Tipo de Pagamento"] = df_exibir["__k__"].map(map_pgto).fillna("")
             df_exibir["Tipo DRE"] = df_exibir["__k__"].map(map_dre).fillna("")
             
-            # Remove a chave temporária e garante ordem das colunas
+            # !!! IMPORTANTE: Removemos a chave temporária mas MANTEMOS o 'Meio de Pagamento' !!!
             df_exibir = df_exibir.drop(columns=["__k__"], errors="ignore")
+
+            # 3. Reordenar colunas para garantir que 'Meio de Pagamento' apareça na posição correta (C)
+            col_order = [
+                "Data", "Dia da Semana", "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",
+                "Loja", "Código Everest", "Grupo", "Código Grupo Everest",
+                "Valor (R$)", "Mês", "Ano", "Sistema"
+            ]
+            # Garante que todas as colunas existam antes de reordenar
+            for col in col_order:
+                if col not in df_exibir.columns:
+                    df_exibir[col] = ""
+            
+            df_exibir = df_exibir[col_order]
 
             st.success(f"✅ {total_registros} registros processados com sucesso!")
 
-            # 3. Verificar meios não localizados
+            # 4. Verificar meios não localizados (usando a chave normalizada)
             meios_norm_tabela = set(df_mapa["__k__"])
-            meios_no_df = df_exibir["Meio de Pagamento"].astype(str).map(_norm).unique()
-            meios_nao_localizados = [m for m in meios_no_df if m not in meios_norm_tabela and m != ""]
+            # Criamos uma lista de meios que não batem com a tabela Google
+            meios_nao_localizados = []
+            for m_orig in df_exibir["Meio de Pagamento"].unique():
+                if _norm(str(m_orig)) not in meios_norm_tabela and str(m_orig).strip() != "":
+                    meios_nao_localizados.append(str(m_orig))
 
             if len(meios_nao_localizados) > 0:
-                # Busca o nome original para mostrar na mensagem
-                nomes_originais = df_exibir[df_exibir["Meio de Pagamento"].astype(str).map(_norm).isin(meios_nao_localizados)]["Meio de Pagamento"].unique()
-                meios_nao_localizados_str = "<​br>".join(nomes_originais)
+                meios_nao_localizados_str = "<​br>".join(meios_nao_localizados)
                 st.markdown(f"""
                 ⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):<br>{meios_nao_localizados_str}
                 <br>✏️ Atualize a tabela clicando <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
@@ -740,7 +758,7 @@ with st.spinner("⏳ Processando..."):
             else:
                 st.success("✅ Todos os meios de pagamento foram localizados!")
 
-            # 4. KPIs e Download (Usando o df_exibir atualizado)
+            # 5. KPIs e Download
             valor_total = df_exibir["Valor (R$)"].sum()
             valor_total_formatado = f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
             st.markdown(f"💰 **Valor total:** <span style='color:green; font-size:1.2rem;'>{valor_total_formatado}</span>", unsafe_allow_html=True)
@@ -751,7 +769,7 @@ with st.spinner("⏳ Processando..."):
             output.seek(0)
 
             st.download_button(
-                label="📥 Baixar Excel 3S Checkout Corrigido",
+                label="📥 Baixar Excel 3S Checkout Completo",
                 data=output,
                 file_name=f"meio_pagamento_3s_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

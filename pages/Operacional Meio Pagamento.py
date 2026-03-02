@@ -999,14 +999,22 @@ with st.spinner("⏳ Processando..."):
             df_meio_pgto_google["Tipo de Pagamento"] = (
                 df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip()
             )
-            df_meio_pgto_google["Tipo DRE"] = (
-                df_meio_pgto_google["Tipo DRE"].astype(str).str.strip()
-            )
+            
+            # ✅ Correto - usa _norm em ambos os lados
+            df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].map(_norm)
+            pgto_map = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip()))
+            dre_map  = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"].astype(str).str.strip()))
+            
+            df_final["__meio_norm__"] = df_final["Meio de Pagamento"].astype(str).str.strip().map(_norm)
+                        
+            #df_meio_pgto_google["Tipo DRE"] = (
+            #    df_meio_pgto_google["Tipo DRE"].astype(str).str.strip()
+            #)
 
-            pgto_map = dict(zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo de Pagamento"]))
-            dre_map  = dict(zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo DRE"]))
+            #pgto_map = dict(zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo de Pagamento"]))
+            #dre_map  = dict(zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo DRE"]))
 
-            df_final["__meio_norm__"] = df_final["Meio de Pagamento"].astype(str).str.strip().str.lower()
+            #df_final["__meio_norm__"] = df_final["Meio de Pagamento"].astype(str).str.strip().str.lower()
 
             if "Tipo de Pagamento" not in df_final.columns:
                 pos = df_final.columns.get_loc("Meio de Pagamento") + 1

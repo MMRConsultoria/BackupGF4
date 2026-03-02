@@ -659,20 +659,26 @@ with st.spinner("⏳ Processando..."):
         st.markdown('</div>', unsafe_allow_html=True)
 
         # ========== EXIBIR RESULTADO 3S ==========
+        # ========== EXIBIR RESULTADO 3S ==========
         if st.session_state.modo_3s_mp and "resumo_3s_mp" in st.session_state:
             resumo_3s = st.session_state.resumo_3s_mp
             total_registros = st.session_state.total_registros_3s_mp
 
             st.success(f"✅ {total_registros} registros processados com sucesso!")
 
-            # Verificar meios não localizados
-            meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
-            meios_nao_localizados = resumo_3s[
-                ~resumo_3s["Meio de Pagamento"].astype(str).str.strip().map(_norm).isin(meios_norm_tabela)
-            ]["Meio de Pagamento"].astype(str).unique()
+            # --- CORREÇÃO AQUI: Normalizar antes de comparar ---
+            # Criamos um set com os meios da planilha já normalizados (minúsculos)
+            meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"].unique())
+            
+            # Filtramos os meios do resumo que, após normalizados, NÃO estão na tabela
+            meios_nao_localizados = [
+                m for m in resumo_3s["Meio de Pagamento"].unique() 
+                if _norm(str(m)) not in meios_norm_tabela
+            ]
 
             if len(meios_nao_localizados) > 0:
-                meios_nao_localizados_str = "<br>".join(meios_nao_localizados)
+                # Exibe os nomes originais no aviso para o usuário identificar
+                meios_nao_localizados_str = "<​br>".join(meios_nao_localizados)
                 mensagem = f"""
                 ⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):<br>{meios_nao_localizados_str}
                 <br>✏️ Atualize a tabela clicando 

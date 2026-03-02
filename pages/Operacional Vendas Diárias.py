@@ -189,43 +189,29 @@ with st.spinner("⏳ Processando..."):
             # 2. Remover zeros à esquerda do store_code
             df['store_code'] = df['store_code'].astype(str).str.lstrip('0')
 
-            # 3. Extrair campos de custom_properties
-            def parse_props(x):
-                if pd.isna(x): return {}
-                try:
-                    if isinstance(x, str):
-                        return json.loads(x)
-                except:
-                    try:
-                        import ast
-                        return ast.literal_eval(x)
-                    except:
-                        return {}
-                return x if isinstance(x, dict) else {}
-
+            # 3. Extrair campos e converter para numérico
             props = df['custom_properties'].apply(parse_props)
             df['TIP_AMOUNT'] = pd.to_numeric(props.apply(lambda x: x.get('TIP_AMOUNT')), errors='coerce').fillna(0)
             df['VOID_TYPE'] = props.apply(lambda x: x.get('VOID_TYPE'))
-
-            # 4. Desconsiderar registros com VOID_TYPE preenchido e pedidos sem valor
-            # Filtro 1: Remove cancelados (VOID_TYPE)
+            
+            # 4. FILTRAGEM ÚNICA: Descartar apenas os cancelados (VOID)
+            # Se o pedido for cancelado, ele sai do DF e não entra nem na SOMA nem na CONTAGEM
             df = df[df['VOID_TYPE'].isna() | (df['VOID_TYPE'] == "") | (df['VOID_TYPE'] == 0)].copy()
             
-            # Filtro 2: Remove pedidos com valor bruto <= 0 (opcional, mas comum para Ticket Médio real)
-            df = df[df['total_gross'] > 0].copy()
-            
-            # 5. Criar coluna de data sem hora para agrupamento
+            # 5. Criar coluna de data para o agrupamento
             df['data'] = df['business_dt'].dt.date
 
-            # 6. Agrupar (Agora o df já está limpo, a contagem será correta)
+            # 6. Agrupar (O df já está sem os VOIDs aqui)
             resumo = df.groupby(['store_code', 'data']).agg(
                 Fat_Real=('total_gross', 'sum'),
                 Serv_Tx=('TIP_AMOUNT', 'sum'),
-                Qtd_Pedidos=('order_code', 'count')
+                Qtd_Pedidos=('order_code', 'count') # Conta apenas os pedidos que NÃO são VOID
             ).reset_index()
 
-            # 7. Cálculos — Ticket calculado ANTES de qualquer rename ou seleção
+            # 7. Cálculos Finais
             resumo['Fat.Total'] = resumo['Fat_Real'] + resumo['Serv_Tx']
+            
+            # O Ticket agora é calculado sobre a base limpa (sem VOIDs)
             resumo['Ticket'] = (resumo['Fat_Real'] / resumo['Qtd_Pedidos'].replace(0, np.nan)).fillna(0).round(2)
 
             # 8. Renomear e selecionar colunas — Qtd_Pedidos fica de fora automaticamente

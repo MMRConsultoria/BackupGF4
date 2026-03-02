@@ -783,7 +783,7 @@ with st.spinner("⏳ Processando..."):
                                 df_temp = df_raw.iloc[linha_inicio_dados:, [2, col]].copy()
                                 df_temp.columns = ["Data", "Valor (R$)"]
                                 df_temp = df_temp[~df_temp["Data"].astype(str).str.lower().str.contains("total|subtotal")]
-                                df_temp.insert(1, "Meio de Pagamento", meio_pgto.lower())
+                                df_temp.insert(1, "Meio de Pagamento", meio_pgto.strip())
                                 df_temp.insert(2, "Loja", loja_atual)
                                 blocos.append(df_temp)
                             except Exception as e:

@@ -548,8 +548,9 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
         df_tender.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
 
         # RESUMO (dia + loja + meio)
+        # RESUMO (dia + loja + meio) - ADICIONADO Meio de Pagamento ao GroupBy
         resumo = df_tender.groupby(
-            ["Data_dt", "Data", "Dia da Semana", "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",
+            ["Data", "Dia da Semana", "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",
              "Loja", "Código Everest", "Grupo", "Código Grupo Everest", "Mês", "Ano", "Sistema"],
             dropna=False,
             as_index=False
@@ -696,11 +697,11 @@ with st.spinner("⏳ Processando..."):
         # ========== EXIBIR RESULTADO 3S ==========
         # ========== EXIBIR RESULTADO 3S ==========
         if st.session_state.modo_3s_mp and "resumo_3s_mp" in st.session_state:
-            # 1. Pegamos os dados brutos do banco (que vimos no debug que estão vindo preenchidos)
+            # 1. Pegamos os dados
             df_exibir = st.session_state.resumo_3s_mp.copy()
             total_registros = st.session_state.total_registros_3s_mp
 
-            # 2. RE-APLICAR MAPEAMENTO E GARANTIR COLUNAS
+            # 2. RE-APLICAR MAPEAMENTO (Sem apagar a coluna original)
             df_meio_ref = df_meio_pgto_google.copy()
             df_meio_ref["__k__"] = df_meio_ref["Meio de Pagamento"].astype(str).map(_norm)
             
@@ -716,14 +717,14 @@ with st.spinner("⏳ Processando..."):
             map_pgto = dict(zip(df_mapa["__k__"], df_mapa["Tipo de Pagamento"]))
             map_dre = dict(zip(df_mapa["__k__"], df_mapa["Tipo DRE"]))
 
-            # Criamos a chave de normalização no DF de exibição
+            # Criamos a chave apenas para busca
             df_exibir["__k__"] = df_exibir["Meio de Pagamento"].astype(str).map(_norm)
             
-            # Preenchemos as colunas de classificação
+            # Preenchemos as classificações APENAS se estiverem vazias
             df_exibir["Tipo de Pagamento"] = df_exibir["__k__"].map(map_pgto).fillna("")
             df_exibir["Tipo DRE"] = df_exibir["__k__"].map(map_dre).fillna("")
             
-            # !!! IMPORTANTE: Removemos a chave temporária mas MANTEMOS o 'Meio de Pagamento' !!!
+            # Removemos apenas a chave temporária
             df_exibir = df_exibir.drop(columns=["__k__"], errors="ignore")
 
             # 3. Reordenar colunas para garantir que 'Meio de Pagamento' apareça na posição correta (C)

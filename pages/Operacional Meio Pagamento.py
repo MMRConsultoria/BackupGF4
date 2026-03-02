@@ -659,48 +659,26 @@ with st.spinner("⏳ Processando..."):
         st.markdown('</div>', unsafe_allow_html=True)
 
         # ========== EXIBIR RESULTADO 3S ==========
-        # ========== EXIBIR RESULTADO 3S ==========
         if st.session_state.modo_3s_mp and "resumo_3s_mp" in st.session_state:
             resumo_3s = st.session_state.resumo_3s_mp
             total_registros = st.session_state.total_registros_3s_mp
 
             st.success(f"✅ {total_registros} registros processados com sucesso!")
 
-            # --- FUNÇÃO DE LIMPEZA PARA ELIMINAR ESPAÇOS INVISÍVEIS ---
-            def limpar_total(texto):
-                import re
-                import unicodedata
-                if not texto: return ""
-                # 1. Remove acentos e normaliza caracteres
-                t = unicodedata.normalize("NFKD", str(texto)).encode("ASCII", "ignore").decode("ASCII")
-                # 2. Transforma em minúsculo
-                t = t.lower()
-                # 3. O PULO DO GATO: Remove QUALQUER tipo de espaço (comum, \xa0, tab, etc)
-                t = re.sub(r'\s+', '', t) 
-                return t.strip()
-
-            # Criamos o set da planilha usando a limpeza total
-            meios_validos_limpos = set()
-            # Varremos a planilha inteira (todas as colunas) para não ter erro
-            for col in df_meio_pgto_raw.columns:
-                for val in df_meio_pgto_raw[col].unique():
-                    meios_validos_limpos.add(limpar_total(val))
-            
-            # Verifica quem do banco não bate com a limpeza
-            meios_nao_localizados = []
-            for m in resumo_3s["Meio de Pagamento"].unique():
-                if limpar_total(m) not in meios_validos_limpos:
-                    meios_nao_localizados.append(str(m))
+            # Verificar meios não localizados
+            meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
+            meios_nao_localizados = resumo_3s[
+                ~resumo_3s["Meio de Pagamento"].astype(str).str.strip().map(_norm).isin(meios_norm_tabela)
+            ]["Meio de Pagamento"].astype(str).unique()
 
             if len(meios_nao_localizados) > 0:
-                st.warning(f"⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):")
-                for m in meios_nao_localizados:
-                    st.write(f"- {m}")
-                
-                st.markdown(f"""
-                ✏️ Atualize a tabela clicando 
+                meios_nao_localizados_str = "<br>".join(meios_nao_localizados)
+                mensagem = f"""
+                ⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):<br>{meios_nao_localizados_str}
+                <br>✏️ Atualize a tabela clicando 
                 <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
-                """, unsafe_allow_html=True)
+                """
+                st.markdown(mensagem, unsafe_allow_html=True)
             else:
                 st.success("✅ Todos os meios de pagamento foram localizados!")
 

@@ -794,6 +794,10 @@ with st.spinner("⏳ Processando..."):
                             st.error("❌ Nenhum dado válido encontrado.")
                         else:
                             df_meio_pagamento = pd.concat(blocos, ignore_index=True).dropna()
+                            # 🔍 DEBUG 1 - Logo após concat
+                            st.write("DEBUG 1 - Shape após concat:", df_meio_pagamento.shape)
+                            st.write("DEBUG 1 - Colunas:", df_meio_pagamento.columns.tolist())
+                            st.write("DEBUG 1 - Primeiras linhas:", df_meio_pagamento.head(3))
                             df_meio_pagamento = df_meio_pagamento[~df_meio_pagamento["Data"].astype(str).str.lower().str.contains("total|subtotal")]
                             df_meio_pagamento["Data"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True, errors="coerce")
                             df_meio_pagamento = df_meio_pagamento[df_meio_pagamento["Data"].notna()]
@@ -851,7 +855,9 @@ with st.spinner("⏳ Processando..."):
 
                             df_meio_pagamento = tmp.groupby(["_k_data", "_k_loja", "_k_meio"], as_index=False).agg(agg_dict)
                             df_meio_pagamento.drop(columns=["_k_data", "_k_loja", "_k_meio"], inplace=True, errors="ignore")
-                            
+                            # 🔍 DEBUG 2 - Após groupby
+                            st.write("DEBUG 2 - Shape após groupby:", df_meio_pagamento.shape)
+                            st.write("DEBUG 2 - Colunas:", df_meio_pagamento.columns.tolist())
                             # Limpeza final da coluna auxiliar
                             if "__meio_norm__" in df_meio_pagamento.columns:
                                 df_meio_pagamento.drop(columns=["__meio_norm__"], inplace=True)
@@ -914,10 +920,7 @@ with st.spinner("⏳ Processando..."):
                     # ✅ VALIDAÇÃO DE MEIOS NÃO LOCALIZADOS (CORRIGIDA)
                     # ======================================================
                     meios_norm_google = set(df_meio_pgto_google["__meio_norm__"])
-                    # 🔍 DEBUG TEMPORÁRIO - remova depois de resolver
-                    st.write("**Meios no Google (normalizados):**", sorted(list(meios_norm_google)))
-                    st.write("**Meios no upload (normalizados):**", sorted(df_meio_pagamento["Meio de Pagamento"].astype(str).map(_norm).unique().tolist()))
-                                        
+                                                          
                     df_erros_meio = df_meio_pagamento[
                         ~df_meio_pagamento["Meio de Pagamento"].astype(str).map(_norm).isin(meios_norm_google)
                     ]

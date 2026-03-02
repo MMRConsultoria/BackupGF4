@@ -470,11 +470,7 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
         df_tender["Meio de Pagamento"] = tender_props.apply(
             lambda x: x.get("tenderDescr") if isinstance(x, dict) else None
         )
-        # DEBUG TEMPORÁRIO
-        st.write("### DEBUG: Amostra de tender_props")
-        st.write(tender_props.head(5).tolist())
-        st.write("### DEBUG: Amostra Meio de Pagamento")
-        st.write(df_tender["Meio de Pagamento"].value_counts(dropna=False).head(10))
+       
 
 
         df_tender["tip_amount"] = pd.to_numeric(
@@ -594,6 +590,9 @@ with st.spinner("⏳ Processando..."):
     gc = gspread.authorize(credentials)
     planilha = gc.open("Tabelas")
 
+
+
+    
     # Tabela Empresa
     df_empresa = pd.DataFrame(planilha.worksheet("Tabela Empresa").get_all_records())
 
@@ -668,7 +667,21 @@ with st.spinner("⏳ Processando..."):
 
             with st.spinner("Buscando dados do banco..."):
                 resumo_3s, erro_3s, total_registros = buscar_meio_pagamento_3s_checkout(df_empresa, df_meio_pgto_google)
+                # === DEBUG FORÇADO AQUI ===
+                st.write("### 🔍 DEBUG DE SAÍDA DO BANCO")
+                if resumo_3s is not None:
+                    st.write(f"Total de linhas no resumo: {len(resumo_3s)}")
+                    st.write("Amostra das colunas 'Meio de Pagamento' e 'Valor (R$)':")
+                    st.dataframe(resumo_3s[["Meio de Pagamento", "Valor (R$)"]].head(10))
+                    
+                    # Verifica se a coluna está toda vazia
+                    vazios = resumo_3s["Meio de Pagamento"].isna().sum()
+                    st.write(f"Linhas com Meio de Pagamento NULO: {vazios}")
+                else:
+                    st.error(f"O resumo_3s retornou None. Erro: {erro_3s}")
 
+
+                
                 if erro_3s:
                     st.error(f"❌ Erro ao buscar dados: {erro_3s}")
                 elif resumo_3s is not None and not resumo_3s.empty:

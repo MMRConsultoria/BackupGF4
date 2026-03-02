@@ -810,47 +810,51 @@ with st.spinner("⏳ Processando..."):
                             df_meio_pagamento = pd.merge(df_meio_pagamento, df_empresa, on="Loja", how="left")
 
                             # Mapeia Tipo de Pagamento / Tipo DRE
-                            if "Meio de Pagamento" not in df_meio_pagamento.columns:
-                                df_meio_pagamento["Meio de Pagamento"] = ""
-                            df_meio_pagamento["__meio_norm__"] = df_meio_pagamento["Meio de Pagamento"].map(_norm)
-                            col_meio_idx = df_meio_pagamento.columns.get_loc("Meio de Pagamento")
-                            df_meio_pagamento.insert(
-                                loc=col_meio_idx + 1,
-                                column="Tipo de Pagamento",
-                                value=df_meio_pagamento["__meio_norm__"].map(
-                                    dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"]))
-                                ).fillna("")
-                            )
-                            df_meio_pagamento.insert(
-                                loc=col_meio_idx + 2,
-                                column="Tipo DRE",
-                                value=df_meio_pagamento["__meio_norm__"].map(
-                                    dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"]))
-                                ).fillna("")
-                            )
-                            df_meio_pagamento.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
+                            # ======================================================
+                            # ✅ MAPEAMENTO E CONSOLIDAÇÃO (CORRIGIDO PARA UPLOAD)
+                            # ======================================================
+                            # 1. Criamos dicionários de mapeamento SEGUROS
+                            # Usamos df_meio_pgto_google que foi carregado no início do script
+                            map_tipo = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"]))
+                            map_dre  = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"]))
 
+                            # 2. Normalizamos o meio do upload para a busca
+                            df_meio_pagamento["__meio_norm__"] = df_meio_pagamento["Meio de Pagamento"].astype(str).map(_norm)
+
+                            # 3. Inserimos as colunas de classificação
+                            if "Tipo de Pagamento" not in df_meio_pagamento.columns:
+                                col_idx = df_meio_pagamento.columns.get_loc("Meio de Pagamento") + 1
+                                df_meio_pagamento.insert(col_idx, "Tipo de Pagamento", df_meio_pagamento["__meio_norm__"].map(map_tipo).fillna(""))
+                                df_meio_pagamento.insert(col_idx + 1, "Tipo DRE", df_meio_pagamento["__meio_norm__"].map(map_dre).fillna(""))
+
+                            # 4. Datas e Períodos
                             df_meio_pagamento["Mês"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.month.map({
                                 1:'jan',2:'fev',3:'mar',4:'abr',5:'mai',6:'jun',7:'jul',8:'ago',9:'set',10:'out',11:'nov',12:'dez'})
                             df_meio_pagamento["Ano"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.year
-
-                            # ➕ Sistema (Formato 1)
                             df_meio_pagamento["Sistema"] = "Colibri"
 
-                            # 💡 Ordem padrão de saída
-                            col_order = [
-                                "Data", "Dia da Semana",
-                                "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",
-                                "Loja", "Código Everest", "Grupo", "Código Grupo Everest",
-                                "Sistema",
-                                "Valor (R$)", "Mês", "Ano"
-                            ]
-                            for c in ["Código Everest", "Grupo", "Código Grupo Everest"]:
-                                if c not in df_meio_pagamento.columns:
-                                    df_meio_pagamento[c] = ""
-                            for c in col_order:
-                                if c not in df_meio_pagamento.columns:
-                                    df_meio_pagamento[c] = ""
+                            # 5. Consolidação de Duplicatas (Garantindo que PIX e pix virem um só)
+                            tmp = df_meio_pagamento.copy()
+                            tmp["Valor (R$)"] = pd.to_numeric(tmp["Valor (R$)"], errors="coerce").fillna(0)
+                            
+                            # Chaves de grupo normalizadas
+                            tmp["_k_data"] = pd.to_datetime(tmp["Data"], dayfirst=True, errors="coerce").dt.date
+                            tmp["_k_loja"] = tmp["Loja"].astype(str).map(_norm)
+                            tmp["_k_meio"] = tmp["__meio_norm__"] # Já está normalizado
+
+                            agg_dict = {
+                                "Data": "first", "Dia da Semana": "first",
+                                "Meio de Pagamento": "first", "Tipo de Pagamento": "first", "Tipo DRE": "first",
+                                "Loja": "first", "Código Everest": "first", "Grupo": "first", "Código Grupo Everest": "first",
+                                "Sistema": "first", "Mês": "first", "Ano": "first", "Valor (R$)": "sum"
+                            }
+
+                            df_meio_pagamento = tmp.groupby(["_k_data", "_k_loja", "_k_meio"], as_index=False).agg(agg_dict)
+                            df_meio_pagamento.drop(columns=["_k_data", "_k_loja", "_k_meio"], inplace=True, errors="ignore")
+                            
+                            # Limpeza final da coluna auxiliar
+                            if "__meio_norm__" in df_meio_pagamento.columns:
+                                df_meio_pagamento.drop(columns=["__meio_norm__"], inplace=True)
 
                     # 🔁 Consolida duplicatas por Data + Loja + Meio de Pagamento
                     # 🔁 Consolida duplicatas por Data + Loja + Meio de Pagamento

@@ -967,6 +967,9 @@ with st.spinner("⏳ Processando..."):
     # ======================
     # 🔄 Aba 2
     # ======================
+    # ======================
+    # 🔄 Aba 2
+    # ======================
     with tab2:
         st.markdown("🔗 [Abrir planilha Faturamento Meio Pagamento](https://docs.google.com/spreadsheets/d/1GSI291SEeeU9MtOWkGwsKGCGMi_xXMSiQnL_9GhXxfU/edit?gid=1278257122#gid)")
 
@@ -984,49 +987,30 @@ with st.spinner("⏳ Processando..."):
             df_final = df_para_enviar.copy()
 
             # Garantir "Tipo de Pagamento" e "Tipo DRE"
-            df_final["Meio de Pagamento"] = (
-                df_final["Meio de Pagamento"].astype(str).str.strip().str.lower()
-            )
-
             df_meio_pgto_google.columns = [str(c).strip() for c in df_meio_pgto_google.columns]
             for c in ["Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE"]:
                 if c not in df_meio_pgto_google.columns:
                     df_meio_pgto_google[c] = ""
 
-            df_meio_pgto_google["Meio de Pagamento"] = (
-                df_meio_pgto_google["Meio de Pagamento"].astype(str).str.strip().str.lower()
-            )
-            df_meio_pgto_google["Tipo de Pagamento"] = (
-                df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip()
-            )
-            
-            # ✅ Correto - usa _norm em ambos os lados
-            df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].map(_norm)
+            # ✅ Normaliza direto com _norm (sem .str.lower() antes)
+            df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].astype(str).map(_norm)
             pgto_map = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip()))
             dre_map  = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"].astype(str).str.strip()))
-            
-            df_final["__meio_norm__"] = df_final["Meio de Pagamento"].astype(str).str.strip().map(_norm)
-                        
-            #df_meio_pgto_google["Tipo DRE"] = (
-            #    df_meio_pgto_google["Tipo DRE"].astype(str).str.strip()
-            #)
 
-            #pgto_map = dict(zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo de Pagamento"]))
-            #dre_map  = dict(zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo DRE"]))
-
-            #df_final["__meio_norm__"] = df_final["Meio de Pagamento"].astype(str).str.strip().str.lower()
+            # ✅ Normaliza df_final com _norm diretamente (sem .str.lower() antes)
+            df_final["__meio_norm__"] = df_final["Meio de Pagamento"].astype(str).map(_norm)
 
             if "Tipo de Pagamento" not in df_final.columns:
                 pos = df_final.columns.get_loc("Meio de Pagamento") + 1
-                df_final.insert(pos, "Tipo de Pagamento", df_final["__meio_norm__"].map(pgto_map))
+                df_final.insert(pos, "Tipo de Pagamento", df_final["__meio_norm__"].map(pgto_map).fillna(""))
             else:
-                df_final["Tipo de Pagamento"] = df_final["Tipo de Pagamento"].fillna(df_final["__meio_norm__"].map(pgto_map))
+                df_final["Tipo de Pagamento"] = df_final["__meio_norm__"].map(pgto_map).fillna("")
 
             if "Tipo DRE" not in df_final.columns:
                 pos = df_final.columns.get_loc("Tipo de Pagamento") + 1
-                df_final.insert(pos, "Tipo DRE", df_final["__meio_norm__"].map(dre_map))
+                df_final.insert(pos, "Tipo DRE", df_final["__meio_norm__"].map(dre_map).fillna(""))
             else:
-                df_final["Tipo DRE"] = df_final["Tipo DRE"].fillna(df_final["__meio_norm__"].map(dre_map))
+                df_final["Tipo DRE"] = df_final["__meio_norm__"].map(dre_map).fillna("")
 
             df_final.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
 
@@ -1048,7 +1032,6 @@ with st.spinner("⏳ Processando..."):
             # Planilha destino
             sh_fatur = gc.open("Faturamento Meio Pagamento")
             aba_destino = sh_fatur.worksheet("Faturamento Meio Pagamento")
-            #aba_destino = gc.open("Faturamento Meio Pagamento").worksheet("Faturamento Meio Pagamento")
             valores_existentes = aba_destino.get_all_values()
 
             if valores_existentes:

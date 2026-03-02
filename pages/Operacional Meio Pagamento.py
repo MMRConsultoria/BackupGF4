@@ -666,37 +666,43 @@ with st.spinner("⏳ Processando..."):
 
             st.success(f"✅ {total_registros} registros processados com sucesso!")
 
-            # --- FORÇA BRUTA: LER PLANILHA DIRETAMENTE AQUI ---
-            try:
-                # Abrimos a aba de Meio de Pagamento novamente para garantir dados frescos
-                ws_meios = gc.open("Tabelas").worksheet("Tabela Meio Pagamento")
-                dados_frescos = pd.DataFrame(ws_meios.get_all_records())
-                
-                # Criamos uma lista de TUDO que existe na planilha (em todas as colunas)
-                # Isso garante que se o nome estiver em "Meio de Pagamento" ou "De/Para", ele seja achado
-                todos_valores_planilha = set()
-                for col in dados_frescos.columns:
-                    for val in dados_frescos[col].astype(str).unique():
-                        todos_valores_planilha.add(_norm(val))
-                
-                # Verifica quem do banco não está nessa lista mestre
-                meios_nao_localizados = []
-                for m in resumo_3s["Meio de Pagamento"].unique():
-                    nome_banco_norm = _norm(str(m))
-                    if nome_banco_norm not in todos_valores_planilha:
-                        meios_nao_localizados.append(str(m))
+            # --- FUNÇÃO DE LIMPEZA PARA ELIMINAR ESPAÇOS INVISÍVEIS ---
+            def limpar_total(texto):
+                import re
+                import unicodedata
+                if not texto: return ""
+                # 1. Remove acentos e normaliza caracteres
+                t = unicodedata.normalize("NFKD", str(texto)).encode("ASCII", "ignore").decode("ASCII")
+                # 2. Transforma em minúsculo
+                t = t.lower()
+                # 3. O PULO DO GATO: Remove QUALQUER tipo de espaço (comum, \xa0, tab, etc)
+                t = re.sub(r'\s+', '', t) 
+                return t.strip()
 
-                if len(meios_nao_localizados) > 0:
-                    st.warning(f"⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):")
-                    for m in meios_nao_localizados:
-                        st.write(f"- {m}")
-                    
-                    st.markdown(f"""
-                    ✏️ Atualize a tabela clicando 
-                    <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
-                    """, unsafe_allow_html=True)
-                else:
-                    st.success("✅ Todos os meios de pagamento foram localizados!")
+            # Criamos o set da planilha usando a limpeza total
+            meios_validos_limpos = set()
+            # Varremos a planilha inteira (todas as colunas) para não ter erro
+            for col in df_meio_pgto_raw.columns:
+                for val in df_meio_pgto_raw[col].unique():
+                    meios_validos_limpos.add(limpar_total(val))
+            
+            # Verifica quem do banco não bate com a limpeza
+            meios_nao_localizados = []
+            for m in resumo_3s["Meio de Pagamento"].unique():
+                if limpar_total(m) not in meios_validos_limpos:
+                    meios_nao_localizados.append(str(m))
+
+            if len(meios_nao_localizados) > 0:
+                st.warning(f"⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):")
+                for m in meios_nao_localizados:
+                    st.write(f"- {m}")
+                
+                st.markdown(f"""
+                ✏️ Atualize a tabela clicando 
+                <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
+                """, unsafe_allow_html=True)
+            else:
+                st.success("✅ Todos os meios de pagamento foram localizados!")
 
             except Exception as e_fb:
                 st.error(f"Erro na validação de meios: {e_fb}")

@@ -470,7 +470,15 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
         df_tender["Meio de Pagamento"] = tender_props.apply(
             lambda x: x.get("tenderDescr") if isinstance(x, dict) else None
         )
-       
+        # ===== DEBUG TENDER DESCR =====
+        st.write("### 🔍 DEBUG: tender_props amostra")
+        amostra_props = df_tender["details"].head(5).apply(parse_props)
+        for i, p in enumerate(amostra_props):
+            st.write(f"Linha {i}: {p}")
+        
+        st.write("### 🔍 Valores únicos de 'Meio de Pagamento' (antes do groupby):")
+        st.write(df_tender["Meio de Pagamento"].value_counts(dropna=False).head(20))
+        # ===== FIM DEBUG =====
 
 
         df_tender["tip_amount"] = pd.to_numeric(

@@ -470,12 +470,7 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
         df_tender["Meio de Pagamento"] = tender_props.apply(
             lambda x: x.get("tenderDescr") if isinstance(x, dict) else None
         )
-        # DEBUG REAL DO BANCO
-        if True:
-            meios_unicos_banco = df_tender["Meio de Pagamento"].unique()
-            print("MEIOS VINDO DO BANCO:")
-            for m in meios_unicos_banco:
-                print(repr(m))
+        
             
         df_tender["tip_amount"] = pd.to_numeric(
             tender_props.apply(lambda x: x.get("tipAmount", 0) if isinstance(x, dict) else 0),
@@ -666,57 +661,44 @@ with st.spinner("⏳ Processando..."):
         st.markdown('</div>', unsafe_allow_html=True)
 
         # ========== EXIBIR RESULTADO 3S ==========
-        # ========== EXIBIR RESULTADO 3S (VERSÃO BLINDADA CONTRA CACHE) ==========
+        # ========== EXIBIR RESULTADO 3S (DIAGNÓSTICO VISUAL) ==========
         if st.session_state.modo_3s_mp and "resumo_3s_mp" in st.session_state:
             resumo_3s = st.session_state.resumo_3s_mp
             total_registros = st.session_state.total_registros_3s_mp
 
             st.success(f"✅ {total_registros} registros processados com sucesso!")
 
-            # --- FORÇA A LEITURA DA PLANILHA AGORA (SEM CACHE) ---
-            try:
-                # Lemos a aba diretamente do Google para garantir que pegamos sua alteração recente
-                ws_validacao = gc.open("Tabelas").worksheet("Tabela Meio Pagamento")
-                df_google_fresco = pd.DataFrame(ws_validacao.get_all_records())
+            # --- QUADRO DE DIAGNÓSTICO ---
+            with st.expander("🔍 DIAGNÓSTICO: Por que não está localizando?", expanded=True):
+                st.write("Abaixo estão os nomes EXATOS que o banco de dados enviou (com aspas para ver espaços):")
                 
-                # Criamos um set com TUDO que está na planilha, normalizado
-                # Usamos uma normalização que remove espaços duplos e acentos
-                def norm_blindada(t):
-                    import unicodedata
-                    import re
-                    if not t: return ""
-                    txt = unicodedata.normalize("NFKD", str(t)).encode("ASCII", "ignore").decode("ASCII")
-                    txt = txt.upper().strip() # Forçamos TUDO para MAIÚSCULO para comparar
-                    txt = re.sub(r'\s+', ' ', txt) # Transforma múltiplos espaços em um só
-                    return txt
+                # Pegamos os meios únicos do resumo vindo do banco
+                meios_banco = resumo_3s["Meio de Pagamento"].unique()
+                
+                # Criamos uma lista técnica (com aspas e códigos) para ver caracteres invisíveis
+                lista_tecnica_banco = [repr(str(m)) for m in meios_banco]
+                st.code("\n".join(lista_tecnica_banco), language="text")
 
-                # Pegamos valores de todas as colunas da planilha para garantir
-                meios_validos = set()
-                for col in df_google_fresco.columns:
-                    for val in df_google_fresco[col].unique():
-                        meios_validos.add(norm_blindada(val))
+                st.write("---")
+                st.write("Abaixo estão os nomes que o sistema carregou da sua PLANILHA (com aspas):")
+                # Usamos a planilha bruta para garantir que vemos o que foi lido
+                meios_planilha = df_meio_pgto_raw["Meio de Pagamento"].unique().tolist()
+                lista_tecnica_planilha = [repr(str(m)) for m in meios_planilha]
+                st.code("\n".join(lista_tecnica_planilha), language="text")
 
-                # Verifica quem do banco não está na planilha fresca
-                meios_nao_localizados = []
-                for m in resumo_3s["Meio de Pagamento"].unique():
-                    if norm_blindada(m) not in meios_validos:
-                        meios_nao_localizados.append(str(m))
+            # Validação normal (para manter o funcionamento visual das mensagens)
+            meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
+            meios_nao_localizados = [
+                m for m in meios_banco 
+                if _norm(str(m)) not in meios_norm_tabela
+            ]
 
-                if len(meios_nao_localizados) > 0:
-                    st.warning(f"⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):")
-                    # Exibimos em lista para ficar claro
-                    for m in meios_nao_localizados:
-                        st.write(f"• {m}")
-                    
-                    st.markdown(f"""
-                    <br>✏️ Se você já cadastrou, tente <b>recarregar a página (F5)</b> para limpar o cache do navegador.
-                    <br>Link da tabela: <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'>aqui</a>.
-                    """, unsafe_allow_html=True)
-                else:
-                    st.success("✅ Todos os meios de pagamento foram localizados com sucesso!")
-
-            except Exception as e_valid:
-                st.error(f"Erro ao validar com a planilha: {e_valid}")
+            if len(meios_nao_localizados) > 0:
+                st.warning(f"⚠️ {len(meios_nao_localizados)} meio(s) não localizado(s):")
+                for m in meios_nao_localizados:
+                    st.write(f"• {m}")
+            else:
+                st.success("✅ Todos os meios localizados!")
 
             # Mostrar resumo do período
             datas_validas = pd.to_datetime(resumo_3s["Data"], format="%d/%m/%Y", errors='coerce').dropna()

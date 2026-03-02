@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from io import BytesIO
 
-st.set_page_config(page_title="3S - Dump de Tabelas (Raw)", layout="wide")
+st.set_page_config(page_title="3S - Dump de Tabelas (RAW em Excel)", layout="wide")
 
 CERT_PATH = "aws-us-east-2-bundle.pem"
 
@@ -51,16 +51,36 @@ def fetch_table_limit(conn, table_name, limit=1000, schema="public"):
     q = f'SELECT * FROM "{schema}"."{table_name}" LIMIT {int(limit)}'
     return pd.read_sql(q, conn)
 
-def df_to_excel_bytes(df: pd.DataFrame, sheet_name="data"):
+def _make_excel_safe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Converte df para um formato 100% compatível com Excel.
+    Mantém os valores "raw" o máximo possível, mas faz cast para string
+    quando Excel não suporta o tipo.
+    """
     df_safe = df.copy()
+
     for col in df_safe.columns:
-        # timedelta
+        s = df_safe[col]
+
+        # 1) datetime com timezone (Excel não aceita)
+        if pd.api.types.is_datetime64_any_dtype(s):
+            try:
+                # tz-aware -> naive
+                df_safe[col] = s.dt.tz_localize(None)
+            except Exception:
+                try:
+                    df_safe[col] = s.dt.tz_convert(None)
+                except Exception:
+                    # fallback: string
+                    df_safe[col] = s.astype(str)
+
+        # 2) timedelta -> string
         if pd.api.types.is_timedelta64_dtype(df_safe[col]):
             df_safe[col] = df_safe[col].astype(str)
-            continue
-        # object: dict, list, bytes, uuid
+
+        # 3) object: dict/list/bytes/uuid/etc.
         if df_safe[col].dtype == object:
-            def _safe(x):
+            def _safe_obj(x):
                 if x is None:
                     return ""
                 if isinstance(x, (dict, list, bytes)):
@@ -68,13 +88,17 @@ def df_to_excel_bytes(df: pd.DataFrame, sheet_name="data"):
                 if isinstance(x, uuid.UUID):
                     return str(x)
                 return x
-            df_safe[col] = df_safe[col].apply(_safe)
-        # UUID direto (tipo psycopg2)
-        try:
-            if df_safe[col].apply(lambda x: isinstance(x, uuid.UUID)).any():
+
+            try:
+                df_safe[col] = df_safe[col].apply(_safe_obj)
+            except Exception:
+                # Se tiver objetos não iteráveis/estranhos, garante string
                 df_safe[col] = df_safe[col].astype(str)
-        except Exception:
-            pass
+
+    return df_safe
+
+def df_to_excel_bytes(df: pd.DataFrame, sheet_name="data"):
+    df_safe = _make_excel_safe(df)
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -85,7 +109,7 @@ def df_to_excel_bytes(df: pd.DataFrame, sheet_name="data"):
 # ========================
 ensure_cert_written()
 
-st.title("3S (Postgres) — Exportador RAW de Tabelas")
+st.title("3S (Postgres) — Exportador RAW (Somente Excel)")
 
 with st.sidebar:
     st.header("Config")
@@ -93,7 +117,7 @@ with st.sidebar:
     limit = st.number_input("LIMIT por tabela", min_value=1, max_value=500000, value=1000, step=1000)
     show_columns = st.checkbox("Mostrar colunas e tipos", value=True)
     show_preview = st.checkbox("Mostrar preview (dataframe)", value=True)
-    st.caption("Nenhum dado é normalizado ou alterado. Dump bruto com LIMIT.")
+    st.caption("Exportação RAW em Excel. Alguns tipos são convertidos para string por limitação do Excel.")
 
 # Conecta
 try:
@@ -130,6 +154,7 @@ if tab_mode == "Selecionar tabela":
                 df = fetch_table_limit(conn, tbl, limit=limit, schema=schema)
             except Exception as e:
                 st.error(f"Erro ao carregar tabela: {e}")
+                conn.close()
                 st.stop()
 
         st.write(f"**Linhas:** {len(df)} | **Colunas:** {df.shape[1]}")
@@ -138,18 +163,6 @@ if tab_mode == "Selecionar tabela":
             st.dataframe(df, use_container_width=True, height=520)
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        try:
-            csv_bytes = df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "📥 Baixar CSV",
-                data=csv_bytes,
-                file_name=f"{tbl}_{ts}.csv",
-                mime="text/csv",
-                key=f"csv_{tbl}_{ts}",
-            )
-        except Exception as e:
-            st.warning(f"Erro ao gerar CSV: {e}")
 
         try:
             xlsx_bytes = df_to_excel_bytes(df, sheet_name=tbl)
@@ -161,7 +174,7 @@ if tab_mode == "Selecionar tabela":
                 key=f"xlsx_{tbl}_{ts}",
             )
         except Exception as e:
-            st.warning(f"Erro ao gerar Excel: {e}")
+            st.error(f"Erro ao gerar Excel: {e}")
 
 else:
     st.subheader("Dump em lote")
@@ -169,7 +182,7 @@ else:
 
     if st.button("Carregar selecionadas", type="primary"):
         for tbl in selected:
-            st.markdown(f"---\n### {tbl}")
+            st.markdown(f"### {tbl}")
             with st.spinner(f"Carregando `{tbl}`..."):
                 try:
                     df = fetch_table_limit(conn, tbl, limit=limit, schema=schema)
@@ -190,30 +203,17 @@ else:
                 st.dataframe(df, use_container_width=True, height=360)
 
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            c1, c2 = st.columns(2)
-
-            try:
-                csv_bytes = df.to_csv(index=False).encode("utf-8")
-                c1.download_button(
-                    "📥 CSV",
-                    data=csv_bytes,
-                    file_name=f"{tbl}_{ts}.csv",
-                    mime="text/csv",
-                    key=f"csv_{tbl}_{ts}",
-                )
-            except Exception as e:
-                c1.warning(f"Erro CSV: {e}")
 
             try:
                 xlsx_bytes = df_to_excel_bytes(df, sheet_name=tbl)
-                c2.download_button(
-                    "📥 Excel",
+                st.download_button(
+                    "📥 Baixar Excel",
                     data=xlsx_bytes,
                     file_name=f"{tbl}_{ts}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key=f"xlsx_{tbl}_{ts}",
                 )
             except Exception as e:
-                c2.warning(f"Erro Excel: {e}")
+                st.error(f"Erro ao gerar Excel ({tbl}): {e}")
 
 conn.close()

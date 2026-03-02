@@ -659,25 +659,26 @@ with st.spinner("⏳ Processando..."):
         st.markdown('</div>', unsafe_allow_html=True)
 
         # ========== EXIBIR RESULTADO 3S ==========
+        # ========== EXIBIR RESULTADO 3S ==========
         if st.session_state.modo_3s_mp and "resumo_3s_mp" in st.session_state:
             resumo_3s = st.session_state.resumo_3s_mp
             total_registros = st.session_state.total_registros_3s_mp
-
+        
             st.success(f"✅ {total_registros} registros processados com sucesso!")
-
-            # Verificar meios não localizados
-            meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
-            st.write("**Meios na tabela Google (normalizados):**", sorted(list(meios_norm_tabela)))
-
-            # Tratando None para evitar o erro de ordenação
-            meios_banco = [str(m) if m is not None else "VALOR_NULO" for m in resumo_3s["Meio de Pagamento"].unique()]
-            st.write("**Meios vindos do banco 3S:**", sorted(meios_banco))
-            meios_nao_localizados = resumo_3s[
-                ~resumo_3s["Meio de Pagamento"].astype(str).str.strip().map(_norm).isin(meios_norm_tabela)
-            ]["Meio de Pagamento"].astype(str).unique()
-
+        
+            # 1. Criamos a lista de comparação garantindo que TUDO seja minúsculo (map(_norm))
+            # Isso ignora se na planilha está maiúsculo ou minúsculo
+            meios_norm_google = set(df_meio_pgto_google["Meio de Pagamento"].astype(str).map(_norm))
+        
+            # 2. Filtramos os erros comparando minúsculo com minúsculo
+            df_erros_meio = resumo_3s[
+                ~resumo_3s["Meio de Pagamento"].astype(str).map(_norm).isin(meios_norm_google)
+            ]
+            
+            meios_nao_localizados = df_erros_meio["Meio de Pagamento"].unique()
+        
             if len(meios_nao_localizados) > 0:
-                meios_nao_localizados_str = "<br>".join(meios_nao_localizados)
+                meios_nao_localizados_str = "<​br>".join(meios_nao_localizados)
                 mensagem = f"""
                 ⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):<br>{meios_nao_localizados_str}
                 <br>✏️ Atualize a tabela clicando 

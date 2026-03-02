@@ -853,20 +853,22 @@ with st.spinner("⏳ Processando..."):
                                     df_meio_pagamento[c] = ""
 
                     # 🔁 Consolida duplicatas por Data + Loja + Meio de Pagamento
+                    # 🔁 Consolida duplicatas por Data + Loja + Meio de Pagamento
                     if 'df_meio_pagamento' in locals() and not df_meio_pagamento.empty:
                         tmp = df_meio_pagamento.copy()
 
                         if "Valor (R$)" in tmp.columns:
                             tmp["Valor (R$)"] = pd.to_numeric(tmp["Valor (R$)"], errors="coerce").fillna(0)
 
+                        # ✅ Use _norm para garantir que "PIX" e "pix" sejam a mesma chave de grupo
                         tmp["_k_data"] = pd.to_datetime(tmp["Data"], dayfirst=True, errors="coerce").dt.date
-                        tmp["_k_loja"] = tmp["Loja"].astype(str).str.strip().str.lower()
-                        tmp["_k_meio"] = tmp["Meio de Pagamento"].astype(str).str.strip().str.lower()
+                        tmp["_k_loja"] = tmp["Loja"].astype(str).map(_norm)
+                        tmp["_k_meio"] = tmp["Meio de Pagamento"].astype(str).map(_norm)
 
                         agg_dict = {
                             "Data": "first",
                             "Dia da Semana": "first",
-                            "Meio de Pagamento": "first",
+                            "Meio de Pagamento": "first", # Mantém o nome original da primeira ocorrência
                             "Tipo de Pagamento": "first",
                             "Tipo DRE": "first",
                             "Loja": "first",
@@ -884,7 +886,6 @@ with st.spinner("⏳ Processando..."):
                                .agg(agg_dict)
                                .drop(columns=["_k_data", "_k_loja", "_k_meio"])
                         )
-
                         df_meio_pagamento = df_meio_pagamento.reindex(columns=[c for c in tmp.columns if c in df_meio_pagamento.columns])
 
                         if 'col_order' in locals():
@@ -903,14 +904,23 @@ with st.spinner("⏳ Processando..."):
                     col2.markdown(f"<div style='font-size:1.2rem;'>💰 Valor total<br><span style='color:green;'>{valor_total}</span></div>", unsafe_allow_html=True)
 
                     # Validações
+                    # ✅ VALIDAÇÕES CORRIGIDAS (Insensível a maiúsculas/acentos)
+                    # ======================================================
+                    # 1. Empresas não localizadas
                     empresas_nao_localizadas = df_meio_pagamento[
                         df_meio_pagamento["Loja"].astype(str).str.strip().isin(["", "nan"])
                     ]["Código Everest"].unique() if "Código Everest" in df_meio_pagamento.columns else []
-                    meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
-                    meios_nao_localizados = df_meio_pagamento[
-                        ~df_meio_pagamento["Meio de Pagamento"].astype(str).str.strip().map(_norm).isin(meios_norm_tabela)
-                    ]["Meio de Pagamento"].astype(str).unique()
 
+                    # 2. Meios de Pagamento não localizados (Usando _norm para comparar)
+                    meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
+                    
+                    # Filtramos o DataFrame original buscando quem, após normalizado, NÃO está na tabela do Google
+                    df_erros_meio = df_meio_pagamento[
+                        ~df_meio_pagamento["Meio de Pagamento"].astype(str).map(_norm).isin(meios_norm_tabela)
+                    ]
+                    meios_nao_localizados = df_erros_meio["Meio de Pagamento"].unique()
+
+                    
                     # Exportar Excel
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:

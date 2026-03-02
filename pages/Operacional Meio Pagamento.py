@@ -701,11 +701,11 @@ with st.spinner("⏳ Processando..."):
         # ========== EXIBIR RESULTADO 3S ==========
         # ========== EXIBIR RESULTADO 3S ==========
         if st.session_state.modo_3s_mp and "resumo_3s_mp" in st.session_state:
-        # 1. Pegamos os dados
-        df_exibir = st.session_state.resumo_3s_mp.copy()
-        total_registros = st.session_state.total_registros_3s_mp
-        # Garante que None/NaN na coluna Meio de Pagamento vire string vazia
-        df_exibir["Meio de Pagamento"] = df_exibir["Meio de Pagamento"].fillna("").astype(str).str.strip()
+            # 1. Pegamos os dados
+            df_exibir = st.session_state.resumo_3s_mp.copy()
+            total_registros = st.session_state.total_registros_3s_mp
+            # Garante que None/NaN na coluna Meio de Pagamento vire string vazia
+            df_exibir["Meio de Pagamento"] = df_exibir["Meio de Pagamento"].fillna("").astype(str).str.strip()
 
             # 2. RE-APLICAR MAPEAMENTO (Sem apagar a coluna original)
             df_meio_ref = df_meio_pgto_google.copy()

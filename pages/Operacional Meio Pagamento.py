@@ -666,46 +666,40 @@ with st.spinner("⏳ Processando..."):
 
             st.success(f"✅ {total_registros} registros processados com sucesso!")
 
-            # --- LIMPEZA TOTAL PARA COMPARAÇÃO ---
-            def limpeza_extrema(texto):
-                import unicodedata
-                import re
-                if not texto or str(texto).lower() == 'nan': return ""
-                # Remove acentos, vira minúsculo, remove tudo que não é letra/número e tira espaços
-                t = unicodedata.normalize("NFKD", str(texto)).encode("ASCII", "ignore").decode("ASCII")
-                t = t.lower().strip()
-                t = re.sub(r'[^a-z0-9]', '', t) # Deixa só letras e números grudados
-                return t
-
-            # Criamos o set da planilha com limpeza extrema
-            meios_validos_limpos = set()
-            for m in df_meio_pgto_google["Meio de Pagamento"].unique():
-                meios_validos_limpos.add(limpeza_extrema(m))
-            
-            # Se você tiver colunas de "De/Para" na planilha, adicione elas também ao set de válidos
-            for col in df_meio_pgto_google.columns:
-                if "ciss" in col.lower() or "de para" in col.lower():
-                    for m in df_meio_pgto_google[col].unique():
-                        meios_validos_limpos.add(limpeza_extrema(m))
-
-            # Verifica quem do banco não bate com nada da planilha
-            meios_nao_localizados = []
-            for m in resumo_3s["Meio de Pagamento"].unique():
-                if limpeza_extrema(m) not in meios_validos_limpos:
-                    meios_nao_localizados.append(str(m))
-
-            if len(meios_nao_localizados) > 0:
-                # Usamos st.write para o Streamlit renderizar o HTML corretamente ou lista simples
-                st.warning(f"⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):")
-                for m in meios_nao_localizados:
-                    st.write(f"- {m}")
+            # --- FORÇA BRUTA: LER PLANILHA DIRETAMENTE AQUI ---
+            try:
+                # Abrimos a aba de Meio de Pagamento novamente para garantir dados frescos
+                ws_meios = gc.open("Tabelas").worksheet("Tabela Meio Pagamento")
+                dados_frescos = pd.DataFrame(ws_meios.get_all_records())
                 
-                st.markdown(f"""
-                ✏️ Atualize a tabela clicando 
-                <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
-                """, unsafe_allow_html=True)
-            else:
-                st.success("✅ Todos os meios de pagamento foram localizados!")
+                # Criamos uma lista de TUDO que existe na planilha (em todas as colunas)
+                # Isso garante que se o nome estiver em "Meio de Pagamento" ou "De/Para", ele seja achado
+                todos_valores_planilha = set()
+                for col in dados_frescos.columns:
+                    for val in dados_frescos[col].astype(str).unique():
+                        todos_valores_planilha.add(_norm(val))
+                
+                # Verifica quem do banco não está nessa lista mestre
+                meios_nao_localizados = []
+                for m in resumo_3s["Meio de Pagamento"].unique():
+                    nome_banco_norm = _norm(str(m))
+                    if nome_banco_norm not in todos_valores_planilha:
+                        meios_nao_localizados.append(str(m))
+
+                if len(meios_nao_localizados) > 0:
+                    st.warning(f"⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):")
+                    for m in meios_nao_localizados:
+                        st.write(f"- {m}")
+                    
+                    st.markdown(f"""
+                    ✏️ Atualize a tabela clicando 
+                    <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
+                    """, unsafe_allow_html=True)
+                else:
+                    st.success("✅ Todos os meios de pagamento foram localizados!")
+
+            except Exception as e_fb:
+                st.error(f"Erro na validação de meios: {e_fb}")
 
             # Mostrar resumo do período
             datas_validas = pd.to_datetime(resumo_3s["Data"], format="%d/%m/%Y", errors='coerce').dropna()

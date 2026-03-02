@@ -207,13 +207,17 @@ with st.spinner("⏳ Processando..."):
             df['TIP_AMOUNT'] = pd.to_numeric(props.apply(lambda x: x.get('TIP_AMOUNT')), errors='coerce').fillna(0)
             df['VOID_TYPE'] = props.apply(lambda x: x.get('VOID_TYPE'))
 
-            # 4. Desconsiderar registros com VOID_TYPE preenchido
+            # 4. Desconsiderar registros com VOID_TYPE preenchido e pedidos sem valor
+            # Filtro 1: Remove cancelados (VOID_TYPE)
             df = df[df['VOID_TYPE'].isna() | (df['VOID_TYPE'] == "") | (df['VOID_TYPE'] == 0)].copy()
-
+            
+            # Filtro 2: Remove pedidos com valor bruto <= 0 (opcional, mas comum para Ticket Médio real)
+            df = df[df['total_gross'] > 0].copy()
+            
             # 5. Criar coluna de data sem hora para agrupamento
             df['data'] = df['business_dt'].dt.date
 
-            # 6. Agrupar
+            # 6. Agrupar (Agora o df já está limpo, a contagem será correta)
             resumo = df.groupby(['store_code', 'data']).agg(
                 Fat_Real=('total_gross', 'sum'),
                 Serv_Tx=('TIP_AMOUNT', 'sum'),

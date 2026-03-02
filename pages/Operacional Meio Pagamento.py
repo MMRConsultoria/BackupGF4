@@ -1110,8 +1110,8 @@ with st.spinner("⏳ Processando..."):
             # =========================================================
             # 📥 BOTÃO ÚNICO: ENVIAR E ATUALIZAR CACHE
             # =========================================================
-            if st.button("📥 Enviar dados e Atualizar Cache", key="btn_enviar_e_cache"):
-                with st.spinner("🔄 Processando envio e atualizando cache..."):
+            if st.button("📥 Enviar dados e Atualizar", key="btn_enviar_e_cache"):
+                with st.spinner("🔄 Processando envio e atualizando..."):
                     # 1. Envio dos novos dados
                     if novos_dados:
                         aba_destino.append_rows(novos_dados)

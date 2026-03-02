@@ -666,25 +666,44 @@ with st.spinner("⏳ Processando..."):
 
             st.success(f"✅ {total_registros} registros processados com sucesso!")
 
-            # --- CORREÇÃO AQUI: Normalizar antes de comparar ---
-            # Criamos um set com os meios da planilha já normalizados (minúsculos)
-            meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"].unique())
+            # --- LIMPEZA TOTAL PARA COMPARAÇÃO ---
+            def limpeza_extrema(texto):
+                import unicodedata
+                import re
+                if not texto or str(texto).lower() == 'nan': return ""
+                # Remove acentos, vira minúsculo, remove tudo que não é letra/número e tira espaços
+                t = unicodedata.normalize("NFKD", str(texto)).encode("ASCII", "ignore").decode("ASCII")
+                t = t.lower().strip()
+                t = re.sub(r'[^a-z0-9]', '', t) # Deixa só letras e números grudados
+                return t
+
+            # Criamos o set da planilha com limpeza extrema
+            meios_validos_limpos = set()
+            for m in df_meio_pgto_google["Meio de Pagamento"].unique():
+                meios_validos_limpos.add(limpeza_extrema(m))
             
-            # Filtramos os meios do resumo que, após normalizados, NÃO estão na tabela
-            meios_nao_localizados = [
-                m for m in resumo_3s["Meio de Pagamento"].unique() 
-                if _norm(str(m)) not in meios_norm_tabela
-            ]
+            # Se você tiver colunas de "De/Para" na planilha, adicione elas também ao set de válidos
+            for col in df_meio_pgto_google.columns:
+                if "ciss" in col.lower() or "de para" in col.lower():
+                    for m in df_meio_pgto_google[col].unique():
+                        meios_validos_limpos.add(limpeza_extrema(m))
+
+            # Verifica quem do banco não bate com nada da planilha
+            meios_nao_localizados = []
+            for m in resumo_3s["Meio de Pagamento"].unique():
+                if limpeza_extrema(m) not in meios_validos_limpos:
+                    meios_nao_localizados.append(str(m))
 
             if len(meios_nao_localizados) > 0:
-                # Exibe os nomes originais no aviso para o usuário identificar
-                meios_nao_localizados_str = "<​br>".join(meios_nao_localizados)
-                mensagem = f"""
-                ⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):<br>{meios_nao_localizados_str}
-                <br>✏️ Atualize a tabela clicando 
+                # Usamos st.write para o Streamlit renderizar o HTML corretamente ou lista simples
+                st.warning(f"⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):")
+                for m in meios_nao_localizados:
+                    st.write(f"- {m}")
+                
+                st.markdown(f"""
+                ✏️ Atualize a tabela clicando 
                 <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
-                """
-                st.markdown(mensagem, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
             else:
                 st.success("✅ Todos os meios de pagamento foram localizados!")
 

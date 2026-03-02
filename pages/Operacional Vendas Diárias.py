@@ -216,19 +216,28 @@ with st.spinner("⏳ Processando..."):
             # 5. Criar coluna de data sem hora para agrupamento
             df['data'] = df['business_dt'].dt.date
             
-            # 6. Agrupar totais por store_code e data
+            # 6. Agrupar e já calcular o Ticket e Totais em um único passo
             resumo = df.groupby(['store_code', 'data']).agg(
                 Fat_Real=('total_gross', 'sum'),
                 Serv_Tx=('TIP_AMOUNT', 'sum'),
                 Qtd_Pedidos=('order_code', 'count')
             ).reset_index()
             
-            # 7. Calcular Fat.Total
-            resumo['Fat_Total'] = resumo['Fat_Real'] + resumo['Serv_Tx']
+            # 7. Cálculos matemáticos
+            resumo['Fat.Total'] = resumo['Fat_Real'] + resumo['Serv_Tx']
+            # Cálculo do Ticket: se Qtd_Pedidos for 0, coloca 0 para evitar erro de divisão
+            resumo['Ticket'] = (resumo['Fat_Real'] / resumo['Qtd_Pedidos'].replace(0, np.nan)).fillna(0).round(2)
+            
+            # 8. Renomear colunas (Note que NÃO incluímos Qtd_Pedidos aqui, ela será descartada no filter abaixo)
+            resumo = resumo.rename(columns={
+                'store_code': 'Código Everest',
+                'data': 'Data',
+                'Fat_Real': 'Fat.Real',
+                'Serv_Tx': 'Serv/Tx'
+            })
 
-            # 8. CALCULAR TICKET MÉDIO ANTES DO MERGE (enquanto Qtd_Pedidos ainda existe)
-            resumo['Ticket'] = (resumo['Fat_Real'] / resumo['Qtd_Pedidos']).replace([np.inf, -np.inf], 0).fillna(0).round(2)
-            resumo.drop(columns=['Qtd_Pedidos'], inplace=True)
+            # Selecionar apenas as colunas que queremos manter (isso exclui a Qtd_Pedidos automaticamente)
+            resumo = resumo[['Código Everest', 'Data', 'Fat.Real', 'Serv/Tx', 'Fat.Total', 'Ticket']]
             
             # 9. Renomear colunas
             resumo = resumo.rename(columns={

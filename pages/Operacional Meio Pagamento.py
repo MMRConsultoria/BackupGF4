@@ -704,9 +704,6 @@ with st.spinner("⏳ Processando..."):
             else:
                 st.success("✅ Todos os meios de pagamento foram localizados!")
 
-            except Exception as e_fb:
-                st.error(f"Erro na validação de meios: {e_fb}")
-
             # Mostrar resumo do período
             datas_validas = pd.to_datetime(resumo_3s["Data"], format="%d/%m/%Y", errors='coerce').dropna()
             if not datas_validas.empty:

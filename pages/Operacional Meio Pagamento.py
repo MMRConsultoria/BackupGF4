@@ -559,7 +559,7 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
         resumo["Valor (R$)"] = pd.to_numeric(resumo["Valor (R$)"], errors="coerce").fillna(0).round(2)
 
         # remove coluna auxiliar
-        resumo.drop(columns=["Data_dt"], inplace=True)
+        resumo.drop(columns=["Data_dt"], inplace=True, errors="ignore")
 
         # ordem padrão
         col_order = [

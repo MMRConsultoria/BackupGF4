@@ -522,14 +522,22 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
             df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].map(_norm)
 
         # CÓDIGO CORRIGIDO
-        df_validos = df_meio_pgto_google[
-            (df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip() != "") &
-            (df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip() != "nan") &
-            (df_meio_pgto_google["Tipo de Pagamento"].notna())
-        ].copy()
+        # MAPEAMENTO ROBUSTO - prioriza valores preenchidos em caso de duplicatas
+        df_meio_local = df_meio_pgto_google.copy()
+        df_meio_local["__meio_norm__"] = df_meio_local["Meio de Pagamento"].astype(str).map(_norm)
+        for _c in ["Tipo de Pagamento", "Tipo DRE"]:
+            df_meio_local[_c] = df_meio_local[_c].astype(str).replace("nan", "").str.strip()
         
-        pgto_map = dict(zip(df_validos["__meio_norm__"], df_validos["Tipo de Pagamento"].astype(str)))
-        dre_map  = dict(zip(df_validos["__meio_norm__"], df_validos["Tipo DRE"].astype(str)))
+        def _pegar_preenchido(s):
+            lista = [x for x in s.tolist() if x and x.strip() and x.strip().lower() != "nan"]
+            return lista[0] if lista else ""
+        
+        df_ref = (
+            df_meio_local.groupby("__meio_norm__", as_index=False)
+            .agg({"Tipo de Pagamento": _pegar_preenchido, "Tipo DRE": _pegar_preenchido})
+        )
+        pgto_map = dict(zip(df_ref["__meio_norm__"], df_ref["Tipo de Pagamento"]))
+        dre_map  = dict(zip(df_ref["__meio_norm__"], df_ref["Tipo DRE"]))
         
         df_tender["__meio_norm__"] = df_tender["Meio de Pagamento"].astype(str).str.strip().map(_norm)
         df_tender["Tipo de Pagamento"] = df_tender["__meio_norm__"].map(pgto_map).fillna("")
@@ -1010,10 +1018,23 @@ with st.spinner("⏳ Processando..."):
                 df_meio_pgto_google["Tipo DRE"].astype(str).str.strip()
             )
 
-            pgto_map = dict(zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo de Pagamento"]))
-            dre_map  = dict(zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo DRE"]))
+            df_meio_aba2 = df_meio_pgto_google.copy()
+            df_meio_aba2["__k__"] = df_meio_aba2["Meio de Pagamento"].astype(str).map(_norm)
+            for _c in ["Tipo de Pagamento", "Tipo DRE"]:
+                df_meio_aba2[_c] = df_meio_aba2[_c].astype(str).replace("nan", "").str.strip()
+            
+            def _pegar_preenchido_aba2(s):
+                lista = [x for x in s.tolist() if x and x.strip() and x.strip().lower() != "nan"]
+                return lista[0] if lista else ""
+            
+            df_ref_aba2 = (
+                df_meio_aba2.groupby("__k__", as_index=False)
+                .agg({"Tipo de Pagamento": _pegar_preenchido_aba2, "Tipo DRE": _pegar_preenchido_aba2})
+            )
+            pgto_map = dict(zip(df_ref_aba2["__k__"], df_ref_aba2["Tipo de Pagamento"]))
+            dre_map  = dict(zip(df_ref_aba2["__k__"], df_ref_aba2["Tipo DRE"]))
 
-            df_final["__meio_norm__"] = df_final["Meio de Pagamento"].astype(str).str.strip().str.lower()
+            df_final["__meio_norm__"] = df_final["Meio de Pagamento"].astype(str).str.strip().map(_norm)
 
             if "Tipo de Pagamento" not in df_final.columns:
                 pos = df_final.columns.get_loc("Meio de Pagamento") + 1

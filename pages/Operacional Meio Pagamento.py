@@ -614,7 +614,7 @@ with st.spinner("⏳ Processando..."):
 
     # MAPAS de classificação (deduplicamos por canônico)
     df_meio_pgto_google = df_meio_pgto_raw.copy()
-    df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].map(_norm)
+    df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].astype(str).map(_norm)
     df_meio_pgto_google = df_meio_pgto_google.drop_duplicates(subset=["__meio_norm__"], keep="first")
 
     # 🔥 Título

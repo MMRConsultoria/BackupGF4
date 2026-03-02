@@ -454,6 +454,7 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
                 order_picture_id,
                 tender_amount,
                 change_amount,
+                tender_name,
                 details
             FROM public.order_picture_tender
             WHERE order_picture_id = ANY(%s)
@@ -467,9 +468,27 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
         df_tender["change_amount"] = pd.to_numeric(df_tender["change_amount"], errors="coerce").fillna(0)
 
         tender_props = df_tender["details"].apply(parse_props)
-        df_tender["Meio de Pagamento"] = tender_props.apply(
-            lambda x: x.get("tenderDescr") if isinstance(x, dict) else None
-        )
+
+        def extrair_meio(row):
+            d = row["details_parsed"]
+            # 1. Tenta extrair do details (tenderDescr, tenderDesc, tenderTypeDescription)
+            if isinstance(d, dict):
+                meio = (
+                    d.get("tenderDescr")
+                    or d.get("tenderDesc")
+                    or d.get("tenderTypeDescription")
+                )
+                if meio and str(meio).strip():
+                    return str(meio).strip()
+            # 2. Fallback: usa tender_name quando details está vazio {}
+            tn = row.get("tender_name")
+            if tn is not None and str(tn).strip() not in ("", "None", "nan"):
+                return str(tn).strip()
+            return None
+
+        df_tender["details_parsed"] = tender_props
+        df_tender["Meio de Pagamento"] = df_tender.apply(extrair_meio, axis=1)
+        df_tender.drop(columns=["details_parsed"], inplace=True, errors="ignore")
         df_tender["tip_amount"] = pd.to_numeric(
             tender_props.apply(lambda x: x.get("tipAmount", 0) if isinstance(x, dict) else 0),
             errors="coerce"

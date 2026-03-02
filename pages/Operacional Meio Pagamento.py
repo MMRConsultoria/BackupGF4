@@ -524,7 +524,13 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
         pgto_map = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"].astype(str)))
         dre_map  = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"].astype(str)))
 
-        df_tender["__meio_norm__"] = df_tender["Meio de Pagamento"].astype(str).str.strip().map(_norm)
+        df_tender["__meio_norm__"] = (
+            df_tender["Meio de Pagamento"]
+                .astype(str)
+                .str.strip()
+                .str.replace(r"\s+", " ", regex=True)
+                .map(_norm)
+        )
         df_tender["Tipo de Pagamento"] = df_tender["__meio_norm__"].map(pgto_map).fillna("")
         df_tender["Tipo DRE"] = df_tender["__meio_norm__"].map(dre_map).fillna("")
         df_tender.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
@@ -906,7 +912,13 @@ with st.spinner("⏳ Processando..."):
                     empresas_nao_localizadas = df_meio_pagamento[
                         df_meio_pagamento["Loja"].astype(str).str.strip().isin(["", "nan"])
                     ]["Código Everest"].unique() if "Código Everest" in df_meio_pagamento.columns else []
-                    meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
+                    df_meio_pgto_google["__meio_norm__"] = (
+                        df_meio_pgto_google["Meio de Pagamento"]
+                            .astype(str)
+                            .str.strip()
+                            .str.replace(r"\s+", " ", regex=True)
+                            .map(_norm)
+                    )
                     meios_nao_localizados = df_meio_pagamento[
                         ~df_meio_pagamento["Meio de Pagamento"].astype(str).str.strip().map(_norm).isin(meios_norm_tabela)
                     ]["Meio de Pagamento"].astype(str).unique()

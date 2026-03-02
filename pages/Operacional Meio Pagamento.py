@@ -470,9 +470,6 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
         df_tender["Meio de Pagamento"] = tender_props.apply(
             lambda x: x.get("tenderDescr") if isinstance(x, dict) else None
         )
-        
-
-
         df_tender["tip_amount"] = pd.to_numeric(
             tender_props.apply(lambda x: x.get("tipAmount", 0) if isinstance(x, dict) else 0),
             errors="coerce"
@@ -524,46 +521,26 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
         if "__meio_norm__" not in df_meio_pgto_google.columns:
             df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].map(_norm)
 
-        # CÓDIGO CORRIGIDO
-        # MAPEAMENTO ROBUSTO - prioriza valores preenchidos em caso de duplicatas
-        df_meio_local = df_meio_pgto_google.copy()
-        df_meio_local["__meio_norm__"] = df_meio_local["Meio de Pagamento"].astype(str).map(_norm)
-        for _c in ["Tipo de Pagamento", "Tipo DRE"]:
-            df_meio_local[_c] = df_meio_local[_c].astype(str).replace("nan", "").str.strip()
-        
-        def _pegar_preenchido(s):
-            lista = [x for x in s.tolist() if x and x.strip() and x.strip().lower() != "nan"]
-            return lista[0] if lista else ""
-        
-        df_ref = (
-            df_meio_local.groupby("__meio_norm__", as_index=False)
-            .agg({"Tipo de Pagamento": _pegar_preenchido, "Tipo DRE": _pegar_preenchido})
-        )
-      
+        pgto_map = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"].astype(str)))
+        dre_map  = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"].astype(str)))
 
-        
-        pgto_map = dict(zip(df_ref["__meio_norm__"], df_ref["Tipo de Pagamento"]))
-        dre_map  = dict(zip(df_ref["__meio_norm__"], df_ref["Tipo DRE"]))
-        
         df_tender["__meio_norm__"] = df_tender["Meio de Pagamento"].astype(str).str.strip().map(_norm)
         df_tender["Tipo de Pagamento"] = df_tender["__meio_norm__"].map(pgto_map).fillna("")
         df_tender["Tipo DRE"] = df_tender["__meio_norm__"].map(dre_map).fillna("")
         df_tender.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
 
         # RESUMO (dia + loja + meio)
-        # RESUMO (dia + loja + meio) - ADICIONADO Meio de Pagamento ao GroupBy
         resumo = df_tender.groupby(
-            ["Data", "Dia da Semana", "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",
+            ["Data_dt", "Data", "Dia da Semana", "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",
              "Loja", "Código Everest", "Grupo", "Código Grupo Everest", "Mês", "Ano", "Sistema"],
             dropna=False,
             as_index=False
         ).agg({"Valor (R$)": "sum"})
 
         resumo["Valor (R$)"] = pd.to_numeric(resumo["Valor (R$)"], errors="coerce").fillna(0).round(2)
-        resumo["Meio de Pagamento"] = resumo["Meio de Pagamento"].fillna("").astype(str).str.strip()
 
         # remove coluna auxiliar
-        resumo.drop(columns=["Data_dt"], inplace=True, errors="ignore")
+        resumo.drop(columns=["Data_dt"], inplace=True)
 
         # ordem padrão
         col_order = [
@@ -595,9 +572,6 @@ with st.spinner("⏳ Processando..."):
     gc = gspread.authorize(credentials)
     planilha = gc.open("Tabelas")
 
-
-
-    
     # Tabela Empresa
     df_empresa = pd.DataFrame(planilha.worksheet("Tabela Empresa").get_all_records())
 
@@ -668,35 +642,11 @@ with st.spinner("⏳ Processando..."):
         st.markdown('<div class="botao-vermelho">', unsafe_allow_html=True)
         if st.button("🔄 Atualizar 3S Checkout", key="btn_3s_mp"):
             st.session_state.modo_3s_mp = True
-            st.session_state.df_meio_pagamento = None 
+            st.session_state.df_meio_pagamento = None  # limpa upload manual
 
             with st.spinner("Buscando dados do banco..."):
-                # 1. BUSCA BRUTA PARA DEBUG
-                conn = get_db_conn()
-                agora_brasil = datetime.utcnow() - timedelta(hours=3)
-                ontem = (agora_brasil - timedelta(days=1)).date()
-                data_inicio = ontem - timedelta(days=2) # apenas 2 dias para o debug ser rápido
-                
-                query_op = "SELECT order_picture_id FROM public.order_picture WHERE business_dt >= %s AND business_dt <= %s AND state_id = 5 LIMIT 100"
-                df_op_debug = pd.read_sql(query_op, conn, params=(data_inicio, ontem))
-                
-                if not df_op_debug.empty:
-                    ids = df_op_debug["order_picture_id"].tolist()
-                    query_tender = "SELECT details FROM public.order_picture_tender WHERE order_picture_id = ANY(%s) LIMIT 20"
-                    df_tender_debug = pd.read_sql(query_tender, conn, params=(ids,))
-                    
-                    st.write("### 🔴 DEBUG CRÍTICO: DADOS BRUTOS DO BANCO")
-                    st.write("Abaixo estão os campos 'details' vindos direto do banco. Procure pelo nome do meio de pagamento (ex: PIX, Dinheiro):")
-                    for i, row in df_tender_debug.iterrows():
-                        st.code(f"Linha {i}: {row['details']}")
-                    
-                    st.warning("O script foi pausado para o debug. Remova este código após identificar a chave correta.")
-                    conn.close()
-                    st.stop() # TRAVA A TELA AQUI
-                
-                # Se o debug acima não travar, ele segue o fluxo normal
                 resumo_3s, erro_3s, total_registros = buscar_meio_pagamento_3s_checkout(df_empresa, df_meio_pgto_google)
-                
+
                 if erro_3s:
                     st.error(f"❌ Erro ao buscar dados: {erro_3s}")
                 elif resumo_3s is not None and not resumo_3s.empty:
@@ -709,89 +659,59 @@ with st.spinner("⏳ Processando..."):
         st.markdown('</div>', unsafe_allow_html=True)
 
         # ========== EXIBIR RESULTADO 3S ==========
-        # ========== EXIBIR RESULTADO 3S ==========
         if st.session_state.modo_3s_mp and "resumo_3s_mp" in st.session_state:
-            # 1. Pegamos os dados
-            df_exibir = st.session_state.resumo_3s_mp.copy()
+            resumo_3s = st.session_state.resumo_3s_mp
             total_registros = st.session_state.total_registros_3s_mp
-            # Garante que None/NaN na coluna Meio de Pagamento vire string vazia
-            df_exibir["Meio de Pagamento"] = df_exibir["Meio de Pagamento"].fillna("").astype(str).str.strip()
-
-           
-                    
-            # 2. RE-APLICAR MAPEAMENTO (Sem apagar a coluna original)
-            df_meio_ref = df_meio_pgto_google.copy()
-            df_meio_ref["__k__"] = df_meio_ref["Meio de Pagamento"].astype(str).map(_norm)
-            
-            def _get_val(s):
-                l = [x for x in s.tolist() if x and str(x).strip().lower() not in ["nan", ""]]
-                return l[0] if l else ""
-
-            df_mapa = df_meio_ref.groupby("__k__").agg({
-                "Tipo de Pagamento": _get_val, 
-                "Tipo DRE": _get_val
-            }).reset_index()
-            
-            map_pgto = dict(zip(df_mapa["__k__"], df_mapa["Tipo de Pagamento"]))
-            map_dre = dict(zip(df_mapa["__k__"], df_mapa["Tipo DRE"]))
-
-            # Criamos a chave apenas para busca
-            df_exibir["__k__"] = df_exibir["Meio de Pagamento"].astype(str).map(_norm)
-            
-            # Preenchemos as classificações APENAS se estiverem vazias
-            df_exibir["Tipo de Pagamento"] = df_exibir["__k__"].map(map_pgto).fillna("")
-            df_exibir["Tipo DRE"] = df_exibir["__k__"].map(map_dre).fillna("")
-            
-            # Removemos apenas a chave temporária
-            df_exibir = df_exibir.drop(columns=["__k__"], errors="ignore")
-
-            # 3. Reordenar colunas para garantir que 'Meio de Pagamento' apareça na posição correta (C)
-            col_order = [
-                "Data", "Dia da Semana", "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",
-                "Loja", "Código Everest", "Grupo", "Código Grupo Everest",
-                "Valor (R$)", "Mês", "Ano", "Sistema"
-            ]
-            # Garante que todas as colunas existam antes de reordenar
-            for col in col_order:
-                if col not in df_exibir.columns:
-                    df_exibir[col] = ""
-            
-            df_exibir = df_exibir[col_order]
 
             st.success(f"✅ {total_registros} registros processados com sucesso!")
 
-            # 4. Verificar meios não localizados (usando a chave normalizada)
-            meios_norm_tabela = set(df_mapa["__k__"])
-            # Criamos uma lista de meios que não batem com a tabela Google
-            meios_nao_localizados = []
-            for m_orig in df_exibir["Meio de Pagamento"].unique():
-                if _norm(str(m_orig)) not in meios_norm_tabela and str(m_orig).strip() != "":
-                    meios_nao_localizados.append(str(m_orig))
+            # Verificar meios não localizados
+            meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
+            meios_nao_localizados = resumo_3s[
+                ~resumo_3s["Meio de Pagamento"].astype(str).str.strip().map(_norm).isin(meios_norm_tabela)
+            ]["Meio de Pagamento"].astype(str).unique()
 
             if len(meios_nao_localizados) > 0:
-                meios_nao_localizados_str = "<​br>".join(meios_nao_localizados)
-                st.markdown(f"""
+                meios_nao_localizados_str = "<br>".join(meios_nao_localizados)
+                mensagem = f"""
                 ⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):<br>{meios_nao_localizados_str}
-                <br>✏️ Atualize a tabela clicando <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
-                """, unsafe_allow_html=True)
+                <br>✏️ Atualize a tabela clicando 
+                <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
+                """
+                st.markdown(mensagem, unsafe_allow_html=True)
             else:
                 st.success("✅ Todos os meios de pagamento foram localizados!")
 
-            # 5. KPIs e Download
-            valor_total = df_exibir["Valor (R$)"].sum()
-            valor_total_formatado = f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            st.markdown(f"💰 **Valor total:** <span style='color:green; font-size:1.2rem;'>{valor_total_formatado}</span>", unsafe_allow_html=True)
+            # Mostrar resumo do período
+            datas_validas = pd.to_datetime(resumo_3s["Data"], format="%d/%m/%Y", errors='coerce').dropna()
+            if not datas_validas.empty:
+                data_inicial = datas_validas.min().strftime("%d/%m/%Y")
+                data_final_str = datas_validas.max().strftime("%d/%m/%Y")
+                valor_total = resumo_3s["Valor (R$)"].sum()
+                valor_total_formatado = f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"""
+                        <div style='font-size:1.2rem;'>📅 Período processado<br>{data_inicial} até {data_final_str}</div>
+                    """, unsafe_allow_html=True)
+                with col2:
+                    st.markdown(f"""
+                        <div style='font-size:1.2rem;'>💰 Valor total<br><span style='color:green;'>{valor_total_formatado}</span></div>
+                    """, unsafe_allow_html=True)
+
+            # Gera Excel
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_exibir.to_excel(writer, sheet_name='Meio de Pagamento', index=False)
+                resumo_3s.to_excel(writer, sheet_name='Meio de Pagamento', index=False)
             output.seek(0)
 
             st.download_button(
-                label="📥 Baixar Excel 3S Checkout Completo",
+                label="📥 Baixar Excel 3S Checkout",
                 data=output,
                 file_name=f"meio_pagamento_3s_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_3s_excel"
             )
 
             # Botão para voltar ao upload manual
@@ -1083,23 +1003,10 @@ with st.spinner("⏳ Processando..."):
                 df_meio_pgto_google["Tipo DRE"].astype(str).str.strip()
             )
 
-            df_meio_aba2 = df_meio_pgto_google.copy()
-            df_meio_aba2["__k__"] = df_meio_aba2["Meio de Pagamento"].astype(str).map(_norm)
-            for _c in ["Tipo de Pagamento", "Tipo DRE"]:
-                df_meio_aba2[_c] = df_meio_aba2[_c].astype(str).replace("nan", "").str.strip()
-            
-            def _pegar_preenchido_aba2(s):
-                lista = [x for x in s.tolist() if x and x.strip() and x.strip().lower() != "nan"]
-                return lista[0] if lista else ""
-            
-            df_ref_aba2 = (
-                df_meio_aba2.groupby("__k__", as_index=False)
-                .agg({"Tipo de Pagamento": _pegar_preenchido_aba2, "Tipo DRE": _pegar_preenchido_aba2})
-            )
-            pgto_map = dict(zip(df_ref_aba2["__k__"], df_ref_aba2["Tipo de Pagamento"]))
-            dre_map  = dict(zip(df_ref_aba2["__k__"], df_ref_aba2["Tipo DRE"]))
+            pgto_map = dict(zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo de Pagamento"]))
+            dre_map  = dict(zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo DRE"]))
 
-            df_final["__meio_norm__"] = df_final["Meio de Pagamento"].astype(str).str.strip().map(_norm)
+            df_final["__meio_norm__"] = df_final["Meio de Pagamento"].astype(str).str.strip().str.lower()
 
             if "Tipo de Pagamento" not in df_final.columns:
                 pos = df_final.columns.get_loc("Meio de Pagamento") + 1

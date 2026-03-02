@@ -80,7 +80,7 @@ with st.sidebar:
     st.info("O filtro será aplicado na coluna de data selecionada para cada tabela.")
     
     st.header("⚙️ Configurações")
-    limit_global = st.number_input("Limite de linhas", min_value=1, max_value=1000000, value=5000)
+    limit_global = st.number_input("Limite de linhas", min_value=1, max_value=1000000, value=50000)
     schema = st.text_input("Schema", value="public")
 
 # Conexão

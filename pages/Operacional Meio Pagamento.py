@@ -694,59 +694,67 @@ with st.spinner("⏳ Processando..."):
         st.markdown('</div>', unsafe_allow_html=True)
 
         # ========== EXIBIR RESULTADO 3S ==========
+        # ========== EXIBIR RESULTADO 3S ==========
         if st.session_state.modo_3s_mp and "resumo_3s_mp" in st.session_state:
-            resumo_3s = st.session_state.resumo_3s_mp
+            # 1. Pegamos os dados do estado da sessão
+            df_exibir = st.session_state.resumo_3s_mp.copy()
             total_registros = st.session_state.total_registros_3s_mp
+
+            # 2. RE-APLICAR MAPEAMENTO (Garantia de que as colunas não fiquem vazias)
+            # Criamos o mapa a partir da tabela Google carregada no início
+            df_meio_ref = df_meio_pgto_google.copy()
+            df_meio_ref["__k__"] = df_meio_ref["Meio de Pagamento"].astype(str).map(_norm)
+            
+            # Função para evitar pegar valores nulos em duplicatas
+            def _get_val(s):
+                l = [x for x in s.tolist() if x and str(x).strip().lower() not in ["nan", ""]]
+                return l[0] if l else ""
+
+            df_mapa = df_meio_ref.groupby("__k__").agg({"Tipo de Pagamento": _get_val, "Tipo DRE": _get_val}).reset_index()
+            map_pgto = dict(zip(df_mapa["__k__"], df_mapa["Tipo de Pagamento"]))
+            map_dre = dict(zip(df_mapa["__k__"], df_mapa["Tipo DRE"]))
+
+            # Aplicamos no DF que será exibido/baixado
+            df_exibir["__k__"] = df_exibir["Meio de Pagamento"].astype(str).map(_norm)
+            df_exibir["Tipo de Pagamento"] = df_exibir["__k__"].map(map_pgto).fillna("")
+            df_exibir["Tipo DRE"] = df_exibir["__k__"].map(map_dre).fillna("")
+            
+            # Remove a chave temporária e garante ordem das colunas
+            df_exibir = df_exibir.drop(columns=["__k__"], errors="ignore")
 
             st.success(f"✅ {total_registros} registros processados com sucesso!")
 
-            # Verificar meios não localizados
-            meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
-            meios_nao_localizados = resumo_3s[
-                ~resumo_3s["Meio de Pagamento"].astype(str).str.strip().map(_norm).isin(meios_norm_tabela)
-            ]["Meio de Pagamento"].astype(str).unique()
+            # 3. Verificar meios não localizados
+            meios_norm_tabela = set(df_mapa["__k__"])
+            meios_no_df = df_exibir["Meio de Pagamento"].astype(str).map(_norm).unique()
+            meios_nao_localizados = [m for m in meios_no_df if m not in meios_norm_tabela and m != ""]
 
             if len(meios_nao_localizados) > 0:
-                meios_nao_localizados_str = "<br>".join(meios_nao_localizados)
-                mensagem = f"""
+                # Busca o nome original para mostrar na mensagem
+                nomes_originais = df_exibir[df_exibir["Meio de Pagamento"].astype(str).map(_norm).isin(meios_nao_localizados)]["Meio de Pagamento"].unique()
+                meios_nao_localizados_str = "<​br>".join(nomes_originais)
+                st.markdown(f"""
                 ⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):<br>{meios_nao_localizados_str}
-                <br>✏️ Atualize a tabela clicando 
-                <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
-                """
-                st.markdown(mensagem, unsafe_allow_html=True)
+                <br>✏️ Atualize a tabela clicando <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
+                """, unsafe_allow_html=True)
             else:
                 st.success("✅ Todos os meios de pagamento foram localizados!")
 
-            # Mostrar resumo do período
-            datas_validas = pd.to_datetime(resumo_3s["Data"], format="%d/%m/%Y", errors='coerce').dropna()
-            if not datas_validas.empty:
-                data_inicial = datas_validas.min().strftime("%d/%m/%Y")
-                data_final_str = datas_validas.max().strftime("%d/%m/%Y")
-                valor_total = resumo_3s["Valor (R$)"].sum()
-                valor_total_formatado = f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            # 4. KPIs e Download (Usando o df_exibir atualizado)
+            valor_total = df_exibir["Valor (R$)"].sum()
+            valor_total_formatado = f"R$ {valor_total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            st.markdown(f"💰 **Valor total:** <span style='color:green; font-size:1.2rem;'>{valor_total_formatado}</span>", unsafe_allow_html=True)
 
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown(f"""
-                        <div style='font-size:1.2rem;'>📅 Período processado<br>{data_inicial} até {data_final_str}</div>
-                    """, unsafe_allow_html=True)
-                with col2:
-                    st.markdown(f"""
-                        <div style='font-size:1.2rem;'>💰 Valor total<br><span style='color:green;'>{valor_total_formatado}</span></div>
-                    """, unsafe_allow_html=True)
-
-            # Gera Excel
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                resumo_3s.to_excel(writer, sheet_name='Meio de Pagamento', index=False)
+                df_exibir.to_excel(writer, sheet_name='Meio de Pagamento', index=False)
             output.seek(0)
 
             st.download_button(
-                label="📥 Baixar Excel 3S Checkout",
+                label="📥 Baixar Excel 3S Checkout Corrigido",
                 data=output,
                 file_name=f"meio_pagamento_3s_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="download_3s_excel"
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
             # Botão para voltar ao upload manual

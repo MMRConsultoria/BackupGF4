@@ -614,7 +614,7 @@ with st.spinner("⏳ Processando..."):
 
     # MAPAS de classificação (deduplicamos por canônico)
     df_meio_pgto_google = df_meio_pgto_raw.copy()
-    df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].astype(str).map(_norm)
+    df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].map(_norm)
     df_meio_pgto_google = df_meio_pgto_google.drop_duplicates(subset=["__meio_norm__"], keep="first")
 
     # 🔥 Título
@@ -659,26 +659,20 @@ with st.spinner("⏳ Processando..."):
         st.markdown('</div>', unsafe_allow_html=True)
 
         # ========== EXIBIR RESULTADO 3S ==========
-        # ========== EXIBIR RESULTADO 3S ==========
         if st.session_state.modo_3s_mp and "resumo_3s_mp" in st.session_state:
             resumo_3s = st.session_state.resumo_3s_mp
             total_registros = st.session_state.total_registros_3s_mp
-        
+
             st.success(f"✅ {total_registros} registros processados com sucesso!")
-        
-            # 1. Criamos a lista de comparação garantindo que TUDO seja minúsculo (map(_norm))
-            # Isso ignora se na planilha está maiúsculo ou minúsculo
-            meios_norm_google = set(df_meio_pgto_google["Meio de Pagamento"].astype(str).map(_norm))
-        
-            # 2. Filtramos os erros comparando minúsculo com minúsculo
-            df_erros_meio = resumo_3s[
-                ~resumo_3s["Meio de Pagamento"].astype(str).map(_norm).isin(meios_norm_google)
-            ]
-            
-            meios_nao_localizados = df_erros_meio["Meio de Pagamento"].unique()
-        
+
+            # Verificar meios não localizados
+            meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
+            meios_nao_localizados = resumo_3s[
+                ~resumo_3s["Meio de Pagamento"].astype(str).str.strip().map(_norm).isin(meios_norm_tabela)
+            ]["Meio de Pagamento"].astype(str).unique()
+
             if len(meios_nao_localizados) > 0:
-                meios_nao_localizados_str = "<​br>".join(meios_nao_localizados)
+                meios_nao_localizados_str = "<br>".join(meios_nao_localizados)
                 mensagem = f"""
                 ⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):<br>{meios_nao_localizados_str}
                 <br>✏️ Atualize a tabela clicando 
@@ -789,7 +783,7 @@ with st.spinner("⏳ Processando..."):
                                 df_temp = df_raw.iloc[linha_inicio_dados:, [2, col]].copy()
                                 df_temp.columns = ["Data", "Valor (R$)"]
                                 df_temp = df_temp[~df_temp["Data"].astype(str).str.lower().str.contains("total|subtotal")]
-                                df_temp.insert(1, "Meio de Pagamento", meio_pgto.strip())
+                                df_temp.insert(1, "Meio de Pagamento", meio_pgto.lower())
                                 df_temp.insert(2, "Loja", loja_atual)
                                 blocos.append(df_temp)
                             except Exception as e:
@@ -816,53 +810,48 @@ with st.spinner("⏳ Processando..."):
                             df_meio_pagamento = pd.merge(df_meio_pagamento, df_empresa, on="Loja", how="left")
 
                             # Mapeia Tipo de Pagamento / Tipo DRE
-                            # ======================================================
-                            # ✅ MAPEAMENTO E CONSOLIDAÇÃO (CORRIGIDO PARA UPLOAD)
-                            # ======================================================
-                            # 1. Criamos dicionários de mapeamento SEGUROS
-                            # Usamos df_meio_pgto_google que foi carregado no início do script
-                            map_tipo = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"]))
-                            map_dre  = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"]))
+                            if "Meio de Pagamento" not in df_meio_pagamento.columns:
+                                df_meio_pagamento["Meio de Pagamento"] = ""
+                            df_meio_pagamento["__meio_norm__"] = df_meio_pagamento["Meio de Pagamento"].map(_norm)
+                            col_meio_idx = df_meio_pagamento.columns.get_loc("Meio de Pagamento")
+                            df_meio_pagamento.insert(
+                                loc=col_meio_idx + 1,
+                                column="Tipo de Pagamento",
+                                value=df_meio_pagamento["__meio_norm__"].map(
+                                    dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"]))
+                                ).fillna("")
+                            )
+                            df_meio_pagamento.insert(
+                                loc=col_meio_idx + 2,
+                                column="Tipo DRE",
+                                value=df_meio_pagamento["__meio_norm__"].map(
+                                    dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"]))
+                                ).fillna("")
+                            )
+                            df_meio_pagamento.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
 
-                            # 2. Normalizamos o meio do upload para a busca
-                            df_meio_pagamento["__meio_norm__"] = df_meio_pagamento["Meio de Pagamento"].astype(str).map(_norm)
-
-                            # 3. Inserimos as colunas de classificação
-                            if "Tipo de Pagamento" not in df_meio_pagamento.columns:
-                                col_idx = df_meio_pagamento.columns.get_loc("Meio de Pagamento") + 1
-                                df_meio_pagamento.insert(col_idx, "Tipo de Pagamento", df_meio_pagamento["__meio_norm__"].map(map_tipo).fillna(""))
-                                df_meio_pagamento.insert(col_idx + 1, "Tipo DRE", df_meio_pagamento["__meio_norm__"].map(map_dre).fillna(""))
-
-                            # 4. Datas e Períodos
                             df_meio_pagamento["Mês"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.month.map({
                                 1:'jan',2:'fev',3:'mar',4:'abr',5:'mai',6:'jun',7:'jul',8:'ago',9:'set',10:'out',11:'nov',12:'dez'})
                             df_meio_pagamento["Ano"] = pd.to_datetime(df_meio_pagamento["Data"], dayfirst=True).dt.year
+
+                            # ➕ Sistema (Formato 1)
                             df_meio_pagamento["Sistema"] = "Colibri"
 
-                            # 5. Consolidação de Duplicatas (Garantindo que PIX e pix virem um só)
-                            tmp = df_meio_pagamento.copy()
-                            tmp["Valor (R$)"] = pd.to_numeric(tmp["Valor (R$)"], errors="coerce").fillna(0)
-                            
-                            # Chaves de grupo normalizadas
-                            tmp["_k_data"] = pd.to_datetime(tmp["Data"], dayfirst=True, errors="coerce").dt.date
-                            tmp["_k_loja"] = tmp["Loja"].astype(str).map(_norm)
-                            tmp["_k_meio"] = tmp["__meio_norm__"] # Já está normalizado
+                            # 💡 Ordem padrão de saída
+                            col_order = [
+                                "Data", "Dia da Semana",
+                                "Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE",
+                                "Loja", "Código Everest", "Grupo", "Código Grupo Everest",
+                                "Sistema",
+                                "Valor (R$)", "Mês", "Ano"
+                            ]
+                            for c in ["Código Everest", "Grupo", "Código Grupo Everest"]:
+                                if c not in df_meio_pagamento.columns:
+                                    df_meio_pagamento[c] = ""
+                            for c in col_order:
+                                if c not in df_meio_pagamento.columns:
+                                    df_meio_pagamento[c] = ""
 
-                            agg_dict = {
-                                "Data": "first", "Dia da Semana": "first",
-                                "Meio de Pagamento": "first", "Tipo de Pagamento": "first", "Tipo DRE": "first",
-                                "Loja": "first", "Código Everest": "first", "Grupo": "first", "Código Grupo Everest": "first",
-                                "Sistema": "first", "Mês": "first", "Ano": "first", "Valor (R$)": "sum"
-                            }
-
-                            df_meio_pagamento = tmp.groupby(["_k_data", "_k_loja", "_k_meio"], as_index=False).agg(agg_dict)
-                            df_meio_pagamento.drop(columns=["_k_data", "_k_loja", "_k_meio"], inplace=True, errors="ignore")
-                           
-                            # Limpeza final da coluna auxiliar
-                            if "__meio_norm__" in df_meio_pagamento.columns:
-                                df_meio_pagamento.drop(columns=["__meio_norm__"], inplace=True)
-
-                    # 🔁 Consolida duplicatas por Data + Loja + Meio de Pagamento
                     # 🔁 Consolida duplicatas por Data + Loja + Meio de Pagamento
                     if 'df_meio_pagamento' in locals() and not df_meio_pagamento.empty:
                         tmp = df_meio_pagamento.copy()
@@ -870,15 +859,14 @@ with st.spinner("⏳ Processando..."):
                         if "Valor (R$)" in tmp.columns:
                             tmp["Valor (R$)"] = pd.to_numeric(tmp["Valor (R$)"], errors="coerce").fillna(0)
 
-                        # ✅ Use _norm para garantir que "PIX" e "pix" sejam a mesma chave de grupo
                         tmp["_k_data"] = pd.to_datetime(tmp["Data"], dayfirst=True, errors="coerce").dt.date
-                        tmp["_k_loja"] = tmp["Loja"].astype(str).map(_norm)
-                        tmp["_k_meio"] = tmp["Meio de Pagamento"].astype(str).map(_norm)
+                        tmp["_k_loja"] = tmp["Loja"].astype(str).str.strip().str.lower()
+                        tmp["_k_meio"] = tmp["Meio de Pagamento"].astype(str).str.strip().str.lower()
 
                         agg_dict = {
                             "Data": "first",
                             "Dia da Semana": "first",
-                            "Meio de Pagamento": "first", # Mantém o nome original da primeira ocorrência
+                            "Meio de Pagamento": "first",
                             "Tipo de Pagamento": "first",
                             "Tipo DRE": "first",
                             "Loja": "first",
@@ -914,27 +902,15 @@ with st.spinner("⏳ Processando..."):
                     valor_total = f"R$ {df_meio_pagamento['Valor (R$)'].sum():,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
                     col2.markdown(f"<div style='font-size:1.2rem;'>💰 Valor total<br><span style='color:green;'>{valor_total}</span></div>", unsafe_allow_html=True)
 
-                   
-                    # ======================================================
-                    # ======================================================
-                    # ✅ VALIDAÇÃO DE MEIOS NÃO LOCALIZADOS (CORRIGIDA)
-                    # ======================================================
-                    meios_norm_google = set(df_meio_pgto_google["__meio_norm__"])
-                                                          
-                    df_erros_meio = df_meio_pagamento[
-                        ~df_meio_pagamento["Meio de Pagamento"].astype(str).map(_norm).isin(meios_norm_google)
-                    ]
-                    
-                    meios_nao_localizados = df_erros_meio["Meio de Pagamento"].unique()
-                    
-                    # Validação de Empresas (Loja)
+                    # Validações
                     empresas_nao_localizadas = df_meio_pagamento[
-                        df_meio_pagamento["Código Everest"].astype(str).str.strip().isin(["", "nan", "None"])
-                    ]["Loja"].unique() if "Código Everest" in df_meio_pagamento.columns else []
+                        df_meio_pagamento["Loja"].astype(str).str.strip().isin(["", "nan"])
+                    ]["Código Everest"].unique() if "Código Everest" in df_meio_pagamento.columns else []
+                    meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
+                    meios_nao_localizados = df_meio_pagamento[
+                        ~df_meio_pagamento["Meio de Pagamento"].astype(str).str.strip().map(_norm).isin(meios_norm_tabela)
+                    ]["Meio de Pagamento"].astype(str).unique()
 
-                    # ======================================================
-                    # 📊 EXPORTAR EXCEL (O código continua aqui...)
-                    # ======================================================
                     # Exportar Excel
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:

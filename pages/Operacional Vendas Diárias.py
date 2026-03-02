@@ -216,17 +216,17 @@ with st.spinner("⏳ Processando..."):
             # 5. Criar coluna de data sem hora para agrupamento
             df['data'] = df['business_dt'].dt.date
             
-            # 6. Agrupar totais por store_code e data (Contando pedidos para o Ticket)
+            # 6. Agrupar totais por store_code e data (Contando order_code para o Ticket)
             resumo = df.groupby(['store_code', 'data']).agg(
                 Fat_Real=('total_gross', 'sum'),
                 Serv_Tx=('TIP_AMOUNT', 'sum'),
-                Qtd_Pedidos=('order_code', 'count') # Usamos order_code para contar quantos pedidos teve
+                Qtd_Pedidos=('order_code', 'count')  # <-- Conta quantos pedidos cada loja fez no dia
             ).reset_index()
             
             # 7. Calcular Fat.Total
             resumo['Fat_Total'] = resumo['Fat_Real'] + resumo['Serv_Tx']
             
-            # 8. Renomear colunas temporariamente
+            # 8. Renomear colunas para o formato correto (incluindo a temporária Qtd_Pedidos)
             resumo.columns = ['Código Everest', 'Data', 'Fat.Real', 'Serv/Tx', 'Qtd_Pedidos', 'Fat.Total']
             
             # 9. Formatar Data
@@ -253,9 +253,15 @@ with st.spinner("⏳ Processando..."):
             
             resumo["Loja"] = resumo["Loja"].astype(str).str.strip().str.lower()
 
-            # 12. CALCULAR TICKET MÉDIO E LIMPAR COLUNA TEMPORÁRIA
-            # Cálculo: Faturamento Real dividido pela quantidade de pedidos
-            resumo['Ticket'] = (resumo['Fat.Real'] / resumo['Qtd_Pedidos']).fillna(0).round(2)
+            # 12. CALCULAR TICKET MÉDIO (Fat.Real / Qtd_Pedidos)
+            # Substitui o antigo resumo['Ticket'] = 0 por este cálculo:
+            resumo['Ticket'] = (resumo['Fat.Real'] / resumo['Qtd_Pedidos']).replace([np.inf, -np.inf], 0).fillna(0).round(2)
+            
+            # Remove a coluna auxiliar para não aparecer no Excel
+            resumo.drop(columns=['Qtd_Pedidos'], inplace=True)
+
+            # Continua com o Mês, Ano e Sistema...
+            resumo['Mês'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.strftime('%b').str.lower()
             
             # Removemos a coluna de contagem para ela não aparecer no resultado final
             resumo.drop(columns=['Qtd_Pedidos'], inplace=True)

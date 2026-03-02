@@ -914,7 +914,10 @@ with st.spinner("⏳ Processando..."):
                     # ✅ VALIDAÇÃO DE MEIOS NÃO LOCALIZADOS (CORRIGIDA)
                     # ======================================================
                     meios_norm_google = set(df_meio_pgto_google["__meio_norm__"])
-                    
+                    # 🔍 DEBUG TEMPORÁRIO - remova depois de resolver
+                    st.write("**Meios no Google (normalizados):**", sorted(list(meios_norm_google)))
+                    st.write("**Meios no upload (normalizados):**", sorted(df_meio_pagamento["Meio de Pagamento"].astype(str).map(_norm).unique().tolist()))
+                                        
                     df_erros_meio = df_meio_pagamento[
                         ~df_meio_pagamento["Meio de Pagamento"].astype(str).map(_norm).isin(meios_norm_google)
                     ]

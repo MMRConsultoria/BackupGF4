@@ -206,24 +206,23 @@ with st.spinner("⏳ Processando..."):
             # 5. Criar coluna de data para o agrupamento
             df['data'] = df['business_dt'].dt.date
 
-            # 6. Agrupar (O faturamento e a contagem agora batem 100%)
+           # 6. Agrupar
             resumo = df.groupby(['store_code', 'data']).agg(
                 Fat_Real=('total_gross', 'sum'),
                 Serv_Tx=('TIP_AMOUNT', 'sum'),
-                Qtd_Pedidos=('order_code', 'nunique') # 'nunique' garante que não conte a mesma venda duas vezes
+                Qtd_Pedidos=('order_code', 'nunique')
             ).reset_index()
 
-            # 7. Cálculos Finais
+            # 7. PRIMEIRO calcula Fat.Total, DEPOIS calcula Ticket sobre ele
             resumo['Fat.Total'] = resumo['Fat_Real'] + resumo['Serv_Tx']
-            
-            # Agora o Ticket será: (Soma das 15 vendas) / 15
-            resumo['Ticket'] = (resumo['Fat_Real'] / resumo['Qtd_Pedidos'].replace(0, np.nan)).fillna(0).round(2)
+            resumo['Fat_Real_Liq'] = resumo['Fat_Real'] - resumo['Serv_Tx']
+            resumo['Ticket'] = (resumo['Fat.Total'] / resumo['Qtd_Pedidos'].replace(0, np.nan)).fillna(0).round(2)
 
-            # 8. Renomear e selecionar colunas — Qtd_Pedidos fica de fora automaticamente
+            # 8. Renomear e selecionar
             resumo = resumo.rename(columns={
                 'store_code': 'Código Everest',
                 'data': 'Data',
-                'Fat_Real': 'Fat.Real',
+                'Fat_Real_Liq': 'Fat.Real',
                 'Serv_Tx': 'Serv/Tx'
             })
             resumo = resumo[['Código Everest', 'Data', 'Fat.Real', 'Serv/Tx', 'Fat.Total', 'Ticket']]

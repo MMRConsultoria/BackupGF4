@@ -668,31 +668,41 @@ with st.spinner("⏳ Processando..."):
         st.markdown('<div class="botao-vermelho">', unsafe_allow_html=True)
         if st.button("🔄 Atualizar 3S Checkout", key="btn_3s_mp"):
             st.session_state.modo_3s_mp = True
-            st.session_state.df_meio_pagamento = None  # limpa upload manual
+            st.session_state.df_meio_pagamento = None 
 
             with st.spinner("Buscando dados do banco..."):
-                resumo_3s, erro_3s, total_registros = buscar_meio_pagamento_3s_checkout(df_empresa, df_meio_pgto_google)
-                # === DEBUG FORÇADO AQUI ===
-                st.write("### 🔍 DEBUG DE SAÍDA DO BANCO")
-                if resumo_3s is not None:
-                    st.write(f"Total de linhas no resumo: {len(resumo_3s)}")
-                    st.write("Amostra das colunas 'Meio de Pagamento' e 'Valor (R$)':")
-                    st.dataframe(resumo_3s[["Meio de Pagamento", "Valor (R$)"]].head(10))
+                # 1. BUSCA BRUTA PARA DEBUG
+                conn = get_db_conn()
+                agora_brasil = datetime.utcnow() - timedelta(hours=3)
+                ontem = (agora_brasil - timedelta(days=1)).date()
+                data_inicio = ontem - timedelta(days=2) # apenas 2 dias para o debug ser rápido
+                
+                query_op = "SELECT order_picture_id FROM public.order_picture WHERE business_dt >= %s AND business_dt <= %s AND state_id = 5 LIMIT 100"
+                df_op_debug = pd.read_sql(query_op, conn, params=(data_inicio, ontem))
+                
+                if not df_op_debug.empty:
+                    ids = df_op_debug["order_picture_id"].tolist()
+                    query_tender = "SELECT details FROM public.order_picture_tender WHERE order_picture_id = ANY(%s) LIMIT 20"
+                    df_tender_debug = pd.read_sql(query_tender, conn, params=(ids,))
                     
-                    # Verifica se a coluna está toda vazia
-                    vazios = resumo_3s["Meio de Pagamento"].isna().sum()
-                    st.write(f"Linhas com Meio de Pagamento NULO: {vazios}")
-                else:
-                    st.error(f"O resumo_3s retornou None. Erro: {erro_3s}")
-
-
+                    st.write("### 🔴 DEBUG CRÍTICO: DADOS BRUTOS DO BANCO")
+                    st.write("Abaixo estão os campos 'details' vindos direto do banco. Procure pelo nome do meio de pagamento (ex: PIX, Dinheiro):")
+                    for i, row in df_tender_debug.iterrows():
+                        st.code(f"Linha {i}: {row['details']}")
+                    
+                    st.warning("O script foi pausado para o debug. Remova este código após identificar a chave correta.")
+                    conn.close()
+                    st.stop() # TRAVA A TELA AQUI
+                
+                # Se o debug acima não travar, ele segue o fluxo normal
+                resumo_3s, erro_3s, total_registros = buscar_meio_pagamento_3s_checkout(df_empresa, df_meio_pgto_google)
                 
                 if erro_3s:
                     st.error(f"❌ Erro ao buscar dados: {erro_3s}")
                 elif resumo_3s is not None and not resumo_3s.empty:
                     st.session_state.resumo_3s_mp = resumo_3s
                     st.session_state.total_registros_3s_mp = total_registros
-                    #st.rerun()
+                    st.rerun()
                 else:
                     st.warning("⚠️ Nenhum dado encontrado para o período.")
         st.markdown('</div>', unsafe_allow_html=True)

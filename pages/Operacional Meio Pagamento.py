@@ -106,8 +106,13 @@ def _strip_accents_keep_case(s: str) -> str:
     return unicodedata.normalize("NFKD", str(s or "")).encode("ASCII", "ignore").decode("ASCII")
 
 def _norm(s: str) -> str:
-    s = _strip_accents_keep_case(s)
-    s = re.sub(r"\s+", " ", s).strip().lower()
+    if not s:
+        return ""
+    s = str(s)
+    s = unicodedata.normalize("NFKD", s)
+    s = s.encode("ASCII", "ignore").decode("ASCII")
+    s = re.sub(r"\s+", " ", s)
+    s = s.strip().lower()
     return s
 
 def _is_formato2(df_headed: pd.DataFrame) -> bool:

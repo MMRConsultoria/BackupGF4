@@ -783,7 +783,7 @@ with st.spinner("⏳ Processando..."):
                                 df_temp = df_raw.iloc[linha_inicio_dados:, [2, col]].copy()
                                 df_temp.columns = ["Data", "Valor (R$)"]
                                 df_temp = df_temp[~df_temp["Data"].astype(str).str.lower().str.contains("total|subtotal")]
-                                df_temp.insert(1, "Meio de Pagamento", meio_pgto.strip())
+                                df_temp.insert(1, "Meio de Pagamento", meio_pgto.lower())
                                 df_temp.insert(2, "Loja", loja_atual)
                                 blocos.append(df_temp)
                             except Exception as e:
@@ -853,22 +853,20 @@ with st.spinner("⏳ Processando..."):
                                     df_meio_pagamento[c] = ""
 
                     # 🔁 Consolida duplicatas por Data + Loja + Meio de Pagamento
-                    # 🔁 Consolida duplicatas por Data + Loja + Meio de Pagamento
                     if 'df_meio_pagamento' in locals() and not df_meio_pagamento.empty:
                         tmp = df_meio_pagamento.copy()
 
                         if "Valor (R$)" in tmp.columns:
                             tmp["Valor (R$)"] = pd.to_numeric(tmp["Valor (R$)"], errors="coerce").fillna(0)
 
-                        # ✅ Use _norm para garantir que "PIX" e "pix" sejam a mesma chave de grupo
                         tmp["_k_data"] = pd.to_datetime(tmp["Data"], dayfirst=True, errors="coerce").dt.date
-                        tmp["_k_loja"] = tmp["Loja"].astype(str).map(_norm)
-                        tmp["_k_meio"] = tmp["Meio de Pagamento"].astype(str).map(_norm)
+                        tmp["_k_loja"] = tmp["Loja"].astype(str).str.strip().str.lower()
+                        tmp["_k_meio"] = tmp["Meio de Pagamento"].astype(str).str.strip().str.lower()
 
                         agg_dict = {
                             "Data": "first",
                             "Dia da Semana": "first",
-                            "Meio de Pagamento": "first", # Mantém o nome original da primeira ocorrência
+                            "Meio de Pagamento": "first",
                             "Tipo de Pagamento": "first",
                             "Tipo DRE": "first",
                             "Loja": "first",
@@ -886,6 +884,7 @@ with st.spinner("⏳ Processando..."):
                                .agg(agg_dict)
                                .drop(columns=["_k_data", "_k_loja", "_k_meio"])
                         )
+
                         df_meio_pagamento = df_meio_pagamento.reindex(columns=[c for c in tmp.columns if c in df_meio_pagamento.columns])
 
                         if 'col_order' in locals():
@@ -904,23 +903,14 @@ with st.spinner("⏳ Processando..."):
                     col2.markdown(f"<div style='font-size:1.2rem;'>💰 Valor total<br><span style='color:green;'>{valor_total}</span></div>", unsafe_allow_html=True)
 
                     # Validações
-                    # ✅ VALIDAÇÕES CORRIGIDAS (Insensível a maiúsculas/acentos)
-                    # ======================================================
-                    # 1. Empresas não localizadas
                     empresas_nao_localizadas = df_meio_pagamento[
                         df_meio_pagamento["Loja"].astype(str).str.strip().isin(["", "nan"])
                     ]["Código Everest"].unique() if "Código Everest" in df_meio_pagamento.columns else []
-
-                    # 2. Meios de Pagamento não localizados (Usando _norm para comparar)
                     meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
-                    
-                    # Filtramos o DataFrame original buscando quem, após normalizado, NÃO está na tabela do Google
-                    df_erros_meio = df_meio_pagamento[
-                        ~df_meio_pagamento["Meio de Pagamento"].astype(str).map(_norm).isin(meios_norm_tabela)
-                    ]
-                    meios_nao_localizados = df_erros_meio["Meio de Pagamento"].unique()
+                    meios_nao_localizados = df_meio_pagamento[
+                        ~df_meio_pagamento["Meio de Pagamento"].astype(str).str.strip().map(_norm).isin(meios_norm_tabela)
+                    ]["Meio de Pagamento"].astype(str).unique()
 
-                    
                     # Exportar Excel
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -977,9 +967,6 @@ with st.spinner("⏳ Processando..."):
     # ======================
     # 🔄 Aba 2
     # ======================
-    # ======================
-    # 🔄 Aba 2
-    # ======================
     with tab2:
         st.markdown("🔗 [Abrir planilha Faturamento Meio Pagamento](https://docs.google.com/spreadsheets/d/1GSI291SEeeU9MtOWkGwsKGCGMi_xXMSiQnL_9GhXxfU/edit?gid=1278257122#gid)")
 
@@ -997,30 +984,41 @@ with st.spinner("⏳ Processando..."):
             df_final = df_para_enviar.copy()
 
             # Garantir "Tipo de Pagamento" e "Tipo DRE"
+            df_final["Meio de Pagamento"] = (
+                df_final["Meio de Pagamento"].astype(str).str.strip().str.lower()
+            )
+
             df_meio_pgto_google.columns = [str(c).strip() for c in df_meio_pgto_google.columns]
             for c in ["Meio de Pagamento", "Tipo de Pagamento", "Tipo DRE"]:
                 if c not in df_meio_pgto_google.columns:
                     df_meio_pgto_google[c] = ""
 
-            # ✅ Normaliza direto com _norm (sem .str.lower() antes)
-            df_meio_pgto_google["__meio_norm__"] = df_meio_pgto_google["Meio de Pagamento"].astype(str).map(_norm)
-            pgto_map = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip()))
-            dre_map  = dict(zip(df_meio_pgto_google["__meio_norm__"], df_meio_pgto_google["Tipo DRE"].astype(str).str.strip()))
+            df_meio_pgto_google["Meio de Pagamento"] = (
+                df_meio_pgto_google["Meio de Pagamento"].astype(str).str.strip().str.lower()
+            )
+            df_meio_pgto_google["Tipo de Pagamento"] = (
+                df_meio_pgto_google["Tipo de Pagamento"].astype(str).str.strip()
+            )
+            df_meio_pgto_google["Tipo DRE"] = (
+                df_meio_pgto_google["Tipo DRE"].astype(str).str.strip()
+            )
 
-            # ✅ Normaliza df_final com _norm diretamente (sem .str.lower() antes)
-            df_final["__meio_norm__"] = df_final["Meio de Pagamento"].astype(str).map(_norm)
+            pgto_map = dict(zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo de Pagamento"]))
+            dre_map  = dict(zip(df_meio_pgto_google["Meio de Pagamento"], df_meio_pgto_google["Tipo DRE"]))
+
+            df_final["__meio_norm__"] = df_final["Meio de Pagamento"].astype(str).str.strip().str.lower()
 
             if "Tipo de Pagamento" not in df_final.columns:
                 pos = df_final.columns.get_loc("Meio de Pagamento") + 1
-                df_final.insert(pos, "Tipo de Pagamento", df_final["__meio_norm__"].map(pgto_map).fillna(""))
+                df_final.insert(pos, "Tipo de Pagamento", df_final["__meio_norm__"].map(pgto_map))
             else:
-                df_final["Tipo de Pagamento"] = df_final["__meio_norm__"].map(pgto_map).fillna("")
+                df_final["Tipo de Pagamento"] = df_final["Tipo de Pagamento"].fillna(df_final["__meio_norm__"].map(pgto_map))
 
             if "Tipo DRE" not in df_final.columns:
                 pos = df_final.columns.get_loc("Tipo de Pagamento") + 1
-                df_final.insert(pos, "Tipo DRE", df_final["__meio_norm__"].map(dre_map).fillna(""))
+                df_final.insert(pos, "Tipo DRE", df_final["__meio_norm__"].map(dre_map))
             else:
-                df_final["Tipo DRE"] = df_final["__meio_norm__"].map(dre_map).fillna("")
+                df_final["Tipo DRE"] = df_final["Tipo DRE"].fillna(df_final["__meio_norm__"].map(dre_map))
 
             df_final.drop(columns=["__meio_norm__"], inplace=True, errors="ignore")
 
@@ -1042,6 +1040,7 @@ with st.spinner("⏳ Processando..."):
             # Planilha destino
             sh_fatur = gc.open("Faturamento Meio Pagamento")
             aba_destino = sh_fatur.worksheet("Faturamento Meio Pagamento")
+            #aba_destino = gc.open("Faturamento Meio Pagamento").worksheet("Faturamento Meio Pagamento")
             valores_existentes = aba_destino.get_all_values()
 
             if valores_existentes:

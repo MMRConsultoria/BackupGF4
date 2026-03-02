@@ -470,8 +470,6 @@ def buscar_meio_pagamento_3s_checkout(df_empresa: pd.DataFrame, df_meio_pgto_goo
         df_tender["Meio de Pagamento"] = tender_props.apply(
             lambda x: x.get("tenderDescr") if isinstance(x, dict) else None
         )
-        
-            
         df_tender["tip_amount"] = pd.to_numeric(
             tender_props.apply(lambda x: x.get("tipAmount", 0) if isinstance(x, dict) else 0),
             errors="coerce"
@@ -661,44 +659,28 @@ with st.spinner("⏳ Processando..."):
         st.markdown('</div>', unsafe_allow_html=True)
 
         # ========== EXIBIR RESULTADO 3S ==========
-        # ========== EXIBIR RESULTADO 3S (DIAGNÓSTICO VISUAL) ==========
         if st.session_state.modo_3s_mp and "resumo_3s_mp" in st.session_state:
             resumo_3s = st.session_state.resumo_3s_mp
             total_registros = st.session_state.total_registros_3s_mp
 
             st.success(f"✅ {total_registros} registros processados com sucesso!")
 
-            # --- QUADRO DE DIAGNÓSTICO ---
-            with st.expander("🔍 DIAGNÓSTICO: Por que não está localizando?", expanded=True):
-                st.write("Abaixo estão os nomes EXATOS que o banco de dados enviou (com aspas para ver espaços):")
-                
-                # Pegamos os meios únicos do resumo vindo do banco
-                meios_banco = resumo_3s["Meio de Pagamento"].unique()
-                
-                # Criamos uma lista técnica (com aspas e códigos) para ver caracteres invisíveis
-                lista_tecnica_banco = [repr(str(m)) for m in meios_banco]
-                st.code("\n".join(lista_tecnica_banco), language="text")
-
-                st.write("---")
-                st.write("Abaixo estão os nomes que o sistema carregou da sua PLANILHA (com aspas):")
-                # Usamos a planilha bruta para garantir que vemos o que foi lido
-                meios_planilha = df_meio_pgto_raw["Meio de Pagamento"].unique().tolist()
-                lista_tecnica_planilha = [repr(str(m)) for m in meios_planilha]
-                st.code("\n".join(lista_tecnica_planilha), language="text")
-
-            # Validação normal (para manter o funcionamento visual das mensagens)
+            # Verificar meios não localizados
             meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
-            meios_nao_localizados = [
-                m for m in meios_banco 
-                if _norm(str(m)) not in meios_norm_tabela
-            ]
+            meios_nao_localizados = resumo_3s[
+                ~resumo_3s["Meio de Pagamento"].astype(str).str.strip().map(_norm).isin(meios_norm_tabela)
+            ]["Meio de Pagamento"].astype(str).unique()
 
             if len(meios_nao_localizados) > 0:
-                st.warning(f"⚠️ {len(meios_nao_localizados)} meio(s) não localizado(s):")
-                for m in meios_nao_localizados:
-                    st.write(f"• {m}")
+                meios_nao_localizados_str = "<br>".join(meios_nao_localizados)
+                mensagem = f"""
+                ⚠️ {len(meios_nao_localizados)} meio(s) de pagamento não localizado(s):<br>{meios_nao_localizados_str}
+                <br>✏️ Atualize a tabela clicando 
+                <a href='https://docs.google.com/spreadsheets/d/1AVacOZDQT8vT-E8CiD59IVREe3TpKwE_25wjsj--qTU' target='_blank'><strong>aqui</strong></a>.
+                """
+                st.markdown(mensagem, unsafe_allow_html=True)
             else:
-                st.success("✅ Todos os meios localizados!")
+                st.success("✅ Todos os meios de pagamento foram localizados!")
 
             # Mostrar resumo do período
             datas_validas = pd.to_datetime(resumo_3s["Data"], format="%d/%m/%Y", errors='coerce').dropna()

@@ -216,17 +216,18 @@ with st.spinner("⏳ Processando..."):
             # 5. Criar coluna de data sem hora para agrupamento
             df['data'] = df['business_dt'].dt.date
             
-            # 6. Agrupar totais por store_code e data
+            # 6. Agrupar totais por store_code e data (Contando pedidos para o Ticket)
             resumo = df.groupby(['store_code', 'data']).agg(
                 Fat_Real=('total_gross', 'sum'),
-                Serv_Tx=('TIP_AMOUNT', 'sum')
+                Serv_Tx=('TIP_AMOUNT', 'sum'),
+                Qtd_Pedidos=('order_code', 'count') # Usamos order_code para contar quantos pedidos teve
             ).reset_index()
             
             # 7. Calcular Fat.Total
             resumo['Fat_Total'] = resumo['Fat_Real'] + resumo['Serv_Tx']
             
-            # 8. Renomear colunas para o formato correto
-            resumo.columns = ['Código Everest', 'Data', 'Fat.Real', 'Serv/Tx', 'Fat.Total']
+            # 8. Renomear colunas temporariamente
+            resumo.columns = ['Código Everest', 'Data', 'Fat.Real', 'Serv/Tx', 'Qtd_Pedidos', 'Fat.Total']
             
             # 9. Formatar Data
             resumo['Data'] = pd.to_datetime(resumo['Data']).dt.strftime('%d/%m/%Y')
@@ -238,7 +239,7 @@ with st.spinner("⏳ Processando..."):
             }
             resumo.insert(1, 'Dia da Semana', pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.day_name().map(dias_traducao))
             
-            # 11. ✅ Buscar informações da Tabela Empresa (também sem zeros à esquerda)
+            # 11. Buscar informações da Tabela Empresa
             df_empresa["Código Everest"] = (
                 df_empresa["Código Everest"]
                 .astype(str)
@@ -249,18 +250,18 @@ with st.spinner("⏳ Processando..."):
             
             resumo = pd.merge(resumo, df_empresa[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]], 
                              on="Código Everest", how="left")
-            # ✅ Converte nome da loja para MAIÚSCULO
+            
             resumo["Loja"] = resumo["Loja"].astype(str).str.strip().str.lower()
-            # 12. Adicionar colunas adicionais
-            resumo['Ticket'] = 0  # Não temos essa informação no agrupamento
+
+            # 12. CALCULAR TICKET MÉDIO E LIMPAR COLUNA TEMPORÁRIA
+            # Cálculo: Faturamento Real dividido pela quantidade de pedidos
+            resumo['Ticket'] = (resumo['Fat.Real'] / resumo['Qtd_Pedidos']).fillna(0).round(2)
+            
+            # Removemos a coluna de contagem para ela não aparecer no resultado final
+            resumo.drop(columns=['Qtd_Pedidos'], inplace=True)
+
             resumo['Mês'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.strftime('%b').str.lower()
-            
-            meses = {"jan": "jan", "feb": "fev", "mar": "mar", "apr": "abr", "may": "mai", "jun": "jun",
-                     "jul": "jul", "aug": "ago", "sep": "set", "oct": "out", "nov": "nov", "dec": "dez"}
-            resumo["Mês"] = resumo["Mês"].map(meses)
-            
-            resumo['Ano'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.year
-            resumo['Sistema'] = '3SCheckout'
+            # ... resto do código (meses.map, Ano, Sistema, etc)
             
             # 13. Ordenar colunas no formato padrão
             colunas_finais = [

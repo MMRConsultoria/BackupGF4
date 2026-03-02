@@ -218,14 +218,17 @@ with st.spinner("⏳ Processando..."):
             # 6. Agrupar totais por store_code e data
             resumo = df.groupby(['store_code', 'data']).agg(
                 Fat_Real=('total_gross', 'sum'),
-                Serv_Tx=('TIP_AMOUNT', 'sum')
+                Serv_Tx=('TIP_AMOUNT', 'sum'),
+                Qtd_Pedidos=('order_code', 'nunique')
             ).reset_index()
             
-            # 7. Calcular Fat.Total
+            # 7. Calcular Fat.Total e Ticket (na ordem correta)
             resumo['Fat_Total'] = resumo['Fat_Real'] + resumo['Serv_Tx']
+            resumo['Ticket']    = (resumo['Fat_Total'] / resumo['Qtd_Pedidos'].replace(0, np.nan)).fillna(0).round(2)
             
-            # 8. Renomear colunas para o formato correto
-            resumo.columns = ['Código Everest', 'Data', 'Fat.Real', 'Serv/Tx', 'Fat.Total']
+            # 8. Renomear colunas para o formato correto (Qtd_Pedidos some aqui)
+            resumo = resumo[['store_code', 'data', 'Fat_Real', 'Serv_Tx', 'Fat_Total', 'Ticket']]
+            resumo.columns = ['Código Everest', 'Data', 'Fat.Real', 'Serv/Tx', 'Fat.Total', 'Ticket']
             
             # 9. Formatar Data
             resumo['Data'] = pd.to_datetime(resumo['Data']).dt.strftime('%d/%m/%Y')
@@ -251,7 +254,7 @@ with st.spinner("⏳ Processando..."):
             # ✅ Converte nome da loja para MAIÚSCULO
             resumo["Loja"] = resumo["Loja"].astype(str).str.strip().str.lower()
             # 12. Adicionar colunas adicionais
-            resumo['Ticket'] = 0  # Não temos essa informação no agrupamento
+            #resumo['Ticket'] = 0  # Não temos essa informação no agrupamento
             resumo['Mês'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.strftime('%b').str.lower()
             
             meses = {"jan": "jan", "feb": "fev", "mar": "mar", "apr": "abr", "may": "mai", "jun": "jun",

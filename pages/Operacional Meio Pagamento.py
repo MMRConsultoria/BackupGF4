@@ -905,14 +905,29 @@ with st.spinner("⏳ Processando..."):
                     col2.markdown(f"<div style='font-size:1.2rem;'>💰 Valor total<br><span style='color:green;'>{valor_total}</span></div>", unsafe_allow_html=True)
 
                    
-                    # ✅ Validação corrigida
-                    meios_norm_tabela = set(df_meio_pgto_google["__meio_norm__"])
+                    # ======================================================
+                    # ✅ VALIDAÇÃO DE MEIOS NÃO LOCALIZADOS (CORRIGIDA)
+                    # ======================================================
+                    # Criamos um conjunto (set) com os nomes normalizados que existem no Google Sheets
+                    # Isso garante que "pix" seja igual a "PIX"
+                    meios_norm_google = set(df_meio_pgto_google["Meio de Pagamento"].astype(str).map(_norm))
                     
-                    # Filtra usando _norm para não dar falso erro de "não localizado"
-                    meios_nao_localizados = df_meio_pagamento[
-                        ~df_meio_pagamento["Meio de Pagamento"].astype(str).map(_norm).isin(meios_norm_tabela)
-                    ]["Meio de Pagamento"].unique()
+                    # Identificamos quais linhas do seu upload NÃO estão no Google (usando a mesma normalização)
+                    df_erros_meio = df_meio_pagamento[
+                        ~df_meio_pagamento["Meio de Pagamento"].astype(str).map(_norm).isin(meios_norm_google)
+                    ]
+                    
+                    # Pegamos os nomes originais (como vieram no arquivo) para mostrar o erro ao usuário
+                    meios_nao_localizados = df_erros_meio["Meio de Pagamento"].unique()
 
+                    # Validação de Empresas (Loja)
+                    empresas_nao_localizadas = df_meio_pagamento[
+                        df_meio_pagamento["Loja"].astype(str).str.strip().isin(["", "nan"])
+                    ]["Código Everest"].unique() if "Código Everest" in df_meio_pagamento.columns else []
+
+                    # ======================================================
+                    # 📊 EXPORTAR EXCEL (O código continua aqui...)
+                    # ======================================================
                     # Exportar Excel
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:

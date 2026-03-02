@@ -687,7 +687,7 @@ with st.spinner("⏳ Processando..."):
                 elif resumo_3s is not None and not resumo_3s.empty:
                     st.session_state.resumo_3s_mp = resumo_3s
                     st.session_state.total_registros_3s_mp = total_registros
-                    st.rerun()
+                    #st.rerun()
                 else:
                     st.warning("⚠️ Nenhum dado encontrado para o período.")
         st.markdown('</div>', unsafe_allow_html=True)

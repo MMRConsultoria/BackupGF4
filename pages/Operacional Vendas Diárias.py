@@ -168,13 +168,11 @@ with st.spinner("⏳ Processando..."):
         """Busca dados do 3S Checkout direto do banco e processa"""
         conn = get_db_conn()
         try:
-            # Ajuste para fuso horário de Brasília (UTC-3) e define "ontem" como limite máximo
             from datetime import datetime, timedelta
             agora_brasil = datetime.utcnow() - timedelta(hours=3)
             ontem = (agora_brasil - timedelta(days=1)).date()
-            data_inicio = ontem - timedelta(days=29)  # últimos 30 dias incluindo ontem
-            
-            # ✅ FILTRO SQL: Adicionado "AND business_dt <= %s"
+            data_inicio = ontem - timedelta(days=29)
+
             query = """
                 SELECT store_code, business_dt, total_gross, custom_properties, order_code, state_id
                 FROM public.order_picture
@@ -184,14 +182,13 @@ with st.spinner("⏳ Processando..."):
                   AND state_id = 5
             """
             df = pd.read_sql(query, conn, params=(data_inicio, ontem))
-            
-            
+
             # 1. Converter datas
             df['business_dt'] = pd.to_datetime(df['business_dt'], errors='coerce')
-            
-            # 2. ✅ REMOVER ZEROS À ESQUERDA do store_code
+
+            # 2. Remover zeros à esquerda do store_code
             df['store_code'] = df['store_code'].astype(str).str.lstrip('0')
-            
+
             # 3. Extrair campos de custom_properties
             def parse_props(x):
                 if pd.isna(x): return {}
@@ -205,60 +202,48 @@ with st.spinner("⏳ Processando..."):
                     except:
                         return {}
                 return x if isinstance(x, dict) else {}
-            
+
             props = df['custom_properties'].apply(parse_props)
             df['TIP_AMOUNT'] = pd.to_numeric(props.apply(lambda x: x.get('TIP_AMOUNT')), errors='coerce').fillna(0)
             df['VOID_TYPE'] = props.apply(lambda x: x.get('VOID_TYPE'))
-            
+
             # 4. Desconsiderar registros com VOID_TYPE preenchido
             df = df[df['VOID_TYPE'].isna() | (df['VOID_TYPE'] == "") | (df['VOID_TYPE'] == 0)].copy()
-            
+
             # 5. Criar coluna de data sem hora para agrupamento
             df['data'] = df['business_dt'].dt.date
-            
-            # 6. Agrupar e já calcular o Ticket e Totais em um único passo
+
+            # 6. Agrupar
             resumo = df.groupby(['store_code', 'data']).agg(
                 Fat_Real=('total_gross', 'sum'),
                 Serv_Tx=('TIP_AMOUNT', 'sum'),
                 Qtd_Pedidos=('order_code', 'count')
             ).reset_index()
-            
-            # 7. Cálculos matemáticos
+
+            # 7. Cálculos — Ticket calculado ANTES de qualquer rename ou seleção
             resumo['Fat.Total'] = resumo['Fat_Real'] + resumo['Serv_Tx']
-            # Cálculo do Ticket: se Qtd_Pedidos for 0, coloca 0 para evitar erro de divisão
             resumo['Ticket'] = (resumo['Fat_Real'] / resumo['Qtd_Pedidos'].replace(0, np.nan)).fillna(0).round(2)
-            
-            # 8. Renomear colunas (Note que NÃO incluímos Qtd_Pedidos aqui, ela será descartada no filter abaixo)
+
+            # 8. Renomear e selecionar colunas — Qtd_Pedidos fica de fora automaticamente
             resumo = resumo.rename(columns={
                 'store_code': 'Código Everest',
                 'data': 'Data',
                 'Fat_Real': 'Fat.Real',
                 'Serv_Tx': 'Serv/Tx'
             })
-
-            # Selecionar apenas as colunas que queremos manter (isso exclui a Qtd_Pedidos automaticamente)
             resumo = resumo[['Código Everest', 'Data', 'Fat.Real', 'Serv/Tx', 'Fat.Total', 'Ticket']]
-            
-            # 9. Renomear colunas
-            resumo = resumo.rename(columns={
-                'store_code': 'Código Everest',
-                'data': 'Data',
-                'Fat_Real': 'Fat.Real',
-                'Serv_Tx': 'Serv/Tx',
-                'Fat_Total': 'Fat.Total'
-            })
-            
-            # 10. Formatar Data
+
+            # 9. Formatar Data
             resumo['Data'] = pd.to_datetime(resumo['Data']).dt.strftime('%d/%m/%Y')
-            
-            # 11. Adicionar Dia da Semana
+
+            # 10. Adicionar Dia da Semana
             dias_traducao = {
                 "Monday": "segunda-feira", "Tuesday": "terça-feira", "Wednesday": "quarta-feira",
                 "Thursday": "quinta-feira", "Friday": "sexta-feira", "Saturday": "sábado", "Sunday": "domingo"
             }
             resumo.insert(1, 'Dia da Semana', pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.day_name().map(dias_traducao))
-            
-            # 12. Buscar informações da Tabela Empresa
+
+            # 11. Merge com Tabela Empresa
             df_empresa["Código Everest"] = (
                 df_empresa["Código Everest"]
                 .astype(str)
@@ -266,39 +251,34 @@ with st.spinner("⏳ Processando..."):
                 .str.lstrip("0")
             )
             resumo["Código Everest"] = resumo["Código Everest"].astype(str).str.strip()
-            
-            resumo = pd.merge(resumo, df_empresa[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]], 
+            resumo = pd.merge(resumo, df_empresa[["Código Everest", "Loja", "Grupo", "Código Grupo Everest"]],
                              on="Código Everest", how="left")
-            
             resumo["Loja"] = resumo["Loja"].astype(str).str.strip().str.lower()
 
-            # Continua com o Mês, Ano e Sistema...
-            resumo['Mês'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.strftime('%b').str.lower()
-            
-            # Removemos a coluna de contagem para ela não aparecer no resultado final
-            resumo.drop(columns=['Qtd_Pedidos'], inplace=True)
+            # 12. Mês, Ano e Sistema
+            meses = {"jan": "jan", "feb": "fev", "mar": "mar", "apr": "abr", "may": "mai", "jun": "jun",
+                     "jul": "jul", "aug": "ago", "sep": "set", "oct": "out", "nov": "nov", "dec": "dez"}
+            resumo['Mês'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.strftime('%b').str.lower().map(meses)
+            resumo['Ano'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.year
+            resumo['Sistema'] = '3SCheckout'
 
-            resumo['Mês'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y').dt.strftime('%b').str.lower()
-            # ... resto do código (meses.map, Ano, Sistema, etc)
-            
             # 13. Ordenar colunas no formato padrão
             colunas_finais = [
                 "Data", "Dia da Semana", "Loja", "Código Everest", "Grupo",
                 "Código Grupo Everest", "Fat.Total", "Serv/Tx", "Fat.Real",
                 "Ticket", "Mês", "Ano", "Sistema"
             ]
-            
             resumo = resumo[[c for c in colunas_finais if c in resumo.columns]]
-            
+
             # 14. Arredondar valores
             for col in ["Fat.Total", "Serv/Tx", "Fat.Real", "Ticket"]:
                 if col in resumo.columns:
                     resumo[col] = resumo[col].round(2)
-            
+
             # 15. Ordenar por Data e Loja
             resumo['Data_Ordenada'] = pd.to_datetime(resumo['Data'], format='%d/%m/%Y')
             resumo = resumo.sort_values(by=['Data_Ordenada', 'Loja']).drop(columns='Data_Ordenada')
-            
+
             return resumo, None, len(df)
         except Exception as e:
             return None, str(e), 0

@@ -76,7 +76,6 @@ tbl = st.selectbox("1️⃣ Escolha a tabela:", tables)
 if tbl:
 df_cols = list_columns(conn, tbl, schema=schema)
 
-# Mostra as colunas da tabela como referência visual (igual ao DBeaver)
 with st.expander("📋 Colunas da tabela (clique para ver)", expanded=True):
     st.dataframe(df_cols, use_container_width=True, hide_index=True)
 
@@ -85,7 +84,6 @@ st.subheader("2️⃣ Monte sua query")
 
 modo = st.radio("Modo:", ["RAW (todas as colunas)", "Agregado (SUM por grupo)"], horizontal=True)
 
-# Colunas de data disponíveis
 cols_data = [c for c in df_cols["column_name"] if any(x in c.lower() for x in ["date", "dt", "at", "time"])]
 cols_todas = df_cols["column_name"].tolist()
 cols_numericas = df_cols[df_cols["data_type"].str.contains("numeric|integer|double|float", na=False)]["column_name"].tolist()
@@ -123,10 +121,10 @@ if st.button("🚀 Executar Query", type="primary"):
 
             if modo == "RAW (todas as colunas)":
                 order = f'ORDER BY "{col_data}" DESC' if usar_filtro_data else ""
-                q = f'SELECT * FROM "{schema}"."{tbl}" {where} {order} LIMIT %s'
+                q = f'SELECT  FROM "{schema}"."{tbl}" {where} {order} LIMIT %s'
                 params.append(int(limit))
 
-            else:  # Agregado
+            else:
                 if col_grupo and col_grupo != "Nenhum":
                     q = f'''
                         SELECT

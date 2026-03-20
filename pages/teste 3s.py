@@ -76,7 +76,7 @@ st.title("3S (Postgres) — Exportador RAW Excel com Filtro")
 # Sidebar de Configuração Global
 with st.sidebar:
     st.header("📅 Filtro de Data")
-    data_inicio = st.date_input("Desde quando?", value=date.today() - timedelta(days=7))
+    data_inicio = st.date_input("Desde quando?", value=date.today() - timedelta(days=97))
     st.info("O filtro será aplicado na coluna de data selecionada para cada tabela.")
     
     st.header("⚙️ Configurações")

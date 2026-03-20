@@ -56,6 +56,15 @@ def df_to_excel_bytes(df, sheet_name="data"):
     output.seek(0)
     return output.getvalue()
 
+def tem_dados(df):
+    if df.empty:
+        return False
+    numeric_cols = df.select_dtypes(include="number").columns
+    if len(numeric_cols) > 0:
+        if df[numeric_cols].isnull().all().all():
+            return False
+    return True
+
 ensure_cert_written()
 st.title("3S (Postgres) — Query Builder")
 
@@ -140,8 +149,8 @@ if tbl:
 
                 df = pd.read_sql(q, conn, params=params if params else None)
 
-                if df.empty:
-                    st.warning("Nenhum dado encontrado.")
+                if not tem_dados(df):
+                    st.warning("Nenhum dado encontrado para este período.")
                 else:
                     st.write(f"✅ {len(df)} linhas retornadas.")
                     st.dataframe(df, use_container_width=True)

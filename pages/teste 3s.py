@@ -219,4 +219,4 @@ if tbl:
 conn.close()
 
 
-Tenho esse codigo quero poder escolher o periodo que quero cada tabela
+

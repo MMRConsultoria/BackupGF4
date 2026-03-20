@@ -44,7 +44,7 @@ def get_unique_stores(conn, table_name, schema="public"):
     except:
         return []
 
-def fetch_table_filtered(conn, table_name, date_col, start_date, stores, limit=1000, schema="public"):
+def fetch_table_filtered(conn, table_name, date_col, start_date, end_date, stores, limit=1000, schema="public"):
     """Busca dados com filtros de Data e Store Code."""
     where_clauses = []
     params = []
@@ -53,6 +53,8 @@ def fetch_table_filtered(conn, table_name, date_col, start_date, stores, limit=1
     if date_col and date_col != "Sem filtro de data":
         where_clauses.append(f'"{date_col}" >= %s')
         params.append(start_date)
+        where_clauses.append(f'"{date_col}" <= %s')
+        params.append(end_date)
 
     # Filtro de Lojas
     if stores:
@@ -137,8 +139,11 @@ st.title("3S (Postgres) — Exportador RAW com Filtro de Loja")
 # Sidebar
 with st.sidebar:
     st.header("📅 Filtro de Data")
-    data_inicio = st.date_input("Desde quando?", value=date.today() - timedelta(days=7))
-    
+    data_inicio = st.date_input("Data início", value=date.today() - timedelta(days=7))
+    data_fim = st.date_input("Data fim", value=date.today())
+    if data_fim < data_inicio:
+        st.error("⚠️ Data fim deve ser maior ou igual à data início.")
+
     st.header("⚙️ Configurações")
     limit_global = st.number_input("Limite de linhas", min_value=1, max_value=1000000, value=100000)
     schema = st.text_input("Schema", value="public")
@@ -179,7 +184,7 @@ if tbl:
         with st.spinner("Consultando banco de dados..."):
             try:
                 df = fetch_table_filtered(
-                    conn, tbl, col_data_escolhida, data_inicio, 
+                    conn, tbl, col_data_escolhida, data_inicio, data_fim,
                     lojas_selecionadas, limit=limit_global, schema=schema
                 )
 
@@ -212,3 +217,6 @@ if tbl:
                 st.error(f"Erro: {e}")
 
 conn.close()
+
+
+Tenho esse codigo quero poder escolher o periodo que quero cada tabela

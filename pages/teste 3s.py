@@ -88,7 +88,12 @@ if tbl:
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        usar_filtro_data = st.checkbox("Filtrar por data?", value=True)
+        usar_filtro_data = st.checkbox("Filtrar por data?", value=False)
+
+    # Inicializa variáveis para evitar erro de referência
+    col_data = None
+    data_inicio = None
+    data_fim = None
 
     if usar_filtro_data:
         with col2:
@@ -98,26 +103,25 @@ if tbl:
         with col4:
             data_fim = st.date_input("Até:", value=date.today())
 
-    limit = st.number_input("Limite de linhas:", min_value=1, max_value=100000, value=5000)
+    limit = st.number_input("Limite de linhas:", min_value=1, max_value=200000, value=5000)
 
     st.divider()
 
     if st.button("🚀 Executar Query", type="primary"):
         with st.spinner("Executando..."):
             try:
-                params = []
-
-                if usar_filtro_data:
+                if usar_filtro_data and col_data:
                     q = f'SELECT * FROM "{schema}"."{tbl}" WHERE "{col_data}" >= %s AND "{col_data}" < %s ORDER BY "{col_data}" DESC LIMIT %s'
                     params = [data_inicio, data_fim + timedelta(days=1), int(limit)]
                 else:
-                    q = f'SELECT  FROM "{schema}"."{tbl}" LIMIT %s'
+                    # Se o filtro estiver desmarcado, faz um SELECT simples sem WHERE
+                    q = f'SELECT * FROM "{schema}"."{tbl}" LIMIT %s'
                     params = [int(limit)]
 
                 df = pd.read_sql(q, conn, params=params)
 
                 if df.empty:
-                    st.warning("Nenhum dado encontrado para este período.")
+                    st.warning("A tabela está vazia ou nenhum dado foi encontrado.")
                 else:
                     st.write(f"✅ {len(df)} linhas retornadas.")
                     st.dataframe(df, use_container_width=True)
@@ -132,6 +136,6 @@ if tbl:
                     )
 
             except Exception as e:
-                st.error(f"Erro: {e}")
+                st.error(f"Erro na execução: {e}")
 
 conn.close()

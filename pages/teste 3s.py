@@ -56,15 +56,6 @@ def df_to_excel_bytes(df, sheet_name="data"):
     output.seek(0)
     return output.getvalue()
 
-def tem_dados(df):
-    if df.empty:
-        return False
-    numeric_cols = df.select_dtypes(include="number").columns
-    if len(numeric_cols) > 0:
-        if df[numeric_cols].isnull().all().all():
-            return False
-    return True
-
 ensure_cert_written()
 st.title("3S (Postgres) — Query Builder")
 
@@ -85,36 +76,29 @@ tbl = st.selectbox("1️⃣ Escolha a tabela:", tables)
 if tbl:
     df_cols = list_columns(conn, tbl, schema=schema)
 
-    with st.expander("📋 Colunas da tabela (clique para ver)", expanded=True):
+    with st.expander("📋 Colunas da tabela", expanded=True):
         st.dataframe(df_cols, use_container_width=True, hide_index=True)
 
     st.divider()
-    st.subheader("2️⃣ Monte sua query")
-
-    modo = st.radio("Modo:", ["RAW (todas as colunas)", "Agregado (SUM por grupo)"], horizontal=True)
+    st.subheader("2️⃣ Filtros")
 
     cols_data = [c for c in df_cols["column_name"] if any(x in c.lower() for x in ["date", "dt", "at", "time"])]
     cols_todas = df_cols["column_name"].tolist()
-    cols_numericas = df_cols[df_cols["data_type"].str.contains("numeric|integer|double|float", na=False)]["column_name"].tolist()
-    cols_texto = df_cols[df_cols["data_type"].str.contains("text|char|varchar", na=False)]["column_name"].tolist()
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         usar_filtro_data = st.checkbox("Filtrar por data?", value=True)
-        if usar_filtro_data:
+
+    if usar_filtro_data:
+        with col2:
             col_data = st.selectbox("Coluna de data:", cols_data if cols_data else cols_todas)
+        with col3:
             data_inicio = st.date_input("De:", value=date.today() - timedelta(days=90))
+        with col4:
             data_fim = st.date_input("Até:", value=date.today())
 
-    with col2:
-        if modo == "Agregado (SUM por grupo)":
-            col_valor = st.selectbox("Coluna para somar (SUM):", cols_numericas if cols_numericas else cols_todas)
-            col_grupo = st.selectbox("Agrupar por (GROUP BY):", ["Nenhum"] + cols_texto + cols_todas)
-
-    with col3:
-        if modo == "RAW (todas as colunas)":
-            limit = st.number_input("Limite de linhas:", min_value=1, max_value=100000, value=5000)
+    limit = st.number_input("Limite de linhas:", min_value=1, max_value=100000, value=5000)
 
     st.divider()
 
@@ -122,34 +106,17 @@ if tbl:
         with st.spinner("Executando..."):
             try:
                 params = []
-                where = ""
 
                 if usar_filtro_data:
-                    where = f'WHERE "{col_data}" >= %s AND "{col_data}" < %s'
-                    params += [data_inicio, data_fim + timedelta(days=1)]
-
-                if modo == "RAW (todas as colunas)":
-                    order = f'ORDER BY "{col_data}" DESC' if usar_filtro_data else ""
-                    q = f'SELECT  FROM "{schema}"."{tbl}" {where} {order} LIMIT %s'
-                    params.append(int(limit))
-
+                    q = f'SELECT * FROM "{schema}"."{tbl}" WHERE "{col_data}" >= %s AND "{col_data}" < %s ORDER BY "{col_data}" DESC LIMIT %s'
+                    params = [data_inicio, data_fim + timedelta(days=1), int(limit)]
                 else:
-                    if col_grupo and col_grupo != "Nenhum":
-                        q = f'''
-                            SELECT
-                                COALESCE(CAST("{col_grupo}" AS TEXT), 'TOTAL') AS "{col_grupo}",
-                                SUM("{col_valor}") AS total_{col_valor}
-                            FROM "{schema}"."{tbl}"
-                            {where}
-                            GROUP BY ROLLUP ("{col_grupo}")
-                            ORDER BY ("{col_grupo}" IS NULL), "{col_grupo}"
-                        '''
-                    else:
-                        q = f'SELECT SUM("{col_valor}") AS total_{col_valor} FROM "{schema}"."{tbl}" {where}'
+                    q = f'SELECT  FROM "{schema}"."{tbl}" LIMIT %s'
+                    params = [int(limit)]
 
-                df = pd.read_sql(q, conn, params=params if params else None)
+                df = pd.read_sql(q, conn, params=params)
 
-                if not tem_dados(df):
+                if df.empty:
                     st.warning("Nenhum dado encontrado para este período.")
                 else:
                     st.write(f"✅ {len(df)} linhas retornadas.")

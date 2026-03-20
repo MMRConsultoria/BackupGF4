@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import psycopg2
 import uuid
+import json
 from datetime import datetime, date, timedelta
 from io import BytesIO
 
@@ -33,6 +34,19 @@ def list_tables(conn, schema="public"):
 def list_columns(conn, table_name, schema="public"):
     q = "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = %s AND table_name = %s ORDER BY ordinal_position"
     return pd.read_sql(q, conn, params=(schema, table_name))
+
+def expandir_json(df, colunas_json):
+    for col in colunas_json:
+        if col not in df.columns:
+            continue
+        try:
+            expandido = df[col].apply(lambda x: x if isinstance(x, dict) else (json.loads(x) if isinstance(x, str) else {}))
+            json_df = pd.json_normalize(expandido)
+            json_df.columns = [f"{col}__{c}" for c in json_df.columns]
+            df = pd.concat([df.drop(columns=[col]), json_df], axis=1)
+        except Exception:
+            pass
+    return df
 
 def _make_excel_safe(df):
     df_safe = df.copy()
@@ -84,13 +98,13 @@ if tbl:
 
     cols_data = [c for c in df_cols["column_name"] if any(x in c.lower() for x in ["date", "dt", "at", "time"])]
     cols_todas = df_cols["column_name"].tolist()
+    cols_json = df_cols[df_cols["data_type"].isin(["json", "jsonb"])]["column_name"].tolist()
 
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         usar_filtro_data = st.checkbox("Filtrar por data?", value=False)
 
-    # Inicializa variáveis para evitar erro de referência
     col_data = None
     data_inicio = None
     data_fim = None
@@ -105,6 +119,20 @@ if tbl:
 
     limit = st.number_input("Limite de linhas:", min_value=1, max_value=200000, value=5000)
 
+    # Opção de desembrar JSON só aparece se a tabela tiver colunas JSON
+    expandir = False
+    colunas_para_expandir = []
+    if cols_json:
+        st.divider()
+        st.subheader("3️⃣ Colunas JSON detectadas")
+        expandir = st.checkbox("Desembrar colunas JSON?", value=False)
+        if expandir:
+            colunas_para_expandir = st.multiselect(
+                "Quais colunas JSON deseja desembrar?",
+                options=cols_json,
+                default=cols_json
+            )
+
     st.divider()
 
     if st.button("🚀 Executar Query", type="primary"):
@@ -114,7 +142,6 @@ if tbl:
                     q = f'SELECT * FROM "{schema}"."{tbl}" WHERE "{col_data}" >= %s AND "{col_data}" < %s ORDER BY "{col_data}" DESC LIMIT %s'
                     params = [data_inicio, data_fim + timedelta(days=1), int(limit)]
                 else:
-                    # Se o filtro estiver desmarcado, faz um SELECT simples sem WHERE
                     q = f'SELECT * FROM "{schema}"."{tbl}" LIMIT %s'
                     params = [int(limit)]
 
@@ -123,7 +150,11 @@ if tbl:
                 if df.empty:
                     st.warning("A tabela está vazia ou nenhum dado foi encontrado.")
                 else:
-                    st.write(f"✅ {len(df)} linhas retornadas.")
+                    if expandir and colunas_para_expandir:
+                        df = expandir_json(df, colunas_para_expandir)
+                        st.info(f"JSON desembrado! Colunas expandidas: {', '.join(colunas_para_expandir)}")
+
+                    st.write(f"✅ {len(df)} linhas e {len(df.columns)} colunas retornadas.")
                     st.dataframe(df, use_container_width=True)
 
                     xlsx_bytes = df_to_excel_bytes(df, sheet_name=tbl)

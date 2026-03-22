@@ -532,7 +532,30 @@ with st.spinner("⏳ Processando..."):
         
                     elif "Relatório 100132" in abas:
                         df = pd.read_excel(xls, sheet_name="Relatório 100132")
-                        df["Loja"] = df["Código - Nome Empresa"].astype(str).str.split("-", n=1).str[-1].str.strip().str.lower()
+                        #df["Loja"] = df["Código - Nome Empresa"].astype(str).str.split("-", n=1).str[-1].str.strip().str.lower()
+                        df["Código Everest"] = (
+                            df["Código - Nome Empresa"]
+                            .astype(str)
+                            .str.split("-", n=1).str[0]
+                            .str.replace(r"\D", "", regex=True)
+                            .str.lstrip("0")
+                        )
+                        
+                        df_empresa["Código Everest"] = (
+                            df_empresa["Código Everest"]
+                            .astype(str)
+                            .str.replace(r"\D", "", regex=True)
+                            .str.lstrip("0")
+                        )
+                        
+                        df = df.merge(
+                            df_empresa[["Código Everest", "Loja"]],
+                            on="Código Everest",
+                            how="left"
+                        )
+                        
+                        
+                        
                         df["Data"] = pd.to_datetime(df["Data"], dayfirst=True, errors="coerce")
                         df["Fat.Total"] = pd.to_numeric(df["Valor Total"], errors="coerce")
                         df["Serv/Tx"] = pd.to_numeric(df["Taxa de Serviço"], errors="coerce")

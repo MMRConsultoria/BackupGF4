@@ -47,6 +47,14 @@ def _parse_json_cell(x):
             return {}
     return {}
 
+def _formatar_moeda(valor):
+    if valor == "" or valor is None:
+        return ""
+    try:
+        return f"$ {float(valor):,.2f}"
+    except (ValueError, TypeError):
+        return valor
+
 def expandir_json(df, colunas_json):
     for col in colunas_json:
         if col not in df.columns:
@@ -56,7 +64,10 @@ def expandir_json(df, colunas_json):
             col_idx = df.columns.get_loc(col)
             for campo in JSON_CAMPOS_FIXOS:
                 nova_col = f"{col}__{campo}"
-                df.insert(col_idx + 1, nova_col, parsed.apply(lambda d: d.get(campo, "")))
+                valores = parsed.apply(lambda d: d.get(campo, ""))
+                if campo == "TIP_AMOUNT":
+                    valores = valores.apply(_formatar_moeda)
+                df.insert(col_idx + 1, nova_col, valores)
                 col_idx += 1
         except Exception:
             pass

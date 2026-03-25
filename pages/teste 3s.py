@@ -35,15 +35,29 @@ def list_columns(conn, table_name, schema="public"):
     q = "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = %s AND table_name = %s ORDER BY ordinal_position"
     return pd.read_sql(q, conn, params=(schema, table_name))
 
+JSON_CAMPOS_FIXOS = ["Tip Amount", "TIP_TYPE", "VOID_TYPE"]
+
+def _parse_json_cell(x):
+    if isinstance(x, dict):
+        return x
+    if isinstance(x, str):
+        try:
+            return json.loads(x)
+        except Exception:
+            return {}
+    return {}
+
 def expandir_json(df, colunas_json):
     for col in colunas_json:
         if col not in df.columns:
             continue
         try:
-            expandido = df[col].apply(lambda x: x if isinstance(x, dict) else (json.loads(x) if isinstance(x, str) else {}))
-            json_df = pd.json_normalize(expandido)
-            json_df.columns = [f"{col}__{c}" for c in json_df.columns]
-            df = pd.concat([df.drop(columns=[col]), json_df], axis=1)
+            parsed = df[col].apply(_parse_json_cell)
+            col_idx = df.columns.get_loc(col)
+            for campo in JSON_CAMPOS_FIXOS:
+                nova_col = f"{col}__{campo}"
+                df.insert(col_idx + 1, nova_col, parsed.apply(lambda d: d.get(campo, "")))
+                col_idx += 1
         except Exception:
             pass
     return df
@@ -125,10 +139,10 @@ if tbl:
     if cols_json:
         st.divider()
         st.subheader("3️⃣ Colunas JSON detectadas")
-        expandir = st.checkbox("Desembrar colunas JSON?", value=False)
+        expandir = st.checkbox("Extrair campos JSON (Tip Amount, TIP_TYPE, VOID_TYPE)?", value=False)
         if expandir:
             colunas_para_expandir = st.multiselect(
-                "Quais colunas JSON deseja desembrar?",
+                "Quais colunas JSON deseja extrair?",
                 options=cols_json,
                 default=cols_json
             )
@@ -152,7 +166,7 @@ if tbl:
                 else:
                     if expandir and colunas_para_expandir:
                         df = expandir_json(df, colunas_para_expandir)
-                        st.info(f"JSON desembrado! Colunas expandidas: {', '.join(colunas_para_expandir)}")
+                        st.info(f"Campos extraídos do JSON (Tip Amount, TIP_TYPE, VOID_TYPE) para: {', '.join(colunas_para_expandir)}")
 
                     st.write(f"✅ {len(df)} linhas e {len(df.columns)} colunas retornadas.")
                     st.dataframe(df, use_container_width=True)

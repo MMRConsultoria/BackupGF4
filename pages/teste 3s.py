@@ -35,7 +35,7 @@ def list_columns(conn, table_name, schema="public"):
     q = "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = %s AND table_name = %s ORDER BY ordinal_position"
     return pd.read_sql(q, conn, params=(schema, table_name))
 
-JSON_CAMPOS_FIXOS = ["Tip Amount", "TIP_TYPE", "VOID_TYPE"]
+JSON_CAMPOS_FIXOS = ["TIP_AMOUNT", "TIP_TYPE", "VOID_TYPE"]
 
 def _parse_json_cell(x):
     if isinstance(x, dict):
@@ -139,7 +139,7 @@ if tbl:
     if cols_json:
         st.divider()
         st.subheader("3️⃣ Colunas JSON detectadas")
-        expandir = st.checkbox("Extrair campos JSON (Tip Amount, TIP_TYPE, VOID_TYPE)?", value=False)
+        expandir = st.checkbox("Extrair campos JSON (TIP_AMOUNT, TIP_TYPE, VOID_TYPE)?", value=False)
         if expandir:
             colunas_para_expandir = st.multiselect(
                 "Quais colunas JSON deseja extrair?",

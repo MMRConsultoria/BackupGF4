@@ -47,18 +47,21 @@ def _parse_json_cell(x):
             return {}
     return {}
 
-def _formatar_moeda(valor):
+def _para_float(valor):
+    """Converte o valor para float; retorna None se vazio/inválido."""
     if valor == "" or valor is None:
-        return ""
+        return None
     try:
-        numero = float(valor)
-        # Formato brasileiro: ponto como separador de milhar, vírgula como decimal
-        formatado = f"{numero:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        return formatado
+        return float(valor)
     except (ValueError, TypeError):
-        return valor
+        return None
+
+# Colunas TIP_AMOUNT geradas (para aplicar formato no Excel)
+_tip_amount_cols = []
 
 def expandir_json(df, colunas_json):
+    global _tip_amount_cols
+    _tip_amount_cols = []
     for col in colunas_json:
         if col not in df.columns:
             continue
@@ -69,7 +72,8 @@ def expandir_json(df, colunas_json):
                 nova_col = f"{col}__{campo}"
                 valores = parsed.apply(lambda d: d.get(campo, ""))
                 if campo == "TIP_AMOUNT":
-                    valores = valores.apply(_formatar_moeda)
+                    valores = valores.apply(_para_float)
+                    _tip_amount_cols.append(nova_col)
                 df.insert(col_idx + 1, nova_col, valores)
                 col_idx += 1
         except Exception:
@@ -91,10 +95,22 @@ def _make_excel_safe(df):
     return df_safe
 
 def df_to_excel_bytes(df, sheet_name="data"):
+    from openpyxl.styles import numbers as xl_numbers
     df_safe = _make_excel_safe(df)
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_safe.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+        # Aplica formato numérico brasileiro nas colunas TIP_AMOUNT
+        if _tip_amount_cols:
+            ws = writer.sheets[sheet_name[:31]]
+            header = {cell.value: cell.column for cell in ws[1]}
+            for col_name in _tip_amount_cols:
+                if col_name in header:
+                    col_letter = ws.cell(row=1, column=header[col_name]).column_letter
+                    for row in ws.iter_rows(min_row=2, min_col=header[col_name], max_col=header[col_name]):
+                        for cell in row:
+                            if cell.value is not None:
+                                cell.number_format = '#.##0,00'
     output.seek(0)
     return output.getvalue()
 

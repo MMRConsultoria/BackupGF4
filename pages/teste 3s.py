@@ -51,7 +51,10 @@ def _formatar_moeda(valor):
     if valor == "" or valor is None:
         return ""
     try:
-        return f"$ {float(valor):,.2f}"
+        numero = float(valor)
+        # Formato brasileiro: ponto como separador de milhar, vírgula como decimal
+        formatado = f"{numero:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return formatado
     except (ValueError, TypeError):
         return valor
 

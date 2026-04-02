@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, date
 
 st.set_page_config(page_title="Meio de Pagamento", layout="wide")
 
-# ====== CSS para travar o botão 3S e estilizar abas (cole após imports) ======
+# ====== CSS para travar  o botão 3S e estilizar abas (cole após imports) ======
 st.markdown(
     """
     <style>

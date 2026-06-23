@@ -52,13 +52,11 @@ if st.button("🔄 Atualizar ZIG - Teste Final"):
 
     if resp_lojas.status_code != 200:
         st.error("Erro ao buscar lojas ZIG")
-        st.text(resp_lojas.text)
         st.stop()
 
     lojas = resp_lojas.json()
 
     registros = []
-    erros = []
     lojas_sem_movimento = []
 
     for loja in lojas:
@@ -77,11 +75,6 @@ if st.button("🔄 Atualizar ZIG - Teste Final"):
         )
 
         if resp.status_code != 200:
-            erros.append({
-                "Loja": loja_nome,
-                "Status": resp.status_code,
-                "Erro": resp.text
-            })
             continue
 
         dados = resp.json()
@@ -106,9 +99,6 @@ if st.button("🔄 Atualizar ZIG - Teste Final"):
 
     if not registros:
         st.warning("⚠️ Nenhum faturamento encontrado para o período informado.")
-        if erros:
-            st.warning("Algumas lojas retornaram erro:")
-            st.write(erros)
         st.stop()
 
     df = pd.DataFrame(registros)
@@ -211,7 +201,3 @@ if st.button("🔄 Atualizar ZIG - Teste Final"):
         file_name=f"zig_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
-    if erros:
-        st.warning("Algumas lojas retornaram erro:")
-        st.write(erros)

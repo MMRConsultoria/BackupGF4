@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
 import pandas as pd
-import numpy as np
 from datetime import date, datetime, timedelta
 from io import BytesIO
 import gspread
@@ -100,7 +99,8 @@ if st.button("🔄 Atualizar ZIG - Teste Final"):
     if not registros:
         st.warning("Nenhum faturamento encontrado.")
         if erros:
-            st.dataframe(pd.DataFrame(erros), use_container_width=True)
+            st.warning("Algumas lojas retornaram erro:")
+            st.write(erros)
         st.stop()
 
     df = pd.DataFrame(registros)
@@ -166,12 +166,6 @@ if st.button("🔄 Atualizar ZIG - Teste Final"):
     resumo["Data_Ordenada"] = pd.to_datetime(resumo["Data"], format="%d/%m/%Y")
     resumo = resumo.sort_values(["Data_Ordenada", "Loja"]).drop(columns="Data_Ordenada")
 
-    st.session_state["resumo_zig_teste"] = resumo
-    st.session_state["erros_zig_teste"] = erros
-
-if "resumo_zig_teste" in st.session_state:
-    resumo = st.session_state["resumo_zig_teste"]
-
     lojas_nao_localizadas = resumo[
         resumo["Código Everest"].isna() |
         (resumo["Código Everest"].astype(str).str.strip() == "")
@@ -180,8 +174,9 @@ if "resumo_zig_teste" in st.session_state:
     if len(lojas_nao_localizadas) > 0:
         st.error("❌ Lojas ZIG não localizadas na Tabela Empresa:")
         st.write(lojas_nao_localizadas)
-    else:
-        st.success("✅ Todas as lojas foram localizadas na Tabela Empresa.")
+        st.stop()
+
+    st.success("✅ Todas as lojas foram localizadas na Tabela Empresa.")
 
     datas_validas = pd.to_datetime(resumo["Data"], format="%d/%m/%Y", errors="coerce").dropna()
 
@@ -189,26 +184,36 @@ if "resumo_zig_teste" in st.session_state:
         data_inicial = datas_validas.min().strftime("%d/%m/%Y")
         data_final = datas_validas.max().strftime("%d/%m/%Y")
         total = resumo["Fat.Total"].sum()
-        total_formatado = f"R$ {total:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+        total_formatado = (
+            f"R$ {total:,.2f}"
+            .replace(",", "X")
+            .replace(".", ",")
+            .replace("X", ".")
+        )
 
         col1, col2 = st.columns(2)
-        col1.metric("Período", f"{data_inicial} até {data_final}")
-        col2.metric("Valor total", total_formatado)
 
-    st.dataframe(resumo, use_container_width=True, hide_index=True)
+        with col1:
+            st.metric("Período", f"{data_inicial} até {data_final}")
+
+        with col2:
+            st.metric("Valor total", total_formatado)
 
     output = BytesIO()
+
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         resumo.to_excel(writer, index=False, sheet_name="Faturamento Servico")
+
     output.seek(0)
 
     st.download_button(
-        "📥 Baixar Excel ZIG no padrão final",
+        label="📥 Baixar Excel ZIG",
         data=output,
-        file_name=f"zig_padrao_final_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+        file_name=f"zig_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-if "erros_zig_teste" in st.session_state and st.session_state["erros_zig_teste"]:
-    st.warning("Algumas lojas retornaram erro:")
-    st.dataframe(pd.DataFrame(st.session_state["erros_zig_teste"]), use_container_width=True)
+    if erros:
+        st.warning("Algumas lojas retornaram erro:")
+        st.write(erros)

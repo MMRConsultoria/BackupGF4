@@ -17,88 +17,168 @@ headers = {
 
 base_url = "https://api.zigcore.com.br/integration"
 
-# =========================
-# 1. BUSCAR LOJAS
-# =========================
-st.markdown("### 1. Buscar lojas")
-
-if st.button("Buscar lojas"):
-    resp = requests.get(
-        f"{base_url}/erp/lojas",
-        headers=headers,
-        params={"rede": rede},
-        timeout=30
-    )
-
-    st.write("Status:", resp.status_code)
-    st.write("URL:", resp.url)
-
-    try:
-        dados = resp.json()
-        st.json(dados)
-
-        if isinstance(dados, list):
-            df_lojas = pd.DataFrame(dados)
-            st.success(f"{len(df_lojas)} lojas encontradas")
-            st.dataframe(df_lojas, use_container_width=True)
-            st.session_state["zig_lojas"] = df_lojas
-
-    except Exception:
-        st.text(resp.text)
-
-
-# =========================
-# 2. TESTAR FATURAMENTO
-# =========================
-st.markdown("---")
-st.markdown("### 2. Testar faturamento")
-
-lojas_fixas = {
-    "HEINEKEN STAGING": "5fa1ff35-6145-4130-8707-8fd62e8822a5",
-    "HEINEKEN HOUSE GRUPO FIT": "0e377e7a-9920-4674-916f-2ab196f8b691"
-}
-
-loja_nome = st.selectbox("Escolha a loja", list(lojas_fixas.keys()))
-loja_id = lojas_fixas[loja_nome]
+# ======================================
+# PERÍODO
+# ======================================
 
 col1, col2 = st.columns(2)
 
 with col1:
-    dtinicio = st.date_input("Data início", value=date.today() - timedelta(days=7))
-
-with col2:
-    dtfim = st.date_input("Data fim", value=date.today())
-
-if st.button("Buscar faturamento"):
-    resp = requests.get(
-        f"{base_url}/erp/faturamento",
-        headers=headers,
-        params={
-            "dtinicio": dtinicio.strftime("%Y-%m-%d"),
-            "dtfim": dtfim.strftime("%Y-%m-%d"),
-            "loja": loja_id
-        },
-        timeout=60
+    dtinicio = st.date_input(
+        "Data início",
+        value=date.today() - timedelta(days=30)
     )
 
-    st.write("Status:", resp.status_code)
-    st.write("URL:", resp.url)
+with col2:
+    dtfim = st.date_input(
+        "Data fim",
+        value=date.today()
+    )
 
-    try:
-        dados = resp.json()
-        st.json(dados)
+# ======================================
+# BUSCAR FATURAMENTO
+# ======================================
 
-        if isinstance(dados, list):
-            df = pd.DataFrame(dados)
+if st.button("🔄 Buscar faturamento ZIG"):
 
-            if not df.empty and "value" in df.columns:
-                df["valor_reais"] = df["value"] / 100
+    with st.spinner("Buscando lojas..."):
 
-            st.dataframe(df, use_container_width=True)
+        resp_lojas = requests.get(
+            f"{base_url}/erp/lojas",
+            headers=headers,
+            params={"rede": rede},
+            timeout=30
+        )
 
-            if not df.empty and "valor_reais" in df.columns:
-                total = df["valor_reais"].sum()
-                st.success(f"Total faturamento: R$ {total:,.2f}")
+        st.write("Status lojas:", resp_lojas.status_code)
 
-    except Exception:
-        st.text(resp.text)
+        if resp_lojas.status_code != 200:
+            st.error("Erro ao buscar lojas")
+            st.text(resp_lojas.text)
+            st.stop()
+
+        lojas = resp_lojas.json()
+
+        st.success(f"{len(lojas)} lojas encontradas")
+
+    todos_registros = []
+    erros = []
+
+    barra = st.progress(0)
+
+    for idx, loja in enumerate(lojas):
+
+        loja_id = loja.get("id")
+        loja_nome = loja.get("name")
+
+        try:
+
+            resp = requests.get(
+                f"{base_url}/erp/faturamento",
+                headers=headers,
+                params={
+                    "dtinicio": dtinicio.strftime("%Y-%m-%d"),
+                    "dtfim": dtfim.strftime("%Y-%m-%d"),
+                    "loja": loja_id
+                },
+                timeout=60
+            )
+
+            if resp.status_code != 200:
+
+                erros.append({
+                    "Loja": loja_nome,
+                    "Status": resp.status_code,
+                    "Erro": resp.text
+                })
+
+                continue
+
+            dados = resp.json()
+
+            if isinstance(dados, list):
+
+                for item in dados:
+
+                    todos_registros.append({
+                        "Data": item.get("eventDate"),
+                        "Loja": loja_nome,
+                        "Faturamento": float(item.get("value", 0)) / 100
+                    })
+
+        except Exception as e:
+
+            erros.append({
+                "Loja": loja_nome,
+                "Status": "EXCEPTION",
+                "Erro": str(e)
+            })
+
+        barra.progress((idx + 1) / len(lojas))
+
+    # ======================================
+    # RESUMO
+    # ======================================
+
+    if len(todos_registros) > 0:
+
+        df = pd.DataFrame(todos_registros)
+
+        tabela_resumo = (
+            df.groupby(
+                ["Data", "Loja"],
+                as_index=False
+            )["Faturamento"]
+            .sum()
+        )
+
+        tabela_resumo["Faturamento"] = (
+            tabela_resumo["Faturamento"]
+            .round(2)
+        )
+
+        total = tabela_resumo["Faturamento"].sum()
+
+        st.success(
+            f"{len(tabela_resumo)} linhas encontradas | Total: R$ {total:,.2f}"
+        )
+
+        st.dataframe(
+            tabela_resumo,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # Excel
+
+        excel = tabela_resumo.to_csv(
+            index=False,
+            sep=";"
+        ).encode("utf-8-sig")
+
+        st.download_button(
+            "📥 Baixar CSV",
+            excel,
+            file_name="zig_faturamento.csv",
+            mime="text/csv"
+        )
+
+    else:
+
+        st.warning("Nenhum faturamento encontrado.")
+
+    # ======================================
+    # ERROS
+    # ======================================
+
+    if len(erros) > 0:
+
+        st.warning(
+            f"{len(erros)} loja(s) retornaram erro."
+        )
+
+        st.dataframe(
+            pd.DataFrame(erros),
+            use_container_width=True,
+            hide_index=True
+        )

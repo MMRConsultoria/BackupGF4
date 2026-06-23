@@ -200,11 +200,20 @@ if st.button("🔄 Testar Faturamento + Produtos"):
         resumo_serv = pd.DataFrame(columns=["Data", "Loja", "Serv/Tx"])
         resumo_tipo = pd.DataFrame()
 
+    # Garantir mesmo tipo antes do merge
+    resumo_fat["Data"] = pd.to_datetime(resumo_fat["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
+    resumo_fat["Loja"] = resumo_fat["Loja"].astype(str).str.strip().str.lower()
+    
+    resumo_serv["Data"] = pd.to_datetime(resumo_serv["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
+    resumo_serv["Loja"] = resumo_serv["Loja"].astype(str).str.strip().str.lower()
+    
     resumo = resumo_fat.merge(
         resumo_serv,
         on=["Data", "Loja"],
         how="left"
     )
+    
+    resumo["Data"] = pd.to_datetime(resumo["Data"], errors="coerce")
 
     resumo["Serv/Tx"] = pd.to_numeric(resumo["Serv/Tx"], errors="coerce").fillna(0)
     resumo["Fat.Real"] = resumo["Fat.Total"] - resumo["Serv/Tx"]

@@ -33,15 +33,32 @@ headers = {
 
 base_url = "https://api.zigcore.com.br/integration"
 
+
+def gerar_periodos_5_dias(data_inicio, data_fim):
+    periodos = []
+    atual = data_inicio
+
+    while atual <= data_fim:
+        fim_bloco = min(atual + timedelta(days=4), data_fim)
+        periodos.append((atual, fim_bloco))
+        atual = fim_bloco + timedelta(days=1)
+
+    return periodos
+
+
 col1, col2 = st.columns(2)
 
 with col1:
-    dtinicio = st.date_input("Data início", value=date.today() - timedelta(days=99))
+    dtinicio = st.date_input("Data início", value=date.today() - timedelta(days=30))
 
 with col2:
     dtfim = st.date_input("Data fim", value=date.today() - timedelta(days=1))
 
 if st.button("🔄 Atualizar ZIG - Teste Final"):
+
+    if dtinicio > dtfim:
+        st.error("A data inicial não pode ser maior que a data final.")
+        st.stop()
 
     resp_lojas = requests.get(
         f"{base_url}/erp/lojas",
@@ -59,37 +76,46 @@ if st.button("🔄 Atualizar ZIG - Teste Final"):
     registros = []
     lojas_sem_movimento = []
 
+    periodos = gerar_periodos_5_dias(dtinicio, dtfim)
+
     for loja in lojas:
         loja_id = loja.get("id")
         loja_nome = loja.get("name")
+        teve_movimento = False
 
-        resp = requests.get(
-            f"{base_url}/erp/faturamento",
-            headers=headers,
-            params={
-                "dtinicio": dtinicio.strftime("%Y-%m-%d"),
-                "dtfim": dtfim.strftime("%Y-%m-%d"),
-                "loja": loja_id
-            },
-            timeout=60
-        )
+        for inicio_bloco, fim_bloco in periodos:
 
-        if resp.status_code != 200:
-            continue
+            resp = requests.get(
+                f"{base_url}/erp/faturamento",
+                headers=headers,
+                params={
+                    "dtinicio": inicio_bloco.strftime("%Y-%m-%d"),
+                    "dtfim": fim_bloco.strftime("%Y-%m-%d"),
+                    "loja": loja_id
+                },
+                timeout=60
+            )
 
-        dados = resp.json()
+            if resp.status_code != 200:
+                continue
 
-        if isinstance(dados, list) and len(dados) == 0:
-            lojas_sem_movimento.append(loja_nome)
-            continue
+            dados = resp.json()
 
-        if isinstance(dados, list):
+            if not isinstance(dados, list):
+                continue
+
+            if len(dados) > 0:
+                teve_movimento = True
+
             for item in dados:
                 registros.append({
                     "Data": item.get("eventDate"),
                     "Loja": loja_nome,
                     "Fat.Total": float(item.get("value", 0)) / 100
                 })
+
+        if not teve_movimento:
+            lojas_sem_movimento.append(loja_nome)
 
     if lojas_sem_movimento:
         st.info(

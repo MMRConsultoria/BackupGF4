@@ -8,10 +8,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 import json
 
 st.set_page_config(page_title="Teste ZIG Final", layout="wide")
-
 st.title("🧪 Teste ZIG - Padrão Final")
 
-# Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
 credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
@@ -25,7 +23,6 @@ df_empresa = pd.DataFrame(valores_empresa[1:], columns=valores_empresa[0])
 df_empresa.columns = df_empresa.columns.str.strip()
 df_empresa["Loja"] = df_empresa["Loja"].astype(str).str.lower().str.strip()
 
-# ZIG
 token = st.secrets["zig"]["token"]
 rede = st.secrets["zig"]["rede"]
 
@@ -62,6 +59,7 @@ if st.button("🔄 Atualizar ZIG - Teste Final"):
 
     registros = []
     erros = []
+    lojas_sem_movimento = []
 
     for loja in lojas:
         loja_id = loja.get("id")
@@ -88,6 +86,10 @@ if st.button("🔄 Atualizar ZIG - Teste Final"):
 
         dados = resp.json()
 
+        if isinstance(dados, list) and len(dados) == 0:
+            lojas_sem_movimento.append(loja_nome)
+            continue
+
         if isinstance(dados, list):
             for item in dados:
                 registros.append({
@@ -96,8 +98,14 @@ if st.button("🔄 Atualizar ZIG - Teste Final"):
                     "Fat.Total": float(item.get("value", 0)) / 100
                 })
 
+    if lojas_sem_movimento:
+        st.info(
+            f"ℹ️ {len(lojas_sem_movimento)} loja(s) sem movimentação no período: "
+            + ", ".join(lojas_sem_movimento)
+        )
+
     if not registros:
-        st.warning("Nenhum faturamento encontrado.")
+        st.warning("⚠️ Nenhum faturamento encontrado para o período informado.")
         if erros:
             st.warning("Algumas lojas retornaram erro:")
             st.write(erros)
@@ -166,17 +174,7 @@ if st.button("🔄 Atualizar ZIG - Teste Final"):
     resumo["Data_Ordenada"] = pd.to_datetime(resumo["Data"], format="%d/%m/%Y")
     resumo = resumo.sort_values(["Data_Ordenada", "Loja"]).drop(columns="Data_Ordenada")
 
-    #lojas_nao_localizadas = resumo[
-    #    resumo["Código Everest"].isna() |
-    #    (resumo["Código Everest"].astype(str).str.strip() == "")
-    #]["Loja"].unique()
-
-    #if len(lojas_nao_localizadas) > 0:
-    #    st.error("❌ Lojas ZIG não localizadas na Tabela Empresa:")
-    #    st.write(lojas_nao_localizadas)
-    #    st.stop()
-    st.info("ℹ️ Validação de lojas desativada neste teste.")
-    #st.success("✅ Todas as lojas foram localizadas na Tabela Empresa.")
+    st.info("ℹ️ Validação de lojas na Tabela Empresa desativada neste teste.")
 
     datas_validas = pd.to_datetime(resumo["Data"], format="%d/%m/%Y", errors="coerce").dropna()
 

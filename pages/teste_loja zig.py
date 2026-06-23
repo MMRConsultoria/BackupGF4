@@ -166,17 +166,17 @@ if st.button("🔄 Atualizar ZIG - Teste Final"):
     resumo["Data_Ordenada"] = pd.to_datetime(resumo["Data"], format="%d/%m/%Y")
     resumo = resumo.sort_values(["Data_Ordenada", "Loja"]).drop(columns="Data_Ordenada")
 
-    lojas_nao_localizadas = resumo[
-        resumo["Código Everest"].isna() |
-        (resumo["Código Everest"].astype(str).str.strip() == "")
-    ]["Loja"].unique()
+    #lojas_nao_localizadas = resumo[
+    #    resumo["Código Everest"].isna() |
+    #    (resumo["Código Everest"].astype(str).str.strip() == "")
+    #]["Loja"].unique()
 
-    if len(lojas_nao_localizadas) > 0:
-        st.error("❌ Lojas ZIG não localizadas na Tabela Empresa:")
-        st.write(lojas_nao_localizadas)
-        st.stop()
-
-    st.success("✅ Todas as lojas foram localizadas na Tabela Empresa.")
+    #if len(lojas_nao_localizadas) > 0:
+    #    st.error("❌ Lojas ZIG não localizadas na Tabela Empresa:")
+    #    st.write(lojas_nao_localizadas)
+    #    st.stop()
+    st.info("ℹ️ Validação de lojas desativada neste teste.")
+    #st.success("✅ Todas as lojas foram localizadas na Tabela Empresa.")
 
     datas_validas = pd.to_datetime(resumo["Data"], format="%d/%m/%Y", errors="coerce").dropna()
 

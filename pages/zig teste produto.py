@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import pandas as pd
+import numpy as np
 from datetime import date, datetime, timedelta
 from io import BytesIO
 import gspread
@@ -8,7 +9,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import json
 
 st.set_page_config(page_title="Teste ZIG Produtos", layout="wide")
-st.title("🧪 Teste ZIG - Faturamento + Produtos")
+st.title("🧪 Teste ZIG - Faturamento + Produtos + Ticket")
 
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 credentials_dict = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
@@ -106,7 +107,7 @@ if st.button("🔄 Testar Faturamento + Produtos"):
                         registros_faturamento.append({
                             "Data": item.get("eventDate"),
                             "Loja": loja_nome,
-                            "Fat.Total": float(item.get("value", 0)) / 100
+                            "Fat.Total": float(item.get("value", 0) or 0) / 100
                         })
 
             resp_prod = requests.get(
@@ -133,11 +134,10 @@ if st.button("🔄 Testar Faturamento + Produtos"):
                         discount_value = float(item.get("discountValue", 0) or 0)
 
                         qtd = count
-
                         if fractional_amount not in [None, "", 0]:
                             try:
                                 qtd = float(fractional_amount)
-                            except:
+                            except Exception:
                                 qtd = count
 
                         valor = ((unit_value * qtd) - discount_value) / 100
@@ -148,6 +148,7 @@ if st.button("🔄 Testar Faturamento + Produtos"):
                             "Tipo": item.get("type"),
                             "Produto": item.get("productName"),
                             "Categoria": item.get("productCategory"),
+                            "TransactionId": item.get("transactionId"),
                             "Valor Produto": valor
                         })
 
@@ -165,7 +166,7 @@ if st.button("🔄 Testar Faturamento + Produtos"):
         st.stop()
 
     df_fat = pd.DataFrame(registros_faturamento)
-    df_fat["Data"] = pd.to_datetime(df_fat["Data"], errors="coerce")
+    df_fat["Data"] = pd.to_datetime(df_fat["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
     df_fat["Loja"] = df_fat["Loja"].astype(str).str.strip().str.lower()
     df_fat["Fat.Total"] = pd.to_numeric(df_fat["Fat.Total"], errors="coerce").fillna(0)
 
@@ -176,10 +177,11 @@ if st.button("🔄 Testar Faturamento + Produtos"):
 
     if registros_produtos:
         df_prod = pd.DataFrame(registros_produtos)
-        df_prod["Data"] = pd.to_datetime(df_prod["Data"], errors="coerce")
+        df_prod["Data"] = pd.to_datetime(df_prod["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
         df_prod["Loja"] = df_prod["Loja"].astype(str).str.strip().str.lower()
         df_prod["Tipo"] = df_prod["Tipo"].astype(str).str.strip().str.lower()
         df_prod["Valor Produto"] = pd.to_numeric(df_prod["Valor Produto"], errors="coerce").fillna(0)
+        df_prod["TransactionId"] = df_prod["TransactionId"].astype(str).str.strip()
 
         df_serv = df_prod[
             df_prod["Tipo"].isin(["tip", "couvert", "entrance"])
@@ -191,33 +193,52 @@ if st.button("🔄 Testar Faturamento + Produtos"):
             .rename(columns={"Valor Produto": "Serv/Tx"})
         )
 
+        ticket_df = (
+            df_prod.groupby(["Data", "Loja"], as_index=False)
+            .agg(Qtde_Transacoes=("TransactionId", "nunique"))
+        )
+
         resumo_tipo = (
             df_prod.groupby(["Data", "Loja", "Tipo"], as_index=False)
             .agg({"Valor Produto": "sum"})
         )
 
     else:
+        df_prod = pd.DataFrame()
         resumo_serv = pd.DataFrame(columns=["Data", "Loja", "Serv/Tx"])
+        ticket_df = pd.DataFrame(columns=["Data", "Loja", "Qtde_Transacoes"])
         resumo_tipo = pd.DataFrame()
 
-    # Garantir mesmo tipo antes do merge
-    resumo_fat["Data"] = pd.to_datetime(resumo_fat["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
-    resumo_fat["Loja"] = resumo_fat["Loja"].astype(str).str.strip().str.lower()
-    
     resumo_serv["Data"] = pd.to_datetime(resumo_serv["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
     resumo_serv["Loja"] = resumo_serv["Loja"].astype(str).str.strip().str.lower()
-    
+
+    ticket_df["Data"] = pd.to_datetime(ticket_df["Data"], errors="coerce").dt.strftime("%Y-%m-%d")
+    ticket_df["Loja"] = ticket_df["Loja"].astype(str).str.strip().str.lower()
+
     resumo = resumo_fat.merge(
         resumo_serv,
         on=["Data", "Loja"],
         how="left"
     )
-    
-    resumo["Data"] = pd.to_datetime(resumo["Data"], errors="coerce")
+
+    resumo = resumo.merge(
+        ticket_df,
+        on=["Data", "Loja"],
+        how="left"
+    )
 
     resumo["Serv/Tx"] = pd.to_numeric(resumo["Serv/Tx"], errors="coerce").fillna(0)
+    resumo["Qtde_Transacoes"] = pd.to_numeric(resumo["Qtde_Transacoes"], errors="coerce").fillna(0)
+
     resumo["Fat.Real"] = resumo["Fat.Total"] - resumo["Serv/Tx"]
-    resumo["Ticket"] = 0
+
+    resumo["Ticket"] = np.where(
+        resumo["Qtde_Transacoes"] > 0,
+        resumo["Fat.Total"] / resumo["Qtde_Transacoes"],
+        0
+    )
+
+    resumo["Data"] = pd.to_datetime(resumo["Data"], errors="coerce")
 
     dias_traducao = {
         "Monday": "segunda-feira",
@@ -276,6 +297,7 @@ if st.button("🔄 Testar Faturamento + Produtos"):
         total_fat = resumo["Fat.Total"].sum()
         total_serv = resumo["Serv/Tx"].sum()
         total_real = resumo["Fat.Real"].sum()
+        ticket_medio = total_fat / resumo["Ticket"].replace(0, np.nan).count() if resumo["Ticket"].replace(0, np.nan).count() > 0 else 0
 
         def brl(valor):
             return (
@@ -304,11 +326,14 @@ if st.button("🔄 Testar Faturamento + Produtos"):
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         resumo.to_excel(writer, index=False, sheet_name="Faturamento Servico")
 
-        if registros_produtos:
+        if not df_prod.empty:
             df_prod.to_excel(writer, index=False, sheet_name="Produtos Detalhe")
 
         if not resumo_tipo.empty:
             resumo_tipo.to_excel(writer, index=False, sheet_name="Resumo Tipo Produto")
+
+        if not ticket_df.empty:
+            ticket_df.to_excel(writer, index=False, sheet_name="Transacoes")
 
     output.seek(0)
 

@@ -161,7 +161,7 @@ if st.button("🔄 Buscar ZIG Meio de Pagamento"):
                         meio_pagamento = payment_name
 
                     registros.append({
-                        "Data_raw": inicio_bloco,
+                        "Data_raw": item.get("eventDate"),
                         "Loja": loja_nome,
                         "Loja ID": loja_id_retorno,
                         "Event ID": event_id,

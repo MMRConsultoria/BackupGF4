@@ -24,14 +24,13 @@ def _norm(s: str) -> str:
     return s
 
 
-def gerar_periodos_5_dias(data_inicio, data_fim):
+def gerar_periodos_1_dia(data_inicio, data_fim):
     periodos = []
     atual = data_inicio
 
     while atual <= data_fim:
-        fim_bloco = min(atual + timedelta(days=4), data_fim)
-        periodos.append((atual, fim_bloco))
-        atual = fim_bloco + timedelta(days=1)
+        periodos.append((atual, atual))
+        atual = atual + timedelta(days=1)
 
     return periodos
 
@@ -105,7 +104,7 @@ if st.button("🔄 Buscar ZIG Meio de Pagamento"):
         st.stop()
 
     lojas = resp_lojas.json()
-    periodos = gerar_periodos_5_dias(dtinicio, dtfim)
+    periodos = gerar_periodos_1_dia(dtinicio, dtfim)
 
     registros = []
     lojas_sem_movimento = []
@@ -161,7 +160,7 @@ if st.button("🔄 Buscar ZIG Meio de Pagamento"):
                         meio_pagamento = payment_name
 
                     registros.append({
-                        "Data_raw": item.get("eventDate"),
+                        "Data_raw": inicio_bloco,
                         "Loja": loja_nome,
                         "Loja ID": loja_id_retorno,
                         "Event ID": event_id,

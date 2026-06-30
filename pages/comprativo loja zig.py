@@ -1,11 +1,11 @@
 import streamlit as st
 import requests
 import pandas as pd
-from datetime import date, datetime
+from datetime import date, timedelta, datetime
 from io import BytesIO
 
-st.set_page_config(page_title="ZIG - Auditoria Todas as Tabelas", layout="wide")
-st.title("🧪 ZIG - Auditoria de Todas as Tabelas por Dia")
+st.set_page_config(page_title="ZIG - Teste Gorjeta", layout="wide")
+st.title("🧪 ZIG - Teste Gorjeta por Compradores")
 
 token = st.secrets["zig"]["token"]
 rede = st.secrets["zig"]["rede"]
@@ -18,88 +18,16 @@ headers = {
 base_url = "https://api.zigcore.com.br/integration"
 
 
-def buscar_get(endpoint, params, timeout=60):
-    try:
-        resp = requests.get(
-            f"{base_url}{endpoint}",
-            headers=headers,
-            params=params,
-            timeout=timeout
-        )
+col1, col2 = st.columns(2)
 
-        if resp.status_code != 200:
-            return [], f"Erro {resp.status_code}: {resp.text}"
+with col1:
+    dtinicio = st.date_input("Data início", value=date.today() - timedelta(days=1))
 
-        dados = resp.json()
-
-        if isinstance(dados, list):
-            return dados, None
-
-        if isinstance(dados, dict):
-            return [dados], None
-
-        return [], "Retorno não é lista nem dicionário"
-
-    except Exception as e:
-        return [], str(e)
+with col2:
+    dtfim = st.date_input("Data fim", value=date.today() - timedelta(days=1))
 
 
-def buscar_paginado(endpoint, params_base, campo_page="page", max_paginas=100):
-    todos = []
-    erros = []
-
-    for page in range(1, max_paginas + 1):
-        params = params_base.copy()
-        params[campo_page] = page
-
-        dados, erro = buscar_get(endpoint, params)
-
-        if erro:
-            erros.append(f"Página {page}: {erro}")
-            break
-
-        if not dados:
-            break
-
-        todos.extend(dados)
-
-        if len(dados) == 0:
-            break
-
-    return todos, erros
-
-
-def normalizar_lista(registros):
-    if not registros:
-        return pd.DataFrame()
-
-    return pd.json_normalize(registros)
-
-
-def adicionar_contexto(lista, loja_id, loja_nome, data_consulta, endpoint):
-    registros = []
-
-    for item in lista:
-        if isinstance(item, dict):
-            novo = item.copy()
-        else:
-            novo = {"valor_retorno": item}
-
-        novo["_data_consulta"] = data_consulta
-        novo["_loja_id_consulta"] = loja_id
-        novo["_loja_nome_consulta"] = loja_nome
-        novo["_endpoint"] = endpoint
-
-        registros.append(novo)
-
-    return registros
-
-
-dt_consulta = st.date_input("Data para consulta", value=date.today())
-
-if st.button("🔍 Buscar todas as tabelas ZIG"):
-
-    data_str = dt_consulta.strftime("%Y-%m-%d")
+if st.button("🔍 Buscar Gorjetas"):
 
     resp_lojas = requests.get(
         f"{base_url}/erp/lojas",
@@ -115,272 +43,109 @@ if st.button("🔍 Buscar todas as tabelas ZIG"):
 
     lojas = resp_lojas.json()
 
-    if not isinstance(lojas, list) or not lojas:
-        st.warning("Nenhuma loja encontrada.")
-        st.stop()
-
-    registros_lojas = []
-    registros_saida_produtos = []
     registros_compradores = []
-    registros_faturamento = []
-    registros_maquina = []
-    registros_maquina_aberta = []
-    registros_invoice = []
-    registros_checkins = []
-    registros_recharges = []
-    erros_gerais = []
 
     for loja in lojas:
         loja_id = loja.get("id")
         loja_nome = loja.get("name")
 
-        registros_lojas.append({
-            "id": loja_id,
-            "name": loja_nome
+        resp = requests.get(
+            f"{base_url}/erp/compradores",
+            headers=headers,
+            params={
+                "dtinicio": dtinicio.strftime("%Y-%m-%d"),
+                "dtfim": dtfim.strftime("%Y-%m-%d"),
+                "loja": loja_id
+            },
+            timeout=60
+        )
+
+        if resp.status_code != 200:
+            continue
+
+        dados = resp.json()
+
+        if not isinstance(dados, list):
+            continue
+
+        for item in dados:
+            registros_compradores.append({
+                "Loja": loja_nome,
+                "Loja ID": loja_id,
+                "transactionId": item.get("transactionId"),
+                "userName": item.get("userName"),
+                "userDocument": item.get("userDocument"),
+                "productsValue_centavos": item.get("productsValue"),
+                "tipValue_centavos": item.get("tipValue"),
+                "productsValue": float(item.get("productsValue", 0) or 0) / 100,
+                "tipValue": float(item.get("tipValue", 0) or 0) / 100,
+                "total_com_gorjeta": (
+                    float(item.get("productsValue", 0) or 0)
+                    + float(item.get("tipValue", 0) or 0)
+                ) / 100
+            })
+
+    if not registros_compradores:
+        st.warning("Nenhum comprador encontrado no período.")
+        st.stop()
+
+    df = pd.DataFrame(registros_compradores)
+
+    df["productsValue"] = pd.to_numeric(df["productsValue"], errors="coerce").fillna(0)
+    df["tipValue"] = pd.to_numeric(df["tipValue"], errors="coerce").fillna(0)
+    df["total_com_gorjeta"] = pd.to_numeric(df["total_com_gorjeta"], errors="coerce").fillna(0)
+
+    resumo_loja = (
+        df.groupby(["Loja", "Loja ID"], as_index=False)
+        .agg({
+            "productsValue": "sum",
+            "tipValue": "sum",
+            "total_com_gorjeta": "sum",
+            "transactionId": "nunique"
         })
+        .rename(columns={
+            "productsValue": "Total Produtos",
+            "tipValue": "Total Gorjeta",
+            "total_com_gorjeta": "Total Produtos + Gorjeta",
+            "transactionId": "Qtde Transações"
+        })
+    )
 
-        # ==========================
-        # 1. SAÍDA DE PRODUTOS
-        # ==========================
-        endpoint = "/erp/saida-produtos"
-        dados, erro = buscar_get(
-            endpoint,
-            {
-                "dtinicio": data_str,
-                "dtfim": data_str,
-                "loja": loja_id
-            }
+    total_produtos = df["productsValue"].sum()
+    total_gorjeta = df["tipValue"].sum()
+    total_com_gorjeta = df["total_com_gorjeta"].sum()
+
+    def brl(v):
+        return (
+            f"R$ {v:,.2f}"
+            .replace(",", "X")
+            .replace(".", ",")
+            .replace("X", ".")
         )
 
-        if erro:
-            erros_gerais.append({
-                "Loja": loja_nome,
-                "Endpoint": endpoint,
-                "Erro": erro
-            })
-        else:
-            registros_saida_produtos.extend(
-                adicionar_contexto(dados, loja_id, loja_nome, data_str, endpoint)
-            )
+    col1, col2, col3 = st.columns(3)
 
-        # ==========================
-        # 2. COMPRADORES
-        # ==========================
-        endpoint = "/erp/compradores"
-        dados, erro = buscar_get(
-            endpoint,
-            {
-                "dtinicio": data_str,
-                "dtfim": data_str,
-                "loja": loja_id
-            }
-        )
+    col1.metric("Produtos", brl(total_produtos))
+    col2.metric("Gorjeta", brl(total_gorjeta))
+    col3.metric("Produtos + Gorjeta", brl(total_com_gorjeta))
 
-        if erro:
-            erros_gerais.append({
-                "Loja": loja_nome,
-                "Endpoint": endpoint,
-                "Erro": erro
-            })
-        else:
-            registros_compradores.extend(
-                adicionar_contexto(dados, loja_id, loja_nome, data_str, endpoint)
-            )
+    st.subheader("Resumo por Loja")
+    st.dataframe(resumo_loja, use_container_width=True, hide_index=True)
 
-        # ==========================
-        # 3. FATURAMENTO
-        # ==========================
-        endpoint = "/erp/faturamento"
-        dados, erro = buscar_get(
-            endpoint,
-            {
-                "dtinicio": data_str,
-                "dtfim": data_str,
-                "loja": loja_id
-            }
-        )
-
-        if erro:
-            erros_gerais.append({
-                "Loja": loja_nome,
-                "Endpoint": endpoint,
-                "Erro": erro
-            })
-        else:
-            registros_faturamento.extend(
-                adicionar_contexto(dados, loja_id, loja_nome, data_str, endpoint)
-            )
-
-        # ==========================
-        # 4. MÁQUINA INTEGRADA
-        # ==========================
-        endpoint = "/erp/faturamento/detalhesMaquinaIntegrada"
-        dados, erro = buscar_get(
-            endpoint,
-            {
-                "dtinicio": data_str,
-                "dtfim": data_str,
-                "loja": loja_id
-            }
-        )
-
-        if erro:
-            erros_gerais.append({
-                "Loja": loja_nome,
-                "Endpoint": endpoint,
-                "Erro": erro
-            })
-        else:
-            registros_maquina.extend(
-                adicionar_contexto(dados, loja_id, loja_nome, data_str, endpoint)
-            )
-
-            for item in dados:
-                values = item.get("values", [])
-
-                if isinstance(values, list):
-                    for v in values:
-                        linha = item.copy()
-                        linha.pop("values", None)
-
-                        for chave, valor in v.items():
-                            linha[f"values.{chave}"] = valor
-
-                        linha["_data_consulta"] = data_str
-                        linha["_loja_id_consulta"] = loja_id
-                        linha["_loja_nome_consulta"] = loja_nome
-                        linha["_endpoint"] = endpoint
-
-                        registros_maquina_aberta.append(linha)
-
-        # ==========================
-        # 5. NOTAS FISCAIS
-        # ==========================
-        endpoint = "/erp/invoice"
-        dados, erros = buscar_paginado(
-            endpoint,
-            {
-                "dtinicio": data_str,
-                "dtfim": data_str,
-                "loja": loja_id
-            }
-        )
-
-        if erros:
-            for erro in erros:
-                erros_gerais.append({
-                    "Loja": loja_nome,
-                    "Endpoint": endpoint,
-                    "Erro": erro
-                })
-
-        registros_invoice.extend(
-            adicionar_contexto(dados, loja_id, loja_nome, data_str, endpoint)
-        )
-
-        # ==========================
-        # 6. CHECK-INS
-        # ==========================
-        endpoint = "/erp/checkins"
-        dados, erros = buscar_paginado(
-            endpoint,
-            {
-                "desde": data_str,
-                "dtfim": data_str,
-                "loja": loja_id
-            }
-        )
-
-        if erros:
-            for erro in erros:
-                erros_gerais.append({
-                    "Loja": loja_nome,
-                    "Endpoint": endpoint,
-                    "Erro": erro
-                })
-
-        registros_checkins.extend(
-            adicionar_contexto(dados, loja_id, loja_nome, data_str, endpoint)
-        )
-
-        # ==========================
-        # 7. RECARGAS
-        # ==========================
-        endpoint = "/erp/recharges"
-        dados, erro = buscar_get(
-            endpoint,
-            {
-                "dtinicio": data_str,
-                "dtfim": data_str,
-                "loja": loja_id
-            }
-        )
-
-        if erro:
-            erros_gerais.append({
-                "Loja": loja_nome,
-                "Endpoint": endpoint,
-                "Erro": erro
-            })
-        else:
-            registros_recharges.extend(
-                adicionar_contexto(dados, loja_id, loja_nome, data_str, endpoint)
-            )
-
-    df_lojas = normalizar_lista(registros_lojas)
-    df_saida_produtos = normalizar_lista(registros_saida_produtos)
-    df_compradores = normalizar_lista(registros_compradores)
-    df_faturamento = normalizar_lista(registros_faturamento)
-    df_maquina = normalizar_lista(registros_maquina)
-    df_maquina_aberta = normalizar_lista(registros_maquina_aberta)
-    df_invoice = normalizar_lista(registros_invoice)
-    df_checkins = normalizar_lista(registros_checkins)
-    df_recharges = normalizar_lista(registros_recharges)
-    df_erros = normalizar_lista(erros_gerais)
-
-    st.success("Consulta finalizada.")
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    col1.metric("Lojas", len(df_lojas))
-    col2.metric("Saída Produtos", len(df_saida_produtos))
-    col3.metric("Faturamento", len(df_faturamento))
-    col4.metric("Máquina Aberta", len(df_maquina_aberta))
-
-    st.subheader("Faturamento")
-    st.dataframe(df_faturamento, use_container_width=True, hide_index=True)
-
-    st.subheader("Máquina Integrada Aberta por Bandeira")
-    st.dataframe(df_maquina_aberta, use_container_width=True, hide_index=True)
-
-    st.subheader("Saída de Produtos")
-    st.dataframe(df_saida_produtos, use_container_width=True, hide_index=True)
-
-    if not df_erros.empty:
-        st.subheader("Erros")
-        st.dataframe(df_erros, use_container_width=True, hide_index=True)
+    st.subheader("Detalhe por Comprador / Transação")
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
     output = BytesIO()
 
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df_lojas.to_excel(writer, index=False, sheet_name="Lojas")
-        df_saida_produtos.to_excel(writer, index=False, sheet_name="Saida Produtos")
-        df_compradores.to_excel(writer, index=False, sheet_name="Compradores")
-        df_faturamento.to_excel(writer, index=False, sheet_name="Faturamento")
-        df_maquina.to_excel(writer, index=False, sheet_name="Maquina Original")
-        df_maquina_aberta.to_excel(writer, index=False, sheet_name="Maquina Aberta")
-        df_invoice.to_excel(writer, index=False, sheet_name="Notas Fiscais")
-        df_checkins.to_excel(writer, index=False, sheet_name="Checkins")
-        df_recharges.to_excel(writer, index=False, sheet_name="Recargas")
-
-        if not df_erros.empty:
-            df_erros.to_excel(writer, index=False, sheet_name="Erros")
+        df.to_excel(writer, index=False, sheet_name="Compradores Detalhe")
+        resumo_loja.to_excel(writer, index=False, sheet_name="Resumo Gorjeta Loja")
 
     output.seek(0)
 
     st.download_button(
-        label="📥 Baixar Excel Auditoria ZIG",
+        label="📥 Baixar Teste Gorjeta",
         data=output,
-        file_name=f"zig_auditoria_todas_tabelas_{data_str}_{datetime.now().strftime('%H%M%S')}.xlsx",
+        file_name=f"zig_teste_gorjeta_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )

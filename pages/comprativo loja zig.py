@@ -3,9 +3,10 @@ import requests
 import pandas as pd
 from datetime import date, datetime, timedelta
 from io import BytesIO
+import unicodedata
 
 st.set_page_config(page_title="Comparativo ZIG", layout="wide")
-st.title("🧪 ZIG - Comparativo Faturamento x Máquina Integrada")
+st.title("🧪 ZIG - Meio de Pagamento ZIG")
 
 token = st.secrets["zig"]["token"]
 rede = st.secrets["zig"]["rede"]
@@ -29,6 +30,42 @@ def gerar_periodos_1_dia(data_inicio, data_fim):
     return periodos
 
 
+def normalizar(txt):
+    if txt is None:
+        return ""
+
+    txt = str(txt).strip().lower()
+
+    txt = unicodedata.normalize("NFKD", txt)
+    txt = "".join(c for c in txt if not unicodedata.combining(c))
+
+    return txt
+
+
+def eh_credito_debito(payment_name):
+    nome = normalizar(payment_name)
+
+    palavras = [
+        "credito",
+        "credit",
+        "debito",
+        "debit",
+        "cartao",
+        "card"
+    ]
+
+    return any(p in nome for p in palavras)
+
+
+def brl(v):
+    return (
+        f"R$ {v:,.2f}"
+        .replace(",", "X")
+        .replace(".", ",")
+        .replace("X", ".")
+    )
+
+
 col1, col2 = st.columns(2)
 
 with col1:
@@ -38,7 +75,7 @@ with col2:
     dtfim = st.date_input("Data fim", value=date.today() - timedelta(days=1))
 
 
-if st.button("🔍 Comparar ZIG"):
+if st.button("🔍 Gerar Meio de Pagamento ZIG"):
 
     resp_lojas = requests.get(
         f"{base_url}/erp/lojas",
@@ -63,9 +100,6 @@ if st.button("🔍 Comparar ZIG"):
 
         for inicio, fim in periodos:
 
-            # ==========================
-            # 1. FATURAMENTO GERAL
-            # ==========================
             resp_fat = requests.get(
                 f"{base_url}/erp/faturamento",
                 headers=headers,
@@ -82,23 +116,23 @@ if st.button("🔍 Comparar ZIG"):
 
                 if isinstance(dados_fat, list):
                     for item in dados_fat:
+                        valor = float(item.get("value", 0) or 0) / 100
+
                         faturamento_geral.append({
-                            "Data Consulta": inicio.strftime("%d/%m/%Y"),
+                            "Data": inicio.strftime("%d/%m/%Y"),
                             "Loja": loja_nome,
-                            "Loja ID Consulta": loja_id,
+                            "Loja ID": loja_id,
+                            "Origem": "Faturamento Geral",
                             "paymentId": item.get("paymentId"),
-                            "paymentName": item.get("paymentName"),
-                            "value_centavos": item.get("value"),
-                            "Valor Geral": float(item.get("value", 0) or 0) / 100,
+                            "Meio de Pagamento": item.get("paymentName"),
+                            "Bandeira": "",
+                            "Valor": valor,
                             "redeId": item.get("redeId"),
                             "lojaId": item.get("lojaId"),
                             "eventId": item.get("eventId"),
                             "eventDate": item.get("eventDate")
                         })
 
-            # ==========================
-            # 2. DETALHE MÁQUINA
-            # ==========================
             resp_maq = requests.get(
                 f"{base_url}/erp/faturamento/detalhesMaquinaIntegrada",
                 headers=headers,
@@ -119,17 +153,19 @@ if st.button("🔍 Comparar ZIG"):
 
                         if isinstance(values, list):
                             for v in values:
+                                valor = float(v.get("totalValue", 0) or 0) / 100
+
                                 maquina_integrada.append({
-                                    "Data Consulta": inicio.strftime("%d/%m/%Y"),
+                                    "Data": inicio.strftime("%d/%m/%Y"),
                                     "Loja": loja_nome,
-                                    "Loja ID Consulta": loja_id,
+                                    "Loja ID": loja_id,
+                                    "Origem": "Máquina Integrada",
                                     "paymentId": item.get("paymentId"),
-                                    "paymentName": item.get("paymentName"),
+                                    "Meio de Pagamento": item.get("paymentName"),
+                                    "Bandeira": v.get("cardBrand"),
+                                    "Valor": valor,
                                     "lojaId": item.get("lojaId"),
-                                    "eventId": item.get("eventId"),
-                                    "cardBrand": v.get("cardBrand"),
-                                    "totalValue_centavos": v.get("totalValue"),
-                                    "Valor Máquina": float(v.get("totalValue", 0) or 0) / 100
+                                    "eventId": item.get("eventId")
                                 })
 
     if not faturamento_geral:
@@ -142,68 +178,150 @@ if st.button("🔍 Comparar ZIG"):
         df_maq = pd.DataFrame(maquina_integrada)
     else:
         df_maq = pd.DataFrame(columns=[
-            "Data Consulta", "Loja", "paymentId", "paymentName",
-            "cardBrand", "Valor Máquina"
+            "Data", "Loja", "Loja ID", "Origem", "paymentId",
+            "Meio de Pagamento", "Bandeira", "Valor", "lojaId", "eventId"
         ])
 
-    resumo_fat = (
-        df_fat.groupby(["Data Consulta", "Loja"], as_index=False)
-        .agg({"Valor Geral": "sum"})
+    # ==========================================
+    # REGRA FINAL:
+    # Crédito/Débito vem da Máquina Integrada
+    # Demais meios vêm do Faturamento Geral
+    # ==========================================
+
+    df_fat["Eh Cartao"] = df_fat["Meio de Pagamento"].apply(eh_credito_debito)
+    df_maq["Eh Cartao"] = df_maq["Meio de Pagamento"].apply(eh_credito_debito)
+
+    # Cartão pela máquina
+    df_cartao = df_maq[df_maq["Eh Cartao"] == True].copy()
+
+    # Não cartão pelo faturamento geral
+    df_nao_cartao = df_fat[df_fat["Eh Cartao"] == False].copy()
+
+    df_meio_pagamento = pd.concat(
+        [df_cartao, df_nao_cartao],
+        ignore_index=True
     )
 
-    resumo_maq = (
-        df_maq.groupby(["Data Consulta", "Loja"], as_index=False)
-        .agg({"Valor Máquina": "sum"})
+    df_meio_pagamento["Valor"] = pd.to_numeric(
+        df_meio_pagamento["Valor"],
+        errors="coerce"
+    ).fillna(0).round(2)
+
+    df_meio_pagamento = df_meio_pagamento[
+        [
+            "Data",
+            "Loja",
+            "Loja ID",
+            "Origem",
+            "paymentId",
+            "Meio de Pagamento",
+            "Bandeira",
+            "Valor"
+        ]
+    ]
+
+    resumo_meio_pagamento = (
+        df_meio_pagamento
+        .groupby(
+            [
+                "Data",
+                "Loja",
+                "Origem",
+                "Meio de Pagamento",
+                "Bandeira"
+            ],
+            as_index=False
+        )
+        .agg({"Valor": "sum"})
+    )
+
+    resumo_meio_pagamento["Valor"] = resumo_meio_pagamento["Valor"].round(2)
+
+    # Comparativo de conferência
+    resumo_fat = (
+        df_fat.groupby(["Data", "Loja"], as_index=False)
+        .agg({"Valor": "sum"})
+        .rename(columns={"Valor": "Valor Geral"})
+    )
+
+    resumo_final = (
+        df_meio_pagamento.groupby(["Data", "Loja"], as_index=False)
+        .agg({"Valor": "sum"})
+        .rename(columns={"Valor": "Valor Meio Pagamento"})
     )
 
     comparativo = resumo_fat.merge(
-        resumo_maq,
-        on=["Data Consulta", "Loja"],
+        resumo_final,
+        on=["Data", "Loja"],
         how="left"
     )
 
-    comparativo["Valor Máquina"] = pd.to_numeric(
-        comparativo["Valor Máquina"],
+    comparativo["Valor Meio Pagamento"] = pd.to_numeric(
+        comparativo["Valor Meio Pagamento"],
         errors="coerce"
     ).fillna(0)
 
     comparativo["Diferença"] = (
-        comparativo["Valor Geral"] - comparativo["Valor Máquina"]
+        comparativo["Valor Geral"] - comparativo["Valor Meio Pagamento"]
     ).round(2)
 
     comparativo["Valor Geral"] = comparativo["Valor Geral"].round(2)
-    comparativo["Valor Máquina"] = comparativo["Valor Máquina"].round(2)
+    comparativo["Valor Meio Pagamento"] = comparativo["Valor Meio Pagamento"].round(2)
 
     total_geral = comparativo["Valor Geral"].sum()
-    total_maquina = comparativo["Valor Máquina"].sum()
+    total_mp = comparativo["Valor Meio Pagamento"].sum()
     total_diferenca = comparativo["Diferença"].sum()
-
-    def brl(v):
-        return (
-            f"R$ {v:,.2f}"
-            .replace(",", "X")
-            .replace(".", ",")
-            .replace("X", ".")
-        )
 
     col1, col2, col3 = st.columns(3)
 
     col1.metric("Faturamento Geral", brl(total_geral))
-    col2.metric("Máquina Integrada", brl(total_maquina))
+    col2.metric("Tabela Meio Pagamento", brl(total_mp))
     col3.metric("Diferença", brl(total_diferenca))
+
+    st.subheader("Tabela Meio de Pagamento Final")
+    st.dataframe(resumo_meio_pagamento, use_container_width=True)
+
+    st.subheader("Comparativo de Conferência")
+    st.dataframe(comparativo, use_container_width=True)
 
     output = BytesIO()
 
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df_fat.to_excel(writer, index=False, sheet_name="Faturamento Geral")
-        df_maq.to_excel(writer, index=False, sheet_name="Maquina Integrada")
-        comparativo.to_excel(writer, index=False, sheet_name="Comparativo")
+        df_fat.drop(columns=["Eh Cartao"], errors="ignore").to_excel(
+            writer,
+            index=False,
+            sheet_name="Faturamento Geral"
+        )
+
+        df_maq.drop(columns=["Eh Cartao"], errors="ignore").to_excel(
+            writer,
+            index=False,
+            sheet_name="Maquina Integrada"
+        )
+
+        df_meio_pagamento.to_excel(
+            writer,
+            index=False,
+            sheet_name="Base Meio Pagamento"
+        )
+
+        resumo_meio_pagamento.to_excel(
+            writer,
+            index=False,
+            sheet_name="Resumo Meio Pagamento"
+        )
+
+        comparativo.to_excel(
+            writer,
+            index=False,
+            sheet_name="Comparativo"
+        )
 
     output.seek(0)
 
     st.download_button(
-        label="📥 Baixar Comparativo ZIG",
+        label="📥 Baixar Meio de Pagamento ZIG",
         data=output,
-        file_name=f"zig_comparativo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+        file_name=f"zig_meio_pagamento_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )

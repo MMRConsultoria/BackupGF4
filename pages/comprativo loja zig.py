@@ -1,12 +1,11 @@
 import streamlit as st
 import requests
 import pandas as pd
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from io import BytesIO
-import unicodedata
 
-st.set_page_config(page_title="Comparativo ZIG", layout="wide")
-st.title("🧪 ZIG - Meio de Pagamento ZIG")
+st.set_page_config(page_title="ZIG - Auditoria Todas as Tabelas", layout="wide")
+st.title("🧪 ZIG - Auditoria de Todas as Tabelas por Dia")
 
 token = st.secrets["zig"]["token"]
 rede = st.secrets["zig"]["rede"]
@@ -19,63 +18,88 @@ headers = {
 base_url = "https://api.zigcore.com.br/integration"
 
 
-def gerar_periodos_1_dia(data_inicio, data_fim):
-    periodos = []
-    atual = data_inicio
+def buscar_get(endpoint, params, timeout=60):
+    try:
+        resp = requests.get(
+            f"{base_url}{endpoint}",
+            headers=headers,
+            params=params,
+            timeout=timeout
+        )
 
-    while atual <= data_fim:
-        periodos.append((atual, atual))
-        atual = atual + timedelta(days=1)
+        if resp.status_code != 200:
+            return [], f"Erro {resp.status_code}: {resp.text}"
 
-    return periodos
+        dados = resp.json()
 
+        if isinstance(dados, list):
+            return dados, None
 
-def normalizar(txt):
-    if txt is None:
-        return ""
+        if isinstance(dados, dict):
+            return [dados], None
 
-    txt = str(txt).strip().lower()
+        return [], "Retorno não é lista nem dicionário"
 
-    txt = unicodedata.normalize("NFKD", txt)
-    txt = "".join(c for c in txt if not unicodedata.combining(c))
-
-    return txt
-
-
-def eh_credito_debito(payment_name):
-    nome = normalizar(payment_name)
-
-    palavras = [
-        "credito",
-        "credit",
-        "debito",
-        "debit",
-        "cartao",
-        "card"
-    ]
-
-    return any(p in nome for p in palavras)
+    except Exception as e:
+        return [], str(e)
 
 
-def brl(v):
-    return (
-        f"R$ {v:,.2f}"
-        .replace(",", "X")
-        .replace(".", ",")
-        .replace("X", ".")
-    )
+def buscar_paginado(endpoint, params_base, campo_page="page", max_paginas=100):
+    todos = []
+    erros = []
+
+    for page in range(1, max_paginas + 1):
+        params = params_base.copy()
+        params[campo_page] = page
+
+        dados, erro = buscar_get(endpoint, params)
+
+        if erro:
+            erros.append(f"Página {page}: {erro}")
+            break
+
+        if not dados:
+            break
+
+        todos.extend(dados)
+
+        if len(dados) == 0:
+            break
+
+    return todos, erros
 
 
-col1, col2 = st.columns(2)
+def normalizar_lista(registros):
+    if not registros:
+        return pd.DataFrame()
 
-with col1:
-    dtinicio = st.date_input("Data início", value=date.today() - timedelta(days=7))
-
-with col2:
-    dtfim = st.date_input("Data fim", value=date.today() - timedelta(days=1))
+    return pd.json_normalize(registros)
 
 
-if st.button("🔍 Gerar Meio de Pagamento ZIG"):
+def adicionar_contexto(lista, loja_id, loja_nome, data_consulta, endpoint):
+    registros = []
+
+    for item in lista:
+        if isinstance(item, dict):
+            novo = item.copy()
+        else:
+            novo = {"valor_retorno": item}
+
+        novo["_data_consulta"] = data_consulta
+        novo["_loja_id_consulta"] = loja_id
+        novo["_loja_nome_consulta"] = loja_nome
+        novo["_endpoint"] = endpoint
+
+        registros.append(novo)
+
+    return registros
+
+
+dt_consulta = st.date_input("Data para consulta", value=date.today())
+
+if st.button("🔍 Buscar todas as tabelas ZIG"):
+
+    data_str = dt_consulta.strftime("%Y-%m-%d")
 
     resp_lojas = requests.get(
         f"{base_url}/erp/lojas",
@@ -85,243 +109,278 @@ if st.button("🔍 Gerar Meio de Pagamento ZIG"):
     )
 
     if resp_lojas.status_code != 200:
-        st.error("Erro ao buscar lojas")
+        st.error("Erro ao buscar lojas ZIG")
+        st.text(resp_lojas.text)
         st.stop()
 
     lojas = resp_lojas.json()
-    periodos = gerar_periodos_1_dia(dtinicio, dtfim)
 
-    faturamento_geral = []
-    maquina_integrada = []
+    if not isinstance(lojas, list) or not lojas:
+        st.warning("Nenhuma loja encontrada.")
+        st.stop()
+
+    registros_lojas = []
+    registros_saida_produtos = []
+    registros_compradores = []
+    registros_faturamento = []
+    registros_maquina = []
+    registros_maquina_aberta = []
+    registros_invoice = []
+    registros_checkins = []
+    registros_recharges = []
+    erros_gerais = []
 
     for loja in lojas:
         loja_id = loja.get("id")
         loja_nome = loja.get("name")
 
-        for inicio, fim in periodos:
+        registros_lojas.append({
+            "id": loja_id,
+            "name": loja_nome
+        })
 
-            resp_fat = requests.get(
-                f"{base_url}/erp/faturamento",
-                headers=headers,
-                params={
-                    "dtinicio": inicio.strftime("%Y-%m-%d"),
-                    "dtfim": fim.strftime("%Y-%m-%d"),
-                    "loja": loja_id
-                },
-                timeout=60
-            )
-
-            if resp_fat.status_code == 200:
-                dados_fat = resp_fat.json()
-
-                if isinstance(dados_fat, list):
-                    for item in dados_fat:
-                        valor = float(item.get("value", 0) or 0) / 100
-
-                        faturamento_geral.append({
-                            "Data": inicio.strftime("%d/%m/%Y"),
-                            "Loja": loja_nome,
-                            "Loja ID": loja_id,
-                            "Origem": "Faturamento Geral",
-                            "paymentId": item.get("paymentId"),
-                            "Meio de Pagamento": item.get("paymentName"),
-                            "Bandeira": "",
-                            "Valor": valor,
-                            "redeId": item.get("redeId"),
-                            "lojaId": item.get("lojaId"),
-                            "eventId": item.get("eventId"),
-                            "eventDate": item.get("eventDate")
-                        })
-
-            resp_maq = requests.get(
-                f"{base_url}/erp/faturamento/detalhesMaquinaIntegrada",
-                headers=headers,
-                params={
-                    "dtinicio": inicio.strftime("%Y-%m-%d"),
-                    "dtfim": fim.strftime("%Y-%m-%d"),
-                    "loja": loja_id
-                },
-                timeout=60
-            )
-
-            if resp_maq.status_code == 200:
-                dados_maq = resp_maq.json()
-
-                if isinstance(dados_maq, list):
-                    for item in dados_maq:
-                        values = item.get("values", [])
-
-                        if isinstance(values, list):
-                            for v in values:
-                                valor = float(v.get("totalValue", 0) or 0) / 100
-
-                                maquina_integrada.append({
-                                    "Data": inicio.strftime("%d/%m/%Y"),
-                                    "Loja": loja_nome,
-                                    "Loja ID": loja_id,
-                                    "Origem": "Máquina Integrada",
-                                    "paymentId": item.get("paymentId"),
-                                    "Meio de Pagamento": item.get("paymentName"),
-                                    "Bandeira": v.get("cardBrand"),
-                                    "Valor": valor,
-                                    "lojaId": item.get("lojaId"),
-                                    "eventId": item.get("eventId")
-                                })
-
-    if not faturamento_geral:
-        st.warning("Nenhum dado encontrado em Faturamento Geral.")
-        st.stop()
-
-    df_fat = pd.DataFrame(faturamento_geral)
-
-    if maquina_integrada:
-        df_maq = pd.DataFrame(maquina_integrada)
-    else:
-        df_maq = pd.DataFrame(columns=[
-            "Data", "Loja", "Loja ID", "Origem", "paymentId",
-            "Meio de Pagamento", "Bandeira", "Valor", "lojaId", "eventId"
-        ])
-
-    # ==========================================
-    # REGRA FINAL:
-    # Crédito/Débito vem da Máquina Integrada
-    # Demais meios vêm do Faturamento Geral
-    # ==========================================
-
-    df_fat["Eh Cartao"] = df_fat["Meio de Pagamento"].apply(eh_credito_debito)
-    df_maq["Eh Cartao"] = df_maq["Meio de Pagamento"].apply(eh_credito_debito)
-
-    # Cartão pela máquina
-    df_cartao = df_maq[df_maq["Eh Cartao"] == True].copy()
-
-    # Não cartão pelo faturamento geral
-    df_nao_cartao = df_fat[df_fat["Eh Cartao"] == False].copy()
-
-    df_meio_pagamento = pd.concat(
-        [df_cartao, df_nao_cartao],
-        ignore_index=True
-    )
-
-    df_meio_pagamento["Valor"] = pd.to_numeric(
-        df_meio_pagamento["Valor"],
-        errors="coerce"
-    ).fillna(0).round(2)
-
-    df_meio_pagamento = df_meio_pagamento[
-        [
-            "Data",
-            "Loja",
-            "Loja ID",
-            "Origem",
-            "paymentId",
-            "Meio de Pagamento",
-            "Bandeira",
-            "Valor"
-        ]
-    ]
-
-    resumo_meio_pagamento = (
-        df_meio_pagamento
-        .groupby(
-            [
-                "Data",
-                "Loja",
-                "Origem",
-                "Meio de Pagamento",
-                "Bandeira"
-            ],
-            as_index=False
+        # ==========================
+        # 1. SAÍDA DE PRODUTOS
+        # ==========================
+        endpoint = "/erp/saida-produtos"
+        dados, erro = buscar_get(
+            endpoint,
+            {
+                "dtinicio": data_str,
+                "dtfim": data_str,
+                "loja": loja_id
+            }
         )
-        .agg({"Valor": "sum"})
-    )
 
-    resumo_meio_pagamento["Valor"] = resumo_meio_pagamento["Valor"].round(2)
+        if erro:
+            erros_gerais.append({
+                "Loja": loja_nome,
+                "Endpoint": endpoint,
+                "Erro": erro
+            })
+        else:
+            registros_saida_produtos.extend(
+                adicionar_contexto(dados, loja_id, loja_nome, data_str, endpoint)
+            )
 
-    # Comparativo de conferência
-    resumo_fat = (
-        df_fat.groupby(["Data", "Loja"], as_index=False)
-        .agg({"Valor": "sum"})
-        .rename(columns={"Valor": "Valor Geral"})
-    )
+        # ==========================
+        # 2. COMPRADORES
+        # ==========================
+        endpoint = "/erp/compradores"
+        dados, erro = buscar_get(
+            endpoint,
+            {
+                "dtinicio": data_str,
+                "dtfim": data_str,
+                "loja": loja_id
+            }
+        )
 
-    resumo_final = (
-        df_meio_pagamento.groupby(["Data", "Loja"], as_index=False)
-        .agg({"Valor": "sum"})
-        .rename(columns={"Valor": "Valor Meio Pagamento"})
-    )
+        if erro:
+            erros_gerais.append({
+                "Loja": loja_nome,
+                "Endpoint": endpoint,
+                "Erro": erro
+            })
+        else:
+            registros_compradores.extend(
+                adicionar_contexto(dados, loja_id, loja_nome, data_str, endpoint)
+            )
 
-    comparativo = resumo_fat.merge(
-        resumo_final,
-        on=["Data", "Loja"],
-        how="left"
-    )
+        # ==========================
+        # 3. FATURAMENTO
+        # ==========================
+        endpoint = "/erp/faturamento"
+        dados, erro = buscar_get(
+            endpoint,
+            {
+                "dtinicio": data_str,
+                "dtfim": data_str,
+                "loja": loja_id
+            }
+        )
 
-    comparativo["Valor Meio Pagamento"] = pd.to_numeric(
-        comparativo["Valor Meio Pagamento"],
-        errors="coerce"
-    ).fillna(0)
+        if erro:
+            erros_gerais.append({
+                "Loja": loja_nome,
+                "Endpoint": endpoint,
+                "Erro": erro
+            })
+        else:
+            registros_faturamento.extend(
+                adicionar_contexto(dados, loja_id, loja_nome, data_str, endpoint)
+            )
 
-    comparativo["Diferença"] = (
-        comparativo["Valor Geral"] - comparativo["Valor Meio Pagamento"]
-    ).round(2)
+        # ==========================
+        # 4. MÁQUINA INTEGRADA
+        # ==========================
+        endpoint = "/erp/faturamento/detalhesMaquinaIntegrada"
+        dados, erro = buscar_get(
+            endpoint,
+            {
+                "dtinicio": data_str,
+                "dtfim": data_str,
+                "loja": loja_id
+            }
+        )
 
-    comparativo["Valor Geral"] = comparativo["Valor Geral"].round(2)
-    comparativo["Valor Meio Pagamento"] = comparativo["Valor Meio Pagamento"].round(2)
+        if erro:
+            erros_gerais.append({
+                "Loja": loja_nome,
+                "Endpoint": endpoint,
+                "Erro": erro
+            })
+        else:
+            registros_maquina.extend(
+                adicionar_contexto(dados, loja_id, loja_nome, data_str, endpoint)
+            )
 
-    total_geral = comparativo["Valor Geral"].sum()
-    total_mp = comparativo["Valor Meio Pagamento"].sum()
-    total_diferenca = comparativo["Diferença"].sum()
+            for item in dados:
+                values = item.get("values", [])
 
-    col1, col2, col3 = st.columns(3)
+                if isinstance(values, list):
+                    for v in values:
+                        linha = item.copy()
+                        linha.pop("values", None)
 
-    col1.metric("Faturamento Geral", brl(total_geral))
-    col2.metric("Tabela Meio Pagamento", brl(total_mp))
-    col3.metric("Diferença", brl(total_diferenca))
+                        for chave, valor in v.items():
+                            linha[f"values.{chave}"] = valor
 
-    st.subheader("Tabela Meio de Pagamento Final")
-    st.dataframe(resumo_meio_pagamento, use_container_width=True)
+                        linha["_data_consulta"] = data_str
+                        linha["_loja_id_consulta"] = loja_id
+                        linha["_loja_nome_consulta"] = loja_nome
+                        linha["_endpoint"] = endpoint
 
-    st.subheader("Comparativo de Conferência")
-    st.dataframe(comparativo, use_container_width=True)
+                        registros_maquina_aberta.append(linha)
+
+        # ==========================
+        # 5. NOTAS FISCAIS
+        # ==========================
+        endpoint = "/erp/invoice"
+        dados, erros = buscar_paginado(
+            endpoint,
+            {
+                "dtinicio": data_str,
+                "dtfim": data_str,
+                "loja": loja_id
+            }
+        )
+
+        if erros:
+            for erro in erros:
+                erros_gerais.append({
+                    "Loja": loja_nome,
+                    "Endpoint": endpoint,
+                    "Erro": erro
+                })
+
+        registros_invoice.extend(
+            adicionar_contexto(dados, loja_id, loja_nome, data_str, endpoint)
+        )
+
+        # ==========================
+        # 6. CHECK-INS
+        # ==========================
+        endpoint = "/erp/checkins"
+        dados, erros = buscar_paginado(
+            endpoint,
+            {
+                "desde": data_str,
+                "dtfim": data_str,
+                "loja": loja_id
+            }
+        )
+
+        if erros:
+            for erro in erros:
+                erros_gerais.append({
+                    "Loja": loja_nome,
+                    "Endpoint": endpoint,
+                    "Erro": erro
+                })
+
+        registros_checkins.extend(
+            adicionar_contexto(dados, loja_id, loja_nome, data_str, endpoint)
+        )
+
+        # ==========================
+        # 7. RECARGAS
+        # ==========================
+        endpoint = "/erp/recharges"
+        dados, erro = buscar_get(
+            endpoint,
+            {
+                "dtinicio": data_str,
+                "dtfim": data_str,
+                "loja": loja_id
+            }
+        )
+
+        if erro:
+            erros_gerais.append({
+                "Loja": loja_nome,
+                "Endpoint": endpoint,
+                "Erro": erro
+            })
+        else:
+            registros_recharges.extend(
+                adicionar_contexto(dados, loja_id, loja_nome, data_str, endpoint)
+            )
+
+    df_lojas = normalizar_lista(registros_lojas)
+    df_saida_produtos = normalizar_lista(registros_saida_produtos)
+    df_compradores = normalizar_lista(registros_compradores)
+    df_faturamento = normalizar_lista(registros_faturamento)
+    df_maquina = normalizar_lista(registros_maquina)
+    df_maquina_aberta = normalizar_lista(registros_maquina_aberta)
+    df_invoice = normalizar_lista(registros_invoice)
+    df_checkins = normalizar_lista(registros_checkins)
+    df_recharges = normalizar_lista(registros_recharges)
+    df_erros = normalizar_lista(erros_gerais)
+
+    st.success("Consulta finalizada.")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric("Lojas", len(df_lojas))
+    col2.metric("Saída Produtos", len(df_saida_produtos))
+    col3.metric("Faturamento", len(df_faturamento))
+    col4.metric("Máquina Aberta", len(df_maquina_aberta))
+
+    st.subheader("Faturamento")
+    st.dataframe(df_faturamento, use_container_width=True, hide_index=True)
+
+    st.subheader("Máquina Integrada Aberta por Bandeira")
+    st.dataframe(df_maquina_aberta, use_container_width=True, hide_index=True)
+
+    st.subheader("Saída de Produtos")
+    st.dataframe(df_saida_produtos, use_container_width=True, hide_index=True)
+
+    if not df_erros.empty:
+        st.subheader("Erros")
+        st.dataframe(df_erros, use_container_width=True, hide_index=True)
 
     output = BytesIO()
 
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df_fat.drop(columns=["Eh Cartao"], errors="ignore").to_excel(
-            writer,
-            index=False,
-            sheet_name="Faturamento Geral"
-        )
+        df_lojas.to_excel(writer, index=False, sheet_name="Lojas")
+        df_saida_produtos.to_excel(writer, index=False, sheet_name="Saida Produtos")
+        df_compradores.to_excel(writer, index=False, sheet_name="Compradores")
+        df_faturamento.to_excel(writer, index=False, sheet_name="Faturamento")
+        df_maquina.to_excel(writer, index=False, sheet_name="Maquina Original")
+        df_maquina_aberta.to_excel(writer, index=False, sheet_name="Maquina Aberta")
+        df_invoice.to_excel(writer, index=False, sheet_name="Notas Fiscais")
+        df_checkins.to_excel(writer, index=False, sheet_name="Checkins")
+        df_recharges.to_excel(writer, index=False, sheet_name="Recargas")
 
-        df_maq.drop(columns=["Eh Cartao"], errors="ignore").to_excel(
-            writer,
-            index=False,
-            sheet_name="Maquina Integrada"
-        )
-
-        df_meio_pagamento.to_excel(
-            writer,
-            index=False,
-            sheet_name="Base Meio Pagamento"
-        )
-
-        resumo_meio_pagamento.to_excel(
-            writer,
-            index=False,
-            sheet_name="Resumo Meio Pagamento"
-        )
-
-        comparativo.to_excel(
-            writer,
-            index=False,
-            sheet_name="Comparativo"
-        )
+        if not df_erros.empty:
+            df_erros.to_excel(writer, index=False, sheet_name="Erros")
 
     output.seek(0)
 
     st.download_button(
-        label="📥 Baixar Meio de Pagamento ZIG",
+        label="📥 Baixar Excel Auditoria ZIG",
         data=output,
-        file_name=f"zig_meio_pagamento_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+        file_name=f"zig_auditoria_todas_tabelas_{data_str}_{datetime.now().strftime('%H%M%S')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
